@@ -12,6 +12,8 @@ import '../../../services/firestore_service.dart';
 import '../../../models/core/business_model.dart' show AttendanceRules;
 import '../../../utils/attendance_policy_disclosure.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/text_layout.dart';
+import '../../calendar/app_calendar.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/dialog_helper.dart';
@@ -420,11 +422,7 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
                       top: ResponsiveHelper.spacing(context, 12),
                       bottom: ResponsiveHelper.spacing(context, 10),
                     ),
-                    child: Text(
-                      '근무 예정 기간',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.grey600, fontWeight: FontWeight.w600),
-                    ),
+                    child: _sectionTitle(context, '근무 예정 기간'),
                   ),
                   _buildCustomPeriodCard(context),
                 ] else ...[
@@ -434,11 +432,7 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
                       top: ResponsiveHelper.spacing(context, 12),
                       bottom: ResponsiveHelper.spacing(context, 10),
                     ),
-                    child: Text(
-                      '희망 시작일',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.grey600, fontWeight: FontWeight.w600),
-                    ),
+                    child: _sectionTitle(context, '희망 시작일'),
                   ),
                   // 날짜 미선택: 캘린더 / 날짜 선택 후: 컴팩트 칩 + 계약 기간
                   if (_desiredStartDate == null)
@@ -470,6 +464,14 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
     );
   }
 
+  /// [DU272] 구역 제목 — 시안·DU241/246/259/268 과 같은 16 bold 본문색(이전 grey600 13 w600), 낱말 단위.
+  Widget _sectionTitle(BuildContext context, String title) => Text(
+        TextLayout.keepWords(title),
+        semanticsLabel: title,
+        style: ResponsiveHelper.subtitleStyle(context).copyWith(
+            fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+      );
+
   // ─── custom 전용: 고정 기간 카드 ─────────────────────────
 
   Widget _buildCustomPeriodCard(BuildContext context) {
@@ -478,13 +480,15 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
     if (rangeStart == null || rangeEnd == null) {
       return Container(
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+        // [DU272] grey100 위 grey500 → 바탕색 면·textSecondary
         decoration: BoxDecoration(
-          color: AppColors.grey100,
-          borderRadius: BorderRadius.circular(12),
+          color: AppColors.background,
+          borderRadius: BorderRadius.circular(16),
         ),
         child: Text(
-          '기간 정보를 불러올 수 없습니다.',
-          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+          TextLayout.keepWords('기간 정보를 불러올 수 없습니다.'),
+          semanticsLabel: '기간 정보를 불러올 수 없습니다.',
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
         ),
       );
     }
@@ -501,10 +505,10 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
         ResponsiveHelper.spacing(context, 14),
         ResponsiveHelper.spacing(context, 12),
       ),
+      // [DU272] radius 16·선 제거(다른 안내 면과 같음)
       decoration: BoxDecoration(
         color: AppColors.infoBg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.infoLight),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -518,10 +522,12 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Expanded(
+                // [DU272] tiny infoDark(4.03) → smallStyle infoDeep, 낱말 단위
                 child: Text(
-                  '관리자가 지정한 고정 기간이에요',
-                  style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.infoDark, fontWeight: FontWeight.w600),
+                  TextLayout.keepWords('관리자가 지정한 고정 기간이에요'),
+                  semanticsLabel: '관리자가 지정한 고정 기간이에요',
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.infoDeep, fontWeight: FontWeight.w600),
                 ),
               ),
               if (periodLabel.isNotEmpty)
@@ -536,26 +542,29 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
                   ),
                   child: Text(
                     periodLabel,
-                    style: ResponsiveHelper.tinyStyle(context,
+                    style: ResponsiveHelper.smallStyle(context, // [DU272] 배지 13(Standards 13~14)
                         color: Colors.white, fontWeight: FontWeight.bold),
                   ),
                 ),
             ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          // [DU272] 날짜마다 한 덩어리 + ' → '(B320 '4/월 17일'), 본문색. 요일 tiny grey600(약 4.0) → textSecondary.
           Text(
-            '$startStr → $endStr',
+            '${TextLayout.unit(startStr)} → ${TextLayout.unit(endStr)}',
+            semanticsLabel: '$startStr → $endStr',
             style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: AppColors.grey800,
+              color: AppColors.textPrimary,
               fontWeight: FontWeight.bold,
             ),
           ),
           if (workDaysLabel.isNotEmpty) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Text(
-              workDaysLabel,
-              style: ResponsiveHelper.tinyStyle(context,
-                  color: AppColors.grey600),
+              TextLayout.keepWords(workDaysLabel),
+              semanticsLabel: workDaysLabel,
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.textSecondary),
             ),
           ],
         ],
@@ -603,21 +612,23 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
                           .copyWith(fontWeight: FontWeight.bold),
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                    // [DU272] grey500(2.68) → textSecondary, 사업장명 식별 단위
                     Text(
-                      widget.businessName,
+                      TextLayout.identity(widget.businessName),
+                      semanticsLabel: widget.businessName,
                       style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.grey500),
+                          color: AppColors.textSecondary),
                     ),
                   ],
                 ),
               ),
+              // [DU272] padding 0·constraints 0(터치 약 22) → 표준 IconButton 48, 보조색 아이콘
               IconButton(
                 onPressed: () => Navigator.pop(context),
+                tooltip: '닫기',
                 icon: Icon(Icons.close,
-                    color: AppColors.grey500,
+                    color: AppColors.textSecondary,
                     size: ResponsiveHelper.iconSize(context, 22)),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
               ),
             ],
           ),
@@ -635,7 +646,7 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
         height: ResponsiveHelper.spacing(context, 200),
         child: const Center(
           child: CircularProgressIndicator(
-            color: AppColors.infoDark,
+            color: AppColors.brand,
             strokeWidth: 2,
           ),
         ),
@@ -645,7 +656,7 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.grey200),
       ),
       child: Column(
@@ -656,8 +667,8 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
             lastDay: _calendarLastDay,
             focusedDay: _focusedDay ?? _selectableStartDate,
             calendarFormat: CalendarFormat.month,
-            daysOfWeekHeight: ResponsiveHelper.spacing(context, 28),
-            rowHeight: ResponsiveHelper.spacing(context, 42),
+            daysOfWeekHeight: AppCalendar.scaledHeight(context, ResponsiveHelper.spacing(context, 28), fontSize: 13),
+            rowHeight: AppCalendar.scaledHeight(context, ResponsiveHelper.spacing(context, 42)),
             selectedDayPredicate: (day) =>
                 _desiredStartDate != null &&
                 DateUtils.isSameDay(_desiredStartDate, day),
@@ -677,17 +688,18 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
               titleTextStyle: ResponsiveHelper.subtitleStyle(context)
                   .copyWith(fontWeight: FontWeight.bold),
               leftChevronIcon: Icon(Icons.chevron_left,
-                  color: AppColors.grey600,
+                  color: AppColors.textSecondary,
                   size: ResponsiveHelper.iconSize(context, 20)),
               rightChevronIcon: Icon(Icons.chevron_right,
-                  color: AppColors.grey600,
+                  color: AppColors.textSecondary,
                   size: ResponsiveHelper.iconSize(context, 20)),
             ),
             daysOfWeekStyle: DaysOfWeekStyle(
+              // [DU272] 주말 빨강(3.68) → 평일과 같은 보조색(시안 달력 머리는 중립)
               weekdayStyle: ResponsiveHelper.smallStyle(context,
-                  color: AppColors.grey600),
+                  color: AppColors.textSecondary),
               weekendStyle: ResponsiveHelper.smallStyle(context,
-                  color: AppColors.error),
+                  color: AppColors.textSecondary),
             ),
             calendarBuilders: CalendarBuilders(
               defaultBuilder: (ctx, day, _) =>
@@ -710,14 +722,15 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
               0,
               ResponsiveHelper.spacing(context, 10),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            // [DU272] 범례 Row(flex 없음, B320 18px 넘침) → Wrap. 선택 = 대표색(UI-1·공용 AppCalendar).
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              spacing: ResponsiveHelper.spacing(context, 16),
+              runSpacing: ResponsiveHelper.spacing(context, 4),
               children: [
-                _buildLegendDot(context, AppColors.infoDark, '선택됨'),
-                SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-                _buildLegendDot(context, AppColors.infoBg, '선택가능',
+                _buildLegendDot(context, AppColors.brand, '선택됨'),
+                _buildLegendDot(context, AppColors.brandSurface, '선택가능',
                     bordered: true),
-                SizedBox(width: ResponsiveHelper.spacing(context, 16)),
                 _buildLegendDot(context, AppColors.grey200, '선택불가'),
               ],
             ),
@@ -739,20 +752,22 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
     Color textColor;
     Border? border;
 
+    // [DU272] 선택 = 대표색(UI-1·공용 AppCalendar). 선택 가능 infoBg 위 infoDark(4.03) → brandSurface 위 brand(4.99),
+    //   선택 불가 grey400(1.88) → textTertiary. 다른 달 날짜는 그대로(이번 달 정보가 아님).
     if (isSelected) {
-      bgColor = AppColors.infoDark;
+      bgColor = AppColors.brand;
       textColor = Colors.white;
-      border = Border.all(color: AppColors.infoDark, width: 2);
+      border = Border.all(color: AppColors.brand, width: 2);
     } else if (isOutside) {
       bgColor = Colors.transparent;
       textColor = AppColors.grey300;
     } else if (selectable) {
-      bgColor = AppColors.infoBg;
-      textColor = AppColors.infoDark;
+      bgColor = AppColors.brandSurface;
+      textColor = AppColors.brand;
       // today 여부와 무관하게 동일 스타일 — border 없음
     } else {
       bgColor = Colors.transparent;
-      textColor = AppColors.grey400;
+      textColor = AppColors.textTertiary;
       // today 여부와 무관하게 동일 스타일 — border 없음
     }
 
@@ -786,14 +801,14 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
             color: color,
             shape: BoxShape.circle,
             border: bordered
-                ? Border.all(color: AppColors.infoDark, width: 1)
+                ? Border.all(color: AppColors.brand, width: 1)
                 : null,
           ),
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
         Text(
           label,
-          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary), // [DU272] tiny grey500 2.68
         ),
       ],
     );
@@ -807,53 +822,48 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
         horizontal: ResponsiveHelper.spacing(context, 14),
         vertical: ResponsiveHelper.spacing(context, 12),
       ),
+      // [DU272] 고른 값 = 대표색 옅은 면(선 없음), 아이콘 대표색
       decoration: BoxDecoration(
-        color: AppColors.infoBg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.infoLight),
+        color: AppColors.brandSurface,
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
         children: [
           Icon(
             Icons.calendar_today_outlined,
             size: ResponsiveHelper.iconSize(context, 18),
-            color: AppColors.infoDark,
+            color: AppColors.brand,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // [DU272] infoDark(4.03) → 라벨 textSecondary·날짜 본문색 굵게
                 Text(
                   '희망 시작일',
-                  style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.infoDark),
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.textSecondary),
                 ),
                 Text(
-                  FormatHelper.formatDateKorean(_desiredStartDate!),
+                  TextLayout.keepWords(FormatHelper.formatDateKorean(_desiredStartDate!)),
+                  semanticsLabel: FormatHelper.formatDateKorean(_desiredStartDate!),
                   style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    color: AppColors.infoDark,
+                    color: AppColors.textPrimary,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
               ],
             ),
           ),
+          // [DU272] 터치 48(이전 minimumSize 0·shrinkWrap), 대표색 글자(공용 TextButton 테마). 스타일은 textStyle 로(DU267).
           TextButton(
             onPressed: () => setState(() => _desiredStartDate = null),
             style: TextButton.styleFrom(
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 10),
-                vertical: ResponsiveHelper.spacing(context, 6),
-              ),
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              minimumSize: const Size(48, 48),
+              textStyle: ResponsiveHelper.smallStyle(context, fontWeight: FontWeight.w600),
             ),
-            child: Text(
-              '변경',
-              style: ResponsiveHelper.smallStyle(context,
-                  color: AppColors.infoDark, fontWeight: FontWeight.w600),
-            ),
+            child: const Text('변경'),
           ),
         ],
       ),
@@ -878,10 +888,10 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
         ResponsiveHelper.spacing(context, 14),
         ResponsiveHelper.spacing(context, 12),
       ),
+      // [DU272] radius 16·선 제거
       decoration: BoxDecoration(
         color: AppColors.infoBg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.infoLight),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -896,10 +906,12 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
+                // [DU272] tiny infoDark(4.03) → smallStyle infoDeep, 낱말 단위
                 child: Text(
-                  '근무 예정 기간',
-                  style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.infoDark, fontWeight: FontWeight.w600),
+                  TextLayout.keepWords('근무 예정 기간'),
+                  semanticsLabel: '근무 예정 기간',
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.infoDeep, fontWeight: FontWeight.w600),
                 ),
               ),
               if (periodLabel.isNotEmpty) ...[
@@ -916,7 +928,7 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
                     ),
                     child: Text(
                       periodLabel,
-                      style: ResponsiveHelper.tinyStyle(context,
+                      style: ResponsiveHelper.smallStyle(context, // [DU272] 배지 13
                           color: Colors.white, fontWeight: FontWeight.bold),
                     ),
                   ),
@@ -926,19 +938,22 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 6)),
           // 둘째 줄: 날짜 한 줄
+          // [DU272] 날짜마다 한 덩어리 + ' → '(B320 '4/월 17일'), 본문색. 요일 tiny grey600(약 4.0) → textSecondary.
           Text(
-            '$startStr → $endStr',
+            '${TextLayout.unit(startStr)} → ${TextLayout.unit(endStr)}',
+            semanticsLabel: '$startStr → $endStr',
             style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: AppColors.grey800,
+              color: AppColors.textPrimary,
               fontWeight: FontWeight.bold,
             ),
           ),
           if (workDaysLabel.isNotEmpty) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Text(
-              workDaysLabel,
-              style: ResponsiveHelper.tinyStyle(context,
-                  color: AppColors.grey600),
+              TextLayout.keepWords(workDaysLabel),
+              semanticsLabel: workDaysLabel,
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.textSecondary),
             ),
           ],
         ],
@@ -952,11 +967,7 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          '선택한 업무',
-          style: ResponsiveHelper.smallStyle(context,
-              color: AppColors.grey600, fontWeight: FontWeight.w600),
-        ),
+        _sectionTitle(context, '선택한 업무'),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         ...widget.selectedWorks.map((work) => _buildWorkCard(context, work)),
       ],
@@ -968,15 +979,26 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
         ? AppColors.warningDark
         : work.wageType == 'hourly'
             ? AppColors.successDark
-            : AppColors.grey600;
+            : AppColors.textSecondary; // [DU272] 월급 grey600
+    final wageText =
+        '${work.wageType == 'hourly' ? '시급' : work.wageType == 'daily' ? '일급' : '월급'} ${FormatHelper.formatNumber(work.wage)}원';
+    final stacked = MediaQuery.textScalerOf(context).scale(10) >= 13;
+    final wageLabel = Text(
+      TextLayout.keepWords(wageText),
+      semanticsLabel: wageText,
+      style: ResponsiveHelper.bodyStyle(context, color: wageColor)
+          .copyWith(fontWeight: FontWeight.bold),
+      textAlign: stacked ? TextAlign.left : TextAlign.right,
+    );
 
     return Container(
       margin:
           EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+      // [DU272] grey50 면·radius 10 → 흰 카드 16·grey200
       decoration: BoxDecoration(
-        color: AppColors.grey50,
-        borderRadius: BorderRadius.circular(10),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.grey200),
       ),
       // [R7-APPLICATION-LIFECYCLE.1C.2 CORRECTION] 임금 Text 에 flex 가 없어서
@@ -1000,29 +1022,33 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // [DU272] 업무명 본문색 식별 단위, 시간 textSecondary 한 덩어리(이전 grey600 4.4)
                 Text(
-                  work.workType,
-                  style: ResponsiveHelper.bodyStyle(context)
+                  TextLayout.identity(work.workType),
+                  semanticsLabel: work.workType,
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary)
                       .copyWith(fontWeight: FontWeight.w600),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                // [DU272 r1] 시간은 '~' 뒤에서만 줄을 바꾼다 — 한 덩어리는 좁은 칸에서 '13:00 ~ 2/2:00' 으로 강제로 끊겼다
                 Text(
-                  work.timeRange,
+                  TextLayout.range(work.startTime, work.endTime),
+                  semanticsLabel: work.timeRange,
                   style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.grey600),
+                      color: AppColors.textSecondary),
                 ),
+                // [DU272 r1] 큰 글자(DU256 규칙)에서는 급여를 업무 정보 아래로 — 반 폭 칸에서 '12,0/00원' 으로 끊겼다
+                if (stacked) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                  wageLabel,
+                ],
               ],
             ),
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Flexible(
-            child: Text(
-              '${work.wageType == 'hourly' ? '시급' : work.wageType == 'daily' ? '일급' : '월급'} ${FormatHelper.formatNumber(work.wage)}원',
-              style: ResponsiveHelper.bodyStyle(context, color: wageColor)
-                  .copyWith(fontWeight: FontWeight.bold),
-              textAlign: TextAlign.right,
-            ),
-          ),
+          if (!stacked) ...[
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Flexible(child: wageLabel),
+          ],
         ],
       ),
     );
@@ -1040,14 +1066,16 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // [DU272] 아이콘 grey400(1.88) → textTertiary, 글자 grey500(2.68) → textSecondary, 낱말 단위
         Icon(Icons.info_outline,
             size: ResponsiveHelper.iconSize(context, 14),
-            color: AppColors.grey400),
+            color: AppColors.textTertiary),
         SizedBox(width: ResponsiveHelper.spacing(context, 6)),
         Expanded(
           child: Text(
-            message,
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+            TextLayout.keepWords(message),
+            semanticsLabel: message,
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
           ),
         ),
       ],
@@ -1103,8 +1131,8 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
           width: double.infinity,
           child: ElevatedButton(
             onPressed: canApply ? _apply : null,
+            // [DU272] infoDark 채움 → 공용 Elevated 테마(대표색). 비활성 면은 grey200 그대로.
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.infoDark,
               disabledBackgroundColor: AppColors.grey200,
               padding: EdgeInsets.symmetric(
                   vertical: ResponsiveHelper.spacing(context, 16)),
@@ -1118,10 +1146,13 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
                     child: CircularProgressIndicator(
                         color: Colors.white, strokeWidth: 2),
                   )
+                // [DU272] 비활성 문구는 이유를 말한다 — grey400(1.62) → textSecondary, 낱말 단위
                 : Text(
-                    ctaLabel,
+                    TextLayout.keepWords(ctaLabel),
+                    semanticsLabel: ctaLabel,
+                    textAlign: TextAlign.center,
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      color: canApply ? Colors.white : AppColors.grey400,
+                      color: canApply ? Colors.white : AppColors.textSecondary,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -1141,7 +1172,10 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
   Widget _buildConflictReason(
       BuildContext context, CommitmentConflictDecision conflict) {
     final unknown = conflict.isUnknown;
-    final color = unknown ? AppColors.grey600 : AppColors.errorDark;
+    // [DU272] 의미색 8% 면·35% 선(확인 불가 grey600 약 4.2) → 토큰 쌍·선 제거:
+    //   겹침 errorBg/errorDark 5.80, 확인 불가 바탕색/textSecondary
+    final color = unknown ? AppColors.textSecondary : AppColors.errorDark;
+    final bg = unknown ? AppColors.background : AppColors.errorBg;
     final text = unknown
         ? '내 일정을 확인할 수 없어요. 지원 결과는 다시 확인해주세요.'
         : _conflictSentence(conflict);
@@ -1149,9 +1183,8 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
       width: double.infinity,
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
-        borderRadius: BorderRadius.circular(8),
+        color: bg,
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1166,8 +1199,9 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           Expanded(
             child: Text(
-              text,
-              style: ResponsiveHelper.captionStyle(context).copyWith(
+              TextLayout.keepWords(text),
+              semanticsLabel: text,
+              style: ResponsiveHelper.smallStyle(context,
                   color: color, fontWeight: FontWeight.w600),
             ),
           ),
@@ -1220,22 +1254,23 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
                     ? Icons.check_circle
                     : Icons.assignment_turned_in_outlined,
                 size: ResponsiveHelper.iconSize(context, 52),
-                color: isConfirmed ? AppColors.success : AppColors.warning,
+                color: isConfirmed ? AppColors.successDark : AppColors.warningDark, // [DU272] 2.78/2.2
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               Text(
-                isConfirmed ? '이미 확정된 공고입니다' : '이미 지원한 공고입니다',
+                TextLayout.keepWords(isConfirmed ? '이미 확정된 공고입니다' : '이미 지원한 공고입니다'),
+                semanticsLabel: isConfirmed ? '이미 확정된 공고입니다' : '이미 지원한 공고입니다',
                 style: ResponsiveHelper.subtitleStyle(context)
                     .copyWith(fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center,
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 6)),
               Text(
-                isConfirmed
+                TextLayout.keepWords(isConfirmed
                     ? '내 스케줄에서 확정 근무를 확인하세요'
-                    : '지원을 취소하거나 상태를 확인하려면 내 스케줄을 이용하세요',
+                    : '지원을 취소하거나 상태를 확인하려면 내 스케줄을 이용하세요'),
                 style: ResponsiveHelper.bodyStyle(context,
-                    color: AppColors.grey500),
+                    color: AppColors.textSecondary), // [DU272] grey500 2.68
                 textAlign: TextAlign.center,
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 28)),
@@ -1255,7 +1290,7 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
                     child: Text(
                       '확인',
                       style: ResponsiveHelper.bodyStyle(context,
-                          color: AppColors.grey600,
+                          color: AppColors.textSecondary,
                           fontWeight: FontWeight.w600),
                     ),
                   ),

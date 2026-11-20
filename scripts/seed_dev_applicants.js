@@ -56,9 +56,13 @@ const admin = require(path.join(ROOT, 'functions/node_modules/firebase-admin'));
 
 // ── 안전장치: DEV 프로젝트가 아니면 실행하지 않는다 ────────────────
 const EXPECTED_PROJECT = 'alfit-89567';
-const SA_PATH = path.join(
-    ROOT, 'functions/alfit-89567-firebase-adminsdk-fbsvc-4174a2458f.json');
-const serviceAccount = require(SA_PATH);
+// [KEY-ROTATE 10-23] 키 파일 경로는 실행 설정(GOOGLE_APPLICATION_CREDENTIALS)으로만 받는다.
+const SA_PATH = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+if (!SA_PATH || !fs.existsSync(SA_PATH)) {
+  console.error('중단: GOOGLE_APPLICATION_CREDENTIALS 에 서비스 계정 키 파일 경로가 없다');
+  process.exit(1);
+}
+const serviceAccount = require(path.resolve(SA_PATH));
 if (serviceAccount.project_id !== EXPECTED_PROJECT) {
   console.error('중단: DEV 프로젝트가 아니다 — ' + serviceAccount.project_id);
   process.exit(1);

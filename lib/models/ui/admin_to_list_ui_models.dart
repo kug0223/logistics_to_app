@@ -391,16 +391,46 @@ class TOItem {
   ///
   ///   업무별로 가를 수 없는 폴백 경로에서는 슬롯 카운터로만 계산한다 —
   ///   그 경로에는 애초에 업무별 수치가 없다.
+  /// [COLLAPSED-EXPANDED] **필요 인원의 canonical 출처는 업무 정의다.**
+  ///
+  ///   펼친 업무 행은 `work.requiredCount` 를 읽는다. 그런데 접힌 요약의
+  ///   폴백 경로는 `TO.totalRequired`(denormalized 카운터)를 읽었다.
+  ///   DEV 실측: `[P4B-RAS] 재배치 상속`(`6jVlL4bry…`) 은
+  ///   `totalRequired = 0` 인데 업무 정의는 냉동분류 1 · 냉장분류 1 이다.
+  ///   → 같은 공고에서 요약은 `필요 미설정`, 상세는 `0/1` 두 줄.
+  ///
+  ///   그래서 두 경로가 **같은 곳**을 읽게 한다. 카운터는 업무 정의를
+  ///   손에 쥐지 못했을 때만 쓴다. 스키마도 writer 도 건드리지 않는다.
+  int get _requiredFromDefinitions {
+    final details = statsAlignedWorkDetails;
+    if (details.isEmpty) return totalRequired;
+    var sum = 0;
+    for (final w in details) {
+      sum += w.requiredCount;
+    }
+    // 정의를 읽었는데 합이 0 이면 그것이 사실이다(진짜 미설정).
+    //   카운터로 되돌리지 않는다 — 두 출처를 섞으면 다시 갈라진다.
+    return sum;
+  }
+
+  /// 필요 인원을 **말할 수 있는가**. false 면 `필요 미설정` 이 아니라 `모름` 이다.
+  ///
+  ///   업무 정의도 없고 카운터도 0 이면 우리는 정원을 **모른다**.
+  ///   그 상태를 `미설정` 으로 적으면 조회 실패가 운영 사실로 둔갑한다.
+  bool get isRequiredKnown =>
+      statsAlignedWorkDetails.isNotEmpty || totalRequired > 0;
+
   ({int confirmed, int pending, int required, int shortage}) resolveStats() {
     int clamp(int n) => n > 0 ? n : 0;
     // [POSTING-V2-01B] 통계 조회가 실패했으면 전부 0인 workDetailStats를 쓰지 않는다.
     // 슬롯 문서의 denormalized counter는 별도 source라 그대로 유효하다 — 이쪽으로 폴백.
     if (workDetailStatsFailed) {
+      final req = _requiredFromDefinitions;
       return (
         confirmed: confirmedCount,
         pending: pendingCount,
-        required: totalRequired,
-        shortage: clamp(totalRequired - confirmedCount),
+        required: req,
+        shortage: clamp(req - confirmedCount),
       );
     }
     // [R7-P1-2 DEVICE.1D] 요약과 업무 상세가 같은 집계를 본다.
@@ -439,12 +469,48 @@ class TOItem {
       }
       return (confirmed: c, pending: p, required: r, shortage: s);
     }
+    // [COLLAPSED-EXPANDED] identity 가 어긋나 집계를 못 써도 **정원은 안다** —
+    //   업무 정의에서 읽는다. 이 경로가 `필요 미설정` 의 실제 출처였다.
+    final req = _requiredFromDefinitions;
     return (
       confirmed: confirmedCount,
       pending: pendingCount,
-      required: totalRequired,
-      shortage: clamp(totalRequired - confirmedCount),
+      required: req,
+      shortage: clamp(req - confirmedCount),
     );
+  }
+
+  /// [CLOSESTATE-BOUNDARY] **저장된 마감 상태** 기준, 열린 업무의 부족만 센다.
+  ///
+  ///   `부족` 은 관리자가 지금 처리할 수 있는 미완료다(초대로 메울 수 있는 자리).
+  ///   서버 초대(callableInviteWorker)와 날짜 창(callableGetDayStaffingDetail
+  ///   `isClosed`)은 같은 저장 상태를 본다:
+  ///     공고 isManualClosed / status CLOSED · 슬롯 isManualClosed / status closed
+  ///     · 업무 isManualClosed / closedAt
+  ///   지원 마감 시각 경과는 매시 스케줄러가 업무 `closedAt`·슬롯 `closed` 로
+  ///   **쓴 뒤에야** 마감이다 — 그 전에는 서버가 초대를 받는다. 기기 시계로
+  ///   실시간 판정하는 `CloseStateUtils` 를 여기 쓰면, 마감 시각부터 다음
+  ///   정각까지 카드(부족 0)와 날짜 창(부족 N · 초대 버튼)이 갈라진다.
+  int persistedOpenShortage({required TOModel master}) {
+    int clamp(int n) => n > 0 ? n : 0;
+    if (master.isManualClosed || master.status == 'CLOSED') return 0;
+    final sl = slot;
+    if (sl != null && (sl.isManualClosed || sl.isClosed)) return 0;
+    final details = statsAlignedWorkDetails;
+    if (!workDetailStatsFailed && _aggregateUsable) {
+      var s = 0;
+      for (final work in details) {
+        if (work.isClosed) continue; // 업무 단위 마감 — 서버와 같은 단위
+        final stats = work.lookupByIdentity(workDetailStats)!;
+        final int wc = stats['confirmed'] ?? 0;
+        s += clamp(work.requiredCount - wc);
+      }
+      return s;
+    }
+    // 업무별 수치가 없는 폴백 — 업무가 전부 닫혔으면 0, 아니면 슬롯 카운터.
+    final defs = sl?.workDetails ?? const <WorkDetailData>[];
+    if (defs.isNotEmpty && defs.every((w) => w.isClosed)) return 0;
+    return resolveStats().shortage;
   }
 
   /// [R7-P1-2 DEVICE.1D] 지금 말하는 수치가 **집계에서 나온 것**인가.
@@ -470,9 +536,43 @@ class TOItem {
     if (stats == null) return false;
     final details = statsAlignedWorkDetails;
     if (details.isEmpty) return false;
+    // 어느 키로 만났는지 모아 둔다 — 아래에서 **아무도 집지 않은 자리**를
+    //   가려내야 한다.
+    final claimed = <String>{};
     for (final work in details) {
       if (work.lookupByIdentity(stats) == null) return false;
+      claimed.add(
+          stats.containsKey(work.canonicalId) ? work.canonicalId : work.id);
     }
+    // [DATE-SCOPE] 집계에 **사람이 들어 있는데 아무 업무도 그 자리를 집지
+    //   못하면** 이 집계로 숫자를 말하지 않는다.
+    //
+    //   `loadTOWorkDetails` 는 정의마다 `{confirmed:0, pending:0}` 을 미리
+    //   깔고(seed), 지원서는 자기 `wdId` 자리에 센다. 정의에 wdId 가 없으면
+    //   seed 키는 composite(`workType_start_end`)가 되는데 지원서는 문서형
+    //   wdId 를 쓴다 — 둘은 **영원히 만나지 못한다**. 그런데도 seed 된 0 이
+    //   `lookupByIdentity` 를 성공시켜 조회 실패가 **진짜 0** 으로 둔갑했다.
+    //
+    //   DEV 실측(`ZujrV62Z2ctTDtdVZy9y`, 10/12 슬롯): 원장은 확정 1
+    //   (`workDetailCounts.UBxR73VI78Z6MSkSd04Z.confirmedCount = 1`)인데
+    //   날짜 칩을 누르는 순간 화면이 `충원 0 · 부족 4 · 미충원 1` 로 바뀌었다.
+    //   관리자는 이미 찬 자리를 다시 뽑으러 간다.
+    for (final entry in stats.entries) {
+      if (claimed.contains(entry.key)) continue;
+      final c = entry.value['confirmed'] ?? 0;
+      final p = entry.value['pending'] ?? 0;
+      if (c > 0 || p > 0) return false;
+    }
+    // [OPEN-DSE-CAPACITY-PROJECTION] 집계가 **전부 0** 인데 원장 카운터에는
+    //   사람이 있는 경우는 여기서 다루지 않는다.
+    //
+    //   DEV 실측(`ZujrV62Z2ctTDtdVZy9y` 10/12): `purpose: capacity` 응답에
+    //   `appliedAt` 이 없어 `ApplicationModel.tryFromMap` 이 모든 지원서를
+    //   드롭한다 → 집계는 seed 된 0 만 남고 확정 1 명이 화면에서 사라진다.
+    //   그러나 "카운터를 믿는다" 로 바꾸면 **취소 직후 집계 0 / 카운터 1** 인
+    //   정상 상태에서 유령 확정자를 보이게 한다 — `group_header_projection`
+    //   A-2 가 고정한 계약과 정반대다. 두 원장 중 무엇을 믿을지는 정책
+    //   결정이고, 근본 해결은 CF projection 에 `appliedAt` 을 더하는 것이다.
     return true;
   }
 

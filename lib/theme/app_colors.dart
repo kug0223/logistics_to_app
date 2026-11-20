@@ -23,7 +23,7 @@ class AppColors {
   // ═══════════════════════════════════════════════════════════
   
   /// 성공 배경색 (연한 초록)
-  static const Color successBg = Color(0xFFE8F5E9);      // green[50]
+  static const Color successBg = Color(0xFFEAF7EF);      // [DU1] 기준 success bg (successDark 대비 6.47:1)
   
   /// 성공 연한색 (보조 배경)
   static const Color successLight = Color(0xFFA5D6A7);   // green[200]
@@ -32,14 +32,14 @@ class AppColors {
   static const Color success = Color(0xFF4CAF50);        // green
   
   /// 성공 진한색 (텍스트, 아이콘)
-  static const Color successDark = Color(0xFF388E3C);    // green[700]
+  static const Color successDark = Color(0xFF166534);    // [DU1] 기준 success text (이전 #388E3C, successBg 위 3.66:1)
   
   // ═══════════════════════════════════════════════════════════
   // 🟠 경고 (대기, 주의, 예약)
   // ═══════════════════════════════════════════════════════════
   
   /// 경고 배경색 (연한 주황)
-  static const Color warningBg = Color(0xFFFFF3E0);      // orange[50]
+  static const Color warningBg = Color(0xFFFFF5D6);      // [DU1] 기준 warning bg
   
   /// 경고 연한색 (보조 배경)
   static const Color warningLight = Color(0xFFFFCC80);   // orange[200]
@@ -48,14 +48,19 @@ class AppColors {
   static const Color warning = Color(0xFFFF9800);        // orange
   
   /// 경고 진한색 (텍스트, 아이콘)
-  static const Color warningDark = Color(0xFFF57C00);    // orange[700]
+  static const Color warningDark = Color(0xFF946200);    // [DU1] 기준 warning text (이전 #F57C00, warningBg 위 2.47:1 → 4.81:1)
+
+  /// [DU352] 경고 가장 진한 글자색 — 주황을 회색 바탕 위에 반투명으로 깐 칩(#F7ECDC 등)의 작은 글자용.
+  ///   warningDark 는 그 바탕 위 4.49:1 로 모자랐다(소급 감사 9). 이 색은 #F7ECDC 위 약 6.0:1, 흰 바탕 약 7.3:1.
+  ///   infoDeep 처럼 특정 연한 면 위 글자에만 쓴다 — warningDark 를 대신하는 전역 치환이 아니다.
+  static const Color warningInk = Color(0xFF7A5000);
   
   // ═══════════════════════════════════════════════════════════
   // 🔴 에러 (거절, 실패, 삭제)
   // ═══════════════════════════════════════════════════════════
   
   /// 에러 배경색 (연한 빨강)
-  static const Color errorBg = Color(0xFFFFEBEE);        // red[50]
+  static const Color errorBg = Color(0xFFFEEDEA);        // [DU1] 기준 error bg
   
   /// 에러 연한색 (보조 배경)
   static const Color errorLight = Color(0xFFEF9A9A);     // red[200]
@@ -64,7 +69,7 @@ class AppColors {
   static const Color error = Color(0xFFF44336);          // red
   
   /// 에러 진한색 (텍스트, 아이콘)
-  static const Color errorDark = Color(0xFFD32F2F);      // red[700]
+  static const Color errorDark = Color(0xFFB42318);      // [DU1] 기준 error text (errorBg 위 5.80:1)
   
   // ═══════════════════════════════════════════════════════════
   // 🔵 정보·단기 근무 (파랑)
@@ -233,7 +238,7 @@ class AppColors {
   // --- 배경 ---
   
   /// 화면 배경
-  static const Color background = grey100;
+  static const Color background = Color(0xFFF6F7FA);  // [DU1] 화면 바탕(옅은 중립) — 이전 grey100
   
   /// 표면 (카드, 다이얼로그)
   static const Color surface = Color(0xFFFFFFFF);
@@ -249,21 +254,21 @@ class AppColors {
   
   // --- 텍스트 (4단계 위계) ---
   //
-  //  textPrimary   #212121  화면 제목, 섹션 제목, 공고 제목, 중요 숫자, 급여
-  //  textSecondary #616161  날짜, 시간, 사업장명, 지역, 사용자가 반드시 읽어야 하는 보조정보
-  //  textTertiary  #8A8A8A  상태 라벨, 통계 라벨, 부가 설명, 중요도 낮은 안내문
+  //  textPrimary   #21242D  화면 제목, 섹션 제목, 공고 제목, 중요 숫자, 급여
+  //  textSecondary #60646F  날짜, 시간, 사업장명, 지역, 사용자가 반드시 읽어야 하는 보조정보
+  //  textTertiary  #686C77  상태 라벨, 통계 라벨, 부가 설명, 중요도 낮은 안내문
   //  textDisabled  #BDBDBD  선택 불가 날짜, 비활성화 버튼, disabled 요소
   //
   // ⚠️ 일반 보조정보(날짜·지역·시간)에 textDisabled 사용 금지 → textSecondary 사용
 
   /// 기본 텍스트 (제목, 핵심 숫자, 급여)
-  static const Color textPrimary = grey900;            // #212121
+  static const Color textPrimary = Color(0xFF21242D);  // [DU1] 본문 15.50:1
 
   /// 보조 텍스트 (날짜, 사업장명, 지역 등 사용자가 반드시 읽어야 하는 보조정보)
-  static const Color textSecondary = grey700;          // #616161
+  static const Color textSecondary = Color(0xFF60646F); // [DU1] 보조 5.92:1 (화면 바탕 위 5.52)
 
   /// 3차 텍스트 (상태 라벨, 통계 라벨, 부가 설명)
-  static const Color textTertiary = Color(0xFF8A8A8A); // #8A8A8A
+  static const Color textTertiary = Color(0xFF686C77); // [DU1] 이전 #8A8A8A 3.45:1 → 흰 5.25 · 화면 바탕 4.90 · brandSurface 4.70
 
   /// 힌트 텍스트 (input placeholder)
   static const Color textHint = grey400;               // #BDBDBD
@@ -277,7 +282,62 @@ class AppColors {
   // --- 브랜드 ---
 
   /// ALfit 브랜드 블루 (섹션 액션 텍스트, 강조 링크)
-  static const Color brand = workTypeBlue;             // #1565C0
+  static const Color brand = Color(0xFF3859E8);        // [DU1] 코발트 — 흰 글자 5.58:1. workTypeBlue(#1565C0, 업무 색 팔레트)와 분리
+
+  /// 브랜드 선택 표면(선택된 날짜·칩·현재 항목 배경). brand 글자 4.99:1
+  static const Color brandSurface = Color(0xFFEEF2FF);
+
+  /// 브랜드 눌림/진한 강조
+  static const Color brandDark = Color(0xFF2A45C4);
+
+  /// [DU306 L1] 두 홈 머리 글자 로고(AlfitWordmark) 전용 잉크색 — 흰 바탕 7.03:1.
+  ///   시안 로고 잉크 관측(중앙색 #1A42E8)을 참고한 설계값이다(원토큰 복원 아님). 글자·행동·버튼·선택 색은 brand 그대로다.
+  static const Color brandInk = Color(0xFF1A42E8);
+
+  // --- [CP01] Concept 01 대표 화면 토큰 ---
+  // 정본: records/reports/DU_concept_precise_spec_audit_2026-11-11.md §4–§7. 대표 화면·지정 부품만 opt-in 으로 쓴다.
+  // 시안 관측색을 그대로 옮긴 것이 아니라 대비를 맞춘 설계값이다(대비는 불투명 sRGB 계산값).
+
+  /// 처리할 일·정보 행 아이콘, 분류 필 글자(진남색). 흰 바탕 12.46:1
+  static const Color conceptNavy = Color(0xFF25325B);
+
+  /// 대표 카드 테두리(옅은 회청)
+  static const Color conceptCardBorder = Color(0xFFE1E6F0);
+
+  /// 대표 카드 그림자 — #8797B8 의 alpha .10
+  static const Color conceptShadow = Color(0x1A8797B8);
+
+  /// [판정51 · S024 초대 대기] 작은 따뜻한 경고 강조 바탕(시안 01 '2명 모집 중' 칩 계열 살구) — 표면별 opt-in, 기존 warning 토큰 · 소비처 변경 0
+  static const Color conceptAmberSurface = Color(0xFFFEEAC5);
+
+  /// [판정51 · S024 초대 대기] 작은 경고 강조 글 · 아이콘(적갈색). conceptAmberSurface 위 9.05:1 · 흰 10.68:1
+  static const Color conceptAmberInk = Color(0xFF702601);
+
+  /// 약속 카드 그라데이션 시작 / 끝 (끝 위 textSecondary 4.90:1)
+  static const Color conceptPromiseStart = Color(0xFFF1F5FE);
+  static const Color conceptPromiseEnd = Color(0xFFE1EAFD);
+
+  /// 숫자 알약 바탕(brand 숫자 4.64:1)
+  static const Color conceptCountBg = Color(0xFFE3EAFE);
+
+  /// 관리자 'N명 추가 필요' 필 바탕 / 글자(5.75:1) — 부족을 빨강으로 칠하지 않는다
+  static const Color conceptStaffingNeedBg = Color(0xFFFDEAC4);
+  static const Color conceptStaffingNeedText = Color(0xFF8A4B00);
+
+  /// 지원자 확정 필 바탕(글자 successDark)
+  static const Color conceptConfirmBg = Color(0xFFDAF4E5);
+
+  /// 일자리 상세 분류 필 바탕(글자 conceptNavy)
+  static const Color conceptCategoryBg = Color(0xFFE4ECFD);
+
+  /// 대표 카드 안 구분선
+  static const Color conceptDivider = Color(0xFFF1F3F5);
+
+  /// 하단 탭 위 1 physical px 선
+  static const Color conceptTabLine = Color(0xFFEAEBEC);
+
+  /// 처리할 일 꺾쇠
+  static const Color conceptChevron = Color(0xFF45474E);
   
   // --- 아이콘 ---
   

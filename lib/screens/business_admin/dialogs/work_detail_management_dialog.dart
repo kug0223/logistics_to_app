@@ -544,7 +544,8 @@ class WorkDetailManagementDialog {
         title: '업무 마감',
         message: '${works.length}개 업무를 마감하시겠습니까?',
         confirmText: '마감',
-        confirmColor: AppColors.warning,
+        // [DU309 §9.1] 모집 마감(미수락 초대 철회 포함)의 주의는 머리 아이콘에만, 운영 버튼은 brand.
+        iconColor: AppColors.warning,
       );
 
       if (!context.mounted || !confirm) return;
@@ -610,7 +611,7 @@ class WorkDetailManagementDialog {
         title: '업무 재오픈',
         message: '${works.length}개 업무를 다시 오픈하시겠습니까?',
         confirmText: '재오픈',
-        confirmColor: AppColors.success,
+        // [DU309 §9.1] 재오픈 = 일반 진행 → 버튼·아이콘 brand(기본값). 이전 success.
       );
 
       if (!context.mounted || !confirm) return;
@@ -671,7 +672,8 @@ class WorkDetailManagementDialog {
         title: '긴급모집 종료',
         message: '${works.length}개 업무의 긴급모집을 종료하시겠습니까?',
         confirmText: '종료',
-        confirmColor: AppColors.warning,
+        // [DU309 §9.1] 긴급모집 표시 종료(모집 자체는 유지) — 주의는 머리 아이콘에만, 버튼 brand.
+        iconColor: AppColors.warning,
       );
 
       if (!context.mounted || !confirm) return;

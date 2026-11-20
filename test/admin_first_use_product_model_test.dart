@@ -20,6 +20,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ALfit/screens/common/onboarding_screen.dart';
 import 'package:ALfit/screens/common/tour_screen.dart';
 
+import 'support/visible_text.dart';
+
 String _code(String p) => File(p)
     .readAsStringSync()
     .split('\n')
@@ -218,9 +220,10 @@ void main() {
       await t.tap(find.text('다음'));
       await t.pumpAndSettle();
     }
-    expect(find.text('ALfit 시작하기'), findsOneWidget,
+    // [DU1 구현83] 마지막 CTA 표시 문자열이 낱말 단위(keepWords) — 보이는 글자로 찾는다
+    expect(findVisibleText('ALfit 시작하기'), findsOneWidget,
         reason: '마지막 페이지에 시작 CTA 가 있어야 한다');
-    await t.tap(find.text('ALfit 시작하기'));
+    await t.tap(findVisibleText('ALfit 시작하기'));
     await t.pump();
     expect(done, 1, reason: '온보딩이 끝나지 않으면 홈으로 갈 수 없다');
     expect(t.takeException(), isNull);

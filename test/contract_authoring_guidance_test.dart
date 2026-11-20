@@ -16,6 +16,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ALfit/models/core/contract_template_model.dart';
 import 'package:ALfit/widgets/dialogs/contract_template_type_selector_sheet.dart';
 
+import 'support/visible_text.dart';
+
 /// 유형 선택 화면이 약속해서는 안 되는 문구.
 /// 모두 5.3/5.5에서 reference default에서 제거된 주제다.
 const _staleLegalPromises = <String>[
@@ -33,9 +35,10 @@ const _staleLegalPromises = <String>[
 
 Future<String> _renderText(WidgetTester tester, Widget child) async {
   await tester.pumpWidget(MaterialApp(home: Scaffold(body: child)));
+  // [DU351 시험 추종] 시트 제목 · 안내 · 행 글자가 낱말 단위 표시 문자열이 됐다 — 보이는 글자 기준(DU255 visibleText)으로 모은다.
   return tester
       .widgetList<Text>(find.byType(Text))
-      .map((t) => t.data ?? '')
+      .map((t) => visibleText(t.data ?? ''))
       .join('\n');
 }
 

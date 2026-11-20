@@ -18,7 +18,9 @@ import '../../providers/theme_provider.dart';
 
 // Utils
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/navigation_helper.dart';
+import '../../utils/picker_cache_scope.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
@@ -67,6 +69,7 @@ import '../../utils/dialog_helper.dart';
 import '../../utils/business_picker_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/app_page_actions.dart';
+import '../../widgets/common/terms_read_only_screen.dart';
 import '../../widgets/user/pending_contract_bar.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 
@@ -262,6 +265,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return;
       }
 
+      // SubAdmin은 현재 모드(isAdminMode) 기준, 그 외는 isAdmin 그대로
+      final isAdminForFcm = userProvider.isSubAdmin
+          ? userProvider.isAdminMode
+          : userProvider.isAdmin;
       if (value) {
         // 알림 켜기 → 시스템 권한 먼저 확인
         final permissionStatus = await Permission.notification.status;
@@ -275,17 +282,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
           await openAppSettings();
           return;
         }
-        // SubAdmin은 현재 모드(isAdminMode) 기준, 그 외는 isAdmin 그대로
-        final isAdminForFcm = userProvider.isSubAdmin
-            ? userProvider.isAdminMode
-            : userProvider.isAdmin;
         await FCMService().initialize(userId, isAdmin: isAdminForFcm);
         if (!mounted) return;
         ToastHelper.showSuccess('푸시 알림이 활성화되었습니다');
       } else {
-        // 알림 끄기 → FCM 토큰 삭제
-        await FCMService().clearToken();
+        // 알림 끄기 → 이 기기 토큰을 서버 문서에서 지운다(서버는 그 문서의 토큰으로 보낸다).
+        //   [.69] 서버 반영이 확인돼야 '꺼짐'이라고 말한다. 못 지웠으면 이 기기로 계속 올 수 있으므로
+        //   앱 쪽 수신도 되돌려 표시와 실제를 맞추고, 실패를 그대로 알린다(다시 누르면 재시도).
+        final removed = await FCMService().clearToken(networkTimeout: const Duration(seconds: 8));
         if (!mounted) return;
+        if (!removed) {
+          await FCMService().initialize(userId, isAdmin: isAdminForFcm);
+          if (!mounted) return;
+          ToastHelper.showError('푸시 알림을 끄지 못했습니다. 서버에 반영되지 않아 알림이 계속 올 수 있어요. 연결을 확인한 뒤 다시 시도해 주세요.');
+          return;
+        }
         ToastHelper.showSuccess('푸시 알림이 비활성화되었습니다');
       }
 
@@ -348,7 +359,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _SettingsItem(
                   icon: Icons.edit_outlined,
                   iconColor: theme.primaryColor,
-                  title: '프로필 수정',
+                  title: '프로필 관리', // [DU312 V2(b)] 진입 문구를 화면 제목 · MY 탭과 같게(Codex 11-15 판정)
                   onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -391,10 +402,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   _SettingsItem(
                     icon: Icons.logout_outlined,
-                    iconColor: AppColors.error,
+                    // [DU525] 탈퇴 '진입' 행은 중립 — 위험색은 확인 순간에만(회원탈퇴 링크 DU245 · 로그아웃 DU247 과 같다).
+                    iconColor: AppColors.grey600,
                     title: '서브관리자 탈퇴',
                     subtitle: '${user!.subAdminBusinessIds.length}개 사업장',
-                    subtitleColor: AppColors.grey500,
                     onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -491,7 +502,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     title: '계약 관리',
                     onTap: () async {
                       final nav = Navigator.of(context);
-                      final biz = await BusinessPickerHelper.pick(context);
+                      // [BUSINESS-ARCHIVE] 운영 종료한 사업장의 계약도 볼 수 있어야 한다.
+                      final biz = await BusinessPickerHelper.pick(context,
+                          includeClosed: true);
                       if (biz == null || !mounted) return;
                       nav.push(MaterialPageRoute(
                           builder: (_) => AdminContractManagementScreen(
@@ -537,9 +550,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           title: '통계',
                           onTap: () async {
                             final nav = Navigator.of(context);
-                            final biz =
-                                await BusinessPickerHelper.pick(context);
+                            final biz = await BusinessPickerHelper.pick(
+                                context,
+                                includeClosed: true);
                             if (biz == null || !mounted) return;
+                            // [ADMIN-MONTHLY-1] 메뉴는 '현재 사업장'의 급여 권한으로 열리지만 선택지는
+                            //   배정된 사업장 전부다. 급여 권한이 없는 사업장의 통계는 서버가 금액을 빼고
+                            //   주므로 화면에는 인건비 0원·'미확정'으로 보였다(LOCAL 재현). 고른 사업장으로 다시 본다.
+                            if (userProvider.checkForBusiness(
+                                    biz.id, (p) => p.canManageWage) !=
+                                PermissionCheck.allowed) {
+                              ToastHelper.showWarning(
+                                  '이 사업장의 급여 관리 권한이 없어 통계를 열 수 없어요.');
+                              return;
+                            }
                             nav.push(MaterialPageRoute(
                                 builder: (_) =>
                                     AdminStatsScreen(businessIds: [biz.id])));
@@ -554,8 +578,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           title: '리뷰 관리',
                           onTap: () async {
                             final nav = Navigator.of(context);
-                            final biz =
-                                await BusinessPickerHelper.pick(context);
+                            final biz = await BusinessPickerHelper.pick(
+                                context,
+                                includeClosed: true);
                             if (biz == null || !mounted) return;
                             nav.push(MaterialPageRoute(
                                 builder: (_) =>
@@ -780,16 +805,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 //
                 //   지원자 경로는 그대로 둔다 — 그쪽 블록은 이름표가 아니라
                 //   근무·평점·지각·노쇼를 담은 정보 면이라 성격이 다르다.
+                //
+                // [DU531 · 감사128 V2] 지원자 경로도 같은 옅은 brand 면으로 낮춘다 — 면 · 글자색만 통일하고
+                //   크기 · 여백(아래 `tonal`) · 통계 · 배지 · 문구는 경로별 그대로다.
                 child: Container(
                   decoration: BoxDecoration(
-                    color: useAdminShell
-                        ? theme.primaryColor.withValues(alpha: 0.06)
-                        : theme.primaryColor,
+                    color: theme.primaryColor.withValues(alpha: 0.06),
                     borderRadius: BorderRadius.circular(16),
-                    border: useAdminShell
-                        ? Border.all(
-                            color: theme.primaryColor.withValues(alpha: 0.16))
-                        : null,
+                    border: Border.all(
+                        color: theme.primaryColor.withValues(alpha: 0.16)),
                   ),
                   child: _buildHeaderProfile(context, userProvider,
                       tonal: useAdminShell),
@@ -809,7 +833,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       {bool tonal = false}) {
     // [P4.2B-ID-01] tonal 면 위에서는 흰 아이콘이 보이지 않는다.
     //   아바타 크기도 함께 내린다 — 이름표가 첫 화면을 덜 차지한다.
-    final fg = tonal ? Theme.of(context).primaryColor : Colors.white;
+    // [DU531 · 감사128 V2] 색은 두 경로 모두 옅은 면 기준(brand 아이콘 · brand 10% 원). `tonal` 은 크기만 가른다.
+    final fg = Theme.of(context).primaryColor;
     final size = ResponsiveHelper.spacing(context, tonal ? 44 : 52);
     final photoUrl = user?.profileImageUrl;
     final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
@@ -817,9 +842,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: tonal
-            ? Theme.of(context).primaryColor.withValues(alpha: 0.10)
-            : Colors.white.withValues(alpha: 0.2),
+        color: Theme.of(context).primaryColor.withValues(alpha: 0.10),
         shape: BoxShape.circle,
       ),
       child: ClipOval(
@@ -853,14 +876,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final isUser = user?.role == UserRole.USER;
     // [P4.2B-ID-01] tonal 면에서는 흰 글자가 전부 사라진다. 색만 바꾸고
     //   구성(아바타 · 이름 · @아이디 · 역할 배지)과 문구는 그대로 둔다.
-    final theme = Theme.of(context);
-    final nameColor = tonal ? AppColors.textPrimary : Colors.white;
-    final subColor =
-        tonal ? AppColors.grey500 : Colors.white.withValues(alpha: 0.8);
-    final badgeFg = tonal ? theme.primaryColor : Colors.white;
-    final badgeBg = tonal
-        ? theme.primaryColor.withValues(alpha: 0.10)
-        : Colors.white.withValues(alpha: 0.2);
+    // [DU531 · 감사128 V2] 두 경로 모두 옅은 brand 면 위다 — 이름 textPrimary · 보조 textSecondary.
+    //   역할 칩은 역할과 무관하게 같은 중립(흰 면 · textSecondary)이고 역할은 글자(역할명)로 말한다.
+    //   `tonal` 은 이제 크기 · 여백만 가른다(관리자 44 · 14 / 지원자 52 · 16).
+    const nameColor = AppColors.textPrimary;
+    const subColor = AppColors.textSecondary;
+    const badgeFg = AppColors.textSecondary;
+    const badgeBg = Colors.white;
+    // [.61] 지원자 통계 줄 — 값은 이름 색 · 이름표는 보조 색(값/라벨 위계).
+    const statValue = nameColor;
+    const statLabel = subColor;
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -898,6 +923,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 6),
                     // 역할 배지 (작게)
+                    // [UI-BALANCE.38] 관리자 홈과 같은 규칙 — 폭이 모자라는 큰 글자에서는 채움·테두리·아이콘 없이
+                    //   글자만 둔다(역할 표시는 유지, 이름보다 무겁지 않게). 기본 크기는 예전 배지 그대로.
+                    if (!TextLayout.fits(context, MediaQuery.sizeOf(context).width, 360))
+                      Text(
+                        CommonWidgets.getRoleName(user?.roleString ?? 'USER'),
+                        style: ResponsiveHelper.tinyStyle(context,
+                            color: badgeFg, fontWeight: FontWeight.w600),
+                      )
+                    else
                     Container(
                       padding: EdgeInsets.symmetric(
                         horizontal: ResponsiveHelper.spacing(context, 8),
@@ -906,10 +940,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       decoration: BoxDecoration(
                         color: badgeBg,
                         borderRadius: BorderRadius.circular(12),
-                        border: tonal
-                            ? null
-                            : Border.all(
-                                color: Colors.white.withValues(alpha: 0.3)),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -949,17 +979,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 vertical: ResponsiveHelper.spacing(context, 8),
               ),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.15),
+                // [DU531 · 감사128 V2] 옅은 면 위 중립 칸 — 반투명 흰색(진한 면 전용)을 흰 면으로.
+                color: Colors.white,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Row(
+              // [.61] Row 는 392·2.0 에서 32px 넘쳤다 — 통계 단위로 줄을 바꾼다.
+              child: Wrap(
+                runSpacing: ResponsiveHelper.spacing(context, 6),
                 children: [
                   // 통계 4개 inline
-                  _miniStat(context, '근무', '${user.totalWorkDays}일'),
+                  _miniStat(context, '근무', '${user.totalWorkDays}일',
+                      valueColor: statValue, labelColor: statLabel),
                   _miniStat(
-                      context, '평점', user.averageRating.toStringAsFixed(1)),
-                  _miniStat(context, '지각(90일)', '${user.recentLateCount}회'),
-                  _miniStat(context, '노쇼(90일)', '${user.recentNoShowCount}회'),
+                      context, '평점', user.averageRating.toStringAsFixed(1),
+                      valueColor: statValue, labelColor: statLabel),
+                  _miniStat(context, '지각(90일)', '${user.recentLateCount}회',
+                      valueColor: statValue, labelColor: statLabel),
+                  _miniStat(context, '노쇼(90일)', '${user.recentNoShowCount}회',
+                      valueColor: statValue, labelColor: statLabel),
                 ],
               ),
             ),
@@ -979,7 +1016,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _miniStat(BuildContext context, String label, String value) {
+  // [.61] tonal(관리 탭 SubAdmin) 면에서 흰 글자가 배경에 묻혔다 — 머리 블록과 같은 색을 받는다.
+  Widget _miniStat(BuildContext context, String label, String value,
+      {required Color valueColor, required Color labelColor}) {
     return Padding(
       padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 8)),
       child: Column(
@@ -987,10 +1026,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           Text(value,
               style: ResponsiveHelper.tinyStyle(context,
-                  color: Colors.white, fontWeight: FontWeight.bold)),
+                  color: valueColor, fontWeight: FontWeight.bold)),
           Text(label,
               style: ResponsiveHelper.tinyStyle(context,
-                  color: Colors.white.withValues(alpha: 0.7))),
+                  color: labelColor)),
         ],
       ),
     );
@@ -998,22 +1037,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // [5A.2A] _showRestartProgramDialog 제거 — 재시작 프로그램 폐기
 
+  /// [DU241] 섹션 제목 — 관리자 홈(S010)·슈퍼관리자 홈(S062)과 같은 16 bold 본문색, 글자만.
+  ///   [icon] 은 호출부 호환을 위해 남기고 그리지 않는다(시안의 섹션 제목은 아이콘이 없다).
   Widget _buildSectionHeader(
       BuildContext context, String title, IconData icon) {
     return Padding(
       padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 4)),
-      child: Row(
-        children: [
-          Icon(icon,
-              size: ResponsiveHelper.iconSize(context, 14),
-              color: AppColors.grey500),
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Text(
-            title,
-            style: ResponsiveHelper.smallStyle(context,
-                color: AppColors.grey500, fontWeight: FontWeight.w600),
-          ),
-        ],
+      // 원문 그대로 — 짧은 두세 낱말이라 낱말 결합 문자가 필요 없고, 기존 시험·접근성이 원문으로 찾는다.
+      child: Text(
+        title,
+        style: const TextStyle(
+            fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
       ),
     );
   }
@@ -1034,11 +1068,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           : done == 0
               ? '신분증 · 계좌 · 통장사본 미등록'
               : '서류 $done/3 완료',
+      // [DU241] 상태색은 글자용 진한 토큰(흰 카드 위 ≥4.5).
       subtitleColor: done == 3
-          ? AppColors.success
+          ? AppColors.successDark
           : done == 0
-              ? AppColors.error
-              : AppColors.warning,
+              ? AppColors.errorDark
+              : AppColors.warningDark,
       onTap: () => NavigationHelper.push<bool>(context,
           destination: const DocumentManagementScreen()),
     );
@@ -1057,7 +1092,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             for (int i = 0; i < valid.length; i++) ...[
               _buildMenuRow(context, valid[i]),
               if (i < valid.length - 1)
-                const Divider(height: 1, indent: 52, thickness: 0.5),
+                Divider(
+                    height: 1,
+                    indent: ResponsiveHelper.spacing(context, 64),
+                    thickness: 1,
+                    color: AppColors.grey100),
             ],
           ],
         ),
@@ -1076,15 +1115,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             vertical: ResponsiveHelper.spacing(context, 12),
           ),
           child: Row(children: [
+            // [DU241] 아이콘은 중립 — S010 '처리할 일' 행과 같은 grey100 상자·grey600. 색으로 종류를 말하지 않는다.
+            //   되돌리기 어려운 행동(iconColor=error, 예: 서브관리자 탈퇴)만 위험색을 남긴다.
             Container(
-              width: ResponsiveHelper.spacing(context, 34),
-              height: ResponsiveHelper.spacing(context, 34),
+              width: ResponsiveHelper.spacing(context, 36),
+              height: ResponsiveHelper.spacing(context, 36),
               decoration: BoxDecoration(
-                color: item.iconColor.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(8),
+                color: item.iconColor == AppColors.error
+                    ? AppColors.errorBg
+                    : AppColors.grey100,
+                borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(item.icon,
-                  color: item.iconColor,
+                  color: item.iconColor == AppColors.error
+                      ? AppColors.errorDark
+                      : AppColors.grey600,
                   size: ResponsiveHelper.iconSize(context, 18)),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1092,13 +1137,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // 제목·설명은 원문 그대로 — 짧은 문구이고, 기존 시험·접근성이 원문으로 찾는다.
                   Text(item.title,
                       style: ResponsiveHelper.bodyStyle(context)
                           .copyWith(fontWeight: FontWeight.w600)),
                   if (item.subtitle != null)
                     Text(item.subtitle!,
                         style: ResponsiveHelper.smallStyle(context,
-                            color: item.subtitleColor ?? AppColors.grey500)),
+                            color: item.subtitleColor ?? AppColors.textSecondary)),
                 ],
               ),
             ),
@@ -1116,7 +1162,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     BuildContext context, {
     required List<Map<String, dynamic>> items,
   }) {
-    final theme = Theme.of(context);
     return Container(
       decoration: CommonWidgets.compactCardDecoration(),
       child: Column(
@@ -1130,16 +1175,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 vertical: ResponsiveHelper.spacing(context, 12),
               ),
               child: Row(children: [
+                // [DU241] 중립 아이콘 상자(S010 과 같음).
                 Container(
-                  width: ResponsiveHelper.spacing(context, 34),
-                  height: ResponsiveHelper.spacing(context, 34),
+                  width: ResponsiveHelper.spacing(context, 36),
+                  height: ResponsiveHelper.spacing(context, 36),
                   decoration: BoxDecoration(
-                    color: theme.primaryColor.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(8),
+                    color: AppColors.grey100,
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
                     item['icon'] as IconData,
-                    color: theme.primaryColor,
+                    color: AppColors.grey600,
                     size: ResponsiveHelper.iconSize(context, 18),
                   ),
                 ),
@@ -1153,13 +1199,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               .copyWith(fontWeight: FontWeight.w600)),
                       Text(item['value'] as String,
                           style: ResponsiveHelper.bodyStyle(context,
-                              color: AppColors.grey500)),
+                              color: AppColors.textSecondary)), // [DU241]
                     ],
                   ),
                 ),
               ]),
             ),
-            if (!isLast) const Divider(height: 1, indent: 52, thickness: 0.5),
+            if (!isLast)
+              Divider(
+                  height: 1,
+                  indent: ResponsiveHelper.spacing(context, 64),
+                  thickness: 1,
+                  color: AppColors.grey100),
           ]);
         }),
       ),
@@ -1168,7 +1219,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _buildNotificationToggleCard(BuildContext context) {
     final theme = Theme.of(context);
-    const iconColor = AppColors.amber;
     return Container(
       decoration: CommonWidgets.compactCardDecoration(),
       child: Padding(
@@ -1177,15 +1227,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           vertical: ResponsiveHelper.spacing(context, 12),
         ),
         child: Row(children: [
+          // [DU241] 중립 아이콘 상자(S010 과 같음) — 켜짐/꺼짐은 스위치와 문구가 말한다.
           Container(
-            width: ResponsiveHelper.spacing(context, 34),
-            height: ResponsiveHelper.spacing(context, 34),
+            width: ResponsiveHelper.spacing(context, 36),
+            height: ResponsiveHelper.spacing(context, 36),
             decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(8),
+              color: AppColors.grey100,
+              borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(Icons.notifications_active,
-                color: iconColor, size: ResponsiveHelper.iconSize(context, 18)),
+                color: AppColors.grey600, size: ResponsiveHelper.iconSize(context, 18)),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           Expanded(
@@ -1198,7 +1249,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Text(
                   _isPushEnabled ? '알림을 받고 있습니다' : '알림이 꺼져 있습니다',
                   style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.grey500),
+                      color: AppColors.textSecondary), // [DU241]
                 ),
               ],
             ),
@@ -1271,7 +1322,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Row(children: [
                 Icon(Icons.tune_outlined,
                     size: ResponsiveHelper.iconSize(context, 18),
-                    color: AppColors.grey500),
+                    color: AppColors.grey600), // [DU241] 중립 아이콘
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Expanded(
                   child: Text('알림 세부 설정',
@@ -1325,7 +1376,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     size:
                                         ResponsiveHelper.iconSize(context, 18),
                                     color: enabled
-                                        ? theme.primaryColor
+                                        ? AppColors.grey600 // [DU241] 중립 — 켜짐은 스위치가 말한다
                                         : AppColors.grey400),
                                 SizedBox(
                                     width:
@@ -1336,7 +1387,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                           .copyWith(
                                               color: enabled
                                                   ? null
-                                                  : AppColors.grey400)),
+                                                  : AppColors.textSecondary)), // [DU241] 꺼진 항목도 읽힌다
                                 ),
                                 Switch(
                                   value: enabled,
@@ -1384,10 +1435,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await nav.push(
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => _TermsReadOnlyScreen(
+        // [DU263] 공용 약관 화면(두 설정 화면의 같은 사본을 합침). 못 읽으면 본문 대신 실패 상태를 보인다
+        //   — 이전에는 실패 문장을 약관 본문처럼 그렸다.
+        builder: (_) => TermsReadOnlyScreen(
           title: item?.title ?? fallbackTitle,
-          content: item?.content ?? '약관을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.',
+          content: item?.content ?? '',
           version: item?.version,
+          loadFailed: item == null,
         ),
       ),
     );
@@ -1441,10 +1495,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       onPressed: () => _showWithdrawalChecklist(context, userProvider),
       child: Text(
         '회원탈퇴',
-        style: ResponsiveHelper.smallStyle(context, color: AppColors.error)
+        // [DU245] 덜 띄게 = 중립 보조색 밑줄 작은 글자(바탕 위 ≥4.5). 위험색(빨강)은 탈퇴를 오히려 강조하므로
+        //   쓰지 않는다(사용자 11-10). 근로자 설정(S082)과 같다. 실수 방지는 체크리스트·확인 대화가 맡는다.
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary)
             .copyWith(
           decoration: TextDecoration.underline,
-          decorationColor: AppColors.error,
+          decorationColor: AppColors.textSecondary,
         ),
       ),
     );
@@ -1732,22 +1788,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: ElevatedButton(
+                        // [DU529 · 감사128 L3] 첫째 단계 '탈퇴 진행'은 최종이 아니다(뒤에 비밀번호 시트 → 최종 확인창) —
+                        //   빨강 채움을 중립 외곽선 · 중립 글자로 낮춘다. 빨강 채움은 셋째 확인창(showDangerConfirm)에만 둔다.
+                        child: OutlinedButton(
                           onPressed: (hardBlocks.isEmpty &&
                                   !isLoading &&
                                   cfError == null)
                               ? () => Navigator.pop(ctx, true)
                               : null,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.error,
-                            disabledBackgroundColor: AppColors.grey300,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.textSecondary,
+                            side: const BorderSide(color: AppColors.grey300),
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12)),
                           ),
                           child: Text('탈퇴 진행',
                               style: ResponsiveHelper.bodyStyle(ctx).copyWith(
-                                  color: Colors.white,
+                                  // 누를 수 없을 때(처리 필요 항목 · 조회 중 · 조회 실패)는 비활성 글자색.
+                                  color: (hardBlocks.isEmpty &&
+                                          !isLoading &&
+                                          cfError == null)
+                                      ? AppColors.textSecondary
+                                      : AppColors.textDisabled,
                                   fontWeight: FontWeight.w600)),
                         ),
                       ),
@@ -1768,7 +1831,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       switch (navTarget) {
         case 'payroll_unpaid':
           // 미이체 탭(0) — 사업장 선택 후 당월 급여 지급현황으로 이동
-          final bizUnpaid = await BusinessPickerHelper.pick(context);
+          final bizUnpaid =
+              await BusinessPickerHelper.pick(context, includeClosed: true);
           if (bizUnpaid == null || !context.mounted) return;
           final nowUnpaid = DateTime.now();
           await Navigator.push(
@@ -1792,7 +1856,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           //   미이체 행으로 보내야 한다. PENDING 필터를 그대로 쓰면 후자는
           //   "처리 대기 중인 중간정산이 없습니다" 가 떠서, 막힌 이유를
           //   말해 놓고 그 일을 할 화면이 비어 있게 된다.
-          final bizInterim = await BusinessPickerHelper.pick(context);
+          final bizInterim =
+              await BusinessPickerHelper.pick(context, includeClosed: true);
           if (bizInterim == null || !context.mounted) return;
           final nowInterim = DateTime.now();
           await Navigator.push(
@@ -1822,7 +1887,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               MaterialPageRoute(builder: (_) => const SubadminLeaveScreen()));
         case 'contract_management':
           // 고정계약 근로자 계약 관리 — 사업장 선택 후 계약 관리 화면으로 이동
-          final bizContract = await BusinessPickerHelper.pick(context);
+          final bizContract =
+              await BusinessPickerHelper.pick(context, includeClosed: true);
           if (bizContract == null || !context.mounted) return;
           await Navigator.push(
               context,
@@ -1960,6 +2026,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // ── 서명 등록 카드 ────────────────────────────────────────────
 
+  /// [DEVICE-GP-SEAL] 못 그리는 이미지를 Flutter 기본 오류 위젯에 맡기면
+  ///   사용자에게 `Exception: Invalid image data` 가 그대로 보인다.
+  ///   무엇이 잘못됐고 무엇을 하면 되는지 한국어로 말한다.
+  static Widget _unreadableImageNote(BuildContext context, String what) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Text(
+          '$what 이미지를 읽지 못했어요 · 다시 등록해 주세요',
+          textAlign: TextAlign.center,
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.error),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSignatureCard(BuildContext context, UserModel? user) {
     final theme = Theme.of(context);
     final signatureBase64 = user?.signatureBase64;
@@ -1968,7 +2050,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // [PERF-FIX] base64 변경 시에만 재디코딩 — build마다 decode 방지
     if (hasSignature && signatureBase64 != _cachedSignatureBase64) {
       _cachedSignatureBase64 = signatureBase64;
-      _cachedSignatureBytes = base64Decode(signatureBase64);
+      // 깨진 base64 는 build 중에 던진다 — 화면 전체를 잃지 않는다.
+      try {
+        _cachedSignatureBytes = base64Decode(signatureBase64);
+      } catch (_) {
+        _cachedSignatureBytes = null;
+      }
     } else if (!hasSignature) {
       _cachedSignatureBase64 = null;
       _cachedSignatureBytes = null;
@@ -2027,10 +2114,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: Image.memory(
-                    _cachedSignatureBytes!,
-                    fit: BoxFit.contain,
-                  ),
+                  child: _cachedSignatureBytes == null
+                      ? _unreadableImageNote(context, '서명')
+                      : Image.memory(
+                          _cachedSignatureBytes!,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) =>
+                              _unreadableImageNote(context, '서명'),
+                        ),
                 ),
               ),
             ],
@@ -2055,15 +2146,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () => _deleteSignature(context),
+                    // [DU525] 삭제 '진입' 버튼은 중립 외곽선 — 빨강은 뒤따르는 확인창(confirmColor)에만 둔다.
                     icon: const Icon(Icons.delete_outline,
-                        size: 14, color: AppColors.error),
+                        size: 14, color: AppColors.textSecondary),
                     label: Text('삭제',
                         style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.error)),
+                            color: AppColors.textSecondary)),
                     style: OutlinedButton.styleFrom(
                       padding: EdgeInsets.symmetric(
                           vertical: ResponsiveHelper.spacing(context, 8)),
-                      side: const BorderSide(color: AppColors.error),
+                      side: const BorderSide(color: AppColors.grey300),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8)),
                     ),
@@ -2350,7 +2442,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // [PERF-FIX] base64 변경 시에만 재디코딩 — build마다 decode 방지
     if (hasSeal && sealBase64 != _cachedSealBase64) {
       _cachedSealBase64 = sealBase64;
-      _cachedSealBytes = base64Decode(sealBase64);
+      try {
+        _cachedSealBytes = base64Decode(sealBase64);
+      } catch (_) {
+        _cachedSealBytes = null;
+      }
     } else if (!hasSeal) {
       _cachedSealBase64 = null;
       _cachedSealBytes = null;
@@ -2367,16 +2463,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // 헤더
-            Row(children: [
+            // [UI-BALANCE.38] 큰 글자에서 제목·설명이 3줄이 되면 아이콘 상자가 세로 가운데에 떠 제목과 어긋났다
+            //   (392·2.0 기기). 한 줄 높이가 상자보다 클 때만 제목 첫 줄에 맞춘다 — 기본 크기는 예전 가운데 정렬.
+            Builder(builder: (context) {
+            final box = ResponsiveHelper.spacing(context, 34);
+            final lineH = MediaQuery.textScalerOf(context)
+                    .scale(ResponsiveHelper.bodyStyle(context).fontSize ?? 15) * 1.35;
+            final topAlign = lineH > box;
+            return Row(
+                crossAxisAlignment: topAlign ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+                children: [
               Container(
+                margin: EdgeInsets.only(top: topAlign ? (lineH - box) / 2 : 0),
                 width: ResponsiveHelper.spacing(context, 34),
                 height: ResponsiveHelper.spacing(context, 34),
                 decoration: BoxDecoration(
-                  color: AppColors.warningDark.withValues(alpha: 0.12),
+                  // [DU525] 분류색 아이콘 면 → 중립(메뉴 행 아이콘 상자 DU241 과 같은 grey100 · grey600).
+                  color: AppColors.grey100,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(Icons.verified_outlined,
-                    color: AppColors.warningDark,
+                    color: AppColors.grey600,
                     size: ResponsiveHelper.iconSize(context, 18)),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -2397,7 +2504,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ],
                 ),
               ),
-            ]),
+            ]);
+            }),
 
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
@@ -2440,10 +2548,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: Image.memory(
-                    _cachedSealBytes!,
-                    fit: BoxFit.contain,
-                  ),
+                  child: _cachedSealBytes == null
+                      ? _unreadableImageNote(context, '인감/서명')
+                      : Image.memory(
+                          _cachedSealBytes!,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) =>
+                              _unreadableImageNote(context, '인감/서명'),
+                        ),
                 ),
               ),
             ],
@@ -2476,15 +2588,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () => _deleteSeal(context, user),
+                    // [DU525] 삭제 '진입' 버튼은 중립 외곽선 — 빨강은 뒤따르는 확인창(confirmColor)에만 둔다.
                     icon: const Icon(Icons.delete_outline,
-                        size: 14, color: AppColors.error),
+                        size: 14, color: AppColors.textSecondary),
                     label: Text('삭제',
                         style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.error)),
+                            color: AppColors.textSecondary)),
                     style: OutlinedButton.styleFrom(
                       padding: EdgeInsets.symmetric(
                           vertical: ResponsiveHelper.spacing(context, 8)),
-                      side: const BorderSide(color: AppColors.error),
+                      side: const BorderSide(color: AppColors.grey300),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8)),
                     ),
@@ -2511,33 +2624,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final source = await ImageHelper.showImageSourceBottomSheet(context);
     if (source == null || !mounted) return;
 
-    final picked = await ImagePicker().pickImage(
-      source: source,
-      imageQuality: 80,
-      maxWidth: 600,
-    );
-    if (picked == null || !mounted) return;
-
+    // [SIM-PICKER-CACHE] 인감 이미지 — picker 가 cache 에 만든 UUID 사본·scaled_ 는
+    //   `readAsBytes()` 로 메모리에 올린 뒤에는 쓰지 않는다. 그 직후 이 선택의 것만 지운다.
+    final pickScope = await PickerCacheScope.begin();
     try {
-      final bytes = await picked.readAsBytes();
-      if (bytes.length > 500000) {
-        if (mounted) ToastHelper.showError('이미지가 너무 큽니다. 더 작은 이미지를 선택해 주세요.');
-        return;
+      final picked = await ImagePicker().pickImage(
+        source: source,
+        imageQuality: 80,
+        maxWidth: 600,
+      );
+      await pickScope.capture(picked?.path);
+      if (picked == null || !mounted) return;
+
+      try {
+        final bytes = await picked.readAsBytes();
+        // 마지막 소비자 — 이후로는 메모리의 bytes 만 쓴다.
+        await pickScope.release();
+        if (bytes.length > 500000) {
+          if (mounted) ToastHelper.showError('이미지가 너무 큽니다. 더 작은 이미지를 선택해 주세요.');
+          return;
+        }
+        final b64 = base64Encode(bytes);
+        await _callSaveSeal(b64, 'stamp');
+        await userProvider.refreshUserData();
+        if (!mounted) return;
+        setState(() {
+          _sealType = 'stamp';
+        });
+        ToastHelper.showSuccess('도장이 등록되었습니다');
+      } catch (e) {
+        // [P4.4B-SEAL-01] 예전에는 원인을 하나로 뭉개고 로그도 남기지 않았다.
+        //   권한 거부·네트워크·서버 거절이 같은 문장이라, 관리자는 다시 눌러야
+        //   하는지 다른 이미지를 골라야 하는지 알 수 없었다.
+        debugPrint('❌ 도장 등록 실패: $e');
+        if (mounted) ToastHelper.showError(_sealErrorMessage(e));
       }
-      final b64 = base64Encode(bytes);
-      await _callSaveSeal(b64, 'stamp');
-      await userProvider.refreshUserData();
-      if (!mounted) return;
-      setState(() {
-        _sealType = 'stamp';
-      });
-      ToastHelper.showSuccess('도장이 등록되었습니다');
-    } catch (e) {
-      // [P4.4B-SEAL-01] 예전에는 원인을 하나로 뭉개고 로그도 남기지 않았다.
-      //   권한 거부·네트워크·서버 거절이 같은 문장이라, 관리자는 다시 눌러야
-      //   하는지 다른 이미지를 골라야 하는지 알 수 없었다.
-      debugPrint('❌ 도장 등록 실패: $e');
-      if (mounted) ToastHelper.showError(_sealErrorMessage(e));
+    } finally {
+      // 취소·화면 이탈·선택 예외도 이 선택이 만든 것은 남기지 않는다(여러 번 불러도 안전).
+      await pickScope.release();
     }
   }
 
@@ -2812,10 +2936,13 @@ class _DeleteAccountSheetState extends State<_DeleteAccountSheet> {
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: ElevatedButton(
+                  // [DU529 · 감사128 L3] 둘째 단계 '탈퇴하기'는 최종 확인창(showDangerConfirm)을 여는 버튼이다 —
+                  //   빨강 채움을 중립 외곽선 · 중립 글자로 낮춘다. 실제 탈퇴는 셋째 확인창의 빨강 버튼 뒤에만 일어난다.
+                  child: OutlinedButton(
                     onPressed: _isLoading ? null : _doDelete,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.error,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.textSecondary,
+                      side: const BorderSide(color: AppColors.grey300),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
@@ -2825,12 +2952,12 @@ class _DeleteAccountSheetState extends State<_DeleteAccountSheet> {
                             width: 18,
                             height: 18,
                             child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white),
+                                strokeWidth: 2, color: AppColors.textSecondary),
                           )
                         : Text(
                             '탈퇴하기',
                             style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                color: Colors.white,
+                                color: AppColors.textSecondary,
                                 fontWeight: FontWeight.w600),
                           ),
                   ),
@@ -2865,73 +2992,7 @@ class _SettingsItem {
   });
 }
 
-// ── 약관 읽기 전용 뷰어 ──────────────────────────────────────────────
-// [LEGAL-FIX 2026-08-10] 개인정보보호법 제35조 열람 요구권 대응
-// 동의 버튼 없이 읽기만 가능 (register_screen의 _TermsViewerScreen과 달리)
-class _TermsReadOnlyScreen extends StatelessWidget {
-  final String title;
-  final String content;
-  final String? version;
-
-  const _TermsReadOnlyScreen({
-    required this.title,
-    required this.content,
-    this.version,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: AppColors.background,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          color: AppColors.grey700,
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        title: Text(
-          title,
-          style: ResponsiveHelper.bodyStyle(context,
-              color: AppColors.grey900, fontWeight: FontWeight.w600),
-        ),
-        centerTitle: true,
-      ),
-      body: SafeArea(
-        top: false,
-        child: Column(
-          children: [
-            if (version != null)
-              Container(
-                width: double.infinity,
-                color: AppColors.grey100,
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 16),
-                  vertical: ResponsiveHelper.spacing(context, 8),
-                ),
-                child: Text(
-                  '버전 $version',
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.grey500),
-                ),
-              ),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
-                child: SelectableText(
-                  content,
-                  style: ResponsiveHelper.bodyStyle(context,
-                      color: AppColors.grey800),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+// [DU263] 약관 읽기 전용 화면은 공용 TermsReadOnlyScreen(lib/widgets/common/terms_read_only_screen.dart)으로 옮겼다.
 
 // ── 날인 방식 선택 탭 버튼 ──────────────────────────────────────────
 class _SealTypeTab extends StatelessWidget {
@@ -2977,16 +3038,22 @@ class _SealTypeTab extends StatelessWidget {
               Icon(
                 icon,
                 size: ResponsiveHelper.iconSize(context, 14),
-                color: selected ? AppColors.warningDark : AppColors.grey500,
+                // [DU529 · 감사128 L2] 방식 선택은 경고 상태가 아니다 — 선택 아이콘 · 글자만 brand(이 자리만 · 전역 치환 0).
+                color: selected ? AppColors.brand : AppColors.grey500,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text(
-                label,
-                style: ResponsiveHelper.smallStyle(
-                  context,
-                  color: selected ? AppColors.warningDark : AppColors.grey500,
-                ).copyWith(
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+              // [DU241] 큰 글자에서 탭 폭을 넘쳤다(320·2.0 baseline 18px) — 남은 폭 안에서 낱말 단위로 줄을 바꾼다.
+              Flexible(
+                child: Text(
+                  TextLayout.keepWords(label),
+                  semanticsLabel: label,
+                  textAlign: TextAlign.center,
+                  style: ResponsiveHelper.smallStyle(
+                    context,
+                    color: selected ? AppColors.brand : AppColors.textSecondary,
+                  ).copyWith(
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                  ),
                 ),
               ),
             ],

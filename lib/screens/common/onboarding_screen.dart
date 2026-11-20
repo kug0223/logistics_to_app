@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../theme/app_colors.dart';
 
 /// 신규 사용자 온보딩 화면
@@ -222,9 +223,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           onPressed: _completeOnboarding,
           child: Text(
             '건너뛰기',
+            // [DU1 구현80 S043] grey500 은 흰 바탕 위 2.68:1(PNG 실측) — 작은 글자 4.5 미달. 읽기용 보조색으로.
             style: ResponsiveHelper.bodyStyle(
               context,
-              color: AppColors.grey500,
+              color: AppColors.textSecondary,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -267,8 +269,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     final color = page.color ?? AppColors.infoDark;
     final bgColor = page.bgColor ?? AppColors.infoBg;
 
+    // [DU1 구현85 S043 관리자] 일러스트를 세로 SingleChildScrollView 에 넣은 뒤(R7-ONBOARDING.1) 이 판은 높이 제약을 잃어
+    //   가운데 원(130) 높이로 쪼그라들었다 — 원이 판 위·아래 끝에 닿고 그림자가 판 밖으로 나왔으며, 바깥 장식 원은 판 모서리에서
+    //   사각으로 잘렸다(관리자 첫 페이지 PNG). 판 높이를 200 으로 두고 둥근 모서리로 자른다. 아이콘·색·구성은 그대로.
     return Container(
       margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
+      height: 200,
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: bgColor,
         borderRadius: BorderRadius.circular(32),
@@ -728,26 +735,28 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   style: TextStyle(fontSize: 9.5, color: AppColors.grey500),
                 ),
                 const SizedBox(height: 8),
-                // 출근하기 버튼 (터치 불가 — 일러스트 전용)
+                // 출퇴근 체크 예시 (터치 불가 — 일러스트 전용)
+                // [DU1 구현83 F82] 전폭 파란 채움·흰 글자 '출근하기' 가 실제 주 버튼과 같은 모양이라 누를 수 있는 행동으로 보였다(감사83).
+                //   같은 자리·크기에서 옅은 회색 면 + 읽기용 보조색 글자 + '예시' 문구로 정적 그림임을 드러낸다. handler·터치 크기는 두지 않는다.
                 Container(
                   width: double.infinity,
                   height: 32,
                   decoration: BoxDecoration(
-                    color: AppColors.infoDark,
+                    color: AppColors.grey100,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(Icons.access_time_rounded,
-                          size: 12, color: Colors.white),
+                          size: 12, color: AppColors.textSecondary),
                       SizedBox(width: 5),
                       Text(
-                        '출근하기',
+                        '출퇴근 체크 예시',
                         style: TextStyle(
                           fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
                         ),
                       ),
                     ],
@@ -842,8 +851,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
   Widget _buildContent(BuildContext context, _OnboardingPage page) {
     // 지원자: ALfit Blue 통일 / 관리자: 페이지별 색상
-    final ctaColor =
-        _isUser ? AppColors.infoDark : (page.color ?? AppColors.infoDark);
+    // [DU1 후속109 S043] CTA(버튼 면·활성 진행점·그림자) 연결색만 brand — 관리자 CTA 가 페이지마다 파랑·보라·초록으로 바뀌어
+    //   같은 주 행동이 다른 버튼처럼 보였다. 기능행·일러스트의 의미색(featureColor·page.color)은 그대로다.
+    final ctaColor = AppColors.brand;
     final featureColor =
         _isUser ? AppColors.infoDark : (page.color ?? AppColors.infoDark);
     final featureBg =
@@ -886,11 +896,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           SizedBox(height: ResponsiveHelper.spacing(context, 10)),
 
           // 설명
+          // [DU1 구현80 S043] 설명 grey500 2.68:1(PNG 실측) — 읽어야 하는 설명이라 textSecondary(5.92:1).
           Text(
             page.description,
             style: ResponsiveHelper.bodyStyle(
               context,
-              color: AppColors.grey500,
+              color: AppColors.textSecondary,
             ).copyWith(height: 1.6),
           ),
 
@@ -912,8 +923,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     ),
                     const SizedBox(width: 12),
                     Expanded(
+                      // [DU1 구현80 S043] 320·2.0 에서 '근무 조건을 확인|하고' 로 낱말 중간이 끊겼다 — 기능 레이블은 낱말 단위(원문은 낭독용).
                       child: Text(
-                        f.label,
+                        TextLayout.keepWords(f.label),
+                        semanticsLabel: f.label,
                         style: ResponsiveHelper.bodyStyle(
                           context,
                           color: AppColors.grey800,
@@ -951,15 +964,21 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 }),
               ),
 
-              const Spacer(),
+              // [DU1 구현83] 320·2.0 마지막 페이지에서 'ALfit 시작하기' 가 줄을 51px 넘어 화면 오른쪽 밖으로 잘렸다(S043-P2-B).
+              //   Spacer+고정 폭 대신 남은 폭 안에서 오른쪽 정렬 — 넉넉하면 예전 그대로, 모자라면 글자가 줄바꿈된다.
+              const SizedBox(width: 12),
 
               // 다음 / ALfit 시작하기 버튼
-              GestureDetector(
+              Flexible(
+                child: Align(
+                alignment: Alignment.centerRight,
+                child: GestureDetector(
                 onTap: _nextPage,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
+                  // [DU1 구현80 S043] 실측 49 — 공통 기준 주 버튼 최소 52. 상하 14→16(글자 약 21 + 32 ≈ 53, 부동소수 경계 여유).
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 28, vertical: 14),
+                      horizontal: 28, vertical: 16),
                   decoration: BoxDecoration(
                     color: ctaColor,
                     borderRadius: BorderRadius.circular(50),
@@ -974,13 +993,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        _currentPage == _pages.length - 1
-                            ? 'ALfit 시작하기'
-                            : '다음',
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
+                      Flexible(
+                        // [DU1 구현83] 줄바꿈되면 'ALfit 시|작하기' 로 낱말 중간이 끊겼다 — 마지막 CTA 는 낱말 단위(원문은 낭독용).
+                        child: Text(
+                          _currentPage == _pages.length - 1
+                              ? TextLayout.keepWords('ALfit 시작하기')
+                              : '다음',
+                          semanticsLabel: _currentPage == _pages.length - 1 ? 'ALfit 시작하기' : null,
+                          textAlign: TextAlign.center,
+                          style: ResponsiveHelper.bodyStyle(context).copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 6),
@@ -991,6 +1015,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       ),
                     ],
                   ),
+                ),
+              ),
                 ),
               ),
             ],

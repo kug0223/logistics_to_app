@@ -1,6 +1,8 @@
 ﻿import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../utils/wage_calculator.dart';
+import '../services/insurance_rate_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/core/user_model.dart';
 import '../models/core/user_region.dart';
@@ -67,12 +69,20 @@ extension PermissionCheckUx on PermissionCheck {
 }
 
 class UserProvider with ChangeNotifier {
-  final AuthService _authService = AuthService();
+  final AuthService _authService;
+
+  /// [authService] 는 시험 대역 전용 — 생략하면 운영 구현이다.
+  UserProvider({AuthService? authService})
+      : _authService = authService ?? AuthService();
 
   UserModel? _currentUser;
   bool _isLoading = false;
   // signIn/signUp 진행 중임을 표시 — auth 스트림의 null 이벤트가 _isLoading을 리셋하지 않도록 방어
   bool _isSigningIn = false;
+  /// [DOC-LATE-DELETE.7 · D] 가입 중(계정 생성 → users 문서 저장)에는 Auth 이벤트로 문서를 읽지 않는다.
+  ///   계정이 생기자마자 이벤트가 오는데 그때는 아직 문서가 없어서, 아래 고아 세션 정리가
+  ///   가입 중인 계정을 로그아웃시켰다(기기 실측 — 타이밍에 따라 재현). 가입이 끝나면 signUp 이 직접 읽는다.
+  bool _isSigningUp = false;
   String? _error;
   // [C안 F-01-3] 외국인 가입 미완료(termsConsentAt 없는 pending 계정) 감지 플래그
   //   signIn() 실패 시 IncompleteRegistrationException을 잡으면 true로 설정.
@@ -118,6 +128,14 @@ class UserProvider with ChangeNotifier {
   /// 지금 map이 담고 있는 사업장 집합 — 재조회 필요 여부 판단용.
   /// 조회에 성공한 사업장만 담는다(실패분은 다음 하이드레이션에서 재시도).
   Set<String> _hydratedPermissionBusinessIds = const {};
+
+  /// [SUBADMIN-SCOPE.40] 마지막 하이드레이션에서 **읽기 자체가 실패한** 사업장.
+  ///
+  /// map에 없는 사업장은 두 가지다 — member 문서가 없어 확인된 거부, 그리고
+  /// 읽지 못해 모르는 것. [_hydratedPermissionBusinessIds]는 둘 다 빼므로
+  /// 구별하지 못한다. 공고 목록 범위가 "모름"을 "거부"로 읽어 그 사업장을
+  /// 조용히 빼지 않도록 실패만 따로 남긴다.
+  Set<String> _permissionReadFailedIds = const {};
 
   /// [CROSS-DOMAIN-R5.1F.2] **열려 있는 대상 사업장 화면**만의 권한 구독.
   ///
@@ -459,6 +477,54 @@ class UserProvider with ChangeNotifier {
         whenUnknown: can((p) => p.canManageTo),
       );
 
+  /// [SUBADMIN-SCOPE.40] 배정 사업장을 [check] 기준으로 나눈다 — 배정 전체를
+  /// 한 번에 읽는 목록(공고)의 요청 범위용.
+  ///
+  /// 서버는 요청한 사업장마다 같은 권한을 보고 하나라도 어긋나면 전부 거절한다.
+  /// 그래서 배정 전체를 보내면 권한이 섞인 순간 허용된 사업장까지 못 본다.
+  ///
+  ///   · allowed    — map에 있고 [check]를 통과. 요청에 넣는다.
+  ///   · unresolved — 하이드레이션 전, 읽기 실패, 구독 error. 넣지 않는다.
+  ///                  거부가 아니다 — 화면이 "확인하지 못함"으로 말해야 한다.
+  ///   · (나머지)   — 확인된 거부. 요청에도, 결과에도 없다.
+  ///
+  /// SUB_ADMIN이 아니면 호출하지 않는다(소유자·SUPER_ADMIN은 사업장별 권한이 없다).
+  ({List<String> allowed, List<String> unresolved}) subAdminBusinessesFor(
+    bool Function(MemberPermissions p) check,
+  ) {
+    final user = _currentUser;
+    if (user == null || !user.isSubAdmin) {
+      return (allowed: const <String>[], unresolved: const <String>[]);
+    }
+    final ids = user.subAdminBusinessIds;
+    if (!subAdminPermissionsLoaded) {
+      return (allowed: const <String>[], unresolved: List.unmodifiable(ids));
+    }
+    final allowed = <String>[];
+    final unresolved = <String>[];
+    for (final id in ids) {
+      final watch = permissionWatchStateFor(id);
+      if (watch == PermissionWatchState.error) {
+        unresolved.add(id);
+        continue;
+      }
+      final perms = permissionsForBusiness(id);
+      if (perms != null) {
+        if (check(perms)) allowed.add(id);
+        continue;
+      }
+      // map에 없다 — 읽지 못한 것이면 모름, 아니면 확인된 거부(문서 없음).
+      if (_permissionReadFailedIds.contains(id) &&
+          watch != PermissionWatchState.verified) {
+        unresolved.add(id);
+      }
+    }
+    return (
+      allowed: List.unmodifiable(allowed),
+      unresolved: List.unmodifiable(unresolved),
+    );
+  }
+
   /// [POSTING-V2-03B.1] 사업장 하나의 권한만 map에 반영한다.
   ///
   /// [perms]가 null이면 membership이 사라진 것으로 보고 entry를 제거하고
@@ -476,6 +542,11 @@ class UserProvider with ChangeNotifier {
     }
     _subAdminPermissionsByBusinessView = Map.unmodifiable(next);
     _hydratedPermissionBusinessIds = hydrated;
+    // [SUBADMIN-SCOPE.40] snapshot이 왔다 = 이 사업장은 더 이상 "읽기 실패"가 아니다.
+    if (_permissionReadFailedIds.contains(businessId)) {
+      _permissionReadFailedIds =
+          Set<String>.from(_permissionReadFailedIds)..remove(businessId);
+    }
   }
 
   void _setPermissionWatchState(String businessId, PermissionWatchState s) {
@@ -753,6 +824,7 @@ class UserProvider with ChangeNotifier {
     if (ids.isEmpty) {
       _subAdminPermissionsByBusinessView = const {};
       _hydratedPermissionBusinessIds = const {};
+      _permissionReadFailedIds = const {};
       _subAdminPermissionsLoaded = true;
       return;
     }
@@ -765,25 +837,32 @@ class UserProvider with ChangeNotifier {
       return; // 같은 배정 집합이고 전부 성공 — 재조회 없음
     }
 
+    // [SUBADMIN-SCOPE.40] 실패 여부를 함께 들고 온다 — null 은 "문서 없음"(확인된
+    //   거부)이고, 읽기 실패와 같은 null 로 섞으면 범위 판정이 둘을 구별하지 못한다.
     final entries = await Future.wait(ids.map((bizId) async {
       try {
-        return MapEntry(bizId, await MemberService().getMemberPermissions(bizId, uid));
+        return (id: bizId,
+            perms: await MemberService().getMemberPermissions(bizId, uid),
+            failed: false);
       } catch (e) {
         debugPrint('⚠️ [02G.1] 사업장 권한 조회 실패 ($bizId): $e');
-        return MapEntry(bizId, null);
+        return (id: bizId, perms: null, failed: true);
       }
     }));
     if (_disposed) return;
     if (gen != null && _loadGeneration != gen) return;
 
     final map = <String, MemberPermissions>{};
+    final failed = <String>{};
     for (final e in entries) {
-      final v = e.value;
-      if (v != null) map[e.key] = v;
+      final v = e.perms;
+      if (v != null) map[e.id] = v;
+      if (e.failed) failed.add(e.id);
     }
     _subAdminPermissionsByBusinessView = Map.unmodifiable(map);
     // 성공한 사업장만 기록 — 실패분은 다음 하이드레이션에서 다시 시도된다.
     _hydratedPermissionBusinessIds = map.keys.toSet();
+    _permissionReadFailedIds = failed;
     _subAdminPermissionsLoaded = true;
   }
 
@@ -1031,6 +1110,7 @@ class UserProvider with ChangeNotifier {
   void _clearSubAdminPermissionMap() {
     _subAdminPermissionsByBusinessView = const {};
     _hydratedPermissionBusinessIds = const {};
+    _permissionReadFailedIds = const {};
     _subAdminPermissionsLoaded = false;
   }
 
@@ -1067,7 +1147,15 @@ class UserProvider with ChangeNotifier {
     _authSubscription = _authService.authStateChanges.listen((User? firebaseUser) async {
       if (_disposed) return;
       if (firebaseUser != null) {
-        await _loadUserData(firebaseUser.uid);
+        if (_isSigningUp) return; // signUp 이 문서 저장 뒤 직접 _loadUserData 를 부른다
+        final load = _loadUserData(firebaseUser.uid);
+        // [LOGIN-INIT-SINGLE] 로그인 버튼 경로 중에 시작된 로드는 signIn 이 합류한다 — 같은 사용자·같은 세션의
+        //   두 번째 _loadUserData(사용자 문서·미서명 계약·FCM 재호출)를 만들지 않는다.
+        //   _loadUserData 는 첫 await 전에 세대를 올리므로 지금 값이 이 로드의 세대다.
+        if (_isSigningIn) {
+          _signInLoad = (uid: firebaseUser.uid, gen: _loadGeneration, future: load);
+        }
+        await load;
       } else {
         _currentUser = null;
         // signIn/signUp 진행 중에 _auth.signOut() 또는 세션 교체로 null 이벤트가 오면
@@ -1086,6 +1174,10 @@ class UserProvider with ChangeNotifier {
     });
   }
 
+  /// [LOGIN-INIT-SINGLE] 로그인 버튼 경로 중 authStateChanges 가 시작한 로드(같은 진입 한 번).
+  ///   signIn 이 합류하고 나면 비운다. 결과를 보관하지 않는다 — 세대가 바뀌면(로그아웃·다른 로드) 쓰지 않는다.
+  ({String uid, int gen, Future<void> future})? _signInLoad;
+
   // 사용자 데이터 로드
   Future<void> _loadUserData(String uid) async {
     // [NEW-03] 세대 카운터: 이 호출이 최신임을 식별. signOut() 또는 새 호출이 오면 _loadGeneration이 증가하여
@@ -1098,12 +1190,22 @@ class UserProvider with ChangeNotifier {
       notifyListeners();
     }
     try {
-      _currentUser = await _authService.getUserData(uid);
+      // [.25 AUTH-BOUNDARY] 읽은 값은 세대 확인 **뒤에** 대입한다. 예전에는 먼저
+      //   `_currentUser` 에 넣고 나서 세대를 봤기 때문에, 로그아웃 뒤 늦게 온 이전 계정
+      //   응답이 사용자를 다시 세우거나 B 로그인 뒤 늦은 A 응답이 B 를 A 로 바꿨다(LOCAL 재현).
+      final loaded = await _authService.getUserData(uid);
       if (_disposed) return; // dispose 후 결과를 반영하지 않음
       // [NEW-03] stale request는 현재 state를 절대 변경하지 않는다.
       // "A load → B login 완료 → A stale 응답" 케이스에서 userB 상태를 훼손 방지.
       // signOut 및 authStateChanges(null)이 독립적으로 모든 logout state를 책임진다.
       if (_loadGeneration != gen) return;
+      _currentUser = loaded;
+      // [SA-MINWAGE.51] 앱 시작 때 최저시급 읽기는 로그인 전이라 설정을 받지 못했다(기기: 안내 10,320 / 설정 10,600).
+      //   로그인된 사용자가 생긴 뒤 한 번 다시 읽는다 — 실패하면 기존 캐시·내장값(기존 동작) 그대로.
+      if (loaded != null) unawaited(WageCalculator.loadMinimumWages());
+      // [SA-INSURANCE.59] 보험료율도 같다 — 로그인 전 읽기는 규칙(isLoggedIn)에 막혀 내장값이 남았다
+      //   (기기: SA 저장 5.0% 인데 관리자 미리보기는 내장 4.75%).
+      if (loaded != null) unawaited(InsuranceRateService.loadRates());
 
       // [F-01-1 restore path FIX] Auth session 존재하지만 users/{uid} 문서 없는 고아 세션 정리.
       // signIn() 경로는 auth_service.signIn()에서 이미 signOut+throw 처리됨.
@@ -1251,7 +1353,7 @@ class UserProvider with ChangeNotifier {
             }
             await Future.wait([
               FCMService().initialize(user.uid, isAdmin: false),
-              refreshPendingContracts(),
+              refreshPendingContracts(joinInFlight: true),
               _bootstrapHomeRegion(uid, user), // homeRegion 1회 보정 (오류 내부 처리)
             ]);
             if (_disposed || _loadGeneration != gen) return; // [NEW-03]
@@ -1265,7 +1367,9 @@ class UserProvider with ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     } catch (e) {
-      if (_disposed) return;
+      // [.25 AUTH-BOUNDARY] 낡은 로드의 실패는 지금 세션을 건드리지 않는다 — 로딩 해제·
+      //   오류 표시·토큰 오류 자동 로그아웃이 새 사용자에게 적용되지 않게 한다.
+      if (_disposed || _loadGeneration != gen) return;
       debugPrint('❌ 사용자 데이터 로드 실패: $e');
       _error = e.toString();
       _isLoading = false;
@@ -1317,17 +1421,54 @@ class UserProvider with ChangeNotifier {
     }
   }
 
+  // [PENDING-CONTRACTS-INFLIGHT] 로그인 한 번에 같은 조회(같은 uid·미서명 필터·50건)가 세 번 나갔다
+  //   — authStateChanges 와 signIn 이 각자 _loadUserData 를 돌고, 홈 로드가 또 부른다.
+  //   **같은 진입**의 호출만 지금 날아가는 요청에 합류한다(완료되면 지운다 — 결과를 보관하지 않는다).
+  //   서명·출퇴근 뒤 갱신은 합류하지 않는다: 변경 전에 출발한 응답을 받으면 끝난 계약이 배너에 남는다.
+  Future<void>? _pendingContractsInFlight;
+  String? _pendingContractsInFlightUid;
+  int _pendingContractsSeq = 0;
+
+  /// 시험 전용 — 인증 없이 현재 사용자를 정한다(미서명 계약 갱신 경로 시험).
+  @visibleForTesting
+  void debugSetCurrentUser(UserModel? user) {
+    _currentUser = user;
+    notifyListeners();
+  }
+
   /// 미서명 계약서 목록 갱신 — 로그인 시·서명 완료 후 호출
-  Future<void> refreshPendingContracts() async {
+  ///
+  /// [joinInFlight] 로그인·홈 로드처럼 같은 진입의 호출만 true.
+  Future<void> refreshPendingContracts({bool joinInFlight = false}) {
     final uid = _currentUser?.uid;
-    if (uid == null || !isUser) return;
+    if (uid == null || !isUser) return Future<void>.value();
+    final cur = _pendingContractsInFlight;
+    if (joinInFlight && cur != null && _pendingContractsInFlightUid == uid) {
+      return cur;
+    }
+    final seq = ++_pendingContractsSeq;
+    final request = _fetchPendingContracts(uid, seq);
+    _pendingContractsInFlight = request;
+    _pendingContractsInFlightUid = uid;
+    unawaited(request.whenComplete(() {
+      if (identical(_pendingContractsInFlight, request)) {
+        _pendingContractsInFlight = null;
+      }
+    }));
+    return request;
+  }
+
+  Future<void> _fetchPendingContracts(String uid, int seq) async {
     try {
       final result = await ContractService().getByWorkerPaged(
         uid,
         statusFilter: ContractStatus.pendingWorker,
         pageSize: 50,
       );
-      if (_disposed) return;
+      // 늦은 응답: 그 사이 더 새 조회가 출발했거나 계정이 바뀌었으면 쓰지 않는다.
+      if (_disposed || seq != _pendingContractsSeq || _currentUser?.uid != uid) {
+        return;
+      }
       _pendingContracts = result.items;
       notifyListeners();
     } catch (e) {
@@ -1391,7 +1532,10 @@ class UserProvider with ChangeNotifier {
       _error = null;
       notifyListeners();
 
-      final user = await _authService.signUp(
+      _isSigningUp = true;
+      final UserModel? user;
+      try {
+        user = await _authService.signUp(
         username: username,
         password: password,
         name: name,
@@ -1417,7 +1561,10 @@ class UserProvider with ChangeNotifier {
         ceoName: ceoName,
         bankName: bankName,
         accountNumber: accountNumber,
-      );
+        );
+      } finally {
+        _isSigningUp = false;
+      }
 
       if (user != null) {
         await _loadUserData(user.uid);
@@ -1450,7 +1597,19 @@ class UserProvider with ChangeNotifier {
       final user = await _authService.signIn(username, password);
       if (user != null) {
         // _loadUserData로 FCM·NotificationProvider·권한 초기화까지 한번에 처리
-        await _loadUserData(user.uid);
+        // [LOGIN-INIT-SINGLE] 인증 직후 authStateChanges 가 같은 사용자의 로드를 이미 시작했고 그 뒤 다른
+        //   로드·로그아웃이 없었으면 그 로드에 합류한다. 위 auth_service 확인(차단·가입 상태·제재)은 그대로 먼저 끝났다.
+        //   합류한 로드가 이 사용자를 세우지 못했으면(읽기 실패 등) 예전처럼 한 번 더 읽는다.
+        final joined = _signInLoad;
+        _signInLoad = null;
+        if (joined != null && joined.uid == user.uid && joined.gen == _loadGeneration) {
+          await joined.future;
+          if (_currentUser?.uid != user.uid || joined.gen != _loadGeneration) {
+            await _loadUserData(user.uid);
+          }
+        } else {
+          await _loadUserData(user.uid);
+        }
         if (kDebugMode) debugPrint('✅ 로그인 성공: ${user.email}');
         return true;
       }
@@ -1478,6 +1637,7 @@ class UserProvider with ChangeNotifier {
       return false;
     } finally {
       _isSigningIn = false;
+      _signInLoad = null;
       // [BUG-수정] SP-M-1: _loadUserData() 성공 시 내부에서 이미 _isLoading=false + notifyListeners() 처리됨.
       // finally가 무조건 재호출하면 불필요한 이중 rebuild 발생 — _isLoading이 아직 true일 때만 정리.
       if (_isLoading) {
@@ -1514,8 +1674,9 @@ class UserProvider with ChangeNotifier {
       _memberPermsSub = null;
     _memberPermsBusinessId = null;
 
-      // FCM 토큰 삭제
-      await FCMService().clearToken();
+      // FCM 토큰 삭제 — [.68] 오프라인이면 서버 확인을 기다리다 로그아웃이 멈췄다. 정리는 시도하되 상한을 둔다.
+      // [.69] 기기 토큰도 폐기 — 문서 정리가 오프라인으로 못 끝나도 다음 계정에 같은 토큰이 붙지 않게.
+      await FCMService().clearToken(networkTimeout: const Duration(seconds: 4), revokeDevice: true);
 
       // D1-18 수정: 로그아웃 시 SharedPreferences 서브어드민 키 삭제
       // 미삭제 시 다른 계정이 같은 기기에서 로그인하면 이전 계정의 isAdminMode가 이월됨
@@ -1533,6 +1694,9 @@ class UserProvider with ChangeNotifier {
       _subAdminBusinessNamesView = const {};
       _clearSubAdminPermissionMap();
       _pendingContracts = [];
+      _pendingContractsSeq++; // 로그아웃 전에 출발한 미서명 조회는 쓰지 않는다
+      _pendingContractsInFlight = null;
+      _signInLoad = null; // [LOGIN-INIT-SINGLE] 로그아웃 전 로그인 로드에 합류하지 않는다
       _error = null;
       _isLoading = false;
 
@@ -1567,6 +1731,9 @@ class UserProvider with ChangeNotifier {
       _subAdminBusinessNamesView = const {};
       _clearSubAdminPermissionMap();
       _pendingContracts = [];
+      _pendingContractsSeq++; // 로그아웃 전에 출발한 미서명 조회는 쓰지 않는다
+      _pendingContractsInFlight = null;
+      _signInLoad = null; // [LOGIN-INIT-SINGLE] 로그아웃 전 로그인 로드에 합류하지 않는다
       _error = null;
       FirestoreService().clearCache();
       notifyListeners();

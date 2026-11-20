@@ -10,7 +10,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import '../../utils/responsive_helper.dart';
 import '../../providers/user_provider.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
+import '../../widgets/common/app_empty_state.dart';
 import '../../utils/dialog_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../models/settings/trust_settings_model.dart';
@@ -22,7 +24,10 @@ import '../../utils/loading_state_mixin.dart';
 
 /// 배지 관리 화면
 class BadgeSettingsScreen extends StatefulWidget {
-  const BadgeSettingsScreen({super.key});
+  const BadgeSettingsScreen({super.key, this.load});
+
+  /// [.61] 시험용 읽기 경계 — null 이면 Firestore `badges`(빈 컬렉션이면 기본 배지 생성 포함, 기존 동작).
+  final Future<List<BadgeModel>> Function()? load;
 
   @override
   State<BadgeSettingsScreen> createState() => _BadgeSettingsScreenState();
@@ -38,6 +43,12 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
   List<BadgeModel> _experienceBadges = [];
   bool _isAdding = false;
   bool _isToggling = false;
+  /// [.61] 배지 정의를 읽지 못했다 — 기본 배지를 현재 설정처럼 보이거나 그 위에서 수정·삭제하지 않는다.
+  Object? _loadError;
+
+  /// [.61] 기본 배지 ID — 삭제해도 화면을 다시 열면 '누락 기본 배지 동기화' 가 되살린다(LOCAL 재현).
+  ///   그래서 삭제를 열지 않고 비활성화로 안내한다.
+  static final Set<String> _defaultIds = BadgeModel.defaultBadges().map((b) => b.id).toSet();
 
   void _groupBadges() {
     _trustBadges      = _badges.where((b) => b.type == BadgeType.trustScore).toList();
@@ -61,7 +72,13 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
 
   Future<void> _loadBadges() async {
     setLoading(true);
+    if (mounted) setState(() => _loadError = null);
     try {
+      if (widget.load != null) {
+        _badges = await widget.load!();
+        _groupBadges();
+        return;
+      }
       final snapshot = await _firestore
           .collection('badges')
           .orderBy('order')
@@ -98,9 +115,10 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
       _groupBadges();
     } catch (e) {
       debugPrint('❌ 배지 로드 실패: $e');
-      _badges = BadgeModel.defaultBadges();
+      // [.61] 예전에는 기본 배지를 현재 설정처럼 보였다(그 위에서 수정·삭제 가능). 못 읽은 것은 못 읽었다고 말한다.
+      _badges = [];
       _groupBadges();
-      if (mounted) ToastHelper.showError('배지 정보를 불러오는 데 실패했습니다');
+      if (mounted) setState(() => _loadError = e);
     } finally {
       if (mounted) setLoading(false);
     }
@@ -220,7 +238,10 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '배지 삭제',
-      message: '"${badge.name}" 배지를 삭제하시겠습니까?\n이미 획득한 사용자에게는 영향이 없습니다.',
+      // [.61] 예전 문구 '이미 획득한 사용자에게는 영향이 없습니다' 는 사실이 아니었다 — 근로자 화면은 배지 정의를
+      //   찾아 그리므로 정의를 지우면 이미 받은 사람의 화면에서도 사라진다(받은 기록 ID 는 남는다).
+      message: TextLayout.keepWords('"${badge.name}" 배지를 삭제하시겠습니까?\n'
+          '이미 받은 사람의 화면에서도 이 배지가 더 이상 보이지 않습니다(받은 기록은 남습니다). 되돌릴 수 없습니다.'),
       confirmText: '삭제',
     );
 
@@ -247,15 +268,17 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
     
     return AppPageScaffold(
       title: '배지 관리',
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: (_isAdding || isLoading) ? null : _addBadge,
-        backgroundColor: theme.primaryColor,
-        icon: const Icon(Icons.add),
-        label: const Text('배지 추가'),
-      ),
+      // [DU503 · 감사48 (가)] 떠 있는 '배지 추가' 버튼(FAB)을 두지 않는다 — 목록 머리의 글자 행동으로 옮겼다(아래 ListView).
       body: isLoading
           ? const LoadingWidget()
-          : ListView(
+          : _loadError != null
+              ? AppEmptyState(
+                  icon: Icons.cloud_off_outlined,
+                  title: '배지 정보를 불러오지 못했습니다',
+                  subtitle: '현재 설정을 모르는 상태라 수정·추가·삭제를 막았습니다.',
+                  action: TextButton(onPressed: _loadBadges, child: const Text('다시 시도')),
+                )
+              : ListView(
               padding: ResponsiveHelper.listPadding(context),
               children: [
                 // 안내 카드
@@ -275,9 +298,13 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
                       SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                       Expanded(
                         child: Text(
-                          '배지를 관리하고 조건을 설정하세요.\n비활성화된 배지는 새로 획득할 수 없습니다.',
+                          // [.61] 이 화면은 배지 **정의** 를 관리한다. 사람에게 직접 주거나 회수하는 기능은 없다(앱·서버 확인).
+                          TextLayout.keepWords('배지 정의와 조건을 관리합니다.\n'
+                              '비활성화한 배지는 새로 받을 수 없고, 이미 받은 사람에게는 그대로 보입니다.\n'
+                              '특정 사람에게 배지를 직접 주거나 회수하는 기능은 없습니다.'),
+                          // [DU503] infoDark/infoBg 4.03(미달) → infoDeep(DU496 · 약관 관리 안내 띠와 같다).
                           style: ResponsiveHelper.bodyStyle(context).copyWith(
-                            color: AppColors.infoDark,
+                            color: AppColors.infoDeep,
                             height: 1.4,
                           ),
                         ),
@@ -286,7 +313,27 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
                   ),
                 ),
                 
-                SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                // [DU503 · 감사48 (가)] 배지 목록 머리 오른쪽 '+ 배지 추가' 글자 행동(S024 '+ 멤버 초대' 와 같은 TextButton 계열 · receiver 48).
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: _isAdding ? null : _addBadge,
+                    icon: Icon(Icons.add, size: ResponsiveHelper.iconSize(context, 16)),
+                    label: Text('배지 추가',
+                        style: ResponsiveHelper.smallStyle(context,
+                            color: theme.primaryColor, fontWeight: FontWeight.w600)),
+                    style: TextButton.styleFrom(
+                      foregroundColor: theme.primaryColor,
+                      minimumSize: const Size(48, 48),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 10),
+                        vertical: ResponsiveHelper.spacing(context, 4),
+                      ),
+                    ),
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 
                 // 신뢰도 배지
                 if (trustBadges.isNotEmpty)
@@ -376,11 +423,16 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
               children: [
                 Icon(icon, size: ResponsiveHelper.iconSize(context, 20), color: color),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Text(
-                  '$title (${badges.length}개)',
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: color,
+                // [.61] 큰 글자(392·2.0)에서 이 줄이 33px 넘쳤다 — 줄을 바꿀 수 있게 하고 낱말로 묶는다.
+                Flexible(
+                  child: Text(
+                    TextLayout.keepWords('$title (${badges.length}개)'),
+                    // [DU490] 제목 글자가 구역 색(amber · success · info)이라 같은 색 10% 면 위 약 1.4–2.9 였다 —
+                    //   앱 섹션 제목 규칙(본문색 bold · DU241)으로 바꾼다. 구역 색은 아이콘 · 머리 면이 그대로 말한다.
+                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary,
+                    ),
                   ),
                 ),
               ],
@@ -427,41 +479,45 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
           ),
         ),
       ),
-      title: Row(
+      // [DU501] Row(Flexible 이름 + 칩)는 B(320@2.0)에서 이름 칸이 한 글자 폭이 되어 세로로 쌓였다 → Wrap.
+      //   이름은 자기 폭을 쓰고 낱말 단위로 줄을 바꾼다([.61] · 말줄임 없음). 칩은 자리가 없으면 다음 줄로 간다.
+      title: Wrap(
+        spacing: ResponsiveHelper.spacing(context, 8),
+        runSpacing: ResponsiveHelper.spacing(context, 4),
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          // Flexible 필수: 긴 배지명 + '비활성' Container 조합 시 overflow 방지
-          Flexible(
-            child: Text(
-              badge.name,
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                fontWeight: FontWeight.w600,
-                color: badge.isActive ? null : AppColors.grey400,
-              ),
-              overflow: TextOverflow.ellipsis,
+          Text(
+            TextLayout.keepWords(badge.name),
+            semanticsLabel: badge.name,
+            style: ResponsiveHelper.bodyStyle(context).copyWith(
+              fontWeight: FontWeight.w600,
+              // [DU489] 비활성 이름 grey400(1.88) → textTertiary(5.25) — 상태는 '비활성' 칩이 말한다.
+              color: badge.isActive ? null : AppColors.textTertiary,
             ),
           ),
-          if (!badge.isActive) ...[
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          if (!badge.isActive)
             Container(
               padding: EdgeInsets.symmetric(
                 horizontal: ResponsiveHelper.spacing(context, 6),
                 vertical: ResponsiveHelper.spacing(context, 2),
               ),
+              // [DU489] grey500/grey200(2.31) → 중립 칩 짝 textSecondary/grey100(5.43 · DU468 과 같다).
               decoration: BoxDecoration(
-                color: AppColors.grey200,
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
                 '비활성',
-                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
               ),
             ),
-          ],
         ],
       ),
+      // [DU489] 조건 설명 grey500(흰 위 2.68) → textSecondary(5.92).
       subtitle: Text(
-        _getConditionText(badge),
-        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+        // [DU501] B 에서 '이/상' 처럼 음절에서 끊겼다 — 낱말 조판(줄바꿈 문자는 그대로).
+        TextLayout.keepWords(_getConditionText(badge)),
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
       ),
       trailing: PopupMenuButton<String>(
         onSelected: (value) {
@@ -483,6 +539,15 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
             value: 'toggle',
             child: Text(badge.isActive ? '비활성화' : '활성화'),
           ),
+          // [.61] 기본 배지는 삭제가 되살아난다 — 삭제를 열지 않고 이유를 보인다.
+          if (_defaultIds.contains(badge.id))
+            PopupMenuItem(
+              enabled: false,
+              value: 'delete-default',
+              child: Text(TextLayout.keepWords('기본 배지는 삭제 대신 비활성화를 쓰세요'),
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500)),
+            )
+          else
           PopupMenuItem(
             value: 'delete',
             child: Text('삭제', style: ResponsiveHelper.bodyStyle(context, color: AppColors.error)),
@@ -616,6 +681,7 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
               items: BadgeType.values,
               labelOf: _getBadgeTypeName,
               prefixIcon: Icons.category,
+              enabled: !isEdit,
               onChanged: (value) {
                 if (value == null) return;
                 setState(() {
@@ -648,6 +714,7 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
               items: BadgeConditionType.values,
               labelOf: _getConditionTypeName,
               prefixIcon: Icons.flag,
+              enabled: !isEdit,
               onChanged: (value) {
                 if (value != null) setState(() => _selectedCondition = value);
               },
@@ -662,8 +729,18 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
               hintText: '예: 90',
               prefixIcon: Icons.numbers,
               keyboardType: TextInputType.number,
+              enabled: !isEdit,
             ),
-            
+            // [.61] 근로자 화면 문구는 이름이 아니라 조건으로 만든다('10번의 근무를 완료했어요').
+            //   받은 뒤 조건을 바꾸면 이미 받은 사람의 화면이 하지 않은 근무를 말했다(10회 → '30번의 근무를 완료했어요').
+            if (isEdit) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+              Text(
+                TextLayout.keepWords('유형과 조건은 바꿀 수 없습니다. 이미 받은 사람의 화면에 조건이 그대로 표시되기 때문입니다. 다른 조건이 필요하면 새 배지를 추가하세요.'),
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+              ),
+            ],
+
             // 업무 유형 (전문 배지일 때만)
             if (_selectedType == BadgeType.specialty) ...[
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
@@ -672,16 +749,23 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
                 labelText: '업무 유형 (선택)',
                 hintText: '예: 피킹',
                 prefixIcon: Icons.work,
+                enabled: !isEdit,
               ),
             ],
 
             // 혜택 설명
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            // [.61] 예시가 구현되지 않은 혜택(자동확정 공고 지원)을 권했다. 혜택 문구는 지금 근로자에게 보이지 않는다.
             StyledDialogTextField(
               controller: _benefitController,
               labelText: '혜택 설명',
-              hintText: '예: 골드 강조 표시 · 자동확정 공고 지원 가능',
+              hintText: '실제로 제공되는 혜택만 적으세요',
               prefixIcon: Icons.card_giftcard,
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            Text(
+              TextLayout.keepWords('혜택 설명은 현재 근로자 화면에 표시되지 않습니다(배지에 연결된 혜택 기능이 없음).'),
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
             ),
           ],
         ),

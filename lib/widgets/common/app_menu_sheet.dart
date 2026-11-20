@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../dialogs/styled_dialog.dart';
 
 // ─────────────────────────────────────────────────────────
@@ -210,17 +211,21 @@ class _Header extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (title != null)
+                  // [DU296 AM3] 이름은 낱말 단위(identity), 읽기 이름 원문
                   Text(
-                    title!,
+                    TextLayout.identity(title!),
+                    semanticsLabel: title!,
                     style: ResponsiveHelper.subtitleStyle(context).copyWith(
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                 if (subtitle != null) ...[
                   const SizedBox(height: 2),
+                  // [DU296 AM3] 부제 grey500(2.68) → 보조색, 낱말 단위
                   Text(
-                    subtitle!,
-                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                    TextLayout.keepWords(subtitle!),
+                    semanticsLabel: subtitle!,
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
                   ),
                 ],
               ],
@@ -266,14 +271,21 @@ class _MenuItem extends StatelessWidget {
                 child: Icon(item.icon, color: item.color, size: ResponsiveHelper.iconSize(context, 22)),
               ),
               const SizedBox(width: 16),
-              Text(
-                item.label,
-                style: ResponsiveHelper.bodyStyle(context,
-                  color: item.isDanger ? AppColors.error : AppColors.grey800,
-                ).copyWith(fontWeight: FontWeight.w500),
+              // [DU296 AM1] 남은 폭 안에서 낱말 단위로 줄을 바꾼다
+              //   (이전: Spacer 앞 폭 제한 없음 → B320 2.0 오른쪽 넘침 61·34·5.7px). 읽기 이름 원문.
+              Expanded(
+                child: Text(
+                  TextLayout.keepWords(item.label),
+                  semanticsLabel: item.label,
+                  style: ResponsiveHelper.bodyStyle(context,
+                    // [DU296 AM2] 위험 글 error(3.68) → errorDark(DU286 위험 글과 같은 짝)
+                    color: item.isDanger ? AppColors.errorDark : AppColors.grey800,
+                  ).copyWith(fontWeight: FontWeight.w500),
+                ),
               ),
-              const Spacer(),
-              Icon(Icons.chevron_right, color: AppColors.grey300, size: 20),
+              const SizedBox(width: 8),
+              // [DU296 AM4] 화살표 grey300(1.32) → textTertiary
+              Icon(Icons.chevron_right, color: AppColors.textTertiary, size: 20),
             ],
           ),
         ),

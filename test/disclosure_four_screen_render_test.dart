@@ -1,3 +1,4 @@
+// ignore_for_file: depend_on_referenced_packages
 // [R7-PREDEVICE-DISCLOSURE-RENDER.1] 근태·급여 고지 네 화면 — **실제 렌더**.
 //
 // ── 왜 필요한가 ─────────────────────────────────────────────────────
@@ -17,7 +18,9 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -27,19 +30,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ALfit/models/core/application_model.dart';
 import 'package:ALfit/models/core/business_model.dart';
-import 'package:ALfit/models/core/business_work_type_model.dart';
 import 'package:ALfit/models/core/contract_template_model.dart';
 import 'package:ALfit/models/core/employment_contract_model.dart';
 import 'package:ALfit/models/core/slot_model.dart';
 import 'package:ALfit/models/core/to_model.dart';
 import 'package:ALfit/models/core/user_model.dart';
 import 'package:ALfit/models/core/user_region.dart';
-import 'package:ALfit/models/core/work_detail_data.dart';
 import 'package:ALfit/models/core/work_detail_model.dart';
 import 'package:ALfit/models/ui/invite_capacity_state.dart';
+import 'package:ALfit/models/ui/invite_accept_readiness.dart';
 import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/common/job_posting_reads.dart';
+import 'package:ALfit/services/work_type_guide_resolver.dart';
 import 'package:ALfit/screens/common/job_posting_screen.dart';
 import 'package:ALfit/screens/contract/contract_sign_screen.dart';
 import 'package:ALfit/screens/user/my_applications_reads.dart';
@@ -134,6 +137,34 @@ void expectAllSevenLines(WidgetTester t, AttendanceRules r, String where) {
   expect(shown.contains('…'), isFalse, reason: '$where — 고지가 말줄임됐다');
 }
 
+/// [.29-A1] 공고·초대·계약은 '근태 인정 기준' 구조다 — 기준 설명(7개 값이 모두 들어 있다)이 전부 보이고 잘리지 않는다.
+List<String> _guidePoints(AttendanceRuleGuide g) =>
+    g.sections.expand((s) => s.items).expand((i) => i.points).toList();
+
+void expectRuleGuide(WidgetTester t, AttendanceRules r, String where,
+    {String? start, String? end}) {
+  final shown = visibleText(_visible(t));
+  final points = _guidePoints(attendanceRuleGuide(r, startHHmm: start, endHHmm: end));
+  expect(points.length, greaterThanOrEqualTo(4), reason: '기준 설명 수가 너무 적다');
+  for (final p in points) {
+    expect(shown.contains(p), isTrue, reason: '$where — 기준 설명이 화면에 없다: $p');
+  }
+  for (final n in [r.earlyWindow, r.earlyArrivalUnit, r.lateGrace, r.lateUnit, r.lateWindow, r.overtimeUnit, r.earlyLeaveUnit]) {
+    if (n == 0) continue; // 0 은 '분' 으로 말하지 않는다(설명 형태가 바뀐다)
+    expect(shown.contains('$n분'), isTrue, reason: '$where — 기준값 $n분이 화면에 없다');
+  }
+  expect(shown.contains('…'), isFalse, reason: '$where — 고지가 말줄임됐다');
+}
+
+/// 사례('예: 18:06 출근 →' / '인정 시작 18:30')가 보이는지 — 입력과 결과는 각각 한 덩어리 글자다.
+void expectGuideExamples(WidgetTester t, AttendanceRuleGuide g, String where, {bool visible = true}) {
+  final shown = visibleText(_visible(t));
+  for (final e in g.sections.expand((s) => s.items).expand((i) => i.examples)) {
+    expect(shown.contains('예: ${e.input} →') && shown.contains(e.result), visible,
+        reason: '$where — 사례 ${visible ? '없음' : '보임'}: ${attendanceRuleExampleText(e)}');
+  }
+}
+
 Future<void> _settle(WidgetTester t, {int rounds = 14}) async {
   for (var i = 0; i < rounds; i++) {
     await t.pump(const Duration(milliseconds: 100));
@@ -145,9 +176,10 @@ Future<void> _settle(WidgetTester t, {int rounds = 14}) async {
 // ═══════════════════════════════════════════════════════════════
 
 class _Worker extends UserProvider {
-  _Worker({this.docsReady = true});
+  _Worker();
 
-  final bool docsReady;
+  // [DU466 · 후속115 §2-5] 넘기는 곳이 없던 선택 매개변수만 없앴다 — 값은 예전 기본값 그대로(true).
+  final bool docsReady = true;
 
   @override
   UserModel? get currentUser => UserModel(
@@ -184,6 +216,13 @@ class _Worker extends UserProvider {
 
 DateTime _kstInstant(int y, int mo, int d) =>
     DateTime.utc(y, mo, d).subtract(const Duration(hours: 9));
+
+/// 오늘(KST)로부터 [plusDays] 일 뒤의 KST 자정 instant — 날짜가 지나도
+/// 깨지지 않는 fixture 용.
+DateTime _futureKstDay(int plusDays) {
+  final k = DateTime.now().toUtc().add(Duration(hours: 9, days: plusDays));
+  return _kstInstant(k.year, k.month, k.day);
+}
 
 WorkDetailData _wdData() => WorkDetailData(
       wdId: 'wd1',
@@ -261,7 +300,7 @@ JobPostingReads _postingReads(AttendanceRules rules) => JobPostingReads(
             ),
           ],
       myApplications: (uid) async => const <ApplicationModel>[],
-      businessWorkTypes: (id) async => const <BusinessWorkTypeModel>[],
+      workTypeCatalog: (id) async => WorkTypeCatalog.empty,
       applicationOnce: (id) async => null,
     );
 
@@ -366,8 +405,8 @@ void main() {
   // D. 공고 상세 — 지원 **전**, 사업장 현재 기준
   // ═══════════════════════════════════════════════════════════
   group('[D] 공고 상세', () {
-    /// 공고 상세를 띄우고 '상세 기준' 시트를 연다.
-    Future<void> openPolicySheet(
+    /// [.29-A1] 공고 상세를 띄우고 '근태 인정 기준' 블록까지 내린다 — 상세 시트는 없어졌다(기준을 처음부터 보인다).
+    Future<void> openPostingGuide(
       WidgetTester t, {
       required AttendanceRules rules,
       required Size size,
@@ -380,64 +419,53 @@ void main() {
         size: size,
         textScale: textScale,
       );
-      final entry = find.text('상세 기준');
-      expect(entry, findsOneWidget,
-          reason: '지원 전에 상세 기준으로 들어갈 입구가 없다');
-      await t.ensureVisible(entry);
-      await t.pump();
-      await t.tap(entry);
+      final title = find.text(kAttendanceRuleGuideTitle);
+      expect(title, findsOneWidget, reason: '공고 상세에 근태 인정 기준이 없다');
+      await t.ensureVisible(title);
       await _settle(t);
     }
 
-    testWidgets('D-1 지원 전 한 줄 고지와 입구가 보인다', (t) async {
-      await _pumpHost(
-        t,
-        JobPostingScreen(
-            to: _to(), workDetails: const [], reads: _postingReads(_standard())),
-        size: const Size(360, 780),
-        textScale: 1.0,
-      );
-      expect(t.takeException(), isNull);
-      final shown = _visible(t);
-      expect(shown.contains(kAttendancePolicyTitle), isTrue,
-          reason: '고지 섹션 제목이 없다');
-      expect(
-          shown.contains('출퇴근 시각은 이 사업장의 처리 기준에 따라 인정 시간으로 계산되고, '
-              '그 인정 시간이 급여 기준이 됩니다.'),
-          isTrue,
-          reason: '영향 설명이 없다 — 숫자만 숨기면 존재를 알 수 없다');
-      expect(find.text('상세 기준'), findsOneWidget);
-    });
-
-    testWidgets('D-2 상세 시트에 7개 기준이 **값까지** 보인다', (t) async {
-      await openPolicySheet(t,
+    testWidgets('D-1 지원 전에 핵심 기준이 처음부터 보인다 — 상세 시트에 숨기지 않는다', (t) async {
+      await openPostingGuide(t,
           rules: _standard(), size: const Size(360, 780), textScale: 1.0);
       expect(t.takeException(), isNull);
-      expectAllSevenLines(t, _standard(), '공고 상세 시트');
+      expectRuleGuide(t, _standard(), '공고 상세');
+      final shown = _visible(t);
+      expect(shown.contains(kAttendancePolicyEffectNote), isTrue,
+          reason: '인정 시간이 급여 기준이라는 영향 설명이 없다');
+      expect(find.text('상세 기준'), findsNothing, reason: '같은 설명을 시트에 한 번 더 두지 않는다');
+    });
+
+    testWidgets('D-2 근무 시각을 모르면 사례 없이 설명만 — 사례를 짐작하지 않는다', (t) async {
+      await openPostingGuide(t,
+          rules: _standard(), size: const Size(360, 780), textScale: 1.0);
+      expect(find.text('시간 예시 보기'), findsNothing);
+      expect(visibleText(_visible(t)).contains('예: '), isFalse);
     });
 
     testWidgets('D-3 사업장 **현재** 기준을 보여준다 — snapshot 이 아니다', (t) async {
-      // 경계값 사업장으로 바꾸면 화면 숫자도 바뀐다.
-      await openPolicySheet(t,
+      // 경계값 사업장으로 바꾸면 화면 문장도 바뀐다.
+      await openPostingGuide(t,
           rules: _boundary(), size: const Size(360, 780), textScale: 1.0);
-      expectAllSevenLines(t, _boundary(), '공고 상세 시트(경계값)');
-      final shown = _visible(t);
-      // 기본값 사업장의 문장이 섞여 있지 않다.
-      for (final l in attendancePolicyLines(_standard())) {
-        expect(shown.contains(l.value), isFalse,
-            reason: '다른 사업장의 기준이 섞였다: ${l.value}');
+      expectRuleGuide(t, _boundary(), '공고 상세(경계값)');
+      final shown = visibleText(_visible(t));
+      final boundary = _guidePoints(attendanceRuleGuide(_boundary())).toSet();
+      // 기본값 사업장에만 있는 문장이 섞여 있지 않다.
+      for (final p in _guidePoints(attendanceRuleGuide(_standard()))) {
+        if (boundary.contains(p)) continue;
+        expect(shown.contains(p), isFalse, reason: '다른 사업장의 기준이 섞였다: $p');
       }
     });
 
     for (final w in _widths) {
       for (final s in _scales) {
-        testWidgets('D-4 ${w.toInt()}dp × 배율 $s — 상세 시트 넘침 0', (t) async {
-          await openPolicySheet(t,
+        testWidgets('D-4 ${w.toInt()}dp × 배율 $s — 공고 기준 넘침 0', (t) async {
+          await openPostingGuide(t,
               rules: _longest(), size: Size(w, 820), textScale: s);
           expect(t.takeException(), isNull,
-              reason: '${w.toInt()}dp × $s 에서 고지 시트가 넘친다');
-          // 가장 긴 조합에서도 값이 사라지지 않는다.
-          expectAllSevenLines(t, _longest(), '${w.toInt()}dp × $s');
+              reason: '${w.toInt()}dp × $s 에서 기준 블록이 넘친다');
+          // 가장 긴 조합에서도 설명이 사라지지 않는다.
+          expectRuleGuide(t, _longest(), '${w.toInt()}dp × $s');
         });
       }
     }
@@ -478,7 +506,8 @@ void main() {
       await _pumpHost(t, dialogHost(rules: null, policyLoaded: true),
           size: const Size(360, 900), textScale: 1.0);
       expect(t.takeException(), isNull);
-      expect(_visible(t).contains(kAttendancePolicyUnavailableNote.split('\n').first),
+      // [DU295 S1 — DU288 따라잡기 누락] 안내 카드 글자가 낱말 묶음 문자를 품는다 → 보이는 글자로 비교(이 파일 다른 단언과 같다).
+      expect(visibleText(_visible(t)).contains(kAttendancePolicyUnavailableNote.split('\n').first),
           isTrue,
           reason: '기준 부재를 말하지 않는다');
 
@@ -486,7 +515,7 @@ void main() {
       await _pumpHost(t, dialogHost(rules: null, policyLoaded: false),
           size: const Size(360, 900), textScale: 1.0);
       expect(t.takeException(), isNull);
-      final shown = _visible(t);
+      final shown = visibleText(_visible(t)); // [DU295 S1 — DU288 따라잡기 누락] 아래 부정 단언이 빈 검사가 되지 않게
       expect(shown.contains(kAttendancePolicyLoadFailedNote.split('\n').first),
           isTrue, reason: '조회 실패를 말하지 않는다');
       expect(shown.contains(kAttendancePolicyUnavailableNote.split('\n').first),
@@ -537,10 +566,17 @@ void main() {
           wage: 53000,
           wageType: 'daily',
           status: 'INVITED',
-          workDate: _kstInstant(2026, 10, 10),
-          appliedAt: _kstInstant(2026, 10, 1),
-          invitedAt: _kstInstant(2026, 10, 2),
+          // [ISG2 시한부 fixture 정정] 예전에는 2026-10-10 고정이었다.
+          //   수락 마감은 `min(초대+24h, 근무 시작)` 이라, 근무가 지난
+          //   초대는 `수락하기` 가 비활성이다(서버도 거절한다). 이 그룹이
+          //   묻는 것은 확인창의 **고지 내용**이므로 날짜는 늘 미래로 센다.
+          workDate: _futureKstDay(3),
+          appliedAt: _futureKstDay(-5),
+          invitedAt: _futureKstDay(-1),
           workInstanceCapacityState: InviteCapacityState.available,
+          // [INVITE-PARITY] 이 그룹은 '수락할 수 있는 초대'의 확인창 고지를 본다.
+          //   준비 상태를 모르면(값 없음) 수락하기가 비활성이라 확인창에 닿지 않는다.
+          inviteAcceptReadiness: InviteAcceptReadiness.ready,
           attendancePolicySnapshot: policy,
         );
 
@@ -555,9 +591,16 @@ void main() {
           contractsByWorker: (uid) async =>
               const <EmploymentContractModel>[],
           autoExpirePending: (uid) async {},
+          // [E1-MYA] 이 테스트는 근태를 보지 않는다 — 빈 결과로 고정한다.
+          monthlyAttendances: (
+                  {required String userId,
+                  required int year,
+                  required int month}) async =>
+              const [],
           // 세무 축을 **우회하지 않는다** — production 과 같은 "모름"
           //   상태를 준다. `loadFailed` 이므로 판정이 막지 않고,
           //   production 의 실패 경로와 같은 값이다.
+          reviewById: (key) async => null,
           taxStatus: () async => const TaxIdentityStatus.unknown(),
         );
 
@@ -597,10 +640,59 @@ void main() {
       final reached = await openAcceptDialog(t,
           policy: _standard(), size: const Size(390, 1200), textScale: 1.0);
       expect(reached, isTrue);
-      expectAllSevenLines(t, _standard(), '내 지원 수락 확인창');
+      expectRuleGuide(t, _standard(), '내 지원 수락 확인창', start: '18:00', end: '22:30');
       // 그 기준이 이 약속에 묶였다는 사실도 말한다.
       expect(_visible(t).contains(kAttendancePolicyFrozenNote), isTrue,
           reason: '고정 사실을 말하지 않으면 현재 설정으로 오해한다');
+    });
+
+    testWidgets('F-1b 이 근무 시각의 사례 — 접혀 있다가 펴면 실제 계산과 같은 줄', (t) async {
+      final reached = await openAcceptDialog(t,
+          policy: _standard(), size: const Size(390, 1600), textScale: 1.0);
+      expect(reached, isTrue);
+      final g = attendanceRuleGuide(_standard(), startHHmm: '18:00', endHHmm: '22:30');
+      expect(g.hasExamples, isTrue);
+      // 기준 설명은 늘 보이고 사례만 접혀 있다.
+      expectGuideExamples(t, g, '접힘', visible: false);
+      final toggle = find.text('시간 예시 보기');
+      await t.ensureVisible(toggle);
+      await t.tap(toggle);
+      await _settle(t);
+      expectGuideExamples(t, g, '펼침');
+      // 유예 5분 → 18:05 출근은 18:00 부터, 18:06 출근은 18:30 부터(30분 단위 올림).
+      final shown = visibleText(_visible(t));
+      expect(shown.contains('예: 18:06 출근 →') && shown.contains('인정 시작 18:30'), isTrue);
+      expect(shown.contains(kAttendancePolicyEffectNote), isTrue);
+    });
+
+    testWidgets('F-1d 탭 안(중첩 Navigator)에서도 취소가 확인창을 닫는다', (t) async {
+      // 실제 앱: UserRootScreen 의 탭마다 Navigator 가 있고 확인창은 루트 Navigator 에 뜬다.
+      await _pumpHost(
+        t,
+        Navigator(
+          onGenerateRoute: (s) => MaterialPageRoute(
+              builder: (_) => MyApplicationsScreen(reads: reads([invite(policy: _standard())])), settings: s),
+        ),
+        size: const Size(390, 1600),
+        textScale: 1.0,
+      );
+      final cta = find.text('수락하기');
+      await t.ensureVisible(cta);
+      await t.tap(cta);
+      await _settle(t, rounds: 30);
+      expect(findVisibleText('동의하고 초대 수락'), findsOneWidget);
+      await t.tap(find.text('취소'));
+      await _settle(t, rounds: 10);
+      expect(findVisibleText('동의하고 초대 수락'), findsNothing, reason: '취소가 확인창을 닫지 못했다');
+      expect(find.text('수락하기'), findsOneWidget, reason: '목록 화면은 그대로 있어야 한다');
+    });
+
+    testWidgets('F-1c 기준 기록이 없으면 예시도 없다 — 현재 기준으로 계산하지 않는다', (t) async {
+      final reached = await openAcceptDialog(t,
+          policy: null, size: const Size(390, 1200), textScale: 1.0);
+      expect(reached, isTrue);
+      expect(find.text('시간 예시 보기'), findsNothing);
+      expect(visibleText(_visible(t)).contains('예: '), isFalse);
     });
 
     testWidgets('F-2 기록이 없으면 **없다고 말한다** — 현재 기준으로 채우지 않는다',
@@ -611,9 +703,59 @@ void main() {
       final shown = _visible(t);
       expect(shown.contains(kAttendancePolicyUnknownNote.split('\n').first),
           isTrue, reason: '기록 없음을 말하지 않는다');
-      for (final l in attendancePolicyLines(_standard())) {
-        expect(shown.contains(l.value), isFalse,
-            reason: '기록이 없는데 기준을 적었다: ${l.value}');
+      for (final p in _guidePoints(attendanceRuleGuide(_standard()))) {
+        expect(visibleText(shown).contains(p), isFalse,
+            reason: '기록이 없는데 기준을 적었다: $p');
+      }
+    });
+
+    // [.29-A1] 내 지원에서 연 공고 상세(초대 수락 화면)는 **그 지원서 snapshot** 을 보인다 — 사업장 현재 기준이 아니다.
+    //   기기 대조: 사업장 기준(유예 10분)을 바꾼 뒤 초대 상세가 10분을 보여, 수락 확인창(snapshot 5분)과 달랐다.
+    testWidgets('F-4 내 지원에서 연 공고 상세는 snapshot 기준과 그 근무 시각을 보인다', (t) async {
+      await _pumpHost(
+        t,
+        JobPostingScreen(
+            to: _to(),
+            workDetails: const [],
+            reads: _postingReads(_boundary()), // 사업장 현재 기준은 경계값
+            myApplication: invite(policy: _standard())), // 이 초대에 고정된 기준은 표준값
+        size: const Size(360, 780),
+        textScale: 1.0,
+      );
+      // [DU466 지원 패치 · 후속114 §3] 제목은 TextLayout.keepWords 로 그려진다(보이지 않는 결합 문자 포함) — 보이는 글자 정확 일치 finder 로 찾는다.
+      final title = findVisibleText(kAttendanceRuleGuideTitle);
+      await t.ensureVisible(title);
+      await _settle(t);
+      expectRuleGuide(t, _standard(), '초대 상세(snapshot)', start: '18:00', end: '22:30');
+      final shown = visibleText(_visible(t));
+      final std = _guidePoints(attendanceRuleGuide(_standard())).toSet();
+      for (final p in _guidePoints(attendanceRuleGuide(_boundary()))) {
+        if (std.contains(p)) continue;
+        expect(shown.contains(p), isFalse, reason: '사업장 현재 기준이 섞였다: $p');
+      }
+      expect(shown.contains('근무시간 18:00–22:30'), isTrue);
+      expect(shown.contains(kAttendancePolicyFrozenNote), isTrue);
+    });
+
+    testWidgets('F-5 snapshot 없는 지원서로 연 공고 상세는 현재 기준으로 채우지 않는다', (t) async {
+      await _pumpHost(
+        t,
+        JobPostingScreen(
+            to: _to(),
+            workDetails: const [],
+            reads: _postingReads(_standard()),
+            myApplication: invite(policy: null)),
+        size: const Size(360, 780),
+        textScale: 1.0,
+      );
+      // [DU466 지원 패치 · 후속114 §3] 제목은 TextLayout.keepWords 로 그려진다(보이지 않는 결합 문자 포함) — 보이는 글자 정확 일치 finder 로 찾는다.
+      final title = findVisibleText(kAttendanceRuleGuideTitle);
+      await t.ensureVisible(title);
+      await _settle(t);
+      final shown = visibleText(_visible(t));
+      expect(shown.contains(kAttendancePolicyUnknownNote.split('\n').first), isTrue);
+      for (final p in _guidePoints(attendanceRuleGuide(_standard()))) {
+        expect(shown.contains(p), isFalse, reason: '기록이 없는데 현재 기준을 적었다: $p');
       }
     });
 
@@ -642,7 +784,64 @@ void main() {
         textScale: 1.0,
       );
       expect(t.takeException(), isNull);
-      expectAllSevenLines(t, _standard(), '계약 서명');
+      expectRuleGuide(t, _standard(), '계약 서명', start: '18:00', end: '22:30');
+      expect(find.text(kAttendanceRuleGuideTitle), findsOneWidget, reason: '임금 조항 아래 구분 제목');
+    });
+
+    // [ATTENDANCE-RULE-GUIDE.29-A1] 계약서는 사례를 접지 않는다 — 기준 바로 아래에 이 근무(18:00~22:30) 사례.
+    testWidgets('G-1b 근태 인정 기준 사례가 이 근무 시각으로 기준 바로 아래 보인다', (t) async {
+      await _pumpHost(
+        t,
+        ContractSignScreen(contract: _contract(policy: _standard()), role: 'worker'),
+        size: const Size(360, 900),
+        textScale: 1.0,
+      );
+      expect(t.takeException(), isNull);
+      final g = attendanceRuleGuide(_standard(), startHHmm: '18:00', endHHmm: '22:30');
+      expect(g.workTime, '18:00–22:30');
+      expect(visibleText(_visible(t)).contains('근무시간 18:00–22:30'), isTrue);
+      expectGuideExamples(t, g, '계약 서명');
+      expect(find.text('시간 예시 보기'), findsNothing, reason: '계약서는 약속 전체가 읽혀야 한다');
+    });
+
+    // [TEXT-LAYOUT-CONSUMER.29] 근무일 표 — 기기 320dp·1.3 에서 '2026-1 / 0-29', '17:3 / 5' 로 갈렸다.
+    //   들어가면 표, 아니면 근무일마다 한 덩어리. 날짜·시각·금액은 쪼개지 않는다.
+    //   (판단은 실제 글자 폭으로 한다 — 시험 글꼴은 기기보다 넓어 '표' 쪽 예시는 600dp 로 둔다.)
+    for (final c in [(const Size(600, 900), 1.0, true), (const Size(320, 900), 1.3, false)]) {
+      testWidgets('G-5 ${c.$1.width.toInt()}dp × ${c.$2} — 근무일 ${c.$3 ? '표' : '쌓음'}, 날짜·시각·금액 한 줄', (t) async {
+        await _pumpHost(
+          t,
+          ContractSignScreen(contract: _contract(policy: _standard()), role: 'worker'),
+          size: c.$1,
+          textScale: c.$2,
+        );
+        expect(t.takeException(), isNull);
+        expect(find.byType(Table), c.$3 ? findsWidgets : findsNothing);
+        final slot = _contract(policy: _standard()).slots.first;
+        for (final v in [slot.workDate, slot.formattedWage]) {
+          final f = find.text(v);
+          await t.ensureVisible(f.first);
+          final p = t.renderObject<RenderParagraph>(
+              find.descendant(of: f.first, matching: find.byType(RichText), matchRoot: true).first);
+          final len = p.text.toPlainText().length;
+          final tops = p
+              .getBoxesForSelection(TextSelection(baseOffset: 0, extentOffset: len))
+              .map((b) => b.top.round())
+              .toSet();
+          expect(tops.length, 1, reason: '$v 이 한 줄이어야 한다');
+        }
+      });
+    }
+
+    testWidgets('G-2b snapshot 이 없으면 사례도 없다', (t) async {
+      await _pumpHost(
+        t,
+        ContractSignScreen(contract: _contract(policy: null), role: 'worker'),
+        size: const Size(360, 900),
+        textScale: 1.0,
+      );
+      expect(find.text(kAttendanceRuleGuideTitle), findsNothing);
+      expect(visibleText(_visible(t)).contains('예: '), isFalse);
     });
 
     testWidgets('G-2 snapshot 이 없으면 **적지 않는다** — 현재 기준으로 채우지 않는다',
@@ -654,10 +853,9 @@ void main() {
         textScale: 1.0,
       );
       expect(t.takeException(), isNull);
-      final shown = _visible(t);
-      for (final l in attendancePolicyLines(_standard())) {
-        expect(shown.contains(l.value), isFalse,
-            reason: '기록이 없는데 기준을 적었다: ${l.value}');
+      final shown = visibleText(_visible(t));
+      for (final p in _guidePoints(attendanceRuleGuide(_standard()))) {
+        expect(shown.contains(p), isFalse, reason: '기록이 없는데 기준을 적었다: $p');
       }
     });
 
@@ -670,7 +868,7 @@ void main() {
         size: const Size(360, 900),
         textScale: 1.0,
       );
-      expectAllSevenLines(t, _boundary(), '계약 서명(snapshot)');
+      expectRuleGuide(t, _boundary(), '계약 서명(snapshot)', start: '18:00', end: '22:30');
       final shown = _visible(t);
       for (final l in attendancePolicyLines(_standard())) {
         expect(shown.contains(l.value), isFalse,
@@ -744,7 +942,7 @@ void main() {
         textScale: 1.0,
       );
       expect(t.takeException(), isNull);
-      expectAllSevenLines(t, _standard(), '서명 완료 계약 재조회');
+      expectRuleGuide(t, _standard(), '서명 완료 계약 재조회', start: '18:00', end: '22:30');
     });
 
     testWidgets('I-2 좁은 화면·큰 배율에서도 재조회가 된다', (t) async {
@@ -756,7 +954,7 @@ void main() {
         textScale: 2.0,
       );
       expect(t.takeException(), isNull);
-      expectAllSevenLines(t, _longest(), '재조회 320×2.0');
+      expectRuleGuide(t, _longest(), '재조회 320×2.0', start: '18:00', end: '22:30');
     });
 
     test('I-3 계약 목록이 상태와 무관하게 상세로 보낸다', () {
@@ -792,9 +990,9 @@ void main() {
   // H. 지원 전 정보 위계 — 7개 기준이 날짜·임금·CTA 를 밀어내지 않는다
   // ═══════════════════════════════════════════════════════════
   group('[H] 정보 위계', () {
-    testWidgets('H-1 고지는 **한 줄**로 있고 숫자는 상세에 있다', (t) async {
-      // 7개 숫자를 본문에 펼치면 날짜·임금이 아래로 밀린다. 본문은
-      //   존재와 영향만 말하고 값은 상세 시트에 둔다.
+    // [.29-A1] 예전 결정(본문은 한 줄, 숫자는 상세 시트)을 뒤집었다 — 지원 전에 핵심 기준을 처음부터 보인다.
+    //   날짜·임금이 고지보다 먼저 나오는 위계는 H-3 이 지킨다. 사례만 접는다.
+    testWidgets('H-1 핵심 기준은 처음부터 보이고, 사례만 접는다', (t) async {
       await _pumpHost(
         t,
         JobPostingScreen(
@@ -802,16 +1000,11 @@ void main() {
         size: const Size(360, 780),
         textScale: 1.0,
       );
-      final shown = _visible(t);
-      // 본문에는 7개 값이 펼쳐져 있지 않다.
-      var inlineValues = 0;
-      for (final l in attendancePolicyLines(_standard())) {
-        if (shown.contains(l.value)) inlineValues++;
-      }
-      expect(inlineValues, 0,
-          reason: '본문에 고지 값 $inlineValues개가 펼쳐져 있다 — 날짜·임금이 밀린다');
-      // 대신 입구가 있다 — 너무 깊이 숨기지도 않는다.
-      expect(find.text('상세 기준'), findsOneWidget);
+      final title = find.text(kAttendanceRuleGuideTitle);
+      await t.ensureVisible(title);
+      await _settle(t);
+      expectRuleGuide(t, _standard(), '공고 본문');
+      expect(find.text('상세 기준'), findsNothing);
     });
 
     testWidgets('H-2 지원 CTA 는 스크롤 본문이 아니라 **하단 바**에 있다', (t) async {
@@ -841,7 +1034,7 @@ void main() {
           .widgetList<Text>(find.byType(Text))
           .map((w) => w.data ?? '')
           .toList();
-      final policyAt = texts.indexWhere((s) => s == kAttendancePolicyTitle);
+      final policyAt = texts.indexWhere((s) => s == kAttendanceRuleGuideTitle);
       expect(policyAt, greaterThan(-1), reason: '고지 섹션이 없다');
       // 업무·임금 정보가 고지 앞쪽에 있다.
       final workAt = texts.indexWhere((s) => s.contains('냉장 분류'));
@@ -864,9 +1057,13 @@ void main() {
         'lib/screens/contract/contract_pdf_builder.dart',
       ]) {
         final s = File(p).readAsStringSync();
+        // [.29-A1] 공고·초대·계약·PDF 는 '근태 인정 기준' 공용 생성(attendanceRuleGuide), 지원 확인은 기존 줄 목록.
         final shared = s.contains('attendancePolicyGroups(') ||
-            s.contains('attendancePolicyLines(');
+            s.contains('attendancePolicyLines(') ||
+            s.contains('attendanceRuleGuide(');
         expect(shared, isTrue, reason: '$p 가 공용 formatter 를 쓰지 않는다');
+        expect(s.contains("AttendanceRuleItem('"), isFalse,
+            reason: '$p 가 기준 항목을 직접 만든다');
         expect(s.contains("AttendancePolicyLine('"), isFalse,
             reason: '$p 가 고지 줄을 직접 만든다');
       }

@@ -10,6 +10,7 @@ import '../../utils/contract_status_visual.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
@@ -23,9 +24,13 @@ import '../common/notification_screen.dart';
 class HistoricalContractDetailScreen extends StatefulWidget {
   final String contractId;
 
+  /// [DU345 seam] 서비스 주입 지점(시험 · 표시 검증용). null 이면 HistoricalContractService() — 기존과 같다.
+  final HistoricalContractService? service;
+
   const HistoricalContractDetailScreen({
     super.key,
     required this.contractId,
+    this.service,
   });
 
   @override
@@ -35,7 +40,7 @@ class HistoricalContractDetailScreen extends StatefulWidget {
 
 class _HistoricalContractDetailScreenState
     extends State<HistoricalContractDetailScreen> {
-  final _service = HistoricalContractService();
+  late final HistoricalContractService _service = widget.service ?? HistoricalContractService();
 
   HistoricalContractDetail? _detail;
   bool _isLoading = true;
@@ -84,14 +89,30 @@ class _HistoricalContractDetailScreenState
   // ─── PDF 공유 ──────────────────────────────────────────────
 
   Future<void> _sharePdf() async {
-    final url = _detail?.pdfUrl;
-    if (url == null || url.trim().isEmpty) return;
+    // [R8P6-PDF-REMEDIATION] 이 화면의 `pdfUrl` 은 더 이상 영구 토큰 URL 이
+    //   아니다 — `callableGetHistoricalContractById` 가 이 사용자의 인가
+    //   (historicalOwnerUid 본인)를 확인한 뒤 만든 **15분 Signed URL** 이다.
+    //   그래서 화면을 열어 둔 채 오래 지나면 만료될 수 있다. 그때는 상세를
+    //   다시 읽어 새 링크를 받는다 — 사용자가 화면을 나갔다 올 이유가 없다.
     if (_isSharingPdf) return;
     if (!mounted) return;
+    var url = _detail?.pdfUrl;
+    if (url == null || url.trim().isEmpty) return;
     setState(() => _isSharingPdf = true);
     try {
-      final resp = await http.get(Uri.parse(url));
+      var resp = await http.get(Uri.parse(url));
       if (!mounted) return;
+      if (resp.statusCode != 200) {
+        // 만료로 보고 한 번만 재발급해 다시 시도한다.
+        await _loadDetail();
+        if (!mounted) return;
+        final retryUrl = _detail?.pdfUrl;
+        if (retryUrl != null && retryUrl.trim().isNotEmpty) {
+          url = retryUrl;
+          resp = await http.get(Uri.parse(url));
+          if (!mounted) return;
+        }
+      }
       if (resp.statusCode != 200) {
         ToastHelper.showError('PDF를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
         return;
@@ -161,18 +182,21 @@ class _HistoricalContractDetailScreenState
             Icon(
               Icons.error_outline,
               size: ResponsiveHelper.iconSize(context, 48),
-              color: AppColors.grey400,
+              color: AppColors.grey600, // [DU345] grey400 → grey600
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            // [DU345 r2] 실패 문구 낱말 단위(320 · 2.0 '못 / 했습니다')
             Text(
-              '계약서를 불러오지 못했습니다.',
+              TextLayout.keepWords('계약서를 불러오지 못했습니다.'),
+              semanticsLabel: '계약서를 불러오지 못했습니다.',
               style: ResponsiveHelper.bodyStyle(context)
                   .copyWith(color: AppColors.textPrimary),
               textAlign: TextAlign.center,
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 6)),
             Text(
-              '잠시 후 다시 시도해 주세요.',
+              TextLayout.keepWords('잠시 후 다시 시도해 주세요.'),
+              semanticsLabel: '잠시 후 다시 시도해 주세요.',
               style: ResponsiveHelper.captionStyle(context)
                   .copyWith(color: AppColors.textSecondary),
               textAlign: TextAlign.center,
@@ -351,42 +375,68 @@ class _HistoricalContractDetailScreenState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 근로자명 + 상태 배지
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Text(
-                  workerName,
-                  style: ResponsiveHelper.titleStyle(context)
-                      .copyWith(fontWeight: FontWeight.w700),
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Container(
+          // [DU345] 이름 + 상태 배지 — 배지 폭(실제 글자 배율)과 이름 최소 폭(본문 굵은 글자 6자)을 재서 한 줄에 같이 못 두면
+          //   배지를 이름 아래 줄로 내린다(S006 DU342 와 같은 방식). 이름은 식별 정보 — 말줄임 없이 identity 줄바꿈.
+          LayoutBuilder(builder: (ctx, cons) {
+            final nameStyle = ResponsiveHelper.titleStyle(ctx).copyWith(fontWeight: FontWeight.w700);
+            final name = Text(
+              TextLayout.identity(workerName),
+              semanticsLabel: workerName,
+              style: nameStyle,
+            );
+            final badge = Container(
                 padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 10),
-                  vertical: ResponsiveHelper.spacing(context, 4),
+                  horizontal: ResponsiveHelper.spacing(ctx, _badgePadH),
+                  vertical: ResponsiveHelper.spacing(ctx, 4),
                 ),
                 decoration: BoxDecoration(
                   color: statusColors.bg,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Text(
-                  displayStatus,
-                  style: ResponsiveHelper.captionStyle(context).copyWith(
-                    color: statusColors.fg,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
+                child: Text(displayStatus, style: _badgeStyle(ctx).copyWith(color: statusColors.fg)),
+              );
+            double oneLine(String text, TextStyle style) {
+              final tp = TextPainter(
+                text: TextSpan(text: text, style: DefaultTextStyle.of(ctx).style.merge(style)),
+                textDirection: Directionality.of(ctx),
+                textScaler: MediaQuery.textScalerOf(ctx),
+                maxLines: 1,
+              )..layout();
+              final w = tp.width;
+              tp.dispose();
+              return w;
+            }
+            final gap = ResponsiveHelper.spacing(ctx, 8);
+            final badgeWidth = oneLine(displayStatus, _badgeStyle(ctx)) + ResponsiveHelper.spacing(ctx, _badgePadH) * 2;
+            final trailingWidth = 0.0;
+            final sideBySide = !cons.hasBoundedWidth ||
+                cons.maxWidth - gap - badgeWidth - trailingWidth >= oneLine('가나다라마바', nameStyle);
+            if (sideBySide) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(child: name),
+                  SizedBox(width: gap),
+                  badge,
+                ],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [Expanded(child: name),]),
+                SizedBox(height: ResponsiveHelper.spacing(ctx, 4)),
+                badge,
+              ],
+            );
+          }),
 
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
 
-          // 사업장명
+          // 사업장명 — [DU345] 낱말 단위
           Text(
-            businessName,
+            TextLayout.phrases(businessName),
+            semanticsLabel: businessName,
             style: ResponsiveHelper.bodyStyle(context)
                 .copyWith(color: AppColors.textSecondary),
           ),
@@ -454,11 +504,13 @@ class _HistoricalContractDetailScreenState
                     ),
                   )
                 : const Icon(Icons.picture_as_pdf_outlined),
-            label: const Text('계약서 PDF 저장/공유'),
+            label: Text(TextLayout.keepWords('계약서 PDF 저장/공유'),
+                semanticsLabel: '계약서 PDF 저장/공유', textAlign: TextAlign.center), // [DU345] '저 / 장/' 분절 해소
           )
         else
           Text(
-            _noPdfCopy(detail),
+            TextLayout.keepWords(_noPdfCopy(detail)),
+            semanticsLabel: _noPdfCopy(detail),
             style: ResponsiveHelper.captionStyle(context)
                 .copyWith(color: AppColors.textSecondary),
           ),
@@ -511,6 +563,11 @@ class _HistoricalContractDetailScreenState
     return (bg: c.bg, fg: c.fg);
   }
 
+  // [DU345] 머리 적응 배치에서 배지 폭을 잰다(배지와 같은 글자 · 여백).
+  TextStyle _badgeStyle(BuildContext context) =>
+      ResponsiveHelper.captionStyle(context).copyWith(fontWeight: FontWeight.w600);
+  static const double _badgePadH = 10;
+
   String _noPdfCopy(HistoricalContractDetail detail) {
     if (detail.status == 'voided') {
       if (detail.voidReason == 'BUSINESS_DELETED') {
@@ -552,7 +609,8 @@ class _DetailSection extends StatelessWidget {
                 vertical: ResponsiveHelper.spacing(context, 10),
               ),
               child: Text(
-                title,
+                TextLayout.keepWords(title), // [DU345] 섹션 · 조항 제목 낱말 단위
+                semanticsLabel: title,
                 style: ResponsiveHelper.captionStyle(context).copyWith(
                   color: AppColors.textSecondary,
                   fontWeight: FontWeight.w600,
@@ -584,27 +642,37 @@ class _InfoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // [DU345] 라벨 칸 80 고정이라 320 · 2.0 에서 '근무 장 / 소' 처럼 라벨이 음절로 갈렸다. 서명 화면 _InfoRow([.29-A1])와
+    //   같은 방식 — 실제 글자 배율로 라벨 한 줄 폭을 재서 칸을 넘으면 라벨을 값 위 한 줄로 올린다. 라벨 · 값 낱말 단위.
+    final labelStyle = ResponsiveHelper.captionStyle(context).copyWith(color: AppColors.textSecondary);
+    final valueStyle = ResponsiveHelper.captionStyle(context).copyWith(color: AppColors.textPrimary);
+    final painter = TextPainter(
+      text: TextSpan(text: label, style: DefaultTextStyle.of(context).style.merge(labelStyle)),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final stacked = painter.width > 80;
+    painter.dispose();
+    final labelText = Text(TextLayout.keepWords(label), semanticsLabel: label, style: labelStyle);
+    final valueText = Text(TextLayout.keepWords(value), semanticsLabel: value, style: valueStyle);
+    if (stacked) {
+      return Padding(
+        padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 6)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [labelText, valueText],
+        ),
+      );
+    }
     return Padding(
       padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 6)),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              label,
-              style: ResponsiveHelper.captionStyle(context)
-                  .copyWith(color: AppColors.textSecondary),
-            ),
-          ),
+          SizedBox(width: 80, child: labelText),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          Expanded(
-            child: Text(
-              value,
-              style: ResponsiveHelper.captionStyle(context)
-                  .copyWith(color: AppColors.textPrimary),
-            ),
-          ),
+          Expanded(child: valueText),
         ],
       ),
     );
@@ -635,8 +703,10 @@ class _Paragraph extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // [DU345] 조항 본문 낱말 단위(S048 · S091 과 같은 보존 규칙) — 줄바꿈 · 번호 · 원문 그대로, 낭독은 원문.
     return Text(
-      content,
+      TextLayout.phrases(content),
+      semanticsLabel: content,
       style: ResponsiveHelper.captionStyle(context)
           .copyWith(color: AppColors.textPrimary, height: 1.6),
     );

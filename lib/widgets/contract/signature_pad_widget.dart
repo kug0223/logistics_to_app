@@ -6,6 +6,7 @@ import 'package:signature/signature.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 
 /// 손글씨 서명 패드 BottomSheet 위젯
@@ -116,13 +117,14 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
                       .copyWith(fontWeight: FontWeight.bold),
                 ),
               ),
+              // [DU1 후속40 B2-C] 이전 constraints(0)·padding 0 — 외곽은 아이콘(20×20) 크기로 추정(당시 측정은 Icon rect 였다, 후속41 정정).
+              //   공통 기준 터치 48×48: 아이콘 크기(20)는 그대로, 누르는 영역만 넓힌다(after 실측 IconButton 외곽 48×48).
               IconButton(
                 icon: const Icon(Icons.close, size: 20),
                 onPressed: widget.onCancel ?? () => Navigator.pop(context),
-                visualDensity: VisualDensity.compact,
                 color: AppColors.grey600,
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
               ),
             ],
           ),
@@ -212,9 +214,10 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
                   fontWeight: FontWeight.w500,
                 ),
               ),
+              // [DU1 후속40 B2-C] 실측 54.4×17(392·1.0)·83.5×34(320·2.0) — 터치 48 미만. 글자·아이콘은 그대로, 최소 48×48 영역.
               style: TextButton.styleFrom(
-                padding: EdgeInsets.zero,
-                minimumSize: Size.zero,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: const Size(48, 48),
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 splashFactory: NoSplash.splashFactory,
               ),
@@ -233,7 +236,7 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
               SizedBox(width: spacing(context, 4)),
               Expanded(
                 child: Text(
-                  '손가락으로 위 영역에 서명해주세요.',
+                  TextLayout.keepWords('손가락으로 위 영역에 서명해주세요.'), // [DU1 후속40 B2-C] '서|명해주세요' 끊김
                   style: ResponsiveHelper.smallStyle(context,
                       color: AppColors.grey500),
                 ),
@@ -253,6 +256,8 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
                 child: OutlinedButton(
                   onPressed: widget.onCancel ?? () => Navigator.pop(context),
                   style: OutlinedButton.styleFrom(
+                    // [DU1 후속40 B2-C] 실측 48 → 기준 주 버튼 52(취소도 같은 줄 높이)
+                    minimumSize: const Size.fromHeight(52),
                     padding: EdgeInsets.symmetric(
                         vertical: spacing(context, 14)),
                     side: const BorderSide(color: AppColors.grey300),
@@ -273,6 +278,8 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: theme.primaryColor,
                     disabledBackgroundColor: AppColors.grey100,
+                    // [DU1 후속40 B2-C] 실측 48 → 기준 주 버튼 52(취소도 같은 줄 높이)
+                    minimumSize: const Size.fromHeight(52),
                     padding: EdgeInsets.symmetric(
                         vertical: spacing(context, 14)),
                     shape: RoundedRectangleBorder(

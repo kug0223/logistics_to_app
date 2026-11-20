@@ -13,6 +13,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -770,7 +771,7 @@ void main() {
     expect(find.text('불가'), findsOneWidget);
     expect(find.text('지원'), findsNothing, reason: '누를 수 있는 지원이 남아 있으면 안 된다');
     // `마감` 과 다른 상태다 — 정원이 아니라 내 일정이 이유다.
-    expect(find.text('마감'), findsNothing);
+    expect(findVisibleText('마감'), findsNothing);
   });
 
   testWidgets('[CCR-2] 겹치지 않으면 지원 버튼이 그대로다 (회귀)', (tester) async {

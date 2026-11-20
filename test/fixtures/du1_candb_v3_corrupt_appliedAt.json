@@ -1,0 +1,46 @@
+{
+ "items": [
+  {
+   "id": "manual_20261103",
+   "applicationId": "manual",
+   "userId": "w_manual",
+   "businessId": "b1",
+   "businessName": "B",
+   "workDate": {
+    "_seconds": 1793631600,
+    "_nanoseconds": 0
+   },
+   "workType": "QA",
+   "checkIn": {
+    "_seconds": 1793664000,
+    "_nanoseconds": 0
+   },
+   "checkOut": {
+    "_seconds": 1793696400,
+    "_nanoseconds": 0
+   },
+   "status": "present",
+   "wageStatus": "pending",
+   "adminConfirmed": true,
+   "snapshotWage": 13000,
+   "snapshotWageType": "hourly",
+   "createdAt": {
+    "_seconds": 1793664000,
+    "_nanoseconds": 0
+   }
+  }
+ ],
+ "limitReached": false,
+ "wageDay": {
+  "applied": true,
+  "applicationMissing": 0,
+  "applicationMismatch": 0,
+  "mismatchReasons": {},
+  "workDetailMissing": 0,
+  "inputIncomplete": 1,
+  "incompleteReasons": {
+   "app:appliedAt:notTimestamp": 1
+  },
+  "complete": false
+ }
+}

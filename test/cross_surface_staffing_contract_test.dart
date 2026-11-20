@@ -113,7 +113,11 @@ void main() {
     test('02-a status만 보고 자리를 세는 reader가 없다', () {
       // 반납된 확정은 status가 CONFIRMED로 남지만 정원을 소모하지 않는다.
       final svc = _codeOf(_src(_svcPath));
-      final f = _after(svc, 'loadTOWorkDetails(', 2200);
+      // [E2-INVITED-SEAT] 집계 본체는 loadTOWorkDetails 가 부르는
+      //   `tallyWorkDetailSeats` 로 옮겼다.
+      expect(_after(svc, 'loadTOWorkDetails(', 4000)
+          .contains('tallyWorkDetailSeats('), isTrue);
+      final f = _after(svc, 'static void tallyWorkDetailSeats(', 2200);
       expect(f.contains('!a.isStaffingReleased'), isTrue,
           reason: '공고 카드 통계가 반납 좌석을 확정으로 센다');
       expect(f.contains('countsAsSeat'), isTrue);
@@ -195,7 +199,13 @@ void main() {
       final n = RegExp(r'final shortage = g\.shortage;')
           .allMatches(day)
           .length;
-      expect(n, 2, reason: 'CTA/시트 중 자체 계산이 남았다');
+      // [INVITE-TERMINAL] 시트는 공개 부족이 0 일 때만 비공개 초대 부족(같은 식
+      //   staffingShortageOf 를 쓰는 getter)을 넘긴다 — 자체 계산은 여전히 없다.
+      final sheet = RegExp(r'final shortage = g\.shortage > 0 \? g\.shortage : g\.privateInviteShortage;')
+          .allMatches(day)
+          .length;
+      expect(n + sheet, 2, reason: 'CTA/시트 중 자체 계산이 남았다');
+      expect(day.contains('int get privateInviteShortage {'), isTrue);
       // 로컬 재계산이 남아 있으면 안 된다
       expect(
           day.contains(

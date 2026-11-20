@@ -117,8 +117,10 @@ void main() {
       // status 는 같은 스냅샷의 confirmedCnt 로 판정한다 — 함께 건너뛴다.
       expect(flatCf.contains('if(applied)awaitsrvSyncToStatusSafely(toRef,totalRequired,confirmedCnt);'),
           isTrue, reason: '비슬롯 분기');
-      expect(flatCf.contains('if(flexApplied){awaitsrvSyncToStatusSafely(toRef,flexTotalRequired,flexConfirmedCnt);}'),
-          isTrue, reason: 'flex 분기');
+      // [INVITE-CAPACITY] flex 는 슬롯 status 로 FULL 을 정한다 — 여전히 flexApplied 안이다.
+      final flexAt = flatCf.indexOf('if(flexApplied){');
+      final syncAt = flatCf.indexOf('awaitsrvSyncToStatusSafely(toRef,flexTotalRequired,flexConfirmedCnt,flexFull);');
+      expect(flexAt > 0 && syncAt > flexAt && syncAt - flexAt < 400, isTrue, reason: 'flex 분기');
     });
 
     test('B-5 재집계는 건너뛴 사실을 응답으로 알린다', () {

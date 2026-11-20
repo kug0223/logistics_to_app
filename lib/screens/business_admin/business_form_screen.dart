@@ -24,6 +24,7 @@ import '../../services/storage_service.dart';
 // Utils
 import '../../utils/attendance_rounding_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/constants.dart';
 // Widgets
@@ -330,7 +331,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           ? const LoadingWidget()
           : Column(
               children: [
-                _buildStepIndicator(context, theme),
+                // [DU456 r3 · 가설] State context 는 AppPageScaffold 위 — 원 크기 측정이 숫자 Text 와 같은 Material 아래 context 를 쓰게 한다.
+                Builder(builder: (ctx) => _buildStepIndicator(ctx, theme)),
                 const Divider(height: 1, color: AppColors.grey100),
                 Expanded(
                   child: SingleChildScrollView(
@@ -356,6 +358,12 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     );
   }
 
+  /// [R7-PAYROLL-DISCLOSURE.1] 근태/급여 처리 기준 고지 — 문구 원문(DU322 에서 표시 · 낭독 두 곳에 쓰려고 상수로 뺐다. 글자 그대로).
+  static const String _kRuleDisclosure = 'GPS/비콘 체크 시각에 자동 적용됩니다. '
+      '이 기준은 근태 판정과 급여 계산에 사용됩니다.\n'
+      '기준을 바꾸면 이후의 새 지원·초대부터 적용되고, '
+      '이미 확정된 근무는 그 당시 기준으로 계산됩니다.';
+
   Widget _buildStepIndicator(BuildContext context, ThemeData theme) {
     const stepLabels = ['업종 선택', '기본 정보', '상세 정보'];
     return Padding(
@@ -379,6 +387,18 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           final stepIndex = i ~/ 2;
           final isCompleted = stepIndex < _currentStep;
           final isCurrent = stepIndex == _currentStep;
+          // [DU456] 숫자 원 지름 — 숫자(13 굵게)의 한 줄 높이 + 6, 최소 28(배율 1.0 은 그대로).
+          //   배율 2.0 에서 28 고정 원 밖으로 흰 숫자가 나가 바탕에 묻혔다('3' 위아래 잘림).
+          const digitStyle = TextStyle(fontWeight: FontWeight.bold, fontSize: 13);
+          final digitPainter = TextPainter(
+            text: TextSpan(text: '${stepIndex + 1}', style: DefaultTextStyle.of(context).style.merge(digitStyle)),
+            textDirection: Directionality.of(context),
+            textScaler: MediaQuery.textScalerOf(context),
+            // [DU456 r2 진단 · locale 가설 기각] B 원 32(높이 26 = 13 × 2.0) · 실제 숫자 줄 37. r3 가설: 측정 context 가 Material 밖이었다(호출부 Builder) — locale 은 숫자 Text 와 같게 둔다.
+            locale: Localizations.maybeLocaleOf(context),
+          )..layout();
+          final circle = digitPainter.height + 6 > 28 ? digitPainter.height + 6 : 28.0;
+          digitPainter.dispose();
           // [R7-PREDEVICE-STABILIZATION.1] 단계 칸이 맨 `Column` 이었다.
           //
           //   Row 는 자식에게 무한 폭을 주므로 라벨('업종 선택' 등)이
@@ -393,8 +413,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             children: [
               AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
-                width: 28,
-                height: 28,
+                width: circle,
+                height: circle,
                 decoration: BoxDecoration(
                   color: isCompleted || isCurrent
                       ? theme.primaryColor
@@ -406,8 +426,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                       ? const Icon(Icons.check, size: 14, color: Colors.white)
                       : Text(
                           '${stepIndex + 1}',
+                          // [DU1 구현88 S013] 다음 단계 숫자 grey500 이 grey200 원 위 2.31:1(PNG) — 읽기용 보조색(5.10:1).
                           style: TextStyle(
-                            color: isCurrent ? Colors.white : AppColors.grey500,
+                            color: isCurrent ? Colors.white : AppColors.textSecondary,
                             fontWeight: FontWeight.bold,
                             fontSize: 13,
                           ),
@@ -415,11 +436,15 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                 ),
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+              // [DU322] 320·2.0 에서 '업종 선 / 택' 으로 끊겼다 — 낱말 단위('업종 / 선택'), 원문은 낭독용
               Text(
-                stepLabels[stepIndex],
+                TextLayout.keepWords(stepLabels[stepIndex]),
+                semanticsLabel: stepLabels[stepIndex],
                 textAlign: TextAlign.center,
+                // [DU1 구현88 S013] 현재가 아닌 단계 라벨 grey500 이 화면 바탕 F6F7FA 위 2.50:1(PNG) — 읽어야 하는 단계 이름이라
+                //   textSecondary(5.52:1). 현재 단계의 브랜드색·굵기 강조는 그대로.
                 style: ResponsiveHelper.tinyStyle(context).copyWith(
-                  color: isCurrent ? theme.primaryColor : AppColors.grey500,
+                  color: isCurrent ? theme.primaryColor : AppColors.textSecondary,
                   fontWeight:
                       isCurrent ? FontWeight.bold : FontWeight.normal,
                 ),
@@ -476,11 +501,13 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // [DU1 구현88 S013] 공용 infoCard 는 글자를 카드색 90% 로 그려 브랜드색일 때 옅은 면 위 3.87:1(PNG) — 작은 글자 4.5 미달.
+        //   공용 위젯(소비처 4곳)은 그대로 두고 이 소비처만 brandDark 를 넘긴다(브랜드 100% 도 4.53 로 경계값이라 여유를 둔다).
         CommonWidgets.infoCard(
           context: context,
           message: '사업장의 업종을 선택해주세요',
           icon: Icons.category,
-          color: theme.primaryColor,
+          color: AppColors.brandDark,
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
@@ -755,9 +782,12 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           if (!_isEditMode)
             Padding(
               padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+              // [DU479] warning(화면 바탕 위 약 2.0) → warningDark(약 4.9 · DU1 기준 warning 글자). 등록증 칸 테두리(warning)는 그대로다.
+              // [DU480] 큰 글자에서 '사업자등 / 록증'처럼 음절 사이에서 끊겼다 — 낱말 사이에서만 줄을 바꾼다. 읽기 도구에는 원문.
               child: Text(
-                '신규 사업장 등록 시 사업자등록증 이미지가 필요합니다.',
-                style: ResponsiveHelper.tinyStyle(context, color: AppColors.warning),
+                TextLayout.keepWords('신규 사업장 등록 시 사업자등록증 이미지가 필요합니다.'),
+                semanticsLabel: '신규 사업장 등록 시 사업자등록증 이미지가 필요합니다.',
+                style: ResponsiveHelper.tinyStyle(context, color: AppColors.warningDark),
               ),
             ),
           _buildBusinessLicensePicker(context, theme),
@@ -807,10 +837,11 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                         color: AppColors.grey400,
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                      // [DU478] grey600(grey200 면 위 3.97) → textSecondary(5.10 · 3단계 '사진 추가'와 같다 · DU473).
                       Text(
                         '대표 이미지 추가 (선택)',
                         style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          color: AppColors.grey600,
+                          color: AppColors.textSecondary,
                         ),
                       ),
                     ],
@@ -1005,17 +1036,18 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                             color: AppColors.grey400,
                           ),
                           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                          // [DU478] grey200 면 위 — 행동 이름 grey600(3.97) → textSecondary(5.10) · 형식 grey500(2.31) → textTertiary(4.52). DU473 짝.
                           Text(
                             '사업자등록증 이미지 업로드',
                             style: ResponsiveHelper.bodyStyle(context)
-                                .copyWith(color: AppColors.grey600),
+                                .copyWith(color: AppColors.textSecondary),
                           ),
                           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                           Text(
                             'JPG / PNG',
                             style: ResponsiveHelper.tinyStyle(
                               context,
-                              color: AppColors.grey500,
+                              color: AppColors.textTertiary,
                             ),
                           ),
                         ],
@@ -1191,11 +1223,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         //   이미 확정된 근무의 계산은 바뀌지 않는다. 이 사실이 어디에도
         //   적혀 있지 않아, 관리자는 과거 급여가 흔들릴까 두려워 기준을
         //   고치지 못하거나 반대로 소급된다고 오해할 수 있었다.
+        // [DU322] 320·2.0 에서 '자 / 동 적용됩니다' 로 끊겼다 — 문구 그대로, 줄바꿈 문자 유지 · 낱말 단위(원문은 낭독용)
         Text(
-          'GPS/비콘 체크 시각에 자동 적용됩니다. '
-          '이 기준은 근태 판정과 급여 계산에 사용됩니다.\n'
-          '기준을 바꾸면 이후의 새 지원·초대부터 적용되고, '
-          '이미 확정된 근무는 그 당시 기준으로 계산됩니다.',
+          TextLayout.phrases(_kRuleDisclosure),
+          semanticsLabel: _kRuleDisclosure,
           style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -1556,38 +1587,49 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(label,
-                        style: ResponsiveHelper.smallStyle(context)
-                            .copyWith(fontWeight: FontWeight.w600)),
-                    Text(description,
-                        style: ResponsiveHelper.tinyStyle(context,
-                            color: AppColors.grey500)),
-                  ],
-                ),
+          // [DU455] B(320 · 2.0)에서 값 칩이 오른쪽 폭을 차지해 설명이 5–6줄로 늘었다 — 옆 칸이 모자라면 값 칩을 아래 줄로(이름 → 설명 → 값 → 슬라이더).
+          LayoutBuilder(builder: (_, box) {
+            final texts = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // [DU448] 이름 · 설명이 음절에서 끊겼다(W '… 조출 인 / 정') — 낱말 사이에서만 줄바꿈(읽기는 원문).
+                //   설명 grey500(흰 위 2.68) → textTertiary(5.25 · DU322 GPS 안내와 같다).
+                Text(TextLayout.keepWords(label),
+                    semanticsLabel: label,
+                    style: ResponsiveHelper.smallStyle(context)
+                        .copyWith(fontWeight: FontWeight.w600)),
+                Text(TextLayout.keepWords(description),
+                    semanticsLabel: description,
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: AppColors.textTertiary)),
+              ],
+            );
+            final chip = Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 10),
+                vertical: ResponsiveHelper.spacing(context, 3),
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 10),
-                  vertical: ResponsiveHelper.spacing(context, 3),
-                ),
-                decoration: BoxDecoration(
-                  color: theme.primaryColor.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text('$value$unit',
-                    style: ResponsiveHelper.smallStyle(context,
-                            color: theme.primaryColor)
-                        .copyWith(fontWeight: FontWeight.bold)),
+              decoration: BoxDecoration(
+                color: theme.primaryColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(20),
               ),
-            ],
-          ),
+              child: Text('$value$unit',
+                  style: ResponsiveHelper.smallStyle(context,
+                          color: theme.primaryColor)
+                      .copyWith(fontWeight: FontWeight.bold)),
+            );
+            if (TextLayout.fits(context, box.maxWidth, 220)) {
+              return Row(children: [
+                Expanded(child: texts),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                chip,
+              ]);
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [texts, SizedBox(height: ResponsiveHelper.spacing(context, 4)), chip],
+            );
+          }),
           SliderTheme(
             data: SliderTheme.of(context).copyWith(
               trackHeight: 3,
@@ -1685,9 +1727,11 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                   ],
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                // [DU322] '가능합 / 니다' 해소 · grey500(2.68) → textTertiary(5.25)
                 Text(
-                  '사업장 위치에서 이 거리 이내여야 출퇴근 가능합니다.',
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                  TextLayout.keepWords('사업장 위치에서 이 거리 이내여야 출퇴근 가능합니다.'),
+                  semanticsLabel: '사업장 위치에서 이 거리 이내여야 출퇴근 가능합니다.',
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.textTertiary),
                 ),
                 Slider(
                   value: _gpsRadius,
@@ -1708,23 +1752,24 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                   //   양끝·가운데로 정렬하면 간격 모양은 그대로다.
                   child: Row(
                     children: [
+                      // [DU445] 눈금 grey400(흰 위 1.88) → textTertiary(5.25).
                       Expanded(
                         child: Text('30m',
                             textAlign: TextAlign.start,
                             style: ResponsiveHelper.tinyStyle(context,
-                                color: AppColors.grey400)),
+                                color: AppColors.textTertiary)),
                       ),
                       Expanded(
                         child: Text('100m',
                             textAlign: TextAlign.center,
                             style: ResponsiveHelper.tinyStyle(context,
-                                color: AppColors.grey400)),
+                                color: AppColors.textTertiary)),
                       ),
                       Expanded(
                         child: Text('500m',
                             textAlign: TextAlign.end,
                             style: ResponsiveHelper.tinyStyle(context,
-                                color: AppColors.grey400)),
+                                color: AppColors.textTertiary)),
                       ),
                     ],
                   ),
@@ -1755,9 +1800,11 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                   ],
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                // [DU448] grey500(2.68) → textTertiary · 낱말 사이 줄바꿈(읽기는 원문).
                 Text(
-                  '사업장에 설치된 iBeacon/Eddystone 기기 정보를 입력하세요.',
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                  TextLayout.keepWords('사업장에 설치된 iBeacon/Eddystone 기기 정보를 입력하세요.'),
+                  semanticsLabel: '사업장에 설치된 iBeacon/Eddystone 기기 정보를 입력하세요.',
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.textTertiary),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
@@ -1847,34 +1894,48 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
                 // 인식 거리 (RSSI 임계값)
-                Row(
-                  children: [
-                    Icon(Icons.signal_wifi_4_bar,
-                        size: ResponsiveHelper.iconSize(context, 18),
-                        color: AppColors.info),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                    Text('인식 거리',
-                        style: ResponsiveHelper.bodyStyle(context)
-                            .copyWith(fontWeight: FontWeight.bold)),
-                    const Spacer(),
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: ResponsiveHelper.spacing(context, 10),
-                        vertical: ResponsiveHelper.spacing(context, 4),
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.info.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        BeaconHelper.proximityLabel(_beaconRssiThreshold),
-                        style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.infoDark,
-                            fontWeight: FontWeight.bold),
-                      ),
+                // [DU445] 제목 + Spacer + 값 칩은 큰 글자(320 · 2.0)에서 가용폭을 넘겼다(Spacer 는 모자란 폭을 만들지 못한다).
+                //   GPS 머리와 같이 제목에 남은 폭을 주고, 옆 칸이 값 칩 + 제목 최소 폭보다 좁으면 값 칩을 아래 줄로 내린다.
+                LayoutBuilder(builder: (_, box) {
+                  final icon = ResponsiveHelper.iconSize(context, 18);
+                  final gap = ResponsiveHelper.spacing(context, 8);
+                  final title = Text(TextLayout.keepWords('인식 거리'),
+                      semanticsLabel: '인식 거리',
+                      style: ResponsiveHelper.bodyStyle(context)
+                          .copyWith(fontWeight: FontWeight.bold));
+                  final chip = Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 10),
+                      vertical: ResponsiveHelper.spacing(context, 4),
                     ),
-                  ],
-                ),
+                    decoration: BoxDecoration(
+                      color: AppColors.info.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      TextLayout.keepWords(BeaconHelper.proximityLabel(_beaconRssiThreshold)),
+                      semanticsLabel: BeaconHelper.proximityLabel(_beaconRssiThreshold),
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.infoDark,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  );
+                  final head = [
+                    Icon(Icons.signal_wifi_4_bar, size: icon, color: AppColors.info),
+                    SizedBox(width: gap),
+                  ];
+                  if (TextLayout.fits(context, box.maxWidth - icon - gap, 210)) {
+                    return Row(children: [...head, Expanded(child: title), chip]);
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [...head, Expanded(child: title)]),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                      chip,
+                    ],
+                  );
+                }),
                 Slider(
                   value: _beaconRssiThreshold.toDouble(),
                   min: -90,
@@ -1888,12 +1949,22 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                 Padding(
                   padding: EdgeInsets.symmetric(
                       horizontal: ResponsiveHelper.spacing(context, 8)),
+                  // [DU445] spaceBetween 세 글은 큰 글자에서 가용폭을 넘겼다 — GPS 눈금처럼 세 칸이 폭을 나눠 갖는다(시작 · 가운데 · 끝).
+                  //   칸보다 길면 낱말과 괄호 사이에서만 줄을 바꾼다(keepWords · 화면 읽기는 원문). grey400(1.88) → textTertiary(5.25).
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('멀리(~10m)', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
-                      Text('보통(~5m)', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
-                      Text('가까이(~1m)', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+                      for (final (label, align) in const [
+                        ('멀리(~10m)', TextAlign.start),
+                        ('보통(~5m)', TextAlign.center),
+                        ('가까이(~1m)', TextAlign.end),
+                      ])
+                        Expanded(
+                          child: Text(TextLayout.keepWords(label.replaceFirst('(', ' (')),
+                              semanticsLabel: label,
+                              textAlign: align,
+                              style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary)),
+                        ),
                     ],
                   ),
                 ),
@@ -2260,15 +2331,16 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               color: AppColors.grey600,
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            // [DU473] grey200 면 위 '사진 추가' grey600(3.97) → textSecondary(5.11) · '(복수선택)' grey500 → textTertiary(4.52).
             Text(
               '사진 추가',
               style: ResponsiveHelper.tinyStyle(context).copyWith(
-                color: AppColors.grey600,
+                color: AppColors.textSecondary,
               ),
             ),
             Text(
               '(복수선택)',
-              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+              style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary),
             ),
           ],
         ),
@@ -2339,15 +2411,16 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                           color: AppColors.grey600,
                         ),
                         SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                        // [DU473] 사업장 사진 타일과 같다(textSecondary · textTertiary).
                         Text(
                           '사진 추가',
                           style: ResponsiveHelper.tinyStyle(context).copyWith(
-                            color: AppColors.grey600,
+                            color: AppColors.textSecondary,
                           ),
                         ),
                         Text(
                           '(복수선택)',
-                          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+                          style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary),
                         ),
                       ],
                     ),
@@ -2651,6 +2724,16 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     return (text: copy.text, icon: icon, color: color, action: copy.action);
   }
 
+  /// [DU481] 위치 상태 글자 — 의미색 글자는 진한 짝(글자 = 진한 짝 · DU425–427 · DU1 기준). 중립(textSecondary)은 그대로.
+  ///   아이콘 · 진행 표시 · 다시 시도 아이콘은 chip.color(기본색) 그대로다.
+  Color _locationInk(Color c) => c == AppColors.success
+      ? AppColors.successDark
+      : c == AppColors.warning
+          ? AppColors.warningDark
+          : c == AppColors.error
+              ? AppColors.errorDark
+              : c;
+
   Widget _buildLocationChip(BuildContext context) {
     final chip = _locationChip();
     final address = _addressController.text.trim();
@@ -2685,7 +2768,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             Expanded(
               child: Text(
                 chip.text,
-                style: ResponsiveHelper.tinyStyle(context, color: chip.color),
+                style: ResponsiveHelper.tinyStyle(context, color: _locationInk(chip.color)),
               ),
             ),
             if (onTap != null) ...[

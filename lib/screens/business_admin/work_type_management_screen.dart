@@ -21,6 +21,7 @@ import '../../widgets/common/app_empty_state.dart';
 import '../../utils/navigation_helper.dart';
 import '../common/notification_screen.dart';
 import '../../models/core/to_model.dart';
+import '../../utils/text_layout.dart';
 
 /// 업무 유형 관리 화면 — businessId/businessName을 외부에서 주입받음
 class WorkTypeManagementScreen extends StatefulWidget {
@@ -164,28 +165,9 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     }
   }
 
-  /// 업무 유형 수정
-  Future<void> _showEditDialog(BusinessWorkTypeModel workType) async {
-    // [R7-P4.4E.5.2] 생성과 **같은 규칙**이다 — 같은 시트를 쓰는데 한쪽만
-    //   실패에서 입력을 잃으면 구조가 갈린다. 수정도 성공해야 닫힌다.
-    final saved = await AddWorkTypeSheet.show(
-      context,
-      editTarget: workType,
-      onSubmit: (draft) async {
-        return _firestoreService.updateBusinessWorkType(
-          businessId: widget.businessId,
-          workTypeId: workType.id,
-          name: draft['name'] as String,
-          icon: draft['icon'] as String?,
-          color: draft['iconColor'] as String? ?? '#FFFFFF',
-          backgroundColor: draft['backgroundColor'] as String?,
-        );
-      },
-    );
-    if (saved != true || !mounted) return;
-
-    _loadWorkTypes();
-  }
+  // [WORKTYPE-IDENTITY] 업무 유형의 이름·아이콘은 등록 후 바꾸지 않는다 — 공고·지원·계약이 이 업무를
+  //   이름·아이콘으로 저장해 두었고, 바꾸면 같은 업무가 다른 업무처럼 보인다. 다른 업무가 필요하면
+  //   새 업무 유형을 만든다. 설명·사진은 상세 정보 화면에서 고친다(기존 공고에도 최신본이 보인다).
 
   /// 삭제 확인 다이얼로그
   Future<void> _confirmDelete(BusinessWorkTypeModel workType) async {
@@ -215,212 +197,11 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       if (!mounted) return;
 
       if (affectedCount > 0) {
-        final proceed = await showDialog<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (ctx) => AlertDialog(
-            title: const Text('활성 공고 있음'),
-            content: Text(
-              '이 업무를 사용하는 활성 공고가 $affectedCount개 있습니다.\n'
-              '삭제하면 해당 공고의 업무 표시에 영향을 줄 수 있습니다.\n계속하시겠습니까?',
-            ),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('취소')),
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                style: TextButton.styleFrom(foregroundColor: AppColors.error),
-                child: const Text('계속'),
-              ),
-            ],
-          ),
-        );
+        final proceed = await showWorkTypeActivePostingsDialog(context, affectedCount: affectedCount);
         if (proceed != true || !mounted) return;
       }
 
-      final confirmed = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) {
-          return Dialog(
-            backgroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(24),
-            ),
-            insetPadding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 16),
-              vertical: AppDialogSize.insetV,
-            ),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight:
-                    MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // 헤더
-                    Container(
-                      padding: ResponsiveHelper.cardPadding(context),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            AppColors.error,
-                            AppColors.error.withValues(alpha: 0.8),
-                          ],
-                        ),
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(24),
-                          topRight: Radius.circular(24),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: ResponsiveHelper.spacing(context, 48),
-                            height: ResponsiveHelper.spacing(context, 48),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Icon(Icons.business,
-                                color: Colors.white70,
-                                size: ResponsiveHelper.iconSize(context, 24)),
-                          ),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-                          Expanded(
-                            child: Text(
-                              '업무 유형 삭제',
-                              style: ResponsiveHelper.titleStyle(context).copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // 컨텐츠
-                    Padding(
-                      padding: ResponsiveHelper.cardPadding(context),
-                      child: Column(
-                        children: [
-                          Icon(
-                            Icons.delete_forever,
-                            size: ResponsiveHelper.iconSize(context, 64),
-                            color: AppColors.error.withValues(alpha: 0.5),
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                          Text(
-                            '정말로 삭제하시겠습니까?',
-                            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                          Text(
-                            workType.name,
-                            style: ResponsiveHelper.bodyStyle(context).copyWith(
-                              color: Theme.of(context).primaryColor,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                          Text(
-                            '삭제된 데이터는 복구할 수 없습니다',
-                            style: ResponsiveHelper.smallStyle(
-                              context,
-                              color: AppColors.error,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // 버튼
-                    Padding(
-                      padding: ResponsiveHelper.cardPadding(context),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            flex: 2,
-                            child: OutlinedButton(
-                              onPressed: () => Navigator.pop(context, false),
-                              style: OutlinedButton.styleFrom(
-                                padding: EdgeInsets.symmetric(
-                                  vertical: ResponsiveHelper.spacing(context, 16),
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              child: const Text('취소'),
-                            ),
-                          ),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                          Expanded(
-                            child: Container(
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    AppColors.error,
-                                    AppColors.error.withValues(alpha: 0.8),
-                                  ],
-                                ),
-                                borderRadius: BorderRadius.circular(12),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: AppColors.error.withValues(alpha: 0.4),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  onTap: () => Navigator.pop(context, true),
-                                  borderRadius: BorderRadius.circular(12),
-                                  child: Padding(
-                                    padding: EdgeInsets.symmetric(
-                                      vertical: ResponsiveHelper.spacing(context, 16),
-                                    ),
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          Icons.delete,
-                                          color: Colors.white,
-                                          size: ResponsiveHelper.iconSize(context, 20),
-                                        ),
-                                        SizedBox(
-                                            width: ResponsiveHelper.spacing(context, 8)),
-                                        Text(
-                                          '삭제',
-                                          style:
-                                              ResponsiveHelper.bodyStyle(context).copyWith(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      );
+      final confirmed = await showWorkTypeDeleteConfirmDialog(context, workTypeName: workType.name);
 
       if (confirmed == true) {
         final success = await _firestoreService.deleteBusinessWorkType(
@@ -638,8 +419,9 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                               ),
                             ),
                             IconButton(
+                              // [DU484] grey400(흰 행 위 약 1.9 · 비텍스트 3:1 미달) → grey600(4.61 · 메뉴 열기 보조 행동 · DU396 과 같다).
                               icon: Icon(Icons.more_vert,
-                                  color: AppColors.grey400,
+                                  color: AppColors.grey600,
                                   size: ResponsiveHelper.iconSize(context, 20)),
                               onPressed: () => _showWorkTypeMenuSheet(
                                   context, theme, workType, index, isFirst, isLast,
@@ -750,14 +532,6 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
             onTap: () =>
                 _handleMenuAction('detail', workType, index, isFirst, isLast),
           ),
-          if (canEdit)
-            AppMenuSheetItem(
-              icon: Icons.edit,
-              label: '아이콘수정',
-              color: AppColors.warning,
-              onTap: () =>
-                  _handleMenuAction('edit', workType, index, isFirst, isLast),
-            ),
         ],
         if (canEdit)
           [
@@ -791,9 +565,6 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       case 'detail':
         _openDetailScreen(workType);
         break;
-      case 'edit':
-        _showEditDialog(workType);
-        break;
       case 'delete':
         _confirmDelete(workType);
         break;
@@ -816,4 +587,82 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       _loadWorkTypes();
     }
   }
+}
+
+/// [DU325 seam] 업무 유형 삭제 1단계 — 진행 중 공고가 이 업무를 쓰면 묻는 창(표시만). 반환: 취소 false · 계속 true · 그 밖 null.
+///   조회 · 권한 · writer 는 호출자(_confirmDelete)에 있다. 시험이 이 창만 직접 띄워 본다.
+/// [DU325 스타일] 공용 셸(StyledDialog) — 바깥 탭으로 닫히지 않는다(barrierDismissible:false 유지). '계속'은 다음 확인으로 가는
+///   일반 진행이라 brand(이전 빨간 글자는 손실 실행처럼 보였다).
+Future<bool?> showWorkTypeActivePostingsDialog(BuildContext context, {required int affectedCount}) {
+  final message = '이 업무를 사용하는 진행 중 공고가 $affectedCount개 있습니다.\n'
+      '그 공고와 지원·확정 기록은 그대로이고 업무 안내도 계속 보입니다.\n'
+      '새 공고에서만 이 업무를 고를 수 없게 됩니다. 계속하시겠습니까?';
+  return showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => StyledDialog(
+      title: '활성 공고 있음',
+      icon: Icons.warning_amber_rounded,
+      headerColor: AppColors.warningDark,
+      content: Text(
+        TextLayout.phrases(message),
+        semanticsLabel: message,
+        style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.textPrimary, height: 1.5),
+      ),
+      actions: [
+        StyledDialogButton.cancel(
+          onPressed: () => Navigator.pop(ctx, false),
+        ),
+        StyledDialogButton.primary(
+          text: '계속',
+          onPressed: () => Navigator.pop(ctx, true),
+        ),
+      ],
+    ),
+  );
+}
+
+/// [DU325 seam] 업무 유형 삭제 2단계 — 최종 삭제 확인 창(표시만). 반환: 취소 false · 삭제 true · 그 밖 null.
+/// [DU325 스타일] 공용 셸(StyledDialog) — 최종 손실 행동 '삭제'만 errorDark(danger). 결과 안내는 읽기용 보조색(빨강 남발 금지).
+///   실제 효과는 isActive:false(호출자 writer) — 기존 공고 · 지원/확정 · 안내 보존 문구는 1단계와 이 창의 결과 안내에 그대로 있다.
+Future<bool?> showWorkTypeDeleteConfirmDialog(BuildContext context, {required String workTypeName}) {
+  return showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => StyledDialog(
+      title: '업무 유형 삭제',
+      subtitle: '정말로 삭제하시겠습니까?',
+      icon: Icons.delete_outline,
+      headerColor: AppColors.errorDark,
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            TextLayout.keepWords(workTypeName),
+            semanticsLabel: workTypeName,
+            style: ResponsiveHelper.bodyStyle(ctx).copyWith(
+              color: Theme.of(ctx).primaryColor,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(ctx, 8)),
+          Text(
+            TextLayout.keepWords('새 공고에서 이 업무를 고를 수 없게 됩니다'),
+            semanticsLabel: '새 공고에서 이 업무를 고를 수 없게 됩니다',
+            style: ResponsiveHelper.smallStyle(ctx, color: AppColors.textSecondary),
+          ),
+        ],
+      ),
+      actions: [
+        StyledDialogButton.cancel(
+          onPressed: () => Navigator.pop(ctx, false),
+        ),
+        StyledDialogButton.danger(
+          text: '삭제',
+          onPressed: () => Navigator.pop(ctx, true),
+        ),
+      ],
+    ),
+  );
 }

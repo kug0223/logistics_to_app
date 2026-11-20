@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 // Models
 import '../../../models/core/to_model.dart';
@@ -44,6 +45,9 @@ enum _PostingEmptyKind {
   /// 아직 아니다. `root` 와 같은 0건이지만 다음 행동이 다르다.
   setupRequired,
 
+  /// [SUBADMIN-SCOPE.40] 배정 사업장 어디에도 공고 권한이 없다 — 조회하지 않았다.
+  noPermission,
+
   /// 공고 자체가 0개 (DRAFT/SCHEDULED 포함해서 0)
   root,
 
@@ -54,6 +58,11 @@ enum _PostingEmptyKind {
   tab,
 }
 
+/// [DU232 F4] 목록 항목 key — 요약·더 불러오기 행과 공고 항목('posting:<공고 ID>')이 서로 겹치지 않는다.
+const String _kSummaryItemKey = 'jobs-list-summary';
+const String _kMoreItemKey = 'jobs-list-more';
+const String _kPostingItemKeyPrefix = 'posting:';
+
 /// 인력 관리 - 리스트 뷰
 class WorkforceListView extends StatefulWidget {
   /// [POSTING-V2-03A.1] 알림에서 지정한 공고 — 1회성으로만 reveal한다.
@@ -63,7 +72,12 @@ class WorkforceListView extends StatefulWidget {
   /// 펼친 상태로 보여주고, 사용자가 탭·필터를 건드리거나 새로고침하면 해제된다.
   final String? targetToId;
 
-  const WorkforceListView({super.key, this.targetToId});
+  /// [DU231 F4] 공고 탭 머리의 범위·한도 요약 — 큰 글자·낮은 화면에서만 공고 탭이 넘긴다(null 이면 머리에 있다).
+  ///   목록이 있으면 첫 항목으로 카드와 함께 스크롤하고, 빈·오류·로딩 본문에서는 그 위에 둔다.
+  ///   오래된 데이터 경고는 이 요약과 별개로 목록 밖 위에 계속 고정이다.
+  final Widget? summaryHeader;
+
+  const WorkforceListView({super.key, this.targetToId, this.summaryHeader});
 
   @override
   State<WorkforceListView> createState() => _WorkforceListViewState();
@@ -198,12 +212,28 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     _workforceController ??= context.read<WorkforceController>();
     _workforceController!.registerShowFilterCallback(_showFilterDialog);
     _workforceController!.registerOnExternalReload(_clearExpansionState);
+    _workforceController!.registerShowActiveTabCallback(_showActiveTab);
+  }
+
+  /// [POSTING-QUOTA-45] 한도 요약의 '진행 중 공고 보기' — 진행중 탭으로, 맨 위로.
+  void _showActiveTab() {
+    if (!mounted) return;
+    setState(() {
+      _clearReveal();
+      _selectedTab = TOStatus.active;
+      _expandedGroups.clear();
+      _expandedTOs.clear();
+      _activeGroupKey = null;
+      _lastCachedItems = null;
+    });
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
   }
 
   @override
   void dispose() {
     _workforceController?.unregisterShowFilterCallback();
     _workforceController?.unregisterOnExternalReload();
+    _workforceController?.unregisterShowActiveTabCallback();
     _scrollController.dispose();
     super.dispose();
   }
@@ -572,6 +602,9 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         }
       },
       child: Container(
+        // [DU231 F1] 탭을 누르는 자리 높이를 48 이상으로 — 배율로 줄지 않는다. 글자·아이콘·색·선택 표시는 그대로다.
+        constraints: const BoxConstraints(minHeight: 48),
+        alignment: Alignment.center,
         padding: EdgeInsets.symmetric(
           vertical: ResponsiveHelper.spacing(context, 9),
         ),
@@ -667,14 +700,14 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     // [POSTING-V2-03P.1] 이제 loading보다도 앞이다 — 첫 시도가 실패했는데
     //   "불러오는 중"을 계속 보여주면 무한 skeleton이 error를 가린다.
     if (controller.loadError != null && controller.items.isEmpty) {
-      return _buildErrorState();
+      return _withSummary(_buildErrorState());
     }
 
     // [POSTING-V2-03P.1] 아직 한 번도 성공하지 못했다 — NOT LOADED != TRUE EMPTY.
     //   이전에는 이 상태가 items.isEmpty 하나로 ROOT_EMPTY에 떨어져,
     //   load가 시작되기 전 프레임에 '등록된 공고가 없습니다'가 그려졌다.
     if (!controller.hasLoadedOnce) {
-      return const LoadingWidget(message: '공고 목록을 불러오는 중...');
+      return _withSummary(const LoadingWidget(message: '공고 목록을 불러오는 중...'));
     }
 
     // [POSTING-V2-02E.1] 성공 조회 후의 0건은 원인이 셋이고 다음 행동도 다르다.
@@ -692,15 +725,18 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     //   마지막 성공이 0건이었다면 refresh 중에도 그 해석은 계속 참이다.
     if (controller.items.isEmpty) {
       if (controller.isLoading && !controller.lastSuccessfulWasEmpty) {
-        return const LoadingWidget(message: '공고 목록을 불러오는 중...');
+        return _withSummary(const LoadingWidget(message: '공고 목록을 불러오는 중...'));
       }
       // [P4.2-SETUP-03] 볼 수 있는 사업장이 0개면 "공고가 없다"가 아니라
       //   **아직 공고를 만들 수 있는 상태가 아니다.** 예전 문구는
       //   "상단 + 버튼에서 새 공고를 등록할 수 있습니다" 라고 말했는데,
       //   그 버튼을 누르면 사업장·업무·템플릿·인감이 없어 준비 화면에서 막힌다.
-      return _buildEmptyState(controller.scopeEmpty
+      // [SUBADMIN-SCOPE.40] 배정은 있는데 공고 권한이 확인된 곳이 0개 —
+      //   조회하지 않았다. "공고 없음"도 "준비 안 됨"도 아니다.
+      if (controller.scopeDenied) return _withSummary(_buildEmptyState(_PostingEmptyKind.noPermission));
+      return _withSummary(_buildEmptyState(controller.scopeEmpty
           ? _PostingEmptyKind.setupRequired
-          : _PostingEmptyKind.root);
+          : _PostingEmptyKind.root));
     }
 
     // [POSTING-V2-03P.1] 여기부터는 보여줄 데이터가 있다 — refresh 중이어도
@@ -711,9 +747,9 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     final allFilteredItems = _getFilteredItems(controller.items);
 
     if (allFilteredItems.isEmpty) {
-      return _buildEmptyState(controller.hasActiveFilters
+      return _withSummary(_buildEmptyState(controller.hasActiveFilters
           ? _PostingEmptyKind.filtered
-          : _PostingEmptyKind.tab);
+          : _PostingEmptyKind.tab));
     }
 
     // 마감됨 탭: 표시 개수 제한 (스크롤 시 추가 로드)
@@ -722,22 +758,56 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         ? allFilteredItems.take(_closedDisplayCount).toList()
         : allFilteredItems;
     final hasMore = isClosedTab && _closedDisplayCount < allFilteredItems.length;
+    // [DU231 F4] 요약을 받았으면 첫 항목으로 — 카드와 함께 스크롤해 본문 높이를 고정 점유하지 않는다.
+    //   오래된 데이터 경고(_buildStaleBanner)는 이 목록 밖 위에 그대로 고정이라 끌어도 사라지지 않는다.
+    final summary = widget.summaryHeader;
+    final lead = summary == null ? 0 : 1;
+    // [DU232 F4] 항목은 index 가 아니라 공고 ID 로 식별한다. 요약이 들어오거나 빠져 index 가 한 칸 밀려도
+    //   같은 공고의 카드 State(날짜 선택·타이머·진행 중 행동)가 그 공고에 남는다. 요약·더 불러오기 행은
+    //   공고 key 와 겹치지 않는 별도 key 다. 공고 ID 는 목록 안에서 하나다(TO 하나 = 그룹 하나, reveal 은 순서만 바꾼다).
+    final positionOf = <String, int>{
+      for (var k = 0; k < filteredItems.length; k++) filteredItems[k].id: k,
+    };
 
     return RefreshIndicator(
       onRefresh: () async => _reload(),
       child: ListView.builder(
         controller: _scrollController,
+        // [SIM-ADJ-3] 자기 controller 를 가진 목록은 primary 가 아니라
+        //   AlwaysScrollable 이 자동으로 붙지 않는다. 카드가 화면보다 짧으면
+        //   (DEV 확정 셀: 2장) 끌어도 스크롤이 없어 새로고침이 발동하지 않았다.
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: ResponsiveHelper.listPadding(context),
-        itemCount: filteredItems.length + (hasMore ? 1 : 0),
-        itemBuilder: (context, index) {
+        itemCount: lead + filteredItems.length + (hasMore ? 1 : 0),
+        // [DU232 F4] key → 지금 index. 목록에서 사라진 key 는 null(그 항목 State 는 정상 정리된다).
+        findChildIndexCallback: (key) {
+          if (key is! ValueKey<String>) return null;
+          final v = key.value;
+          if (v == _kSummaryItemKey) return summary == null ? null : 0;
+          if (v == _kMoreItemKey) return hasMore ? lead + filteredItems.length : null;
+          if (!v.startsWith(_kPostingItemKeyPrefix)) return null;
+          final k = positionOf[v.substring(_kPostingItemKeyPrefix.length)];
+          return k == null ? null : lead + k;
+        },
+        itemBuilder: (context, i) {
+          if (summary != null && i == 0) {
+            return Padding(
+              key: const ValueKey<String>(_kSummaryItemKey),
+              padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
+              child: summary,
+            );
+          }
+          final index = i - lead;
           if (index == filteredItems.length) {
             return Padding(
+              key: const ValueKey<String>(_kMoreItemKey),
               padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 16)),
               child: const LoadingWidget(),
             );
           }
           final groupItem = filteredItems[index];
           return RepaintBoundary(
+            key: ValueKey<String>('$_kPostingItemKeyPrefix${groupItem.id}'),
             child: Padding(
               padding: EdgeInsets.only(
                 bottom: ResponsiveHelper.spacing(context, 10),
@@ -789,6 +859,20 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     );
   }
 
+  /// [DU231 F4] 목록이 아닌 본문(빈·오류·로딩) 위에 요약을 둔다. 요약이 머리에 있으면(null) 본문 그대로다.
+  Widget _withSummary(Widget body) {
+    final summary = widget.summaryHeader;
+    if (summary == null) return body;
+    final lp = ResponsiveHelper.listPadding(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(padding: EdgeInsets.fromLTRB(lp.left, lp.top, lp.right, 0), child: summary),
+        Expanded(child: body),
+      ],
+    );
+  }
+
   /// [POSTING-V2-02E.1] 성공 조회 후의 빈 목록 — 세 의미를 한 renderer에서 분기.
   ///
   /// 이전에는 네 상황이 '조건에 맞는 공고가 없습니다 / 필터를 변경하거나 새로운
@@ -805,6 +889,11 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       _PostingEmptyKind.setupRequired => (
           '아직 공고를 등록할 수 없어요',
           '사업장 등록부터 마치면 공고를 만들 수 있어요',
+        ),
+      // 공고 탭의 권한 surface 와 같은 문장이다 — 같은 사실을 다르게 말하지 않는다.
+      _PostingEmptyKind.noPermission => (
+          '접근 권한이 없습니다',
+          '공고 관리 권한이 있는 관리자에게 문의하세요.',
         ),
       // 헤더 '+ 공고 등록'이 같은 화면에 이미 있다 — 본문에 중복 CTA를 두지 않는다.
       _PostingEmptyKind.root => (
@@ -829,9 +918,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     };
 
     return AppEmptyState(
-      icon: Icons.inbox_outlined,
+      icon: kind == _PostingEmptyKind.noPermission
+          ? Icons.lock_outline
+          : Icons.inbox_outlined,
       title: copy.$1,
       subtitle: copy.$2,
+      // [DU231 F7] 다음 행동을 알려 주는 부제 — 읽기 대비(grey400 1.80:1 → textSecondary).
+      subtitleColor: AppColors.textSecondary,
       // 유일하게 body action을 갖는 상태. 여기서 '공고 등록'을 권하면
       // 필터만 풀면 보이는 기존 공고를 놓치고 중복 공고를 만들게 된다.
       action: switch (kind) {
@@ -887,7 +980,12 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     final stillUnrefreshed = controller.isLoading && controller.lastLoadFailed;
     final isStale = (controller.loadError != null || stillUnrefreshed) &&
         controller.items.isNotEmpty;
-    if (!isStale) return const SizedBox.shrink();
+    // [SUBADMIN-SCOPE.40] 목록은 성공했지만 권한을 확인하지 못한 사업장은
+    //   묻지 않았다. 보이는 목록이 전부인 것처럼 두지 않는다 — 0건이어도 같다.
+    final partialScope = !isStale &&
+        controller.loadError == null &&
+        controller.unresolvedScopeIds.isNotEmpty;
+    if (!isStale && !partialScope) return const SizedBox.shrink();
 
     return Container(
       width: double.infinity,
@@ -907,7 +1005,10 @@ class _WorkforceListViewState extends State<WorkforceListView> {
           Expanded(
             child: Text(
               // 내부 예외 메시지를 노출하지 않는다 — 운영 상태만 말한다.
-              '최신 정보를 불러오지 못했습니다. 다시 시도해 주세요.',
+              isStale
+                  ? '최신 정보를 불러오지 못했습니다. 다시 시도해 주세요.'
+                  : '사업장 ${controller.unresolvedScopeIds.length}곳의 공고 권한을 '
+                      '확인하지 못해 빠져 있습니다. 다시 시도해 주세요.',
               style: ResponsiveHelper.smallStyle(context)
                   .copyWith(color: AppColors.warningDarkest),
             ),
@@ -939,11 +1040,31 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   /// [POSTING-V2-01B] 목록 조회 실패 — 공통 AppEmptyState를 error 톤으로 재사용한다.
   /// primary action은 '공고 등록'이 아니라 '다시 시도'다.
   Widget _buildErrorState() {
+    // [SUBADMIN-SCOPE.40] 권한 때문에 실패했으면 "네트워크를 확인하라"고 말하지 않는다 —
+    //   사용자가 엉뚱한 것을 고친다. 다시 시도는 같다(_reload 가 권한을 먼저 다시 읽는다).
+    final permissionCopy =
+        _permissionErrorCopy(context.read<WorkforceController>().loadError);
+    if (permissionCopy != null) {
+      return AppEmptyState(
+        icon: Icons.error_outline,
+        iconColor: AppColors.grey400,
+        title: permissionCopy.$1,
+        subtitle: permissionCopy.$2,
+        subtitleColor: AppColors.textSecondary, // [DU231 F7]
+        action: TextButton.icon(
+          onPressed: _reload,
+          icon: Icon(Icons.refresh,
+              size: ResponsiveHelper.iconSize(context, 16)),
+          label: const Text('다시 시도'),
+        ),
+      );
+    }
     return AppEmptyState(
       icon: Icons.cloud_off_rounded,
       iconColor: AppColors.grey400,
       title: '공고 목록을 불러오지 못했습니다',
       subtitle: '네트워크 상태를 확인한 뒤 다시 시도해주세요',
+      subtitleColor: AppColors.textSecondary, // [DU231 F7]
       action: TextButton.icon(
         onPressed: _reload,
         icon: Icon(Icons.refresh,
@@ -952,6 +1073,20 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       ),
     );
   }
+
+  /// [SUBADMIN-SCOPE.40] 권한 쪽 실패의 문구. 그 밖(네트워크 등)이면 null.
+  ///   미확인은 거부가 아니고, 서버 거절은 권한이 바뀌었을 수 있다는 뜻이다.
+  static (String, String)? _permissionErrorCopy(Object? error) => switch (error) {
+        PostingScopeUnresolved() => (
+            '공고 권한을 확인하지 못했습니다',
+            '권한이 없다는 뜻은 아닙니다. 다시 시도해 주세요',
+          ),
+        FirebaseFunctionsException(code: 'permission-denied') => (
+            '공고 목록을 볼 권한이 확인되지 않았습니다',
+            '권한이 바뀌었을 수 있습니다. 다시 시도해 주세요',
+          ),
+        _ => null,
+      };
 
   /// 그룹 카드 펼침 핸들러
   Future<void> _handleGroupExpand(TOGroupItem groupItem) async {
@@ -993,7 +1128,18 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       if (!mounted) return;
       if (groupItem.groupTOs.length == 1 &&
           groupItem.groupTOs.first.needsWorkDetailLoad) {
-        await controller.loadWorkDetails(groupItem.groupTOs.first);
+        // [DU1 구현59 · 감사59 §5.2] 읽는 동안을 '실패'로 그리지 않는다.
+        //   카드는 이 키가 _loadingTOs 에 있을 때만 '불러오는 중'을 안다(_isSingleTOLoading).
+        //   여기만 표시가 없어 요청이 진행 중인데 업무 행이 '지원 현황을 불러오지 못했습니다
+        //   + 재시도' 를 보였다. _handleTOExpand 와 같은 표시를 단다.
+        final first = groupItem.groupTOs.first;
+        final toKey = first.slot?.id ?? first.to.id;
+        setState(() => _loadingTOs.add(toKey));
+        try {
+          await controller.loadWorkDetails(first);
+        } finally {
+          if (mounted) setState(() => _loadingTOs.remove(toKey));
+        }
       }
     } else if (!groupItem.isWorkDetailLoaded) {
       // 단건 TO: 업무별 통계 lazy load
@@ -1037,7 +1183,17 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     // 단일 슬롯 flex TO: 업무 상세 통계도 함께 복구
     if (groupItem.groupTOs.length == 1 &&
         groupItem.groupTOs.first.needsWorkDetailLoad) {
-      await controller.loadWorkDetails(groupItem.groupTOs.first);
+      // [DU1 구현62 · 감사62 §5] 일정 재시도 뒤 통계를 읽는 동안도 '읽는 중'이다.
+      //   _handleGroupExpand(구현59)와 같은 _loadingTOs 표시 — 없으면 요청 진행 중인데
+      //   업무 행이 '지원 현황을 불러오지 못했습니다 + 재시도' 를 보였다.
+      final first = groupItem.groupTOs.first;
+      final toKey = first.slot?.id ?? first.to.id;
+      setState(() => _loadingTOs.add(toKey));
+      try {
+        await controller.loadWorkDetails(first);
+      } finally {
+        if (mounted) setState(() => _loadingTOs.remove(toKey));
+      }
     }
   }
 

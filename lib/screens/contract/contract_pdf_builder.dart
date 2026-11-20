@@ -1,6 +1,4 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
@@ -16,12 +14,22 @@ class ContractPdfBuilder {
     required DateTime contractDate,
     List<ContractSlot> slots = const [],
     List<ContractArticle> articles = const [],
-    String? employerSignatureUrl,
+    Uint8List? employerSignatureBytes,
     Uint8List? workerSignatureBytes,
     String? ownerNameOverride,
     bool? isLongTermOverride,
     String employerSealType = 'stamp',
   }) async {
+    // [R8P6-SIG-CUTOVER] 인자 검증은 폰트 파싱보다 **앞**이다 — 서명이 비었으면
+    //   한글 폰트 두 벌을 읽을 이유가 없다. 빈 바이트는 "서명 없음"이 아니라
+    //   "못 가져왔다"는 뜻이므로, 서명란이 빈 PDF 를 만들어선 안 된다.
+    if (employerSignatureBytes != null && employerSignatureBytes.isEmpty) {
+      throw Exception('사업주 서명 이미지가 비어 있습니다');
+    }
+    if (workerSignatureBytes != null && workerSignatureBytes.isEmpty) {
+      throw Exception('근로자 서명 이미지가 비어 있습니다');
+    }
+
     // ownerNameOverride: 근무자 경로에서 스냅샷 ownerName이 없을 때 Firestore 조회값.
     // 둘 다 없는 구형 계약서는 '(사업주)' fallback으로 PDF에서 빈 이름 방지.
     final effectiveOwnerName = snapshot.ownerName.isNotEmpty
@@ -37,18 +45,18 @@ class ContractPdfBuilder {
     pw.MemoryImage? employerSig;
     pw.MemoryImage? workerSig;
 
-    if (employerSignatureUrl != null) {
-      try {
-        final resp = await http.get(Uri.parse(employerSignatureUrl));
-        if (resp.statusCode == 200) {
-          employerSig = pw.MemoryImage(resp.bodyBytes);
-        } else {
-          throw Exception('사업주 서명 이미지 로드 실패 (HTTP ${resp.statusCode})');
-        }
-      } catch (e) {
-        if (kDebugMode) debugPrint('사업주 서명 이미지 로드 실패: $e');
-        rethrow;
-      }
+    // [R8P6-SIG-CUTOVER] 여기서 네트워크를 쓰지 않는다 — 바이트를 받아 그린다.
+    //
+    //   예전에는 계약 문서의 영구 토큰 URL 을 이 안에서 `http.get` 했다.
+    //   그래서 (1) 빌더가 권한·만료·재시도를 알아야 했고, (2) URL 이 없는
+    //   계약(단계 C 의 신규 계약)에서는 **사업주 서명이 빠진 PDF 가 조용히**
+    //   만들어졌다. 서명란이 빈 계약서가 완료 처리되는 셈이었다.
+    //
+    //   이제 호출자가 `ContractService.fetchContractSignatureBytes` 로
+    //   그때의 권한에 따라 바이트를 받아 넘긴다. 못 받으면 거기서 예외가 난다 —
+    //   빌더까지 오지 않는다. 근로자 서명(`workerSignatureBytes`)과 **같은 모양**이다.
+    if (employerSignatureBytes != null) {
+      employerSig = pw.MemoryImage(employerSignatureBytes);
     }
     if (workerSignatureBytes != null) {
       workerSig = pw.MemoryImage(workerSignatureBytes);
@@ -112,9 +120,14 @@ class ContractPdfBuilder {
             // [R7-PAYROLL-POLICY.4B] 그래서 항목 목록을 손으로 적지 않고
             //   화면과 **같은 formatter** 에서 받는다. 한쪽만 7개가 되는 일이
             //   구조적으로 생기지 않는다.
+            // [ATTENDANCE-RULE-GUIDE.29-A1] 화면과 같은 구조·같은 생성 함수 — 서명된 문서가 화면보다 적게
+            //   말하지 않는다. 이 빌더는 근로자 서명 때 한 번 돌아 PDF 를 보관한다(이미 보관된 PDF 는 그대로).
             if (snapshot.attendancePolicy case final policy?)
-              ...attendancePolicyLines(policy).map(
-                  (line) => _row(line.label, line.value, baseStyle, boldStyle)),
+              _buildAttendanceRuleGuide(
+                  attendanceRuleGuide(policy,
+                      startHHmm: snapshot.startTime, endHHmm: snapshot.endTime),
+                  baseStyle,
+                  boldStyle),
           ], fontBold),
           // 템플릿 조항 동적 렌더링
           ...articles.map((a) => pw.Column(children: [
@@ -124,16 +137,22 @@ class ContractPdfBuilder {
             ], fontBold),
           ])),
           pw.SizedBox(height: 32),
-          _buildDateLine(contractDate, fontRegular),
-          pw.SizedBox(height: 24),
-          _buildSignatureRow(
-            snapshot: snapshot,
-            ownerName: effectiveOwnerName,
-            employerSig: employerSig,
-            workerSig: workerSig,
-            fontRegular: fontRegular,
-            fontBold: fontBold,
-            employerSealType: employerSealType,
+          // [PDF-PAGEBREAK.30] 계약일과 서명란은 한 덩어리 — 날짜만 앞 쪽에 남고 서명이 다음 쪽에
+          //   홀로 넘어가지 않게 한다(실제 서명 PDF 3쪽에서 관찰).
+          pw.Inseparable(
+            child: pw.Column(children: [
+              _buildDateLine(contractDate, fontRegular),
+              pw.SizedBox(height: 24),
+              _buildSignatureRow(
+                snapshot: snapshot,
+                ownerName: effectiveOwnerName,
+                employerSig: employerSig,
+                workerSig: workerSig,
+                fontRegular: fontRegular,
+                fontBold: fontBold,
+                employerSealType: employerSealType,
+              ),
+            ]),
           ),
         ],
       ),
@@ -167,7 +186,10 @@ class ContractPdfBuilder {
     List<pw.Widget> children,
     pw.Font fontBold,
   ) {
-    return pw.Column(
+    // [PDF-PAGEBREAK.30] 조 제목과 내용 상자는 한 덩어리 — Column 은 MultiPage 에서 쪽을 나눌 수 있어
+    //   제목만 앞 쪽 끝에 남고 상자가 다음 쪽으로 넘어갔다(제3조, 실제 서명 PDF). 상자는 원래 나뉘지 않는다.
+    return pw.Inseparable(
+        child: pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
         pw.Text(title,
@@ -189,6 +211,39 @@ class ContractPdfBuilder {
               children: children),
         ),
       ],
+    ));
+  }
+
+  /// [ATTENDANCE-RULE-GUIDE.29-A1] 근무시간 → 출근/퇴근 기준 → 항목 설명 → 그 기준의 사례.
+  static pw.Widget _buildAttendanceRuleGuide(
+      AttendanceRuleGuide g, pw.TextStyle base, pw.TextStyle bold) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.only(top: 8),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text(kAttendanceRuleGuideTitle, style: bold),
+          if (g.workTime != null) pw.Text('근무시간 ${g.workTime}', style: base),
+          for (final s in g.sections) ...[
+            pw.SizedBox(height: 4),
+            pw.Text(s.title, style: bold),
+            for (final i in s.items) ...[
+              pw.Padding(
+                  padding: const pw.EdgeInsets.only(left: 6, top: 2),
+                  child: pw.Text(i.title, style: bold)),
+              for (final p in i.points)
+                pw.Padding(
+                    padding: const pw.EdgeInsets.only(left: 10),
+                    child: pw.Text('· $p', style: base)),
+              for (final e in i.examples)
+                pw.Padding(
+                    padding: const pw.EdgeInsets.only(left: 16),
+                    child: pw.Text('예: ${attendanceRuleExampleText(e)}',
+                        style: base.copyWith(color: PdfColors.grey700))),
+            ],
+          ],
+        ],
+      ),
     );
   }
 

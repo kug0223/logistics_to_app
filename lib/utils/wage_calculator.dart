@@ -17,9 +17,11 @@ class WageCalculator {
   
   /// 로컬 백업 - 연도별 최저시급 (고용노동부 고시 기준)
   /// 2020: 8,590원 / 2021: 8,720원 / 2022: 9,160원 / 2023: 9,620원
-  /// 2024: 9,860원 / 2025: 10,030원 / 2026: 10,320원
+  /// 2024: 9,860원 / 2025: 10,030원 / 2026: 10,320원 / 2027: 10,700원
+  /// 2027: 고용노동부 고시 제2026-60호(2026-08-05, 시행 2027-01-01) — 서버 SETMW·가드 표와 같은 값(.73)
   /// Firestore settings/wage_config.minimumWages 우선, 이 값은 네트워크 오류 시 폴백
   static const Map<int, int> _minimumWageByYear = {
+    2027: 10700,
     2026: 10320,
     2025: 10030,
     2024: 9860,
@@ -31,6 +33,28 @@ class WageCalculator {
   
   /// Firestore에서 로드된 최저시급 캐시
   static Map<int, int>? _cachedMinimumWages;
+
+  /// [MW-52] 문서에 있으나 값이 손상된 연도(문자열·소수·0 이하).
+  static Set<int> _corruptMinimumWageYears = const {};
+
+  /// [MW-52] 새 약속 판정용 — 그 연도의 기준만 쓴다(서버 후보 srvMinWageFromCfg52 와 같은 규칙).
+  ///   문서 값이 그 연도 내장 고시값보다 낮으면 내장값(법정 하한은 설정으로 내려가지 않는다) · 문서 값이 손상이면 null ·
+  ///   문서에 없으면 그 연도 내장값 · 그것도 없으면 null(확인 불가). 다른 연도 값으로 대신하지 않는다.
+  ///   기존 [getMinimumWage](급여 표시 등)는 바꾸지 않는다.
+  static int? minimumWageForYear(int year) {
+    if (_corruptMinimumWageYears.contains(year)) return null;
+    final builtin = _minimumWageByYear[year];
+    final doc = _cachedMinimumWages?[year];
+    if (doc != null) return (builtin != null && doc < builtin) ? builtin : doc;
+    return builtin;
+  }
+
+  /// 시험 전용 — 캐시를 직접 채운다.
+  @visibleForTesting
+  static void debugSetMinimumWageCache(Map<int, int>? valid, {Set<int> corrupt = const {}}) {
+    _cachedMinimumWages = valid;
+    _corruptMinimumWageYears = corrupt;
+  }
   
   /// Firestore에서 최저시급 로드 (앱 시작 시 1회 호출)
   static Future<void> loadMinimumWages() async {
@@ -42,11 +66,22 @@ class WageCalculator {
       
       if (doc.exists && doc.data()?['minimumWages'] != null) {
         final data = doc.data()!['minimumWages'] as Map<String, dynamic>;
-        _cachedMinimumWages = Map.fromEntries(
-          data.entries
-              .where((e) => int.tryParse(e.key) != null)
-              .map((e) => MapEntry(int.parse(e.key), (e.value as num).toInt())),
-        );
+        // [MW-52] 양의 정수만 값으로 받는다. 문자열·소수·0 이하는 '손상'으로 따로 적어 그 연도를 확인 불가로 둔다
+        //   (예전: 소수는 버림, 문자열은 로드 전체 실패 → 내장값으로 조용히 통과).
+        final valid = <int, int>{};
+        final corrupt = <int>{};
+        for (final e in data.entries) {
+          final y = int.tryParse(e.key);
+          if (y == null) continue;
+          final v = e.value;
+          if (v is int && v > 0) {
+            valid[y] = v;
+          } else {
+            corrupt.add(y);
+          }
+        }
+        _cachedMinimumWages = valid;
+        _corruptMinimumWageYears = corrupt;
         if (kDebugMode) debugPrint('✅ 최저시급 로드 완료: $_cachedMinimumWages');
       }
     } catch (e) {
@@ -73,8 +108,56 @@ class WageCalculator {
     return _minimumWageByYear[latestYear]!;
   }
   
-  /// 현재 연도 최저시급
-  static int get currentMinimumWage => getMinimumWage(DateTime.now().year);
+  /// 현재 연도 최저시급 — [SA-MINWAGE.51] 연도는 기기 시간대가 아니라 KST(서버와 같은 달력).
+  static int get currentMinimumWage => getMinimumWage(currentKstYear);
+
+  /// [SA-MINWAGE.51] 오늘의 KST 연도.
+  static int get currentKstYear => FormatHelper.toKstDate(DateTime.now()).year;
+
+  /// [SA-MINWAGE.51] 소정근로시간 기준 최저일급 — 서버 srvValidateMinimumWagePromise 와 같은 올림.
+  static int minimumDailyWage(int minimumWage, int workMinutes) =>
+      (minimumWage * workMinutes / 60).ceil();
+
+  /// [SA-MINWAGE.51] 약속하려는 임금이 최저임금 미만이면 사유, 아니면 null.
+  ///   서버(지원·초대 writer의 srvValidateMinimumWagePromise)와 같은 식이다 — 앱이 다르게 판정하면
+  ///   앱은 통과시킨 공고를 서버가 모든 지원·초대에서 거절한다(c51 D450-1: 예전 반올림 식).
+  ///   소정분 = 시작~종료(종료가 시작 이하면 +24h) − 휴게, 0 이하이면 일급은 판정하지 않는다(서버와 같음).
+  static String? minimumWageViolation({
+    required String wageType,
+    required int wage,
+    required int minimumWage,
+    required String startTime,
+    required String endTime,
+    required int breakMinutes,
+  }) {
+    if (minimumWage <= 0) return null;
+    if (wageType == 'hourly') {
+      return wage < minimumWage
+          ? '시급 ${FormatHelper.formatNumber(wage)}원은 최저임금 ${FormatHelper.formatNumber(minimumWage)}원 미만입니다.'
+          : null;
+    }
+    if (wageType == 'daily') {
+      int? toMin(String t) {
+        final p = t.split(':');
+        if (p.length < 2) return null;
+        final h = int.tryParse(p[0]), m = int.tryParse(p[1]);
+        return (h == null || m == null) ? null : h * 60 + m;
+      }
+      final s = toMin(startTime), e0 = toMin(endTime);
+      if (s == null || e0 == null) return null;
+      final e = e0 < s ? e0 + 1440 : e0;
+      final work = e - s - breakMinutes;
+      // [MW-52] 소정근로시간을 못 구하면 판정 불가 — 통과가 아니다(서버 후보와 같음).
+      if (work <= 0) return '일급 근무시간(시작·종료·휴게)으로 소정근로시간을 확인할 수 없어 최저임금을 판정할 수 없습니다.';
+      final minDaily = minimumDailyWage(minimumWage, work);
+      // 일급 ÷ 소정시간 ≥ 시간급 ⇔ 일급 × 60 ≥ 시간급 × 소정분 — 정수 비교(중간 반올림 없음).
+      return wage * 60 < minimumWage * work
+          ? '일급 ${FormatHelper.formatNumber(wage)}원은 소정근로시간 ${(work / 60).toStringAsFixed(1)}시간 기준 '
+              '최저일급 ${FormatHelper.formatNumber(minDaily)}원 미만입니다.'
+          : null;
+    }
+    return null;
+  }
 
   /// 근로기준법 제54조 기준 최대 허용 휴게시간 (분)
   ///

@@ -100,24 +100,29 @@ void main() {
   // isFull
   // ══════════════════════════════════════════════════════
   group('TOModel: isFull', () {
+      // [INVITE-CAPACITY] 합계 판정은 장기(contract) 공고의 계약이다.
+      test('slot 공고는 합계가 아니라 서버 status FULL 을 따른다', () {
+        expect(_make(totalRequired: 3, totalConfirmed: 3).isFull, isFalse);
+        expect(_make(status: TOStatus.full).isFull, isTrue);
+      });
     test('totalRequired=0 → isFull=false (인원 제한 없음)', () {
-      expect(_make(totalRequired: 0, totalConfirmed: 0).isFull, isFalse);
+      expect(_make(type: TOType.contract, totalRequired: 0, totalConfirmed: 0).isFull, isFalse);
     });
 
     test('totalConfirmed < totalRequired → false', () {
-      expect(_make(totalRequired: 5, totalConfirmed: 4).isFull, isFalse);
+      expect(_make(type: TOType.contract, totalRequired: 5, totalConfirmed: 4).isFull, isFalse);
     });
 
     test('totalConfirmed == totalRequired → true', () {
-      expect(_make(totalRequired: 5, totalConfirmed: 5).isFull, isTrue);
+      expect(_make(type: TOType.contract, totalRequired: 5, totalConfirmed: 5).isFull, isTrue);
     });
 
     test('totalConfirmed > totalRequired (초과 확정) → true', () {
-      expect(_make(totalRequired: 5, totalConfirmed: 6).isFull, isTrue);
+      expect(_make(type: TOType.contract, totalRequired: 5, totalConfirmed: 6).isFull, isTrue);
     });
 
     test('totalRequired=1, totalConfirmed=0 → false', () {
-      expect(_make(totalRequired: 1, totalConfirmed: 0).isFull, isFalse);
+      expect(_make(type: TOType.contract, totalRequired: 1, totalConfirmed: 0).isFull, isFalse);
     });
   });
 
@@ -153,7 +158,7 @@ void main() {
     });
 
     test('isFull (totalRequired=3, confirmed=3) → isClosed=true', () {
-      expect(_make(totalRequired: 3, totalConfirmed: 3).isClosed, isTrue);
+      expect(_make(type: TOType.contract, totalRequired: 3, totalConfirmed: 3).isClosed, isTrue);
     });
 
     test('status=CLOSED → isClosed=true', () {

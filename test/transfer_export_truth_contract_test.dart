@@ -146,6 +146,12 @@ void main() {
             'lib/screens/business_admin/dialogs/day_applicants_reads.dart',
         'lib/screens/business_admin/dialogs/attendance_status_dialog.dart':
             'lib/screens/business_admin/dialogs/attendance_reads.dart',
+        // [E2-INVITED-SEAT] 업무별 지원자 창도 읽기 경계를 지난다.
+        'lib/screens/business_admin/dialogs/work_applicants_dialog.dart':
+            'lib/screens/business_admin/dialogs/work_applicants_reads.dart',
+        // [DU347] 계약 확인 필요 화면도 읽기 경계를 지난다(경계가 workerDirectory 를 고정).
+        'lib/screens/business_admin/expiring_contracts_screen.dart':
+            'lib/screens/business_admin/expiring_contracts_reads.dart',
       };
       for (final path in _directoryCallers) {
         final code = _codeOf(_src(path));
@@ -509,7 +515,8 @@ void main() {
       expect(svc, contains('class TransferBlockedException'));
       expect(svc, contains('throw TransferBlockedException('));
       // skipped에 있으면 반드시 예외 — 조용한 성공 금지
-      expect(svc, contains('if (!skipped.contains(attendanceId)) return;'));
+      // [SIM-XFER-COUNT] 단건도 서버 결과(처리·이미 이체)를 돌려준다 — 의미는 같다.
+      expect(svc, contains('if (!skipped.contains(attendanceId)) return outcome;'));
       expect(svc, contains("already.contains(attendanceId)"),
           reason: '멱등 재시도는 실패가 아니다');
     });

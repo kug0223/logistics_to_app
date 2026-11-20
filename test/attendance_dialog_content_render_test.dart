@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -7,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
 import 'package:ALfit/models/core/application_model.dart';
+import 'package:ALfit/services/contract_service.dart';
 import 'package:ALfit/models/core/attendance_model.dart';
 import 'package:ALfit/models/core/business_model.dart';
 import 'package:ALfit/models/core/user_model.dart';
@@ -99,14 +101,14 @@ Map<String, dynamic> _attMap({
   required String applicationId,
   String? checkIn,
   String? checkOut,
-  required String status,
+  String? status,
 }) =>
     {
       'id': id,
       'applicationId': applicationId,
       'uid': 'u-long',
       'businessId': _biz,
-      'status': status,
+      if (status != null) 'status': status,
       if (checkIn != null) 'checkIn': checkIn,
       if (checkOut != null) 'checkOut': checkOut,
       'workDate': _ts(_dayKey),
@@ -134,7 +136,7 @@ BusinessModel _business() => BusinessModel(
     );
 
 /// 정상 조회 + 대표 혼합 명단. `fail` 이 true 면 첫 호출만 실패시킨다.
-AttendanceReads _reads({bool failFirstLoad = false}) {
+AttendanceReads _reads({bool failFirstLoad = false, bool a1WithoutStatus = false}) {
   var calls = 0;
   const longType = '홀서빙 및 매장 정리(오후 피크타임 집중 근무)';
   return AttendanceReads(
@@ -157,9 +159,10 @@ AttendanceReads _reads({bool failFirstLoad = false}) {
     workTypeDocs: (_) async => const {},
     adminAttendances: ({required businessId, required startMs, required endMs}) async => [
       // a1: 출근만 / a3: 퇴근까지 / a2: 기록 없음(출근 전)
-      _attMap(id: 'att1', applicationId: 'a1', checkIn: '09:02', status: 'CHECKED_IN'),
+      _attMap(id: 'att1', applicationId: 'a1', checkIn: '09:02',
+          status: a1WithoutStatus ? null : 'present'),
       _attMap(id: 'att3', applicationId: 'a3', checkIn: '08:58', checkOut: '13:05',
-          status: 'CHECKED_OUT'),
+          status: 'present'),
     ],
     workDetailTimes: (_) async => const {},
     usersBatch: ({required uids, required businessId}) async => {
@@ -167,7 +170,8 @@ AttendanceReads _reads({bool failFirstLoad = false}) {
       'u2': _user('u2', '박둘'),
     },
     contractStatus: ({required appIds, required businessId}) async =>
-        {for (final id in appIds) id: 'signed'},
+        ContractStatusBatch(
+            statuses: {for (final id in appIds) id: 'signed'}),
     dayStaffing: ({required businessId, required dayStartMs}) async =>
         const <DayStaffingRow>[],
     businessById: (_) async => _business(),
@@ -195,7 +199,8 @@ AttendanceReads _legacyReads() => AttendanceReads(
       usersBatch: ({required uids, required businessId}) async =>
           {'u-legacy': _user('u-legacy', '한사람두관계')},
       contractStatus: ({required appIds, required businessId}) async =>
-          {for (final id in appIds) id: 'signed'},
+          ContractStatusBatch(
+              statuses: {for (final id in appIds) id: 'signed'}),
       dayStaffing: ({required businessId, required dayStartMs}) async =>
           const <DayStaffingRow>[],
       businessById: (_) async => _business(),
@@ -238,7 +243,7 @@ Future<void> _pump(
 
 /// 탭을 눌러 그 탭의 행을 그린다 — production TabBar 동작 그대로.
 Future<void> _openTab(WidgetTester tester, String label) async {
-  await tester.tap(find.text(label));
+  await tester.tap(findVisibleText(label));
   for (var i = 0; i < 20; i++) {
     await tester.pump(const Duration(milliseconds: 50));
   }
@@ -255,46 +260,46 @@ void main() {
     await _pump(tester, size: const Size(390, 780), reads: _reads());
 
     expect(tester.takeException(), isNull);
-    expect(find.text('당일명단'), findsOneWidget);
+    expect(findVisibleText('당일명단'), findsOneWidget);
     expect(
-        find.textContaining(
+        findVisibleTextContaining(
             '${_day.month.toString().padLeft(2, '0')}월 '
             '${_day.day.toString().padLeft(2, '0')}일'),
         findsOneWidget);
     // 정상 조회 + 결과 있음 → "확정된 근무자가 없습니다"(조회 0건)가 아니다.
-    expect(find.text('확정된 근무자가 없습니다'), findsNothing);
-    expect(find.text('명단을 확인하지 못했습니다'), findsNothing);
+    expect(findVisibleText('확정된 근무자가 없습니다'), findsNothing);
+    expect(findVisibleText('명단을 확인하지 못했습니다'), findsNothing);
     // 상단 통계가 **건** 으로 말한다(fixture: 확정 3 / 출근 2 / 미출근 1).
-    expect(find.text('3건'), findsWidgets);
-    expect(find.text('2건'), findsWidgets);
-    expect(find.text('1건'), findsWidgets);
-    expect(find.text('0/3건'), findsOneWidget);
+    expect(findVisibleText('3건'), findsWidgets);
+    expect(findVisibleText('2건'), findsWidgets);
+    expect(findVisibleText('1건'), findsWidgets);
+    expect(findVisibleText('0/3건'), findsOneWidget);
     // 명단을 아는 상태이므로 명단 전제 행동이 열린다.
-    expect(find.text('명단 출력'), findsOneWidget);
+    expect(findVisibleText('명단 출력'), findsOneWidget);
   });
 
   testWidgets('ACR-2 정상 탭에 행이 그려지고, 업무 그룹은 사람 수로 센다', (tester) async {
     await _pump(tester, size: const Size(390, 780), reads: _reads());
     // 기본 탭은 '확인필요'(0건) — 그 탭의 빈 문구는 조회 0건과 다른 말이다.
-    expect(find.text('해당 근무자가 없습니다'), findsOneWidget);
+    expect(findVisibleText('해당 근무자가 없습니다'), findsOneWidget);
 
     await _openTab(tester, '정상');
     expect(tester.takeException(), isNull);
     // 실제 행이 그려진다 — 긴 이름도 포함.
-    expect(find.textContaining('김아주아주긴이름'), findsWidgets);
-    expect(find.textContaining('박둘'), findsWidgets);
+    expect(findVisibleTextContaining('김아주아주긴이름'), findsWidgets);
+    expect(findVisibleTextContaining('박둘'), findsWidgets);
     // 같은 사람(u-long)이 **다른 업무 2건** → 업무 그룹이 둘로 갈린다.
     //   그룹 키의 조각은 workDetailId 다(index 기준: businessId|toId|slotId|workDetailId).
     //   첫 그룹 헤더는 업무명·시간과 '출근 n/m'(그 그룹 기준)을 말한다.
-    expect(find.textContaining('홀서빙 및 매장 정리'), findsWidgets);
+    expect(findVisibleTextContaining('홀서빙 및 매장 정리'), findsWidgets);
     //   a1·a3 둘 다 출근 기록이 있다 → 그 그룹은 2/2.
-    expect(find.text('출근 2/2'), findsOneWidget);
+    expect(findVisibleText('출근 2/2'), findsOneWidget);
     // 동질 그룹(같은 업무·시간)은 기존 표현 그대로 — 혼합 문구가 끼지 않는다.
-    expect(find.textContaining('여러 업무'), findsNothing);
+    expect(findVisibleTextContaining('여러 업무'), findsNothing);
     // 두 번째 업무 그룹은 아래에 있다 — 스크롤해서 같은 사람이 또 나오는지 본다.
-    await tester.drag(find.text('상태순').first, const Offset(0, -400));
+    await tester.drag(findVisibleText('상태순').first, const Offset(0, -400));
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('주방 보조'), findsWidgets);
+    expect(findVisibleText('주방 보조'), findsWidgets);
   });
 
   testWidgets('ACR-3 좁은 폭 + 큰 글자에서도 행이 그려지고 overflow 가 없다',
@@ -302,9 +307,15 @@ void main() {
     await _pump(tester, size: const Size(320, 640), reads: _reads(), textScale: 1.3);
     await _openTab(tester, '정상');
     expect(tester.takeException(), isNull);
-    expect(find.textContaining('김아주아주긴이름'), findsWidgets);
+    expect(findVisibleTextContaining('김아주아주긴이름'), findsWidgets);
+    // [COMMON-TEXT-LAYOUT.28] 이름은 말줄임하지 않는다 — 괄호(인력번호·나이)가 다음 줄로 간다.
+    for (final e in findVisibleTextContaining('김아주아주긴이름').evaluate()) {
+      final t = e.widget as Text;
+      expect(t.overflow, isNot(TextOverflow.ellipsis));
+      expect(t.maxLines, isNull);
+    }
     // 마지막 행까지 스크롤로 닿는다.
-    await tester.drag(find.textContaining('김아주아주긴이름').first, const Offset(0, -260));
+    await tester.drag(findVisibleTextContaining('김아주아주긴이름').first, const Offset(0, -260));
     await tester.pump(const Duration(milliseconds: 200));
     expect(tester.takeException(), isNull);
   });
@@ -313,9 +324,9 @@ void main() {
     await _pump(tester, size: const Size(390, 780), reads: _reads(failFirstLoad: true));
 
     // 1) 실패: 조회 0건으로 말하지 않고, 명단 전제 행동도 열지 않는다.
-    expect(find.text('확정된 근무자가 없습니다'), findsNothing);
-    expect(find.text('명단 출력'), findsNothing);
-    final retry = find.text('다시 시도');
+    expect(findVisibleText('확정된 근무자가 없습니다'), findsNothing);
+    expect(findVisibleText('명단 출력'), findsNothing);
+    final retry = findVisibleText('다시 시도');
     expect(retry, findsOneWidget);
 
     // 2) 재시도 → 정상 목록
@@ -324,9 +335,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
     }
     expect(tester.takeException(), isNull);
-    expect(find.text('명단 출력'), findsOneWidget);
+    expect(findVisibleText('명단 출력'), findsOneWidget);
     await _openTab(tester, '정상');
-    expect(find.textContaining('김아주아주긴이름'), findsWidgets);
+    expect(findVisibleTextContaining('김아주아주긴이름'), findsWidgets);
   });
 
   testWidgets('ACR-5 구 문서(workDetailId 없음) — 한 사람의 두 관계가 한 그룹, 숫자는 건',
@@ -335,22 +346,22 @@ void main() {
     expect(tester.takeException(), isNull);
 
     // 상단: 관계 2건.
-    expect(find.text('2건'), findsWidgets);
-    expect(find.text('0/2건'), findsOneWidget);
+    expect(findVisibleText('2건'), findsWidgets);
+    expect(findVisibleText('0/2건'), findsOneWidget);
 
     // 두 관계가 모두 살아 있다 — 행을 지우거나 합치지 않았다.
     // 출근 전(미출근)은 '정상' 탭에 있다 — 확인필요가 아니다.
     await _openTab(tester, '정상');
-    expect(find.textContaining('한사람두관계'), findsNWidgets(2));
+    expect(findVisibleTextContaining('한사람두관계'), findsNWidgets(2));
     // [R7-P1-3] 혼합 그룹 헤더는 **첫 업무로 대표하지 않는다**.
-    expect(find.text('여러 업무 2종'), findsOneWidget);
-    expect(find.textContaining('시간 2종'), findsOneWidget);
+    expect(findVisibleText('여러 업무 2종'), findsOneWidget);
+    expect(findVisibleTextContaining('시간 2종'), findsOneWidget);
     // 두 관계를 행에서 각각 식별할 수 있다 — 업무명 · 예정 시간.
-    expect(find.text('홀서빙 · 09:00 ~ 13:00'), findsOneWidget);
-    expect(find.text('주방 보조 · 14:00 ~ 18:00'), findsOneWidget);
+    expect(findVisibleText('홀서빙 · 09:00 ~ 13:00'), findsOneWidget);
+    expect(findVisibleText('주방 보조 · 14:00 ~ 18:00'), findsOneWidget);
 
     // 그룹 헤더의 분자/분모는 같은 단위(관계)다 — 아직 아무도 출근하지 않았다.
-    expect(find.text('출근 0/2'), findsOneWidget);
+    expect(findVisibleText('출근 0/2'), findsOneWidget);
   });
 
   testWidgets('ACR-6 혼합 그룹 문맥이 좁은 폭·큰 글자에서도 가려지지 않는다',
@@ -360,12 +371,12 @@ void main() {
     expect(tester.takeException(), isNull);
 
     // 두 관계의 문맥이 각각 보인다(줄바꿈/축약이 필수 정보를 지우지 않는다).
-    expect(find.text('홀서빙 · 09:00 ~ 13:00'), findsOneWidget);
-    expect(find.text('주방 보조 · 14:00 ~ 18:00'), findsOneWidget);
+    expect(findVisibleText('홀서빙 · 09:00 ~ 13:00'), findsOneWidget);
+    expect(findVisibleText('주방 보조 · 14:00 ~ 18:00'), findsOneWidget);
     // 행동 버튼에 닿는다.
-    expect(find.text('출근'), findsWidgets);
+    expect(findVisibleText('출근'), findsWidgets);
     // 마지막 행까지 스크롤된다.
-    await tester.drag(find.text('상태순').first, const Offset(0, -260));
+    await tester.drag(findVisibleText('상태순').first, const Offset(0, -260));
     await tester.pump(const Duration(milliseconds: 200));
     expect(tester.takeException(), isNull);
   });
@@ -377,7 +388,7 @@ void main() {
     // L2(주방 보조) 행의 체크박스만 누른다 — 문맥 줄로 그 행을 특정한다.
     //   카드 탭은 상세 열기이고, 선택은 별도 GestureDetector 다(production 구조).
     final l2Row = find.ancestor(
-      of: find.text('주방 보조 · 14:00 ~ 18:00'),
+      of: findVisibleText('주방 보조 · 14:00 ~ 18:00'),
       matching: find.byType(Material),
     );
     expect(l2Row, findsWidgets);
@@ -395,11 +406,23 @@ void main() {
     expect(checked, 1);
     // 그리고 그 행은 주방 보조 관계다.
     final selectedRow = find.ancestor(
-      of: find.text('주방 보조 · 14:00 ~ 18:00'),
+      of: findVisibleText('주방 보조 · 14:00 ~ 18:00'),
       matching: find.byType(Material),
     );
     final selectedCheck = tester.widget<AppCheckbox>(
         find.descendant(of: selectedRow.first, matching: find.byType(AppCheckbox)));
     expect(selectedCheck.value, isTrue);
+  });
+
+  // [ATTENDANCE-UNKNOWN-DEST.28] 통계가 '근태 확인 필요'로 안내한 근태(status 없음)가 이 화면에서
+  //   fromMap 기본값('absent')으로 읽혀 결근 → '처리완료' 탭에 있었다. 같은 판정을 쓰는지 본다.
+  testWidgets('ACR-8 status 없는 근태 — 처리완료가 아니라 출퇴근 사실대로, "근태 확인 필요" 를 함께 말한다', (tester) async {
+    await _pump(tester, size: const Size(390, 780), reads: _reads(a1WithoutStatus: true));
+    expect(tester.takeException(), isNull);
+    await _openTab(tester, '처리완료');
+    expect(find.byKey(const ValueKey('att-unconfirmed-a1')), findsNothing);
+    await _openTab(tester, '정상');
+    expect(find.byKey(const ValueKey('att-unconfirmed-a1')), findsOneWidget);
+    expect(findVisibleText('근태 확인 필요'), findsOneWidget, reason: '상태가 있는 다른 근무에는 붙지 않는다');
   });
 }

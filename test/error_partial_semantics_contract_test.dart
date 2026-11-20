@@ -274,11 +274,15 @@ void main() {
         '"invalidWorkHours"', '"invalidStatus"', '"attendanceMissing"',
         '"ownerMismatch"', '"wageAlreadySettled"', '"futureDate"',
         '"unknownError"',
+        // [CONTRACT-DISPATCH.4 B2] 2026-10-25: 출근 기록 없는 근태에 퇴근을 쓰던 반례(LOCAL 재현)를
+        //   막으면서 **실제 분기**가 생겼다 — 이전 기대("notCheckedIn 없음")는 그 분기가 없던 때의 것.
+        '"notCheckedIn"',
       ]) {
         expect(co, contains(reason), reason: reason);
       }
       // 없는 상태를 지어내지 않았다.
-      expect(co, isNot(contains('"notCheckedIn"')));
+      expect(co, contains('if (snapData.checkIn == null) return "notCheckedIn";'),
+          reason: 'notCheckedIn 은 출근 기록이 없을 때만 나온다');
       expect(co, isNot(contains('"alreadyCheckedOut"')));
     });
 
@@ -321,7 +325,7 @@ void main() {
       expect(sch, contains("_loadError = '일정을 불러오지 못했습니다.';"));
       final e = _flat(_sliceOf(sch, 'Widget _buildEmptyState() {', 'isFiltered'));
       expect(e, contains('if (_loadError != null)'));
-      expect(e, contains('일정이 없다는 뜻이 아닙니다'));
+      expect(e, contains('일정이 없다는 뜻은 아니에요'));
     });
 
     test('20b 계약: 실패 상태가 있고 "계약 없음"과 갈린다', () {
@@ -334,7 +338,8 @@ void main() {
     });
 
     test('20c 재시도 시작 시 실패 표시를 지운다', () {
-      expect(sch, contains('_isLoading = true; _loadError = null;'));
+      // [DU258] DU213 이 setState 를 여러 줄로 바꿨다 — 공백을 접어 같은 순서·인접성을 본다.
+      expect(_flat(sch), contains('_isLoading = true; _loadError = null;'));
       expect(con, contains('_loadError = null;'));
     });
   });

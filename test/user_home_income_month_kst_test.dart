@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -22,6 +23,7 @@ import 'package:ALfit/screens/user/income_detail_screen.dart';
 import 'package:ALfit/screens/user/user_home_reads.dart';
 import 'package:ALfit/services/payroll_correction_service.dart';
 import 'package:ALfit/screens/user/user_home_screen.dart';
+import 'support/checkin_contract_fixture.dart';
 
 /// [R7-P2-1 최종 · VERIFY-INCOME-MONTH-LOCAL]
 /// 홈이 말하는 **'이번 달'** 의 라벨·조회 연월·금액이 같은 달을 가리키는가.
@@ -149,6 +151,8 @@ UserHomeReads _reads({
 }) =>
     UserHomeReads(
     slotsForTO: (toId) async => const <SlotModel>[],
+      // [CONTRACT-DISPATCH-B4] 홈 CTA 는 계약 동의 판정을 함께 본다 — 이 시험의 전제: 오늘 근무 계약은 양측 서명 완료
+      myContracts: (uid) async => completedContractsFor(apps),
       myApplications: (uid) async => apps,
       myMonthlyAttendances: (
           {required String userId, required int year, required int month}) async {
@@ -243,9 +247,9 @@ void main() {
       );
 
       expect(tester.takeException(), isNull);
-      expect(find.text('2026년 10월 ›'), findsOneWidget,
+      expect(findVisibleText('2026년 10월 ›'), findsOneWidget,
           reason: '$label 에서 홈이 9월이라고 말하면 사용자는 다른 달 돈을 본다');
-      expect(find.text('2026년 9월 ›'), findsNothing);
+      expect(findVisibleText('2026년 9월 ›'), findsNothing);
     });
 
     testWidgets('IMK-2 $label · 읽는 원장도 같은 KST 달이다', (tester) async {
@@ -277,7 +281,7 @@ void main() {
           reason: 'KST 1일 근무가 기기 로컬 달 필터에 걸려 사라졌다');
       expect(find.text('90,000원'), findsNothing,
           reason: '지난달 금액이 이번 달에 섞였다');
-      expect(find.text('아직 이번 달 수입이 없어요'), findsNothing);
+      expect(findVisibleText('아직 이번 달 수입이 없어요'), findsNothing);
     });
 
     testWidgets('IMK-4 $label · 상세로 넘기는 월도 같은 달이다', (tester) async {
@@ -288,7 +292,7 @@ void main() {
         device: device,
       );
 
-      await tester.tap(find.text('2026년 10월 ›'));
+      await tester.tap(findVisibleText('2026년 10월 ›'));
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
@@ -309,7 +313,7 @@ void main() {
         nowInstant: _kst(2026, 10, 15, 12, 0),
         device: device,
       );
-      expect(find.text('2026년 10월 ›'), findsOneWidget);
+      expect(findVisibleText('2026년 10월 ›'), findsOneWidget);
     }
   });
 
@@ -328,8 +332,8 @@ void main() {
     );
 
     expect(find.text('확인 못함'), findsWidgets);
-    expect(find.text('아직 이번 달 수입이 없어요'), findsNothing);
-    expect(find.text('2026년 10월 ›'), findsOneWidget,
+    expect(findVisibleText('아직 이번 달 수입이 없어요'), findsNothing);
+    expect(findVisibleText('2026년 10월 ›'), findsOneWidget,
         reason: '조회가 실패해도 말하는 달은 흔들리지 않는다');
   });
 

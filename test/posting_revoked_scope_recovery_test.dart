@@ -542,7 +542,13 @@ void main() {
       final body = _flat(_codeOf(
           _bodyOf(ctrl, 'Future<List<TOGroupItem>> _loadWithScopeRecovery(')));
       expect(body.contains('if (revoked.isEmpty) {'), true);
-      expect(body.contains('if (newScope.isEmpty) { return []; }'), true);
+      // [SUBADMIN-SCOPE.40] 서브관리자 범위 = 공고 권한이 확인된 배정(서버 R5-D2 가 canManageTo 를 요구한다).
+      //   빈 범위는 이유를 남기고(권한 없음/사업장 없음) 0건으로 끝낸다. 모르는 사업장이
+      //   남았으면 0건으로 확정하지 않는다.
+      expect(body.contains('if (newScope.isEmpty) {'), true);
+      expect(body.contains('throw PostingScopeUnresolved(next.unresolved);'), true);
+      expect(body.contains('_markEmptyScope(refreshed); _requestedScope = newScope; return [];'),
+          true);
     });
 
     test('07-f prune이 캐시·이름·필터를 함께 정리한다 (§15, §16, §17)', () {
@@ -554,11 +560,12 @@ void main() {
     });
 
     test('07-g scope 계산이 한 곳이다 (§15)', () {
-      final body = _flat(_codeOf(_bodyOf(ctrl, 'List<String>? _scopeOf(UserModel user)')));
-      expect(body.contains('if (user.isSuperAdmin) return null;'), true);
-      expect(body.contains('if (user.isSubAdmin) return user.subAdminBusinessIds;'),
+      final body = _flat(_codeOf(_bodyOf(ctrl, '({List<String>? ids, List<String> unresolved}) _scopeOf(')));
+      expect(body.contains('if (user.isSuperAdmin) return (ids: null, unresolved: const <String>[]);'), true);
+      expect(body.contains('final s = up.subAdminBusinessesFor((p) => p.canManageTo); '
+          'return (ids: s.allowed, unresolved: s.unresolved);'),
           true);
-      expect(body.contains('return user.managedBusinessIds;'), true);
+      expect(body.contains('return (ids: user.managedBusinessIds, unresolved: const <String>[]);'), true);
     });
   });
 

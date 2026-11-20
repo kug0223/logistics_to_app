@@ -29,6 +29,7 @@ import '../../work_type_icon.dart';
 // Dialogs
 import '../../../screens/business_admin/dialogs/work_applicants_dialog.dart';
 import '../../../utils/posting_presentation_mode.dart';
+import '../../../utils/staffing_clock.dart';
 
 /// ✨ 업무 상세 행 위젯 (간소화된 디자인)
 /// 
@@ -77,12 +78,12 @@ class WorkDetailRow extends StatefulWidget {
 }
 
 class _WorkDetailRowState extends State<WorkDetailRow> {
-  DateTime _buildNow = DateTime.now();
+  DateTime _buildNow = StaffingClock.now();
 
   @override
   void didUpdateWidget(WorkDetailRow oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.work != widget.work) _buildNow = DateTime.now();
+    if (oldWidget.work != widget.work) _buildNow = StaffingClock.now();
   }
 
   String get _netWorkTimeStr => FormatHelper.calcNetWorkTime(
@@ -94,12 +95,12 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
   /// 저장된 마감 시각 — 데이터 초기화 후 항상 존재
   DateTime? get _effectiveDeadline => widget.work.applicationDeadline;
 
-  // 급여 색상 — 일급: 주황, 시급: 초록
+  // 급여 색상
+  // [DU1 구현73 S023/S035] 시급=초록·일급=주황이라 녹색(확정·충원)·주황(부족·마감) 의미색과 겹쳤다 —
+  //   시급/일급은 앞의 라벨이 말한다. 대표 패턴(S041 업무 카드·S073 일정 카드)처럼 임금은 브랜드색 하나. 마감은 회색 그대로.
   Color _wageColor(bool isClosed) {
     if (isClosed) return AppColors.grey600;
-    return widget.work.wageType == 'daily'
-        ? AppColors.warningDark
-        : AppColors.successDark;
+    return AppColors.brand;
   }
 
   // ✅ workDetailId로 조회
@@ -226,11 +227,14 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                         size: ResponsiveHelper.iconSize(context, 12),
                         color: AppColors.grey400),
                     SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                    // [E2-NARROW] 시급은 사실이라 자르지 않는다 — 320dp × 1.3 에서
+                    //   `시급 1…` 로 금액이 사라졌다. 좁으면 다음 줄로 흐르고,
+                    //   시각·금액 덩어리 안에서는 붙임 공백(U+00A0)으로 끊기지 않게 한다.
                     Flexible(
                       child: Text.rich(
                         TextSpan(children: [
                           TextSpan(
-                            text: '${widget.work.startTime} ~ ${widget.work.endTime}',
+                            text: '${widget.work.startTime} ~ ${widget.work.endTime}',
                             style: ResponsiveHelper.smallStyle(context,
                                 color: AppColors.grey600),
                           ),
@@ -241,13 +245,12 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                                   .copyWith(color: AppColors.grey500),
                             ),
                           TextSpan(
-                            text: '  ·  ${widget.work.wageTypeLabel} ${FormatHelper.formatWage(widget.work.wage)}',
+                            text: '  ·  ${widget.work.wageTypeLabel} ${FormatHelper.formatWage(widget.work.wage)}',
                             style: ResponsiveHelper.smallStyle(context,
                                     color: wageColor)
                                 .copyWith(fontWeight: FontWeight.w600),
                           ),
                         ]),
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
@@ -255,21 +258,30 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                 // ④ 상태배지 + 마감시간 (단기만)
                 if (!widget.toItem.to.isLongTerm) ...[
                   SizedBox(height: ResponsiveHelper.spacing(context, 5)),
-                  Row(
+                  // [E2-NARROW] 배지 + 마감 시각이 320/360dp × 2.0 에서 넘쳤다
+                  //   (통합 렌더 실측). 마감 묶음(아이콘+시각)은 쪼개지 않고
+                  //   다음 줄로 흐르게 한다 — 시각은 사실이라 자르지 않는다.
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: ResponsiveHelper.spacing(context, 6),
+                    runSpacing: ResponsiveHelper.spacing(context, 3),
                     children: [
                       _buildWorkStatusBadge(context, isClosed: isClosed),
-                      if (_effectiveDeadline != null) ...[
-                        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                        Icon(Icons.timer_off_outlined,
-                            size: ResponsiveHelper.iconSize(context, 12),
-                            color: isClosed ? AppColors.grey400 : AppColors.warningDark),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                        Text(
-                          '마감 ${FormatHelper.formatTime(_effectiveDeadline!)}',
-                          style: ResponsiveHelper.smallStyle(context,
-                              color: isClosed ? AppColors.grey400 : AppColors.warningDark),
+                      if (_effectiveDeadline != null)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.timer_off_outlined,
+                                size: ResponsiveHelper.iconSize(context, 12),
+                                color: isClosed ? AppColors.grey400 : AppColors.warningDark),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                            Text(
+                              '마감 ${FormatHelper.formatTime(_effectiveDeadline!)}',
+                              style: ResponsiveHelper.smallStyle(context,
+                                  color: isClosed ? AppColors.grey400 : AppColors.warningDark),
+                            ),
+                          ],
                         ),
-                      ],
                     ],
                   ),
                 ],
@@ -281,7 +293,7 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                 //   lifecycle(mode)과 data state(statsFailed)는 다른 축이므로
                 //   순서대로 본다: 끝났는가 → 아는가.
                 if (!widget.mode.showsCurrentStaffing)
-                  _buildOperationEndedRow(context)
+                  _buildOperationEndedRow(context, known: !widget.statsFailed)
                 else if (widget.statsFailed)
                   _buildStatsErrorRow(context)
                 else
@@ -360,24 +372,35 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
     final missingColor = AppColors.grey400;
     final textColor = isClosed ? AppColors.grey500 : AppColors.grey700;
 
+    // [E2-NARROW] 점+숫자 세 묶음을 한 Row 에 고정 폭으로 늘어놓아 320dp × 1.3,
+    //   411dp × 2.0 에서 RenderFlex 가 넘쳤다(통합 렌더 실측). 묶음은 쪼개지 않고
+    //   (`대기` 와 `1` 이 갈라지지 않게) 남은 폭 안에서 다음 줄로 흐르게 한다.
+    //   N/total 은 오른쪽에 그대로 둔다.
+    Widget group(Color dot, String text) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildDot(dot),
+            SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+            Text(text,
+                style: ResponsiveHelper.tinyStyle(context, color: textColor)),
+          ],
+        );
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildDot(confirmedColor),
-        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-        // [R7-P1-2 DEVICE.1C] 업무 상세도 공고 요약과 같은 말을 쓴다 — 운영 집계는 `충원`.
-        Text('충원 $_confirmedCount',
-            style: ResponsiveHelper.tinyStyle(context, color: textColor)),
+        Expanded(
+          child: Wrap(
+            spacing: ResponsiveHelper.spacing(context, 8),
+            runSpacing: ResponsiveHelper.spacing(context, 2),
+            children: [
+              // [R7-P1-2 DEVICE.1C] 업무 상세도 공고 요약과 같은 말을 쓴다 — 운영 집계는 `충원`.
+              group(confirmedColor, '충원 $_confirmedCount'),
+              group(pendingColor, '대기 $_pendingCount'),
+              group(missingColor, '미충원 $missing'),
+            ],
+          ),
+        ),
         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-        _buildDot(pendingColor),
-        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-        Text('대기 $_pendingCount',
-            style: ResponsiveHelper.tinyStyle(context, color: textColor)),
-        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-        _buildDot(missingColor),
-        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-        Text('미충원 $missing',
-            style: ResponsiveHelper.tinyStyle(context, color: textColor)),
-        const Spacer(),
         Text(
           '$_confirmedCount/${widget.work.requiredCount}',
           style: ResponsiveHelper.smallStyle(context,
@@ -395,15 +418,39 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
   ///
   ///   원래 필요 인원과 사람 이력은 그대로 남는다. 여기서 내리는 것은
   ///   `지금 몇 자리가 비었는가` 라는 **질문**이다.
-  Widget _buildOperationEndedRow(BuildContext context) {
+  ///
+  ///   [POSTING-ENDED-STAFFING.27] `운영 종료` 가 인원 정보를 **대신하지** 않는다 — 상태와
+  ///   기록된 인원(`충원 c / 필요 r`, 접힌 카드와 같은 단어)을 함께 둔다. `미충원`·진행 막대색
+  ///   같은 지금 할 일 표현은 쓰지 않는다. 통계를 모르면 숫자 대신 `인원 확인 불가`.
+  Widget _buildOperationEndedRow(BuildContext context, {required bool known}) {
     return Row(
       children: [
         Icon(Icons.event_available,
             size: ResponsiveHelper.iconSize(context, 13),
             color: AppColors.grey500),
         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-        Text('운영 종료',
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600)),
+        Flexible(
+          child: Text(
+            known
+                ? '운영 종료  ·  충원 $_confirmedCount / 필요 ${widget.work.requiredCount}'
+                : '운영 종료  ·  인원 확인 불가',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
+          ),
+        ),
+        if (!known && widget.onRetryStats != null)
+          TextButton(
+            onPressed: widget.onRetryStats,
+            style: TextButton.styleFrom(
+              padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 6)),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text('재시도',
+                style: ResponsiveHelper.tinyStyle(context,
+                        color: Theme.of(context).primaryColor)
+                    .copyWith(fontWeight: FontWeight.w700)),
+          ),
       ],
     );
   }
@@ -419,8 +466,8 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
           child: Text(
             '지원 현황을 불러오지 못했습니다',
             style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            // [DU1 구현60 · 감사60 §5] 1줄 말줄임을 풀었다 — 320@2.0 에서 `지원 현황을 …` 으로
+            //   잘려 무엇이 실패했는지 읽을 수 없었다. 줄바꿈으로 전문을 보인다.
           ),
         ),
         if (widget.onRetryStats != null)
@@ -429,7 +476,9 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
             style: TextButton.styleFrom(
               padding: EdgeInsets.symmetric(
                   horizontal: ResponsiveHelper.spacing(context, 6)),
-              minimumSize: Size.zero,
+              // [DU1 구현60 · 감사60 §5] 실패 복구 행동의 터치 최소 48×48 — 320@2.0 76.7×34.0,
+              //   360@1.0 44.2×17.0 였다(Size.zero+shrinkWrap). 배율로 줄이지 않는 고정 하한.
+              minimumSize: const Size(48, 48),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
             child: Text('재시도',
@@ -557,9 +606,12 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
       widget.onChanged();  // 그룹 카드 헤더 통계 갱신 (전체 reload)
       // [POSTING-V2-02B.2] 확정·거절은 Home의 인력 부족·지원 검토 건수를 바꾼다.
       //   공고 탭 자신은 위 onChanged로 이미 갱신됐다.
-      WorkforceController.notifyDataChanged(
-        origin: AdminMutationOrigin.jobs,
-      );
+      // [ISG2-REFRESH] 초대만 바뀐 경우는 Home 숫자가 그대로다 — 깨우지 않는다.
+      if (result.homeRelevant) {
+        WorkforceController.notifyDataChanged(
+          origin: AdminMutationOrigin.jobs,
+        );
+      }
 
       // 🔥 충돌로 영향받은 다른 TO가 있으면 상위에 알림
       if (result.affectedTOIds.isNotEmpty) {

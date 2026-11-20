@@ -64,6 +64,28 @@ const _knownBankbookReaders = <String>{
   'callableGetApplicantDocumentUrl',
 };
 
+/// Signed URL 을 발급하는 export 전부 — 서류별로 분류해 둔다.
+///
+///   새 reader 가 생기면 "어떤 서류이고 어떤 exact 술어를 쓰는가"를
+///   여기 적고 나서 통과한다. 숫자만 세면 그 질문을 건너뛴다.
+const _knownSignedUrlReaders = <String>{
+  // 통장사본 (3) — `srvResolveOwnedBankbookStoragePath`
+  'callableGetBankbookSignedUrl',
+  'callableGetPayrollBankbookUrl',
+  'callableGetApplicantDocumentUrl',
+  // 신분증 (2) — `srvIsOwnedStoragePath`
+  'callableGetIdCardSignedUrl',
+  'callableGetTaxIdentityIdCardUrl',
+  // 사업자등록증 (1)
+  'callableGetBusinessLicenseSignedUrl',
+  // 근로계약서 PDF (1) — `srvIsOwnedContractPdfPath`
+  //   [R8P6-PDF-REMEDIATION] 영구 토큰 URL 을 끊고 15분 Signed URL 로 전환했다.
+  'callableGetContractPdfSignedUrl',
+  // 근로계약서 서명 PNG (1) — `srvIsOwnedContractSigPath` (계약 id + 역할)
+  //   [R8P6-SIG-REMEDIATION] PDF 와 같은 인가(`srvAssertContractViewAccess`)를 쓴다.
+  'callableGetContractSignatureUrl',
+};
+
 /// `export const <name> = onCall(...)` 단위로 소스를 쪼갠다.
 /// 주석은 소유자 판정에서만 제외하고, 본문은 원문을 유지한다.
 Map<String, String> _exportBodies(String raw) {
@@ -132,11 +154,17 @@ void main() {
       expect(readers, equals(_knownBankbookReaders),
           reason: '네 번째 reader 가 생겼거나 이름이 바뀌었다. '
               '추가한 reader 도 exact 술어를 쓰는지 확인하고 이 집합을 갱신하라.');
-      // 서명 발급 지점 자체의 총수도 고정한다 — 새 서류 reader 를 추가하면
-      //   여기서 먼저 보인다(통장사본이 아니어도 눈에 띄게).
-      expect(signedUrlOwners().length, 6,
-          reason: 'getSignedUrl 호출 export 함수 총수. 늘었으면 어떤 서류의 '
-              'reader 인지 분류하고 네임스페이스 술어를 확인하라.');
+      // 서명 발급 지점 자체를 고정한다 — 새 서류 reader 를 추가하면 여기서
+      //   먼저 보인다(통장사본이 아니어도 눈에 띄게).
+      //
+      //   [R8P6-PDF-REMEDIATION] 숫자만 세던 것을 **이름 집합**으로 바꿨다.
+      //   계약서 PDF reader 가 추가됐을 때(6 → 7) 숫자는 "늘었다"만 말했고,
+      //   그것이 어떤 서류의 reader 이고 어떤 술어를 쓰는지는 말하지 못했다.
+      //   이 테스트가 요구하는 "분류하고 술어를 확인"을 집합으로 표현한다.
+      expect(signedUrlOwners(), equals(_knownSignedUrlReaders),
+          reason: 'getSignedUrl 을 부르는 export 가 바뀌었다. 새 reader 라면 '
+              '어떤 서류인지 분류하고 그 서류 전용 exact 술어를 쓰는지 확인한 뒤 '
+              '이 집합을 갱신하라.');
     });
 
     test('BANK-READ-INV-02 3개 모두 exact bankbook resolver 를 쓴다', () {
@@ -379,19 +407,20 @@ void main() {
 
     test('BANK-APPREAD-06 ID 분기 behavior 무변경 (§12·§35)', () {
       final c = code('callableGetApplicantDocumentUrl');
-      // ID 는 기존 넓은 술어를 그대로 쓴다 — 별도 owner 다.
-      expect(_flat(c), contains(
-          '} else if (srvIsOwnedStoragePath(storagePath, targetUid)) { '
-          'safeStoragePath = storagePath; }'));
+      // [DOC-LATE-DELETE.7 · C 갱신] 예전: ID 는 넓은 술어(srvIsOwnedStoragePath)를 그대로 썼다.
+      //   이제 신분증 모양 술어다 — 통장사본 분기와 같은 이유(같은 사용자의 다른 서류가 통과).
+      expect(_flat(c), contains('} else if (srvIsOwnedIdCardObjectPath(targetUid, storagePath)) {'));
+      expect(_flat(c), contains('safeStoragePath = storagePath; }'));
       expect(_flat(c), contains(
           'const storagePath = documentType === DOC_TYPE_ID ? '
           '(w["idCardImagePath"] as string | undefined) : '
           '(w["bankbookImagePath"] as string | undefined);'));
-      // ID 전용 reader 두 개는 이번에 건드리지 않았다.
+      // [DOC-LATE-DELETE.7 · C 갱신] 예전: ID 전용 reader 두 개는 넓은 술어(srvIsOwnedStoragePath)였다.
+      //   이제 둘 다 신분증 모양 술어다.
       expect(code('callableGetIdCardSignedUrl'),
-          contains('srvIsOwnedStoragePath(storagePath, targetUserId)'));
+          contains('srvIsOwnedIdCardObjectPath(targetUserId, storagePath)'));
       expect(code('callableGetTaxIdentityIdCardUrl'),
-          contains('srvIsOwnedStoragePath(storagePath, targetUid)'));
+          contains('srvIsOwnedIdCardObjectPath(targetUid, storagePath)'));
     });
 
     test('BANK-APPREAD-07 unknown documentType 이 BANKBOOK 으로 흐르지 않는다 (§49)', () {
@@ -409,7 +438,8 @@ void main() {
       for (final keep in [
         'await assertBizAdmin(callerUid, businessId);',
         'if (!await srvCanReviewApplicantDocuments(callerUid, businessId)) {',
-        'srvApplicantReviewAccessBlock(appSnap.data()!, businessId, targetUid);',
+        // [INVITE-PREACCEPT] 동의 gate 는 그대로이고, 초대 기한(slot 기준)이 더해졌다.
+        'srvApplicantReviewAccessBlockAsync(appSnap.data()!, businessId, targetUid);',
         '"등록된 서류가 없습니다."',
       ]) {
         expect(c, contains(keep), reason: '$keep 가 바뀌면 안 된다');
@@ -424,15 +454,12 @@ void main() {
   group('BANK-READ-NC 이번 patch 가 건드리지 않은 것 (§23·§36~§39·§55)', () {
     test('BANK-READ-NC-01 넓은 술어는 다른 서류에서 계속 쓰인다 (§23)', () {
       // 전역 금지 테스트를 만들지 않는다 — 다른 artifact 의 정당한 술어다.
-      final users = <String>[
-        'callableGetIdCardSignedUrl',
-        'callableGetTaxIdentityIdCardUrl',
-        'callableGetApplicantDocumentUrl',
-        'callableRegisterBusinessLicense',
-      ];
-      for (final u in users) {
-        expect(code(u), contains('srvIsOwnedStoragePath('), reason: u);
+      // [DOC-LATE-DELETE.7 · C 갱신] 신분증 열람 3함수는 신분증 모양 술어로 좁혔다. 넓은 술어는
+      //   사업자등록증 등 다른 서류에서 계속 쓰인다 — 전역 금지가 아니다.
+      for (final u in ['callableGetIdCardSignedUrl', 'callableGetTaxIdentityIdCardUrl', 'callableGetApplicantDocumentUrl']) {
+        expect(code(u), contains('srvIsOwnedIdCardObjectPath('), reason: u);
       }
+      expect(code('callableRegisterBusinessLicense'), contains('srvIsOwnedStoragePath('));
       // 정의 자체도 그대로다.
       expect(_flat(_codeOf(_sliceOf(raw, 'function srvIsOwnedStoragePath(', '\n}'))),
           contains(r'return path.startsWith(`users/${ownerUid}/`);'));

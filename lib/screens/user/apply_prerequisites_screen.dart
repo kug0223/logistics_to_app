@@ -7,6 +7,7 @@ import '../../services/tax_identity_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
@@ -117,14 +118,16 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                   if (_isBlacklisted) ...[
                     _buildRestrictionBanner(
                       icon: Icons.block,
-                      color: AppColors.error,
+                      color: AppColors.errorDark, // [DU251] 글자용 진한 토큰(옅은 바탕 위 ≥4.5)
+                      background: AppColors.errorBg,
                       message: '이용이 영구 제한된 계정입니다. 지원이 불가합니다.',
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                   ] else if (_isRestricted) ...[
                     _buildRestrictionBanner(
                       icon: Icons.timer_off_outlined,
-                      color: AppColors.warning,
+                      color: AppColors.warningDark, // [DU251]
+                      background: AppColors.warningBg,
                       message: _restrictedRemainDays != null
                           ? '무단 결근 패널티로 $_restrictedRemainDays일간 지원이 제한됩니다.'
                           : '무단 결근 패널티로 이용이 제한되어 있습니다.',
@@ -158,7 +161,7 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                               Text(
                                 '아래 $_totalItemCount가지를 모두 완료해야 지원할 수 있습니다.',
                                 style: ResponsiveHelper.smallStyle(context,
-                                    color: AppColors.grey600),
+                                    color: AppColors.textSecondary), // [DU251]
                               ),
                             ],
                           ),
@@ -169,6 +172,8 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
 
                   SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
+                  // [DU251] 준비 항목을 묶음 카드 하나에 행으로 담는다(S010·S082 와 같은 흰 면·반경 16·grey200).
+                  _buildPrerequisiteGroup([
                   // 1. 신분증 등록
                   _buildPrerequisiteCard(
                     index: 1,
@@ -184,7 +189,6 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                       await _reCheck();
                     },
                   ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
                   // 2. 신분증 인증 (단기 공고만)
                   if (widget.isFlexType) ...[
@@ -202,7 +206,6 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                         await _reCheck();
                       },
                     ),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                   ],
 
                   // [PII-DOC-R1.5.4] 계좌 정보·통장사본 카드 복구.
@@ -223,7 +226,6 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                       await _reCheck();
                     },
                   ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
                   // 통장사본 (flex: 4번 / contract: 3번)
                   _buildPrerequisiteCard(
@@ -240,6 +242,7 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                       await _reCheck();
                     },
                   ),
+                  ]),
                   SizedBox(height: ResponsiveHelper.spacing(context, 32)),
 
                   // 하단 버튼
@@ -270,7 +273,9 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: theme.primaryColor,
                             foregroundColor: Colors.white,
-                            disabledBackgroundColor: AppColors.grey300,
+                            // [DU251] 비활성이어도 무엇을 못 하는지 읽힌다(이전 grey300 + 기본 흐린 글자).
+                            disabledBackgroundColor: AppColors.grey200,
+                            disabledForegroundColor: AppColors.textSecondary,
                             padding: EdgeInsets.symmetric(
                                 vertical: ResponsiveHelper.spacing(context, 14)),
                             shape: RoundedRectangleBorder(
@@ -289,13 +294,15 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
   Widget _buildRestrictionBanner({
     required IconData icon,
     required Color color,
+    required Color background,
     required String message,
   }) {
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
+        // [DU251 v2] 겹침 8% 대신 정해진 옅은 바탕 토큰 — 화면 바탕 위 겹침은 경고 글자를 4.41 로 떨어뜨렸다.
+        color: background,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
@@ -327,26 +334,13 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
     VoidCallback? onAction,
   }) {
     final theme = Theme.of(context);
-    final color = isReady ? AppColors.success : AppColors.error;
+    // [DU251] 준비됨 = 진한 초록 체크(successBg 원), 미준비 = 중립 빈 원(해야 할 일 — 위험이 아니다).
+    final iconColor = isReady ? AppColors.successDark : AppColors.grey600;
+    final circleColor = isReady ? AppColors.successBg : AppColors.grey100;
 
-    return Container(
+    // [DU251] 낱개 카드(그림자·색 테두리) → 묶음 카드 안의 행(_buildPrerequisiteGroup).
+    return Padding(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isReady
-              ? AppColors.success.withValues(alpha: 0.3)
-              : AppColors.grey300,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.grey500.withValues(alpha: 0.08),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
       // [R7-P2-2 P22-G] 액션 버튼에 상한이 없어 320dp·배율 2.0 에서 줄이
       //   15px 넘쳤다(4개 항목 전부). 준비 항목 이름도 행동 이름도 지우지
       //   않는다 — 넘칠 때만 버튼 폭을 40% 로 묶어 글자가 줄바꿈되게 한다.
@@ -358,13 +352,13 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
+              color: circleColor,
               shape: BoxShape.circle,
             ),
             child: Center(
               child: Icon(
                 isReady ? Icons.check_circle : Icons.radio_button_unchecked,
-                color: color,
+                color: iconColor,
                 size: ResponsiveHelper.iconSize(context, 22),
               ),
             ),
@@ -378,20 +372,24 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                   children: [
                     Text('$index.',
                         style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.grey500)),
+                            color: AppColors.textSecondary)), // [DU251] 이전 grey500
                     SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                     Flexible(
-                      child: Text(title,
-                          style: ResponsiveHelper.bodyStyle(context)
+                      // [DU251 v3] 큰 글자에서 낱말 단위로만 줄을 바꾼다. 읽기 도구에는 원문.
+                      child: Text(TextLayout.keepWords(title),
+                          semanticsLabel: title,
+                          style: ResponsiveHelper.bodyStyle(context,
+                                  color: AppColors.textPrimary) // [DU251] 이전 기본 grey700
                               .copyWith(fontWeight: FontWeight.bold)),
                     ),
                   ],
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                 Text(
-                  isReady ? readyDescription : notReadyDescription,
+                  TextLayout.keepWords(isReady ? readyDescription : notReadyDescription),
+                  semanticsLabel: isReady ? readyDescription : notReadyDescription,
                   style: ResponsiveHelper.smallStyle(context,
-                      color: isReady ? AppColors.successDark : AppColors.grey600),
+                      color: isReady ? AppColors.successDark : AppColors.textSecondary), // [DU251]
                 ),
               ],
             ),
@@ -407,8 +405,8 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                 padding: EdgeInsets.symmetric(
                     horizontal: ResponsiveHelper.spacing(context, 10),
                     vertical: ResponsiveHelper.spacing(context, 6)),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                // [DU251] 터치 48(이전 shrinkWrap·최소 0).
+                minimumSize: const Size(48, 48),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -431,6 +429,31 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
         ],
       );
       }),
+    );
+  }
+
+  /// [DU251] 준비 항목 묶음 카드 — 흰 면·반경 16·grey200 선, 행 사이 grey100 구분선(상태 원 뒤 글자 시작 68).
+  Widget _buildPrerequisiteGroup(List<Widget> rows) {
+    return Material(
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppColors.grey200),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          for (var i = 0; i < rows.length; i++) ...[
+            rows[i],
+            if (i < rows.length - 1)
+              Divider(
+                  height: 1,
+                  thickness: 1,
+                  color: AppColors.grey100,
+                  indent: ResponsiveHelper.spacing(context, 16) + 40 + ResponsiveHelper.spacing(context, 12)),
+          ],
+        ],
+      ),
     );
   }
 }

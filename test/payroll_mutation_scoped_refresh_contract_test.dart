@@ -209,7 +209,13 @@ void main() {
       final bank = _flat(_sliceOf(code, 'Future<void> _loadBankInfo(Set<String> uids) async {',
           'Future<void> _loadWorkerNames('));
       expect(bank, contains('uids.where((u) => !_userBankCache.containsKey(u))'));
-      expect(bank, contains('if (uncached.isEmpty) return;'));
+      // [PAYROLL-V3-RECOVERY 갱신] 예전: _loadBankInfo 안의 'if (uncached.isEmpty) return;'.
+      //   그 줄이 지급 준비 조회까지 건너뛰었다(월 왕복 뒤 판정 없는 카드). 이름 캐시 가드는
+      //   _loadWorkerNames 쪽에만 남는다 — 이름은 여전히 캐시 미스일 때만 묻는다.
+      expect(bank, isNot(contains('if (uncached.isEmpty) return;')));
+      final names = _flat(_sliceOf(code, 'Future<void> _loadWorkerNames(',
+          'Set<String> get _visibleWorkerUids'));
+      expect(names, contains('if (uncached.isEmpty) return;'));
     });
 
     test('PM-51 이체 mutation 이 프로필/지급준비를 직접 다시 부르지 않는다', () {

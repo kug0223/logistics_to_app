@@ -112,7 +112,10 @@ void main() {
       final rules = _src(_rules);
       final idx = rules.indexOf('allow update: if isLoggedIn() &&');
       expect(idx, isNot(-1));
-      final block = rules.substring(idx, idx + 2500);
+      // 글자 수(2500)로 자르면 같은 규칙에 주석이 늘 때 차단 목록이 창 밖으로 밀린다 — 다음 allow 까지가 이 규칙이다.
+      final end = rules.indexOf('allow ', idx + 1);
+      final block = rules.substring(idx, end == -1 ? rules.length : end);
+      expect(block.contains('isOwner(userId)'), isTrue, reason: '본인 수정 규칙이어야 한다');
       expect(block.contains("'name', 'legalName', 'koreanName'"), isTrue,
           reason: '이 차단이 풀리면 이름이 사실상 가변 식별자가 된다. '
               '그때는 이름을 쓰는 모든 표시 지점을 다시 봐야 한다.');

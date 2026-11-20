@@ -151,8 +151,13 @@ void main() {
 
     test('CN-51 알림 예외를 삼키고 성공을 반환한다', () {
       expect(sf, contains('} catch (e) { console.error( "⚠️ [finalizeWorkerSignature] contractSigned 알림 실패 (서명은 완료됨):", e); }'));
+      // 이 셀이 묻는 것은 **순서**다 — 알림이 응답보다 앞에 있어야 한다.
+      //   [R8P6-PDF-REMEDIATION] 응답 모양이 pdfUrl → pdfStoragePath 로 바뀌어
+      //   이 표지가 깨졌다. 순서 질문은 그대로 두고 표지만 갱신한다.
       final notifyAt = signCf.indexOf('await srvNotifyContractSigned(');
-      final returnAt = signCf.indexOf('return {success: true, pdfUrl: computedPdfUrl, sigUrl};');
+      final returnAt = signCf.indexOf('return {success: true, ');
+      expect(notifyAt, greaterThan(-1), reason: '알림 호출을 찾지 못했다');
+      expect(returnAt, greaterThan(-1), reason: '응답 지점을 찾지 못했다');
       expect(notifyAt, lessThan(returnAt));
     });
 
@@ -178,8 +183,19 @@ void main() {
       expect(_flat(_codeOf(_apply())), contains('return ApplyResult.unknown('));
     });
 
-    test('CN-62 서명 응답 모양이 그대로다', () {
-      expect(sf, contains('return {success: true, pdfUrl: computedPdfUrl, sigUrl};'));
+    test('CN-62 서명 응답은 경로와 레거시 URL 을 함께 돌려준다 (단계 A)', () {
+      // [R8P6-PDF-REMEDIATION.3 §2] 모양이 두 번 바뀌었다.
+      //   원래   : {success, pdfUrl, sigUrl}             ← pdfUrl 이 영구 bearer
+      //   .1     : {success, pdfStoragePath, sigUrl}     ← 구버전 앱이 깨졌다
+      //   지금(A): {success, pdfStoragePath, pdfUrl, sigUrl}
+      //
+      //   신규 앱은 경로만 쓰고(열람은 callableGetContractPdfSignedUrl),
+      //   구버전 앱은 URL 을 쓴다. 단계 C 에서 pdfUrl 을 응답에서 지운다.
+      // `sf` 는 이미 공백을 접었고 **주석이 제거된** 코드다 — 전환 표지
+      //   (`[STAGE-C-SWITCH]`)는 주석이라 여기서 보이지 않는다.
+      //   그 표지는 `contract_pdf_access_contract_test.dart` 가 고정한다.
+      expect(sf, contains('pdfStoragePath: computedPdfPath'));
+      expect(sf, contains('pdfUrl: computedPdfUrl'));
     });
 
     test('CN-63 클라이언트는 여전히 계약 모델을 돌려준다', () {

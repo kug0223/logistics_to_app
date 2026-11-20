@@ -436,7 +436,9 @@ void main() {
 
     test('LSP-J4 집계 규칙을 새로 만들지 않았다', () {
       final svc = _codeOf(_read('lib/services/firestore_service.dart'));
-      expect(svc, contains("const activeStatuses = {'PENDING', 'CONFIRMED', 'CONTRACT_PENDING'}"));
+      // [E2-INVITED-SEAT] 집계 본체는 tallyWorkDetailSeats 로 옮겼고, 상태 집합은
+      //   서버 PENDING_STATUSES 짝(AppStatus.seatCountedStatuses — INVITED 를 `대기` 로 센다).
+      expect(svc, contains('countedStatuses ?? AppStatus.seatCountedStatuses.toSet()'));
       expect(svc, contains('!a.isStaffingReleased'));
       // 업무마다 0으로 미리 채우는 계약 — null 과 0 의 구분이 여기서 나온다.
       // [R7 STAFFING AUDIT] seed 키가 `w.id`(composite) → `w.canonicalId` 로

@@ -11,6 +11,7 @@ import '../../providers/user_provider.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import 'to_limit_reads.dart';
@@ -228,12 +229,17 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // [DU495] 큰 글자 · 좁은 폭(B 320@2.0)에서 고정 두 탭의 이름이 잘렸다. 한 줄에 안 들어가면 가로 스크롤로
+    //   (탭 이름은 줄이지 않는다 · DU430 · 근태 · 급여 대시보드와 같은 판정). perTab 120 = '관리자별 한도' 글자 + 좌우 여백.
+    final tabsFit = TextLayout.tabsFit(context, MediaQuery.sizeOf(context).width, 2, perTab: 120);
     return AppPageScaffold(
       title: '공고 등록 개수 제한',
       bottom: TabBar(
         controller: _tabController,
+        isScrollable: !tabsFit,
+        tabAlignment: tabsFit ? null : TabAlignment.start,
         labelColor: theme.primaryColor,
-        unselectedLabelColor: AppColors.grey500,
+        unselectedLabelColor: AppColors.textSecondary, // [DU495] grey500(2.68) → 보조 글자색(DU242 · DU429 와 같다)
         indicatorColor: theme.primaryColor,
         tabs: const [
           Tab(text: '전역 기본값'),
@@ -280,13 +286,15 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                     //   `status in [ACTIVE, FULL]` 인 공고, 강제 지점은
                     //   `callableCreateTO` 의 생성 시점이다.
                     //   현재 사용량은 reader 에 없으므로 만들지 않는다.
-                    '한도는 한 관리자 계정이 동시에 진행 중인 공고 수입니다.\n'
-                    '그 계정의 모든 사업장을 합쳐서 셉니다 — 사업장 수가 아닙니다.\n'
-                    '새 공고를 등록할 때만 적용되고, 이미 등록된 공고는 닫히지 않습니다.\n'
-                    '관리자별 개별 한도가 설정되지 않은 경우 이 값이 적용됩니다.\n'
-                    'draft 상태로는 제한 없이 저장 가능합니다.',
+                    // [DU496] B(320@2.0)에서 '계/정이' 처럼 음절에서 끊겼다 → 낱말 조판. 글자 infoDark/infoBg 4.03 → infoDeep(약관 관리 안내 띠와 같다).
+                    TextLayout.keepWords(
+                        '한도는 한 관리자 계정이 동시에 진행 중인 공고 수입니다.\n'
+                        '그 계정의 모든 사업장을 합쳐서 셉니다 — 사업장 수가 아닙니다.\n'
+                        '새 공고를 등록할 때만 적용되고, 이미 등록된 공고는 닫히지 않습니다.\n'
+                        '관리자별 개별 한도가 설정되지 않은 경우 이 값이 적용됩니다.\n'
+                        'draft 상태로는 제한 없이 저장 가능합니다.'),
                     style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.infoDark),
+                        color: AppColors.infoDeep),
                   ),
                 ),
               ],
@@ -304,8 +312,9 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
                       child: Text(
-                        '현재 기본 한도를 불러오지 못했습니다.\n'
-                        '지금 값을 저장하면 실제 설정을 덮어씁니다.',
+                        // [DU496] 낱말 조판(B 음절 끊김 방지).
+                        TextLayout.keepWords('현재 기본 한도를 불러오지 못했습니다.\n'
+                            '지금 값을 저장하면 실제 설정을 덮어씁니다.'),
                         style: ResponsiveHelper.smallStyle(context,
                             color: AppColors.errorDark),
                       ),
@@ -384,16 +393,18 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                   color: AppColors.grey400),
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               Text(
-                '관리자 목록을 불러오지 못했습니다',
+                TextLayout.keepWords('관리자 목록을 불러오지 못했습니다'), // [DU496] 낱말 조판
+                // [DU495] grey600(화면 바탕 위 4.5 미만) → 보조 글자색.
                 style: ResponsiveHelper.bodyStyle(context,
-                    color: AppColors.grey600),
+                    color: AppColors.textSecondary),
                 textAlign: TextAlign.center,
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 4)),
               Text(
-                '등록된 관리자가 없다는 뜻이 아닙니다.',
+                TextLayout.keepWords('등록된 관리자가 없다는 뜻이 아닙니다.'), // [DU496] B '뜻/이' 끊김 → 낱말 조판
+                // [DU495] grey500(2.5 안팎) → 보조 글자색.
                 style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.grey500),
+                    color: AppColors.textSecondary),
                 textAlign: TextAlign.center,
               ),
               TextButton(
@@ -428,12 +439,13 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
               color: AppColors.infoBg,
               borderRadius: BorderRadius.circular(12),
             ),
+            // [DU496] 낱말 조판 · 글자 infoDark/infoBg 4.03 → infoDeep(전역 탭 안내 띠와 같다).
             child: Text(
-              '한도는 동시에 진행 중인 공고 수입니다 — 사업장 수가 아닙니다.\n'
-              '그 관리자 계정의 모든 사업장을 합쳐서 셉니다.\n'
-              '새 공고를 등록할 때만 적용되고, 이미 등록된 공고는 닫히지 않습니다.',
+              TextLayout.keepWords('한도는 동시에 진행 중인 공고 수입니다 — 사업장 수가 아닙니다.\n'
+                  '그 관리자 계정의 모든 사업장을 합쳐서 셉니다.\n'
+                  '새 공고를 등록할 때만 적용되고, 이미 등록된 공고는 닫히지 않습니다.'),
               style: ResponsiveHelper.smallStyle(context,
-                  color: AppColors.infoDark),
+                  color: AppColors.infoDeep),
             ),
           );
         }
@@ -466,7 +478,8 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                         style: ResponsiveHelper.bodyStyle(context)
                             .copyWith(fontWeight: FontWeight.bold)),
                     if (admin.managedBizCount > 1)
-                      Text('${admin.managedBizCount}개 사업장 관리 중',
+                      // [DU507] B(320 · 2.0)에서 '2개 사업장 관/리 중' 음절 끊김 → 낱말 조판(기존 시험은 findVisibleText 라 그대로 찾는다).
+                      Text(TextLayout.keepWords('${admin.managedBizCount}개 사업장 관리 중'),
                           style: ResponsiveHelper.smallStyle(context,
                               color: AppColors.textSecondary))
                     else if (admin.businessName != null)
@@ -490,8 +503,9 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                 child: Text(
                   hasCustom ? '개별 ${admin.customLimit}개' : '전역 $_globalLimit개',
                   style: ResponsiveHelper.smallStyle(context,
+                      // [DU496] info/info 10% 2.80 → infoDeep 7.74(면은 그대로).
                       color: hasCustom
-                          ? AppColors.info
+                          ? AppColors.infoDeep
                           : AppColors.textSecondary),
                 ),
               ),
@@ -506,7 +520,14 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: InputDecoration(
-                    hintText: '비워두면 전역값($_globalLimit개) 사용',
+                    // [DU507 r2] B 에서 힌트가 '비워두…'로 말줄임돼 무엇을 비우면 어떻게 되는지 읽히지 않았다 — 낱말 단위 최대 3줄.
+                    //   괄호 '(7개)' 가 '전역값' 과 한 덩어리가 되어 B 가용폭을 넘었다(r1 정적 대조) — 띄어 써서 덩어리를 나눈다.
+                    hintText: TextLayout.keepWords('비워두면 전역값 $_globalLimit개 사용'),
+                    hintMaxLines: 3,
+                    // [DU507 r3 · 후속117 N117-1] 값이 든 칸이 숨은 3줄 힌트의 높이를 그대로 잡아 B 에서 3줄 높이로 비었다
+                    //   (InputDecoration.maintainHintSize 기본 true — SDK input_decorator.dart:1068–1071). 숨은 힌트는 크기를 남기지 않는다.
+                    //   빈 칸에서는 힌트 전문이 그대로 보인다(글자 축소 · 배율 제한 · 잘라맞추기 없음).
+                    maintainHintSize: false,
                     suffixText: '개',
                     isDense: true,
                     border: OutlineInputBorder(

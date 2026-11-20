@@ -196,9 +196,12 @@ void main() {
       expect(bFlat, contains('return "wageAlreadySettled"'));
       expect(bFlat, contains('return "wageAlreadyCalculated"'));
       // [R7-P4.4E.11C.0C.0b] fence 가 TX 의 첫 read 로 들어왔다 — 그 뒤 순서는 그대로다.
+      // [ARCHIVE-WRITER-FENCE] 그 다음에 운영 종료 재판정(같은 TX)이 들어왔다 — 기존 행 읽기는 그 뒤다.
       expect(bFlat, contains('Promise<string | null> => { '
           'const ciFrozen = await srvAccountFreezeReasonInTx(tx, userId); '
-          'if (ciFrozen) return ciFrozen; const snap = await tx.get(ref)'));
+          'if (ciFrozen) return ciFrozen; '
+          'if (await srvArchivedNewWorkBlockedInTx(tx, businessId, appVerifySnap.data()!, workDateMs, checkInMs)) { '
+          'return "businessClosed"; } const snap = await tx.get(ref)'));
     });
 
     test('TA-71 confirmed/transferred/calculated 보호는 유지된다', () {

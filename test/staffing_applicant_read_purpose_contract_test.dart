@@ -129,10 +129,15 @@ void main() {
     test('SAP-F2 인력 현황 다이얼로그가 applicantReview 를 넘긴다', () {
       final loader = _slice(workDialog, 'final List<ApplicationModel> apps;',
           'final uniqueUids');
-      expect(loader, contains('getApplicationsBySlotId'));
-      expect(loader, contains('getApplicationsByTOId'));
-      expect('FirestoreService.purposeApplicantReview'.allMatches(loader).length,
-          2,
+      // [E2-INVITED-SEAT] 이 창의 읽기는 WorkApplicantsReads 경계를 지난다(테스트 seam).
+      //   계약은 그대로다 — 창이 목적·인자를 넘기고, 경계가 같은 서비스로 전달한다.
+      expect(loader, contains('_reads.applications('));
+      expect(loader, contains('slotId: widget.toItem.slot?.id,'));
+      expect(loader, contains('purpose: FirestoreService.purposeApplicantReview,'));
+      final reads = File('lib/screens/business_admin/dialogs/work_applicants_reads.dart').readAsStringSync();
+      expect(reads, contains('getApplicationsBySlotId('));
+      expect(reads, contains('getApplicationsByTOId('));
+      expect('purpose: purpose'.allMatches(reads).length, greaterThanOrEqualTo(2),
           reason: '두 조회 경로 모두 purpose 를 넘겨야 한다');
     });
 

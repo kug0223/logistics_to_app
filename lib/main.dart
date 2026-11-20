@@ -26,6 +26,7 @@ import 'screens/user/user_root_screen.dart';
 import 'screens/super_admin/super_admin_home_screen.dart';
 import 'screens/business_admin/business_admin_shell.dart';
 import 'screens/common/splash_screen.dart';
+import 'screens/common/forced_update_screen.dart';
 import 'screens/common/onboarding_screen.dart';
 import 'utils/wage_calculator.dart';
 import 'services/fcm_service.dart';
@@ -41,6 +42,8 @@ import 'models/core/user_region.dart';
 import 'services/firestore_service.dart';
 import 'services/auth_service.dart';
 import 'utils/toast_helper.dart';
+import 'utils/responsive_helper.dart';
+import 'utils/text_layout.dart';
 
 /// 앱이 완전히 종료된 상태에서 FCM 메시지 수신 시 호출되는 최상위 핸들러
 /// (반드시 main() 바깥 최상위 함수여야 함 — Flutter 요구사항)
@@ -133,6 +136,33 @@ void main() async {
 
   // 🔔 FCM에 Navigator Key 전달
   FCMService().setNavigatorKey(navigatorKey);
+  // [.69] 이전 로그아웃이 끝내지 못한 기기 토큰 폐기를 이어서 한다(로그인 전에도). 결과는 기기 표식으로 남고,
+  //   로그인은 FCMService.initialize 에서 이 폐기를 다시 기다린다 — 여기서 앱 시작을 막지 않는다.
+  unawaited(FCMService().settlePendingRevoke());
+
+  // [VERSION-GATE §6] 백그라운드 복귀 시 최소 버전 재확인.
+  //   확인 주기(30분)를 지켰을 때만 실제로 받고, **차단 판정일 때만**
+  //   라우트를 대체한다. 그래야 쓰던 화면으로 돌아갈 수 없다.
+  AppVersionService.startResumeWatch((result) {
+    navigatorKey.currentState?.pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => ForcedUpdateScreen(
+          result: result,
+          // [DU313 r3] 새 판정을 차단 화면에 돌려준다(splash 호출부와 같다) — 막힌 그대로면 화면이 그 판정으로 바뀐다.
+          onRetry: () async {
+            final again = await AppVersionService.evaluate(forceFetch: true);
+            if (again.status != VersionGateStatus.supported) return again;
+            navigatorKey.currentState?.pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const AuthWrapper()),
+              (route) => false,
+            );
+            return again;
+          },
+        ),
+      ),
+      (route) => false,
+    );
+  });
 
   // 로그아웃 후 로그인 화면 이동 콜백 등록
   // goHome()이 (route)=>false로 AuthWrapper를 제거한 뒤 로그아웃해도
@@ -405,35 +435,69 @@ class _AuthWrapperState extends State<AuthWrapper> {
           debugPrint('스택: $stackTrace');
           
           // 에러 화면 표시
+          // [DU-S094] 예외 원문은 화면에 두지 않는다 — 위 debugPrint 가 남긴다.
+          //   사용자에게는 고정 안내만 보인다. 안전 영역 · 좌우 여백 · 큰 글자 스크롤 ·
+          //   낱말 단위 줄바꿈(화면 읽기는 원문). 로그아웃 버튼 문구와 동작은 그대로다.
+          const routeErrorTitle = '화면을 불러오지 못했어요';
+          const routeErrorBody = '일시적인 문제일 수 있어요.\n로그아웃한 뒤 다시 로그인해 주세요.';
           return Scaffold(
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.error_outline,
-                    size: 64,
-                    color: AppColors.error,
+            body: SafeArea(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 24),
+                    vertical: ResponsiveHelper.spacing(context, 32),
                   ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    '화면을 불러오는 중 오류가 발생했습니다',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: ResponsiveHelper.spacing(context, 80),
+                          height: ResponsiveHelper.spacing(context, 80),
+                          decoration: const BoxDecoration(
+                            color: AppColors.errorBg,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.error_outline,
+                            size: ResponsiveHelper.spacing(context, 40),
+                            color: AppColors.errorDark,
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                      Text(
+                        TextLayout.keepWords(routeErrorTitle),
+                        semanticsLabel: routeErrorTitle,
+                        textAlign: TextAlign.center,
+                        style: ResponsiveHelper.titleStyle(context,
+                            color: AppColors.textPrimary),
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                      Text(
+                        TextLayout.phrases(routeErrorBody),
+                        semanticsLabel: routeErrorBody,
+                        textAlign: TextAlign.center,
+                        style: ResponsiveHelper.bodyStyle(context,
+                            color: AppColors.textSecondary),
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 32)),
+                      ElevatedButton(
+                        onPressed: () async {
+                          await userProvider.signOut();
+                        },
+                        style: ElevatedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52),
+                        ),
+                        // [DU424] 좁은 폭 · 큰 글자에서 '다 / 시'로 끊기지 않게 낱말 단위 줄바꿈(문구 · 화면 읽기 원문 그대로).
+                        child: Text(TextLayout.keepWords('로그아웃하고 다시 시도'),
+                            semanticsLabel: '로그아웃하고 다시 시도',
+                            textAlign: TextAlign.center),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    e.toString(),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: AppColors.error),
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton(
-                    onPressed: () async {
-                      await userProvider.signOut();
-                    },
-                    child: const Text('로그아웃하고 다시 시도'),
-                  ),
-                ],
+                ),
               ),
             ),
           );
@@ -594,7 +658,36 @@ class _HomeRegionRecoveryScreen extends StatefulWidget {
 
 class _HomeRegionRecoveryScreenState extends State<_HomeRegionRecoveryScreen> {
   bool _isLoading = false;
+
+  /// [E1-CORRECTION-1] 로그아웃 진행 중 — 연속 탭으로 signOut 을 두 번
+  ///   부르지 않는다.
+  bool _isSigningOut = false;
   UserRegion? _selected;
+
+  /// [E1-CORRECTION-1] 이 화면에서 계정을 끝낼 수 있어야 한다.
+  ///
+  ///   이 화면은 `AuthWrapper` 가 **루트로** 반환한다 — Navigator 스택이
+  ///   비어 있어 뒤로 갈 곳이 없고, AppBar·건너뛰기도 없었다. 그래서
+  ///   `homeRegion` 이 없는 계정으로 로그인하면 지역을 저장하기 전까지
+  ///   **그 계정에서 빠져나올 방법이 전혀 없었다**(앱 데이터 삭제 외).
+  ///
+  ///   지역 필수 정책은 그대로 둔다. 건너뛰기도, 기본 지역 자동 저장도
+  ///   추가하지 않는다 — 더한 것은 **나가는 문 하나**뿐이다.
+  ///   인증 종료는 기존 `UserProvider.signOut()` 을 그대로 쓰고, 화면
+  ///   전환은 `AuthWrapper` 가 한다(여기서 라우팅 스택을 건드리지 않는다).
+  Future<void> _signOut() async {
+    if (_isLoading || _isSigningOut) return;
+    setState(() => _isSigningOut = true);
+    try {
+      await context.read<UserProvider>().signOut();
+      // 성공하면 AuthWrapper 가 로그인 화면으로 바꾸며 이 위젯은 사라진다.
+    } catch (e) {
+      debugPrint('⚠️ 지역 설정 화면 로그아웃 실패: $e');
+      if (!mounted) return;
+      setState(() => _isSigningOut = false);
+      ToastHelper.showError('로그아웃에 실패했어요. 다시 시도해 주세요.');
+    }
+  }
 
   Future<void> _pickRegion() async {
     final result = await HomeRegionPickerSheet.show(
@@ -628,10 +721,16 @@ class _HomeRegionRecoveryScreenState extends State<_HomeRegionRecoveryScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // [DU-S085] 표시만 바꾼다 — 지역 선택 · 저장 · 로그아웃의 호출과 활성 조건은 그대로다.
+    const regionTitle = '주로 일할 지역을 알려주세요';
+    const regionBody = '맞춤 일자리 추천에 활용됩니다.\n나중에 MY에서 언제든지 변경할 수 있어요.';
     return Scaffold(
-      backgroundColor: AppColors.grey50,
+      // 앱 공통 화면 바탕(이전 grey50 #FAFAFA).
+      backgroundColor: AppColors.background,
       body: SafeArea(
-        child: Padding(
+        // [E1-CORRECTION-1] 로그아웃 줄이 늘어난 만큼, 작은 화면·큰 배율에서
+        //   주 CTA 나 로그아웃이 잘리지 않도록 스크롤을 허용한다.
+        child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -647,78 +746,127 @@ class _HomeRegionRecoveryScreenState extends State<_HomeRegionRecoveryScreen> {
                     color: theme.primaryColor, size: 36),
               ),
               const SizedBox(height: 24),
-              const Text(
-                '주로 일할 지역을 알려주세요',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              // 제목 · 설명 — 낱말 단위 줄바꿈(화면 읽기는 원문). 제목 크기 22 bold 는 그대로.
+              Text(
+                TextLayout.keepWords(regionTitle),
+                semanticsLabel: regionTitle,
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
-              const Text(
-                '맞춤 일자리 추천에 활용됩니다.\n나중에 MY에서 언제든지 변경할 수 있어요.',
-                style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+              Text(
+                TextLayout.phrases(regionBody),
+                semanticsLabel: regionBody,
+                style: ResponsiveHelper.bodyStyle(context,
+                    color: AppColors.textSecondary),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 32),
               // 지역 선택 카드
-              GestureDetector(
-                onTap: _pickRegion,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
+              // [DU-S085] 눌림 피드백(InkWell)과 버튼 의미를 명시한다. 탭하면 늘 _pickRegion 이다.
+              //   안내 글자 · 아이콘은 읽히는 색으로 — 이전 grey400(#BDBDBD)은 흰 카드 위 1.9:1.
+              Semantics(
+                button: true,
+                child: Material(
+                  color: AppColors.surface,
+                  shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: _selected != null ? theme.primaryColor : AppColors.grey300,
+                    side: BorderSide(
+                      color: _selected != null ? theme.primaryColor : AppColors.border,
                       width: _selected != null ? 1.5 : 1,
                     ),
                   ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.map_outlined,
-                          color: _selected != null ? theme.primaryColor : AppColors.grey400),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          _selected != null
-                              ? '${_selected!.province ?? ''} ${_selected!.city}'.trim()
-                              : '지역 선택하기',
-                          style: TextStyle(
-                            color: _selected != null ? AppColors.textPrimary : AppColors.grey400,
-                            fontSize: 15,
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: _pickRegion,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                      child: Row(
+                        children: [
+                          Icon(Icons.map_outlined,
+                              color: _selected != null
+                                  ? theme.primaryColor
+                                  : AppColors.textSecondary),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            // [DU424] 지역 이름은 낱말 단위로 줄을 바꾸고, 긴 한 낱말은 가운데에서만 끊는다
+                            //   (좁은 폭 · 큰 글자에서 '세종특별자치 / 시' 음절 끊김). 화면 읽기는 원문이다.
+                            child: Text(
+                              TextLayout.identity(_selected != null
+                                  ? '${_selected!.province ?? ''} ${_selected!.city}'.trim()
+                                  : '지역 선택하기'),
+                              semanticsLabel: _selected != null
+                                  ? '${_selected!.province ?? ''} ${_selected!.city}'.trim()
+                                  : '지역 선택하기',
+                              style: ResponsiveHelper.bodyStyle(context,
+                                  color: _selected != null
+                                      ? AppColors.textPrimary
+                                      : AppColors.textSecondary),
+                            ),
                           ),
-                        ),
+                          const Icon(Icons.chevron_right,
+                              color: AppColors.textTertiary),
+                        ],
                       ),
-                      Icon(Icons.chevron_right, color: AppColors.grey400),
-                    ],
+                    ),
                   ),
                 ),
               ),
               const SizedBox(height: 24),
               // 저장 버튼
+              // [DU-S085] 높이 고정 52 대신 최소 52 — 글자를 키우면 버튼도 함께 커진다.
+              //   비활성 글자색은 공용 주 버튼(CommonWidgets.primaryButton)과 같은 grey500.
               SizedBox(
                 width: double.infinity,
-                height: 52,
                 child: ElevatedButton(
                   onPressed: (_selected == null || _isLoading) ? null : _save,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: theme.primaryColor,
                     foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(52),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
                     disabledBackgroundColor: AppColors.grey200,
-                    disabledForegroundColor: AppColors.grey400,
+                    disabledForegroundColor: AppColors.grey500,
                   ),
                   child: _isLoading
                       ? const SizedBox(
                           width: 22, height: 22,
                           child: CircularProgressIndicator(
                               strokeWidth: 2, color: Colors.white))
-                      : const Text('저장하고 시작하기',
-                          style: TextStyle(
+                      // [DU424] 큰 글자에서 '시작하 / 기'로 끊기지 않게 낱말 단위 줄바꿈(문구 · 화면 읽기 원문 그대로).
+                      : Text(TextLayout.keepWords('저장하고 시작하기'),
+                          semanticsLabel: '저장하고 시작하기',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
                               fontSize: 16, fontWeight: FontWeight.w600)),
                 ),
               ),
               // homeRegion은 가입 필수 조건 — 건너뛰기 없음
+              //
+              // [E1-CORRECTION-1] 다만 **계정을 끝낼 길**은 있어야 한다.
+              //   건너뛰기가 아니라 로그아웃이다 — 지역을 저장하지 않으면
+              //   이 화면으로 다시 돌아온다. 주 CTA 아래 보조 행동으로 둔다.
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: (_isLoading || _isSigningOut) ? null : _signOut,
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.textSecondary,
+                  // [DU-S085] 터치 최소 48(이전 44).
+                  minimumSize: const Size.fromHeight(48),
+                ),
+                child: _isSigningOut
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('로그아웃',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w500)),
+              ),
             ],
           ),
         ),

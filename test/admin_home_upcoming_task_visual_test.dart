@@ -542,8 +542,9 @@ void main() {
 
     test('08-d label 15 / count 15 hierarchy', () {
       final flat = _flat(taskRowCode);
+      // [ADMIN-HOME.31] 표시는 낱말 단위(TextLayout.keepWords), 원문은 접근성 이름 — 위계(15/w600/textPrimary)는 그대로.
       expect(flat,
-          contains('Text(item.label, style: TextStyle( fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.textPrimary))'));
+          contains('Text(TextLayout.keepWords(item.label), semanticsLabel: item.label, style: TextStyle( fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.textPrimary))'));
       expect(flat.contains('fontSize: 14,'), isFalse);
     });
 
@@ -551,12 +552,15 @@ void main() {
       // badge에만 item.color가 남는다
       expect(RegExp(r'item\.color').allMatches(taskRowCode).length, 1);
       expect(_flat(taskRowCode),
-          contains('Text(item.badge!, style: TextStyle(fontSize: 12, color: item.color))'));
+          contains('Text(TextLayout.phrases(item.badge!), semanticsLabel: item.badge, style: TextStyle(fontSize: 12, color: item.color))'));
     });
 
     test('08-f badge는 실제 urgency metadata가 있을 때만 생긴다', () {
       final make = _codeOf(_bodyOf(home, '_makeActionRows(BuildContext context'));
-      expect(make, contains(r"badge: soon > 0 ? '내일 자동 승인 $soon건' : null"));
+      // [D3-RETRO-EXCLUDE] 퇴사 배지 = 아는 수동 검토 수 + 임박 건수. 둘 다 없으면 배지 없음.
+      expect(make, contains(r"if (soon > 0) '내일 자동 승인 $soon건',"));
+      expect(make, contains(r"if (manual != null && manual > 0) '수동 검토 $manual건',"));
+      expect(make, contains('badge: resignBadge.isEmpty ? null : resignBadge,'));
       expect(make, contains('overdueCount'));
       // 새 urgency 계산을 만들지 않았다
       expect(make.contains('urgencyScore'), isFalse);

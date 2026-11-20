@@ -334,9 +334,13 @@ void main() {
   // ══════════════════════════════════════════════════════════════
 
   group('PSP-N PAST 표현', () {
-    test('PSP-N 운영 종료 문구', () {
-      expect(card, contains("Text('운영 종료'"));
-      expect(detail, contains("Text('운영 종료'"));
+    // [POSTING-ENDED-STAFFING.27] 운영 종료가 인원 정보를 **대신하지** 않는다 — 상태와 기록된
+    //   인원(충원 / 필요)을 함께 말한다. 끝난 공고에 부족·미충원은 여전히 말하지 않는다.
+    test('PSP-N 운영 종료 문구 + 인원 요약', () {
+      expect(card, contains("text: '운영 종료'"));
+      expect(card, contains(r"'  ·  충원 $safeConfirmed'"));
+      expect(detail, contains(r"'운영 종료  ·  충원 $_confirmedCount / 필요 ${widget.work.requiredCount}'"));
+      expect(detail, contains("'운영 종료  ·  인원 확인 불가'"));
     });
 
     test('PSP-O 요약에서 현재 부족을 말하지 않는다', () {
@@ -344,12 +348,18 @@ void main() {
       final branch = _slice(card, 'if (_presentationMode.showsCurrentStaffing)',
           '_buildLongTermMeta(');
       expect(branch, contains('_buildStaffingLine('));
-      expect(branch, contains('_buildOperationEndedLine(context)'));
+      expect(branch, contains('_buildOperationEndedLine('));
+      expect(branch, contains('confirmed: totalConfirmed'));
+      final ended = _slice(card, 'Widget _buildOperationEndedLine(', 'bool _singleTOStatsFailed()');
+      expect(ended.contains('부족'), isFalse);
+      expect(ended.contains('대기'), isFalse);
     });
 
     test('PSP-P 업무 상세에서 미충원·N/M 을 말하지 않는다', () {
       expect(detail, contains('if (!widget.mode.showsCurrentStaffing)'));
-      expect(detail, contains('_buildOperationEndedRow(context)'));
+      expect(detail, contains('_buildOperationEndedRow(context, known: !widget.statsFailed)'));
+      final ended = _slice(detail, 'Widget _buildOperationEndedRow(', 'Widget _buildStatsErrorRow(');
+      expect(ended.contains('미충원'), isFalse);
       // 순서: lifecycle → data state. ERROR 를 종료처럼 보여주지 않는다.
       final branch = _slice(detail, 'if (!widget.mode.showsCurrentStaffing)',
           '_buildPersonnelStatus(');

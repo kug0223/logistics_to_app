@@ -117,7 +117,11 @@ void main() {
     test('실제로 살아 있는 형식만 허용한다 (§3 READ 결과)', () {
       // DEV idCardImagePath 7/7 = users/{uid}/idCard_{millis}.jpg
       // 클라이언트 writer 4곳 전부 같은 모양을 만든다.
-      expect(helper(), contains(r'/^idCard_\d{10,}\.(jpg|jpeg|png|webp|heic|heif)$/i'));
+      // [DOC-RACE.6 · C] 예전 단언은 `/i`(대소문자 무시)였다. Storage 규칙 isIdCardName 은
+      //   대소문자를 구분하므로 'idCard_….PNG' 가 서버에선 현재 신분증이 되고 규칙에선 보호 밖이었다
+      //   (에뮬레이터 재현: 전환 뒤 본인 삭제 204). 이제 서버도 대소문자를 구분한다.
+      expect(helper(), contains(r'/^idCard_\d{10,}\.(jpg|jpeg|png|webp|heic|heif)$/.test(name)'));
+      expect(helper(), isNot(contains(r'heif)$/i')));
     });
 
     test('negative control — 다른 문서 접두를 허용하지 않는다 (§4)', () {

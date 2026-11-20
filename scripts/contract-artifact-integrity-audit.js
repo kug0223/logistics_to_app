@@ -136,22 +136,29 @@ try {
   }
 }
 
+// [KEY-ROTATE 10-23] DEV 키 파일 경로를 코드에 두지 않는다 — GOOGLE_APPLICATION_CREDENTIALS 로만 받는다.
 const SA_PATHS = {
-  dev:  path.join(__dirname, 'alfit-89567-firebase-adminsdk-fbsvc-d22e7faef3.json'),
   prod: path.join(__dirname, 'alfit-prod-adminsdk.json'),
 };
 
 // [SECURITY] 자격증명 "출처"만 표시하고 경로 전체·키 내용은 출력하지 않는다.
 let credential;
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  // 키의 프로젝트가 --project 와 다르면 연결 전에 멈춘다(다른 프로젝트 키를 조용히 쓰지 않는다).
+  let keyProject = null;
+  try { keyProject = JSON.parse(fs.readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, 'utf8')).project_id; } catch (_) { /* 아래에서 거부 */ }
+  if (keyProject !== projectId) {
+    console.error(`Credential project mismatch: key is for "${keyProject ?? 'unreadable'}", --project is "${projectId}".`);
+    process.exit(1);
+  }
   credential = admin.credential.applicationDefault();
   console.log('Credentials   : GOOGLE_APPLICATION_CREDENTIALS env');
-} else if (fs.existsSync(SA_PATHS[projectAlias])) {
+} else if (SA_PATHS[projectAlias] && fs.existsSync(SA_PATHS[projectAlias])) {
   credential = admin.credential.cert(SA_PATHS[projectAlias]);
   console.log(`Credentials   : service account file (scripts/${path.basename(SA_PATHS[projectAlias])})`);
 } else {
   console.error(`Service account not found for "${projectAlias}".`);
-  console.error('Set GOOGLE_APPLICATION_CREDENTIALS or place the key under scripts/.');
+  console.error('Set GOOGLE_APPLICATION_CREDENTIALS to the service account key file.');
   process.exit(1);
 }
 console.log();

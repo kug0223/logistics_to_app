@@ -9,6 +9,7 @@ import '../../models/work_detail_input.dart';
 import '../../models/core/insurance_rate_model.dart';
 import '../work_type_icon.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../models/core/work_detail_data.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/wage_calculator.dart';
@@ -724,10 +725,14 @@ class WorkDetailDialog {
                   size: ResponsiveHelper.iconSize(context, 13),
                   color: AppColors.grey400),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text(
-                '${DateTime.now().year}년 최저시급 ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}',
-                style: ResponsiveHelper.captionStyle(context,
-                    color: AppColors.grey500),
+              // [DU1 구현56] 320·2.0 에서 0.7px 넘쳤다 — 남은 폭 안에서 단어 단위 줄바꿈(접근성 이름은 원문)
+              Expanded(
+                child: Text(
+                  TextLayout.keepWords('${WageCalculator.currentKstYear}년 최저시급 ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}'),
+                  semanticsLabel: '${WageCalculator.currentKstYear}년 최저시급 ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}',
+                  style: ResponsiveHelper.captionStyle(context,
+                      color: AppColors.grey500),
+                ),
               ),
             ],
           ),
@@ -736,7 +741,10 @@ class WorkDetailDialog {
             builder: (context, value, _) {
               final wage = int.tryParse(value.text.replaceAll(',', ''));
               final minWage = WageCalculator.currentMinimumWage;
-              if (wage == null || wage <= 0 || wage >= minWage) {
+              if (wage == null || wage <= 0 ||
+                  WageCalculator.minimumWageViolation(wageType: 'hourly', wage: wage, minimumWage: minWage,
+                          startTime: '', endTime: '', breakMinutes: 0) ==
+                      null) {
                 return const SizedBox.shrink();
               }
               return Column(children: [
@@ -785,9 +793,13 @@ class WorkDetailDialog {
               int e = toMins(endTime);
               if (e <= s) e += 1440;
               final workMins = (e - s - breakMinutes).clamp(1, 1440);
-              final hourlyEquiv = (wage * 60 / workMins).round();
               final minWage = WageCalculator.currentMinimumWage;
-              final isMet = hourlyEquiv >= minWage;
+              // [SA-MINWAGE.51] 서버와 같은 판정(최저일급 올림). 반올림 환산시급 비교는 450분·77,399원을 통과시켰다.
+              final minDaily = WageCalculator.minimumDailyWage(minWage, workMins);
+              final isMet = WageCalculator.minimumWageViolation(
+                    wageType: 'daily', wage: wage, minimumWage: minWage,
+                    startTime: startTime, endTime: endTime, breakMinutes: breakMinutes) ==
+                  null;
 
               // [Phase 6] 8시간 초과 일급 힌트 — 절대 금지 표현 없음
               final showLongShiftHint = workMins > 480;
@@ -827,8 +839,8 @@ class WorkDetailDialog {
                       Expanded(
                         child: Text(
                           isMet
-                              ? '환산시급 ${FormatHelper.formatNumber(hourlyEquiv)}원 — 최저시급 충족'
-                              : '환산시급 ${FormatHelper.formatNumber(hourlyEquiv)}원 — 최저시급(${FormatHelper.formatNumber(minWage)}원) 미달',
+                              ? '이 근무시간 최저일급 ${FormatHelper.formatNumber(minDaily)}원 — 충족'
+                              : '이 근무시간 최저일급 ${FormatHelper.formatNumber(minDaily)}원 — 미달',
                           style: ResponsiveHelper.smallStyle(context,
                               color: isMet
                                   ? AppColors.infoDeep
@@ -1408,13 +1420,15 @@ class WorkDetailDialog {
                       ),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    // [DU1 구현56] 320·2.0 에서 네 칸 각각 아이콘+글이 1.1~5.4px 넘쳤다 — 폭이 모자라면 글을 아이콘 아래 줄로(Wrap)
+                    child: Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: ResponsiveHelper.spacing(context, 4),
                       children: [
                         Icon(icon,
                             size: ResponsiveHelper.iconSize(context, 14),
                             color: isSelected ? Colors.white : AppColors.grey500),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                         Text(label,
                             style: ResponsiveHelper.smallStyle(context).copyWith(
                               color: isSelected ? Colors.white : AppColors.grey700,
@@ -1758,20 +1772,25 @@ class WorkDetailDialog {
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '공제 방식',
-                  style: ResponsiveHelper.subtitleStyle(context)
-                      .copyWith(fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  '임금에서 차감할 세금·보험 방식',
-                  style: ResponsiveHelper.captionStyle(context)
-                      .copyWith(color: AppColors.grey500),
-                ),
-              ],
+            // [DU1 구현56] 320·2.0 에서 제목·설명 Column 이 줄지 않아 오른쪽으로 99px 넘쳤다 — 남은 폭 안에서 단어 단위 줄바꿈
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 짧은 제목은 원문 그대로(한 줄에 들어간다 — 시험 문자열 계약 유지, 구현46 원칙)
+                  Text(
+                    '공제 방식',
+                    style: ResponsiveHelper.subtitleStyle(context)
+                        .copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    TextLayout.keepWords('임금에서 차감할 세금·보험 방식'),
+                    semanticsLabel: '임금에서 차감할 세금·보험 방식',
+                    style: ResponsiveHelper.captionStyle(context)
+                        .copyWith(color: AppColors.grey500),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -1957,6 +1976,18 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
   late final TextEditingController _descriptionController;
 
   // Section GlobalKeys (scroll-to-first-error)
+  /// [SA-MINWAGE.51] 저장 직전 최저임금 판정 — 설정을 다시 읽고(실패하면 이미 가진 값) 서버와 같은 식으로 본다.
+  Future<String?> _minimumWageViolationNow(int wage) async {
+    await WageCalculator.loadMinimumWages();
+    // [MW-52] 그 연도 기준을 확인할 수 없으면 저장하지 않는다(다른 연도 값으로 대신 통과시키지 않는다).
+    final year = WageCalculator.currentKstYear;
+    final minimum = WageCalculator.minimumWageForYear(year);
+    if (minimum == null) return '$year년 최저임금 기준을 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.';
+    return WageCalculator.minimumWageViolation(
+      wageType: _selectedWageType, wage: wage, minimumWage: minimum,
+      startTime: _startTime ?? '', endTime: _endTime ?? '', breakMinutes: _breakMinutes);
+  }
+
   final _keyWorkType    = GlobalKey();
   final _keyWage        = GlobalKey();
   final _keyTime        = GlobalKey();
@@ -2024,12 +2055,11 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
       );
       _descriptionController =
           TextEditingController(text: w.description ?? '');
-      if (widget.businessWorkTypes.isNotEmpty) {
-        _selectedWorkType = widget.businessWorkTypes.firstWhere(
-          (wt) => wt.name == w.workType,
-          orElse: () => widget.businessWorkTypes.first,
-        );
-      }
+      // [WORKTYPE-IDENTITY · D7] 수정 모드는 업무 유형을 고르지 않는다(선택 UI 자체가 없다 —
+      //   4H.0B-IDENTITY-LOCK). 예전에는 현재 활성 목록에서 이 업무를 이름으로 찾고, 없으면
+      //   목록의 **첫 업무**를 골라 두었다가 저장 결과에 실었다 — 업무가 비활성화되거나 이름이
+      //   바뀐 뒤 임금만 고쳐도 근무가 다른 업무로 바뀌었다. 정체성은 저장본 그대로 둔다.
+      _selectedWorkType = null;
     } else {
       _wageController = TextEditingController();
       _countController = TextEditingController();
@@ -2567,7 +2597,7 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
           message: '현재 확정 인원(${widget.currentCount}명)보다 적게 설정합니다.\n'
               '이미 확정된 인원이 초과 상태가 됩니다. 계속하시겠습니까?',
           confirmText: '저장',
-          confirmColor: AppColors.warning,
+          // [DU309] 정원 저장은 brand, 초과 상태의 주의는 머리 아이콘에 유지.
           icon: Icons.warning_amber,
           iconColor: AppColors.warning,
         );
@@ -2596,56 +2626,15 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
         return;
       }
 
-      // 최저임금 위반 경고 (edit: confirm dialog, hourly + daily 동일 convention)
-      final minWage = WageCalculator.currentMinimumWage;
-      if (_selectedWageType == 'hourly' && wage < minWage) {
-        if (!mounted) return;
-        final proceed = await DialogHelper.showConfirm(
-          context,
-          title: '최저임금 미달 경고',
-          message: '입력한 시급(${FormatHelper.formatNumber(wage)}원)이\n'
-              '최저임금(${FormatHelper.formatNumber(minWage)}원)보다 낮습니다.\n\n'
-              '최저임금법 위반 시 3년 이하 징역 또는 2천만 원 이하 벌금이 부과됩니다.\n'
-              '그래도 저장하시겠습니까?',
-          confirmText: '저장',
-          cancelText: '수정하기',
-          confirmColor: AppColors.errorDark,
-          icon: Icons.warning_amber,
-          iconColor: AppColors.errorDark,
-        );
-        if (!proceed) return;
-        if (!mounted) return;
-      }
-      if (_selectedWageType == 'daily' &&
-          _startTime != null && _endTime != null) {
-        int toMin(String t) {
-          final p = t.split(':');
-          return int.parse(p[0]) * 60 + int.parse(p[1]);
-        }
-        int sMin = toMin(_startTime!), eMin = toMin(_endTime!);
-        if (eMin <= sMin) eMin += 1440;
-        final workMins = (eMin - sMin - _breakMinutes).clamp(0, 9999);
-        if (workMins > 0) {
-          final hourlyEquiv = (wage * 60 / workMins).round();
-          if (hourlyEquiv < minWage) {
-            if (!mounted) return;
-            final proceed = await DialogHelper.showConfirm(
-              context,
-              title: '최저임금 미달 경고',
-              message: '환산시급(${FormatHelper.formatNumber(hourlyEquiv)}원)이\n'
-                  '최저임금(${FormatHelper.formatNumber(minWage)}원)보다 낮습니다.\n\n'
-                  '최저임금법 위반 시 3년 이하 징역 또는 2천만 원 이하 벌금이 부과됩니다.\n'
-                  '그래도 저장하시겠습니까?',
-              confirmText: '저장',
-              cancelText: '수정하기',
-              confirmColor: AppColors.errorDark,
-              icon: Icons.warning_amber,
-              iconColor: AppColors.errorDark,
-            );
-            if (!proceed) return;
-            if (!mounted) return;
-          }
-        }
+      // [SA-MINWAGE.51] 최저임금 — 등록·수정 같은 판정, 서버(지원·초대 writer)와 같은 식. 미달 공고는 서버가 모든 지원·초대를
+      //   거절하므로 '그래도 저장'을 두지 않는다. 저장 직전 설정을 다시 읽는다(다른 기기에서 SA 가 바꾼 값).
+      final minViolation = await _minimumWageViolationNow(wage);
+      if (!mounted) return;
+      if (minViolation != null) {
+        _scrollToFirstError(_keyWage);
+        // 320·1.3 기기에서 '않습니/다'로 끊겼다 — 낱말 단위 줄바꿈.
+        ToastHelper.showError(TextLayout.keepWords('$minViolation\n이 금액으로는 근로자 지원·초대가 받아들여지지 않습니다.'));
+        return;
       }
 
       // stale baseHourlyWage → null (새 계산 기준 불일치 방지)
@@ -2674,13 +2663,9 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
         if (!mounted) return;
       }
 
+      // [D7] 업무 정체성(이름·아이콘·색·업무유형 id)은 싣지 않는다 — 호출자는 기존 값을 유지한다.
+      //   업무를 바꾸려면 근무를 지우고 새로 추가한다(서버의 지원자 보호 관문이 그 경로에 있다).
       Navigator.of(context).pop(<String, dynamic>{
-        if (_selectedWorkType != null) ...{
-          'workType': _selectedWorkType!.name,
-          'workTypeIcon': _selectedWorkType!.icon,
-          'workTypeColor': _selectedWorkType!.color,
-          'workTypeBackgroundColor': _selectedWorkType!.backgroundColor,
-        },
         'wage': wage,
         'wageType': _selectedWageType,
         'requiredCount': count,
@@ -2734,31 +2719,14 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
         return;
       }
 
-      // 최저시급 검증 (add: hard block)
-      final minWage = WageCalculator.currentMinimumWage;
-      if (_selectedWageType == 'hourly' && wage < minWage) {
+      // [SA-MINWAGE.51] 최저임금 — 등록·수정 같은 판정, 서버(지원·초대 writer)와 같은 식. 미달 공고는 서버가 모든 지원·초대를
+      //   거절하므로 '그래도 저장'을 두지 않는다. 저장 직전 설정을 다시 읽는다(다른 기기에서 SA 가 바꾼 값).
+      final minViolation = await _minimumWageViolationNow(wage);
+      if (!mounted) return;
+      if (minViolation != null) {
         _scrollToFirstError(_keyWage);
-        ToastHelper.showError(
-          '시급이 최저시급(${FormatHelper.formatNumber(minWage)}원) 미만입니다.\n최저시급 이상으로 입력해주세요.');
+        ToastHelper.showError(TextLayout.keepWords('$minViolation\n이 금액으로는 근로자 지원·초대가 받아들여지지 않습니다.'));
         return;
-      }
-      if (_selectedWageType == 'daily') {
-        int toMin(String t) {
-          final p = t.split(':');
-          return int.parse(p[0]) * 60 + int.parse(p[1]);
-        }
-        int sMin = toMin(_startTime!), eMin = toMin(_endTime!);
-        if (eMin <= sMin) eMin += 1440;
-        final workMins = (eMin - sMin - _breakMinutes).clamp(0, 9999);
-        if (workMins > 0) {
-          final hourlyEquiv = (wage * 60 / workMins).round();
-          if (hourlyEquiv < minWage) {
-            _scrollToFirstError(_keyWage);
-            ToastHelper.showError(
-              '환산시급(${FormatHelper.formatNumber(hourlyEquiv)}원)이 최저시급(${FormatHelper.formatNumber(minWage)}원) 미만입니다.\n일급을 올려주세요.');
-            return;
-          }
-        }
       }
 
       if (count == null || count <= 0) {
@@ -2802,13 +2770,13 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
       // manual baseHourlyWage 최저임금 미달 경고 (OPTION A: confirm dialog)
       if (_selectedWageType == 'daily' &&
           addBaseHourly != null &&
-          addBaseHourly < minWage) {
+          addBaseHourly < WageCalculator.currentMinimumWage) {
         if (!mounted) return;
         final proceed = await DialogHelper.showConfirm(
           context,
           title: '통상시급 최저임금 미달 경고',
           message: '수동 입력한 통상시급(${FormatHelper.formatNumber(addBaseHourly)}원)이\n'
-              '최저임금(${FormatHelper.formatNumber(minWage)}원)보다 낮습니다.\n\n'
+              '최저임금(${FormatHelper.formatNumber(WageCalculator.currentMinimumWage)}원)보다 낮습니다.\n\n'
               '야간수당 계산 기준에 사용됩니다. 그래도 저장하시겠습니까?',
           confirmText: '저장',
           cancelText: '수정하기',
@@ -2822,6 +2790,7 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
 
       Navigator.of(context).pop(
         WorkDetailInput(
+          workTypeId: _selectedWorkType!.id,
           workType: _selectedWorkType!.name,
           workTypeIcon: _selectedWorkType!.icon,
           workTypeColor: _selectedWorkType!.color ?? '#FFFFFF',

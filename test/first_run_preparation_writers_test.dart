@@ -198,9 +198,14 @@ void main() {
       // 서로 다른 authority 면(예: users vs businesses.sealUrl) BLOCKER 다.
       expect((_src(_home) + _src(_readinessResolver))
           .contains('currentUser?.sealBase64'), isTrue);
+      // [CONTRACT-DISPATCH.4 B1] 계약 생성은 owner 문서를 직접 읽지 않는다(앱은 읽을 수 없다 —
+      //   목록에 ownerId 없음·users 본인만). 같은 필드(users/{owner}.sealBase64)를 **서버가** 읽는다.
       final c = _src(_contractDialog);
-      expect(c.contains(".collection('users').doc(sealUid).get()"), isTrue);
-      expect(c.contains("sealDoc.data()?['sealBase64']"), isTrue);
+      expect(c.contains(".collection('users').doc(sealUid).get()"), isFalse);
+      expect(c.contains('BusinessPostingReadiness.employerSealReady('), isTrue);
+      final fns = _src('functions/src/index.ts');
+      expect(fns.contains('const raw = ownerSnap.exists ? ownerSnap.get("sealBase64") : null;'), isTrue,
+          reason: '서명 writer 가 읽는 authority 도 users/{owner}.sealBase64 하나다');
       // businesses 문서에는 저장하지 않는다는 결정이 남아 있다.
       final b = _src('lib/models/core/business_model.dart');
       expect(b.contains('sealBase64는 users/{uid} 문서에만 저장한다'), isTrue);

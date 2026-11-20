@@ -5,6 +5,7 @@ import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/terms_consent_plan.dart';
 import '../../services/legal_terms_service.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/auth/legal_consent_list.dart';
@@ -301,16 +302,17 @@ class _RegistrationRecoveryScreenState
           child: ListView(
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
             children: [
-              _buildIcon(Icons.assignment_late_outlined, Colors.orange),
+              _buildIcon(Icons.assignment_late_outlined, AppColors.warningDark),
               const SizedBox(height: 20),
-              Text('약관 동의가 필요합니다',
+              // [DU1 구현46 S005] 큰 글자에서 낱말 중간이 끊겼다('필/요합니다'·'없/습니다'·'돌아/가기') — 단어 단위 줄바꿈(문구 그대로)
+              Text(TextLayout.keepWords('약관 동의가 필요합니다'),
                   style: Theme.of(context)
                       .textTheme
                       .titleLarge
                       ?.copyWith(fontWeight: FontWeight.bold)),
               const SizedBox(height: 12),
-              const Text('이전 가입에서 약관 동의가 기록되지 않았습니다.\n'
-                  '내용을 확인하고 직접 선택해주세요.'),
+              Text(TextLayout.phrases('이전 가입에서 약관 동의가 기록되지 않았습니다.\n'
+                  '내용을 확인하고 직접 선택해주세요.')),
               const SizedBox(height: 20),
               LegalConsentList(
                 items: items,
@@ -367,13 +369,13 @@ class _RegistrationRecoveryScreenState
         children: [
           _buildIcon(Icons.credit_card_outlined, Colors.blue),
           const SizedBox(height: 20),
-          Text('외국인등록증 정보 등록 필요',
+          Text(TextLayout.keepWords('외국인등록증 정보 등록 필요'),
               style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
           const SizedBox(height: 12),
-          const Text(
+          Text(TextLayout.phrases(
             '외국인등록증 정보나 이미지가 아직 등록되지 않았습니다.\n'
             '외국인 가입 화면에서 이어서 등록해주세요.',
-          ),
+          )),
           const SizedBox(height: 24),
           _buildErrorBanner(),
           const Spacer(),
@@ -411,10 +413,10 @@ class _RegistrationRecoveryScreenState
         children: [
           _buildIcon(Icons.error_outline, Colors.red),
           const SizedBox(height: 20),
-          Text('상태 확인 실패',
+          Text(TextLayout.keepWords('상태 확인 실패'),
               style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
           const SizedBox(height: 12),
-          Text(_errorMessage ?? '알 수 없는 오류가 발생했습니다.'),
+          Text(TextLayout.phrases(_errorMessage ?? '알 수 없는 오류가 발생했습니다.')),
           const Spacer(),
           SizedBox(width: double.infinity, child: ElevatedButton(onPressed: _detectCase, child: const Text('다시 시도'))),
           const SizedBox(height: 12),
@@ -441,14 +443,14 @@ class _RegistrationRecoveryScreenState
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.red.shade50,
+          color: AppColors.errorBg,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.red.shade200),
+          border: Border.all(color: AppColors.errorLight),
         ),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Icon(Icons.error_outline, color: Colors.red.shade700, size: 18),
+          Icon(Icons.error_outline, color: AppColors.errorDark, size: 18),
           const SizedBox(width: 8),
-          Expanded(child: Text(_errorMessage!, style: TextStyle(color: Colors.red.shade700))),
+          Expanded(child: Text(_errorMessage!, style: TextStyle(color: AppColors.errorDark))),
         ]),
       ),
       const SizedBox(height: 16),
@@ -460,7 +462,7 @@ class _RegistrationRecoveryScreenState
       width: double.infinity,
       child: TextButton(
         onPressed: _isRecording ? null : _handleSignOut,
-        child: const Text('로그인 화면으로 돌아가기', style: TextStyle(color: AppColors.grey500)),
+        child: Text(TextLayout.keepWords('로그인 화면으로 돌아가기'), style: const TextStyle(color: AppColors.textTertiary)),
       ),
     );
   }

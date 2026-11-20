@@ -21,6 +21,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/attendance_policy_disclosure.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 
 class ApplicationPolicyAcknowledgeSheet {
@@ -94,86 +95,136 @@ class _SheetState extends State<_Sheet> {
     }
   }
 
+  /// [DU295] 큰 글자(1.3배 이상) 배치 전환 기준 — DU264 지원 확인의 `_stacked` 와 같다.
+  static bool _stacked(BuildContext context) =>
+      MediaQuery.textScalerOf(context).scale(10) >= 13;
+
+  /// [DU295] 화면 글자만 낱말 단위로 줄을 바꾼다(문구·접근성 이름은 원문 그대로).
+  static Widget _words(String s, {TextStyle? style, TextAlign? textAlign}) =>
+      Text(
+        TextLayout.keepWords(s),
+        semanticsLabel: s,
+        style: style,
+        textAlign: textAlign,
+      );
+
   @override
   Widget build(BuildContext context) {
     final current = widget.currentBusinessRules;
+    final pad = ResponsiveHelper.spacing(context, 20);
+    // [DU295] 가운데 내용만 스크롤하고 버튼은 아래에 고정한다.
+    //   이전: 버튼이 스크롤 맨 끝 — W360 1.0 첫 화면에서 주 버튼 11px 잘림,
+    //   B320 2.0 은 1743px 내려야 닿았다.
     return SafeArea(
       top: false,
-      child: SingleChildScrollView(
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '지원 당시 기준 확인',
-              style: ResponsiveHelper.subtitleStyle(context)
-                  .copyWith(fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-            Text(
-              '${widget.workerName}님은 변경 전 근태·급여 기준으로 지원했습니다.\n'
-              '지원 당시 기준으로 확정하며, 조건은 바뀌지 않습니다.',
-              style:
-                  ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            _block(context,
-                title: '지원 당시 기준 (이 근무에 적용)',
-                rules: widget.snapshot,
-                highlight: true),
-            if (current != null && !current.sameRulesAs(widget.snapshot)) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-              _block(context,
-                  title: '현재 사업장 기준 (이 근무에는 적용되지 않음)',
-                  rules: current,
-                  highlight: false),
-            ],
-            SizedBox(height: ResponsiveHelper.spacing(context, 14)),
-            Text(
-              '현재 사업장 기준은 변경 이후 새로 지원하는 근로자에게 적용됩니다.',
-              style:
-                  ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(
-                          vertical: ResponsiveHelper.spacing(context, 14)),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                    onPressed:
-                        _sending ? null : () => Navigator.pop(context, false),
-                    child: const Text('나중에'),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                  pad, pad, pad, ResponsiveHelper.spacing(context, 8)),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '지원 당시 기준 확인',
+                    style: ResponsiveHelper.subtitleStyle(context)
+                        .copyWith(fontWeight: FontWeight.bold),
                   ),
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-                Expanded(
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.brand,
-                      padding: EdgeInsets.symmetric(
-                          vertical: ResponsiveHelper.spacing(context, 14)),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                    onPressed: _sending ? null : _acknowledge,
-                    child: Text(
-                      _sending ? '확인 중...' : '지원 당시 기준으로 확정',
-                      style: const TextStyle(
-                          color: Colors.white, fontWeight: FontWeight.bold),
-                    ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                  _words(
+                    '${widget.workerName}님은 변경 전 근태·급여 기준으로 지원했습니다.\n'
+                    '지원 당시 기준으로 확정하며, 조건은 바뀌지 않습니다.',
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.grey600),
                   ),
-                ),
-              ],
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                  _block(context,
+                      title: '지원 당시 기준 (이 근무에 적용)',
+                      rules: widget.snapshot,
+                      highlight: true),
+                  if (current != null &&
+                      !current.sameRulesAs(widget.snapshot)) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                    _block(context,
+                        title: '현재 사업장 기준 (이 근무에는 적용되지 않음)',
+                        rules: current,
+                        highlight: false),
+                  ],
+                  SizedBox(height: ResponsiveHelper.spacing(context, 14)),
+                  _words(
+                    '현재 사업장 기준은 변경 이후 새로 지원하는 근로자에게 적용됩니다.',
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: AppColors.grey600),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
+          ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+                pad, ResponsiveHelper.spacing(context, 8), pad, pad),
+            child: _actions(context),
+          ),
+        ],
       ),
+    );
+  }
+
+  /// [DU295] 버튼 높이 52. 배율 1.0 은 나중에 1 : 주 2(DU264 지원 확인과 같은 비율),
+  ///   큰 글자는 주 버튼 위·나중에 아래(전체 폭). 이전: 반 폭씩이라 '확 | 정' 음절 끊김.
+  Widget _actions(BuildContext context) {
+    const shape = RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(12)));
+    final vPad =
+        EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 14));
+    final later = OutlinedButton(
+      style: OutlinedButton.styleFrom(
+        // [DU295] 글자 대표색 → 본문색 w600(DU264 '취소' 와 같다). 처리 중 흐림은 테마 그대로.
+        foregroundColor: AppColors.textPrimary,
+        minimumSize: const Size(0, 52),
+        padding: vPad,
+        shape: shape,
+      ),
+      onPressed: _sending ? null : () => Navigator.pop(context, false),
+      child: const Text('나중에', style: TextStyle(fontWeight: FontWeight.w600)),
+    );
+    final primary = ElevatedButton(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppColors.brand,
+        foregroundColor: AppColors.surface,
+        // [DU295] 처리 중 비활성 — 흰 글 on 회색이라 안 보이던 것을 DU290 DP1 과 같은 짝으로
+        disabledBackgroundColor: AppColors.grey200,
+        disabledForegroundColor: AppColors.textSecondary,
+        minimumSize: const Size(0, 52),
+        padding: vPad,
+        shape: shape,
+      ),
+      onPressed: _sending ? null : _acknowledge,
+      child: _words(
+        _sending ? '확인 중...' : '지원 당시 기준으로 확정',
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ),
+    );
+    if (_stacked(context)) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          primary,
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          later,
+        ],
+      );
+    }
+    return Row(
+      children: [
+        Expanded(child: later),
+        SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+        Expanded(flex: 2, child: primary),
+      ],
     );
   }
 
@@ -183,6 +234,13 @@ class _SheetState extends State<_Sheet> {
     required AttendanceRules rules,
     required bool highlight,
   }) {
+    final stacked = _stacked(context);
+    final labelStyle =
+        ResponsiveHelper.smallStyle(context, color: AppColors.grey700);
+    // [DU295] 값 글자 기본 grey600(회색 면 4.23) → textSecondary. 굵기 그대로.
+    final valueStyle =
+        ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary)
+            .copyWith(fontWeight: FontWeight.w600);
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
@@ -197,34 +255,39 @@ class _SheetState extends State<_Sheet> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          // [DU295] '현재 사업장 기준' 제목 grey500(2.46) → textSecondary
+          _words(
             title,
             style: ResponsiveHelper.smallStyle(context,
-                color: highlight ? AppColors.brand : AppColors.grey500),
+                color: highlight ? AppColors.brand : AppColors.textSecondary),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 6)),
           // [R7-PAYROLL-POLICY.4B] 근로자 화면·계약서와 **같은 목록**을 쓴다.
           //   관리자가 확인하는 것이 근로자가 본 것과 달라서는 안 된다.
+          //   [DU295] 문구는 그대로 두고 화면 글자만 낱말 단위로 묶는다.
+          //   큰 글자는 라벨 위·값 아래(DU264 와 같은 기준).
           for (final line in attendancePolicyLines(rules))
             Padding(
               padding:
                   EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 3)),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    width: ResponsiveHelper.spacing(context, 80),
-                    child: Text(line.label,
-                        style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.grey700)),
-                  ),
-                  Expanded(
-                    child: Text(line.value,
-                        style: ResponsiveHelper.smallStyle(context)
-                            .copyWith(fontWeight: FontWeight.w600)),
-                  ),
-                ],
-              ),
+              child: stacked
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _words(line.label, style: labelStyle),
+                        _words(line.value, style: valueStyle),
+                      ],
+                    )
+                  : Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: ResponsiveHelper.spacing(context, 80),
+                          child: _words(line.label, style: labelStyle),
+                        ),
+                        Expanded(child: _words(line.value, style: valueStyle)),
+                      ],
+                    ),
             ),
         ],
       ),

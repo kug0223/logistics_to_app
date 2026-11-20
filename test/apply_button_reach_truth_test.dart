@@ -31,6 +31,8 @@ import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/widgets/common/loading_widget.dart';
 import 'package:ALfit/widgets/dialogs/apply/apply_work_dialog.dart';
 
+import 'support/visible_text.dart'; // [DU277] 머리 사업장명이 식별 단위(TextLayout.identity)라 보이는 글자로 찾는다
+
 class _FakeApp extends Fake
     with MockPlatformInterfaceMixin
     implements FirebaseAppPlatform {
@@ -148,7 +150,7 @@ void main() {
 
     // 헤더·하단 버튼은 로딩 분기 **밖**이라 그려진다 — 껍데기는 살아있다.
     expect(find.text('지원하기'), findsOneWidget);
-    expect(find.text('강남 물류센터'), findsOneWidget);
+    expect(findVisibleText('강남 물류센터'), findsOneWidget);
     expect(find.text('닫기'), findsOneWidget);
 
     // 본문은 로딩에 머문다. `widget.workDetails` 에 업무를 1건 넘겼는데도

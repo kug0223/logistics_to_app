@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import '../../models/settings/trust_settings_model.dart';
 import '../../providers/badge_provider.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/text_layout.dart';
+import '../../widgets/common/app_empty_state.dart';
 
 /// 나의 활동 — 획득 배지 전체 목록
 ///
@@ -83,8 +85,7 @@ class _MyActivityScreenState extends State<MyActivityScreen> {
                     children: [
                       for (final entry in grouped.entries) ...[
                         _buildGroupHeader(entry.key),
-                        for (final badge in entry.value)
-                          _buildBadgeItem(badge),
+                        _buildBadgeGroup(entry.value),
                       ],
                       const SizedBox(height: 32),
                     ],
@@ -164,7 +165,7 @@ class _MyActivityScreenState extends State<MyActivityScreen> {
     switch (type) {
       case BadgeType.attendance:  return AppColors.successDark;
       case BadgeType.experience:  return AppColors.infoDark;
-      case BadgeType.specialty:   return AppColors.amberDark;
+      case BadgeType.specialty:   return AppColors.warningDark; // [DU250] amberDark 는 자기 옅은 원 위 1.9 — 4.58
       case BadgeType.trustScore:  return AppColors.grey500;
     }
   }
@@ -199,8 +200,12 @@ class _MyActivityScreenState extends State<MyActivityScreen> {
       width: double.infinity,
       color: Colors.white,
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+      // [DU250 v2] 큰 글자에서 낱말 단위로만 줄을 바꾼다(B320 '획/득했어요' 음절 끊김). 읽기 도구에는 원문.
       child: Text(
-        earnedCount == 0
+        TextLayout.keepWords(earnedCount == 0
+            ? '아직 획득한 활동 배지가 없어요'
+            : '$earnedCount개의 활동 배지를 획득했어요'),
+        semanticsLabel: earnedCount == 0
             ? '아직 획득한 활동 배지가 없어요'
             : '$earnedCount개의 활동 배지를 획득했어요',
         style: const TextStyle(
@@ -215,9 +220,12 @@ class _MyActivityScreenState extends State<MyActivityScreen> {
 
   Widget _buildTabFilter() {
     return Container(
+      width: double.infinity, // [DU250 v2] Wrap 은 내용 폭만 쓴다 — 흰 띠는 화면 폭 전체
       color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      child: Row(
+      // [DU250] 칩 터치 높이 48 만큼 아래 여백을 덜어낸다(12 → 4).
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+      // [DU250] 큰 글자에서 칩 줄이 49px 넘쳤다(B320) — 넘치면 다음 줄로 내린다.
+      child: Wrap(
         children: List.generate(_tabs.length, (i) => _buildTabChip(i)),
       ),
     );
@@ -227,21 +235,29 @@ class _MyActivityScreenState extends State<MyActivityScreen> {
     final selected = _selectedTab == index;
     return Padding(
       padding: const EdgeInsets.only(right: 8),
+      // [DU250] 선택은 대표색(UI-1). 칩 모양은 그대로 두고 터치 높이만 48 로 넓힌다(이전 약 30).
       child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: () => setState(() => _selectedTab = index),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.infoDark : AppColors.background,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            _tabs[index],
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: selected ? Colors.white : AppColors.textSecondary,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Center(
+            widthFactor: 1,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: selected ? AppColors.brand : AppColors.background,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                _tabs[index],
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? Colors.white : AppColors.textSecondary,
+                ),
+              ),
             ),
           ),
         ),
@@ -251,31 +267,51 @@ class _MyActivityScreenState extends State<MyActivityScreen> {
 
   Widget _buildGroupHeader(String label) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
+      // [DU250] 섹션 제목 — S010·S082·S040 과 같은 16 bold 본문색(이전 12 textHint, 바탕 위 1.75).
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
       child: Text(
         label,
         style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          color: AppColors.textHint,
-          letterSpacing: 0.5,
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: AppColors.textPrimary,
+        ),
+      ),
+    );
+  }
+
+  /// [DU250] 분류 하나 = 묶음 카드 하나(S010·S082 와 같은 흰 면·반경 16·grey200). 이전에는 배지마다 따로 카드였다.
+  Widget _buildBadgeGroup(List<BadgeModel> badges) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Material(
+        color: AppColors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppColors.grey200),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            for (var i = 0; i < badges.length; i++) ...[
+              _buildBadgeItem(badges[i]),
+              if (i < badges.length - 1)
+                const Divider(
+                    height: 1, thickness: 1, color: AppColors.grey100, indent: 72),
+            ],
+          ],
         ),
       ),
     );
   }
 
   Widget _buildBadgeItem(BadgeModel badge) {
+    // 아이콘의 분류 색(출근·근무·특별)은 MY 탭 배지 줄과 같은 성취 분류 표시라 유지한다.
     final color = _categoryColor(badge.type);
     final icon = _conditionIcon(badge.conditionType);
 
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+    return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.borderLight),
-      ),
       child: Row(
         children: [
           // 아이콘
@@ -294,8 +330,10 @@ class _MyActivityScreenState extends State<MyActivityScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // [DU250] 큰 글자에서 낱말 단위로만 줄을 바꾼다. 읽기 도구에는 원문.
                 Text(
-                  _badgeTitle(badge),
+                  TextLayout.keepWords(_badgeTitle(badge)),
+                  semanticsLabel: _badgeTitle(badge),
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
@@ -305,7 +343,8 @@ class _MyActivityScreenState extends State<MyActivityScreen> {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  _describe(badge),
+                  TextLayout.keepWords(_describe(badge)),
+                  semanticsLabel: _describe(badge),
                   style: const TextStyle(
                     fontSize: 12,
                     color: AppColors.textSecondary,
@@ -321,21 +360,11 @@ class _MyActivityScreenState extends State<MyActivityScreen> {
 
   Widget _buildEmptyState() {
     final categoryName = _selectedTab == 0 ? '활동' : _tabs[_selectedTab];
+    // [DU250] 공용 빈 상태(AppEmptyState)로 — 다른 화면의 빈 상태와 같은 크기·읽기색(DU248).
     return Expanded(
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.emoji_events_outlined,
-                size: 40, color: AppColors.grey300),
-            const SizedBox(height: 12),
-            Text(
-              '아직 획득한 $categoryName 배지가 없어요',
-              style: const TextStyle(
-                  fontSize: 14, color: AppColors.textSecondary),
-            ),
-          ],
-        ),
+      child: AppEmptyState(
+        icon: Icons.emoji_events_outlined,
+        title: '아직 획득한 $categoryName 배지가 없어요',
       ),
     );
   }

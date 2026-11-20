@@ -18,6 +18,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다
 
 import 'package:ALfit/models/core/business_work_type_model.dart';
 import 'package:ALfit/models/core/work_detail_data.dart';
@@ -261,7 +262,7 @@ void main() {
     testWidgets('WDH-23 시급 선택 시에는 보이지 않는다', (tester) async {
       await _openAddDialog(tester);
       // default는 시급 — 기초 시급 섹션이 없어야 한다
-      expect(find.textContaining('통상시급'), findsNothing);
+      expect(findVisibleTextContaining('통상시급'), findsNothing);
     });
   });
 

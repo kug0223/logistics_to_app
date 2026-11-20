@@ -13,8 +13,10 @@ import 'package:flutter/material.dart';
 import '../../models/core/application_model.dart';
 import '../../models/ui/invitation_projection.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/light_app_bar_style.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 
 class InvitationPromiseCard extends StatelessWidget {
   final InvitationProjection projection;
@@ -74,6 +76,8 @@ class InvitationPromiseCard extends StatelessWidget {
           if (app.breakMinutes != null)
             _row(context, Icons.free_breakfast_outlined,
                 '휴게 ${app.breakMinutes}분'),
+          if (_responseDeadlineLabel() case final deadline?)
+            _row(context, Icons.hourglass_bottom_outlined, deadline, words: true),
 
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
@@ -110,6 +114,8 @@ class InvitationPromiseCard extends StatelessWidget {
           //   수락 대상은 위의 제안 하나다 — A는 두 번째 수락 대상이 아니다.
           if (projection.isAlternativeOffer) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            // [DU475] 면 grey50 위 글자 대비 — 라벨 · 기존 줄 textTertiary(5.03) · 정리 안내 textSecondary(5.67).
+            //   이전 grey500(약 2.6) · grey600(4.42)은 기준 4.5 미달이었다.
             Container(
               width: double.infinity,
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
@@ -123,13 +129,13 @@ class InvitationPromiseCard extends StatelessWidget {
                   Text(
                     '기존 지원',
                     style: ResponsiveHelper.tinyStyle(context,
-                        color: AppColors.grey500),
+                        color: AppColors.textTertiary),
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                   Text(
                     _sourceLine(app),
                     style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.grey600)
+                            color: AppColors.textTertiary)
                         .copyWith(decoration: TextDecoration.lineThrough),
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -142,7 +148,7 @@ class InvitationPromiseCard extends StatelessWidget {
                     "수락하면 기존 지원은 '다른 업무로 확정됨'으로 정리되며,\n"
                     '취소·노쇼 불이익은 적용되지 않습니다.',
                     style: ResponsiveHelper.tinyStyle(context,
-                        color: AppColors.grey600),
+                        color: AppColors.textSecondary),
                   ),
                 ],
               ),
@@ -202,10 +208,32 @@ class InvitationPromiseCard extends StatelessWidget {
     );
   }
 
+  /// [E1-INVITE-DETAIL-KST] 근무일은 KST 자정 instant 다 — **KST 달력일**로 읽는다.
+  ///   기기 성분을 쓰면 GMT 기기에서 10/19(월) 초대가 10/18(일)로 보였다(설치 앱 실측).
   String _dateLabel(ApplicationModel app) {
     const days = ['월', '화', '수', '목', '금', '토', '일'];
-    final d = app.workDate;
+    final d = FormatHelper.toKstDate(app.workDate);
     return '${d.month}월 ${d.day}일(${days[d.weekday - 1]})';
+  }
+
+  /// [E1-INVITE-DETAIL-KST] 응답 기한 — 목록 카드(`~MM.dd HH:mm 만료`)와 **같은 값**.
+  ///
+  ///   값은 [ApplicationModel.effectiveInviteDeadline] 하나다(저장 만료·근무 시작·
+  ///   서버 수락 마감 중 이른 쪽). 다만 원장에 만료 필드가 **하나도 없으면**
+  ///   보이지 않는다 — `초대 + 24시간` 같은 규칙으로 시각을 지어내지 않는다.
+  ///   이미 처리된 초대에는 응답할 것이 없으므로 말하지 않는다.
+  String? _responseDeadlineLabel() {
+    if (projection.acceptability == InvitationAcceptability.alreadyResolved) {
+      return null;
+    }
+    final app = projection.application;
+    if (app.inviteExpiresAt == null && app.inviteAcceptDeadline == null) {
+      return null;
+    }
+    final deadline = app.effectiveInviteDeadline;
+    if (deadline == null) return null;
+    final d = FormatHelper.toKstDate(deadline);
+    return '${d.month}월 ${d.day}일 ${FormatHelper.formatTime(deadline)}까지 응답';
   }
 
   /// 기존 지원 한 줄. 서버가 적어 둔 것만 쓴다 — 모르는 값은 적지 않는다.
@@ -218,7 +246,9 @@ class InvitationPromiseCard extends StatelessWidget {
     return app.sourceWorkType ?? '기존 지원';
   }
 
-  Widget _row(BuildContext context, IconData icon, String text) {
+  // [DU475 r2] Row 안 글자에 Flexible 이 없어 B(320 · 2.0)에서 응답 기한 줄이 오른쪽으로 넘쳤다 — 모든 행 글자를 Flexible 로,
+  //   응답 기한('11월 19일 22:00까지 응답')만 낱말 단위(keepWords · 원문 semantics)로 둔다. 다른 행 글자는 그대로다.
+  Widget _row(BuildContext context, IconData icon, String text, {bool words = false}) {
     return Padding(
       padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 4)),
       child: Row(
@@ -227,8 +257,11 @@ class InvitationPromiseCard extends StatelessWidget {
               size: ResponsiveHelper.iconSize(context, 15),
               color: AppColors.grey500),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Text(text,
-              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey800)),
+          Flexible(
+            child: Text(words ? TextLayout.keepWords(text) : text,
+                semanticsLabel: words ? text : null,
+                style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey800)),
+          ),
         ],
       ),
     );
@@ -261,6 +294,9 @@ class InvitationFallbackDetail extends StatelessWidget {
       appBar: AppBar(
         title: const Text('업무 초대'),
         backgroundColor: Colors.white,
+        // [E2-APPBAR-ON-LIGHT] 흰 배경 — 테마의 흰 제목·아이콘을 이 화면만 덮는다.
+        titleTextStyle: LightAppBarStyle.title(context),
+        iconTheme: LightAppBarStyle.iconTheme,
         elevation: 0,
       ),
       body: SingleChildScrollView(

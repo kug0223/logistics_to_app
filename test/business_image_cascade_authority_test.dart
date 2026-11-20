@@ -54,9 +54,11 @@ void main() {
   final cf = _flat(_codeOf(raw));
 
   /// 비활성화 트리거 본문 (실행 코드만).
+  /// [ARCHIVE-CASCADE-PAGINATION] 본문은 srvRunBusinessArchiveCascade 로 옮겨졌다 — 둘을 함께 본다.
   String deactivate() => _flat(_codeOf(_slice(
       raw, 'export const onBusinessDeactivated = onDocumentUpdated(',
-      '\n// ═══')));
+      '\n// ═══') + _slice(
+      raw, 'async function srvRunBusinessArchiveCascade(', '\n}')));
 
   /// 영구 삭제 트리거 본문 (실행 코드만).
   String hardDelete() => _flat(_codeOf(_slice(

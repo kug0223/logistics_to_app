@@ -223,7 +223,8 @@ void main() {
       final preview = _between(
           code, 'export const callableGetWithdrawBlockers = onCall(', '\n);\n');
       final checkAt = preview.indexOf('srvCountStaleOwnerBusinesses');
-      final earlyAt = preview.indexOf('if (bizIds.length === 0)');
+      // [BUSINESS-ARCHIVE] early-return 은 돈 범위(운영 종료 사업장 포함) 기준이 됐다.
+      final earlyAt = preview.indexOf('if (moneyBizIds.length === 0)');
       expect(checkAt, greaterThan(-1));
       expect(earlyAt, greaterThan(-1));
       expect(checkAt, lessThan(earlyAt),

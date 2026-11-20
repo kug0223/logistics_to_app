@@ -108,7 +108,11 @@ void main() {
     test('캐시가 없으면 rethrow — 있으면 stale', () {
       final fs = _flat(_codeOf(_src(_appFsPath)));
       final i = fs.indexOf('Future<List<ApplicationModel>> getMyApplications(');
-      final body = fs.substring(i, i + 1600);
+      // [MY-APPS-INFLIGHT] 실제 조회·실패 처리는 _fetchMyApplications 로 옮겼다 —
+      //   두 함수(공유 진입점 + 조회 본문)를 한 덩어리로 본다.
+      final end = fs.indexOf('Future<ApplicationModel?> getApplicationOnce(', i);
+      expect(fs.indexOf('_fetchMyApplications(', i), lessThan(end));
+      final body = fs.substring(i, end);
       expect(body.contains('return cached ?? [];'), false);
       expect(body.contains('if (cached != null) return cached;'), true,
           reason: 'stale 데이터가 빈 화면보다 낫다 — 다만 0으로 덮지 않는다');

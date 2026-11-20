@@ -8,9 +8,11 @@ import '../../../models/core/attendance_model.dart';
 import '../../../models/core/insurance_rate_model.dart';
 import '../../../models/core/user_model.dart';
 import '../../../models/core/wage_detail_model.dart';
+import '../../../services/tax_deduction_service.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/format_helper.dart';
+import '../../../utils/text_layout.dart';
 import '../../../utils/wage_calculation_lines.dart';
 import '../../../utils/wage_calculator.dart';
 import '../../../theme/app_colors.dart';
@@ -43,6 +45,9 @@ class WageDetailDialog extends StatefulWidget {
   // TO 수정 후 최신 스케줄 시간 (미전달 시 app.startTime/endTime 폴백)
   final String? effStart;
   final String? effEnd;
+  /// [PAYROLL-DETAIL.32] user 를 읽지 못했을 때(관리자는 users GET 권한이 없다) 머리말에 쓸 이름.
+  ///   호출부가 이미 아는 이름을 넘긴다 — 없으면 예전처럼 '이름 없음'.
+  final String? fallbackName;
 
   const WageDetailDialog({
     super.key,
@@ -58,6 +63,7 @@ class WageDetailDialog extends StatefulWidget {
     this.baseHourlyWage,
     this.effStart,
     this.effEnd,
+    this.fallbackName,
   });
 
   static Future<WageDialogResult?> show({
@@ -74,6 +80,7 @@ class WageDetailDialog extends StatefulWidget {
     int? baseHourlyWage,
     String? effStart,
     String? effEnd,
+    String? fallbackName,
   }) {
     return showDialog<WageDialogResult>(
       context: context,
@@ -91,6 +98,7 @@ class WageDetailDialog extends StatefulWidget {
         baseHourlyWage: baseHourlyWage,
         effStart: effStart,
         effEnd: effEnd,
+        fallbackName: fallbackName,
       ),
     );
   }
@@ -127,7 +135,18 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     super.dispose();
   }
 
+  /// [.82-4] daily_auto_8(8일 이상 근무 시 4대보험 소급) 계산 확정분은 금액을 정정하지 않는다 — 메모만.
+  ///   순번·소급분이 그 달 다른 근무와 묶인 계산이라 하루 정정으로 맞출 수 없다(82_audit_04). 서버도 같은 규칙으로 거절한다.
+  ///   미확정(pending)은 계산 확정 경로라 해당하지 않는다.
+  bool get _amountLocked =>
+      (widget.mode == WageDialogMode.calculated || widget.mode == WageDialogMode.editOnly) &&
+      widget.wage.taxDeductionType == InsuranceRateModel.typeDailyAuto8;
+
   void _updateWage() {
+    if (_amountLocked) {
+      setState(() => _wage = widget.wage.copyWith(memo: _memoController.text.trim()));
+      return;
+    }
     final additional =
         (int.tryParse(_additionalController.text.replaceAll(',', '')) ?? 0).abs();
     final deduction =
@@ -135,21 +154,22 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     final newTotal = _wage.baseAmount + _wage.overtimeAmount + _wage.nightAmount +
         additional - deduction + _wage.weeklyHolidayAmount;
     setState(() {
-      _wage = _wage.copyWith(
-        additionalAmount: additional,
-        deductionAmount: deduction,
-        totalAmount: newTotal,
-        // 보험 공제액은 기본급 기준으로 이미 확정됐으므로 그대로 유지.
-        // ✅ 의도된 netWage 직접 할당:
-        //   이 다이얼로그는 isCalculated=true(calculatedAt != null) 상태에서 편집한다.
-        //   effectiveNetWage 게터는 isCalculated=true이면 netWage를 반환하므로,
-        //   추가수당/수동공제 변경 시 UI 미리보기를 즉시 동기화하려면
-        //   copyWith(netWage: ...)로 직접 갱신해야 한다.
-        //   최종 저장(_onAction) 시점에도 이 값이 Firestore에 기록된다.
-        netWage: newTotal - _wage.totalInsuranceDeduction,
-        memo: _memoController.text.trim().isNotEmpty
-            ? _memoController.text.trim()
-            : null,
+      // [.82 F1] 추가수당·추가공제는 세전(사용자 결정 11-04) — 새 총액으로 세금·보험을 다시 계산한다.
+      //   예전에는 "보험 공제는 기본급 기준 확정"이라며 공제를 유지해 추가수당만큼 원천징수가 빠졌다.
+      //   규칙은 서버 callableUpdateWageDetail 과 같고(TaxDeductionService.recomputeForAdjustment),
+      //   저장 뒤에는 서버가 돌려준 값으로 바뀐다.
+      _wage = TaxDeductionService.recomputeForAdjustment(
+        stored: widget.wage,
+        edited: _wage.copyWith(
+          additionalAmount: additional,
+          deductionAmount: deduction,
+          totalAmount: newTotal,
+          memo: _memoController.text.trim().isNotEmpty
+              ? _memoController.text.trim()
+              : null,
+        ),
+        workYear: TaxDeductionService.kstWorkYear(widget.attendance.workDate),
+        calculatedAdjustment: widget.mode != WageDialogMode.pending,
       );
     });
   }
@@ -366,25 +386,23 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     setState(() {
       // [Phase 3.1] breakdown 보존: applied + additional 각각 명시적으로 저장
       // legacy record도 이 편집을 거치면 신규 breakdown 형식으로 upgrade됨
-      _wage = recalculated.copyWith(
-        appliedScheduledBreakMinutes: appliedScheduledBreak,
-        additionalBreakMinutes: additionalBreak,
-        // 수동 공제 유지
-        deductionAmount: currentDeduction,
-        totalAmount: recalculated.totalAmount - currentDeduction,
-        // 보험·세금 공제 유지
-        taxDeductionType: _wage.taxDeductionType,
-        employmentInsuranceDeduction: _wage.employmentInsuranceDeduction,
-        nationalPensionDeduction: _wage.nationalPensionDeduction,
-        healthInsuranceDeduction: _wage.healthInsuranceDeduction,
-        ltcInsuranceDeduction: _wage.ltcInsuranceDeduction,
-        incomeTaxDeduction: _wage.incomeTaxDeduction,
-        retroactiveDeduction: _wage.retroactiveDeduction,
-        // ✅ 의도된 netWage 직접 할당 (_updateWage()와 동일한 이유)
-        netWage: recalculated.totalAmount - currentDeduction - _wage.totalInsuranceDeduction,
-        // 계산 타임스탬프 유지
-        calculatedBy: _wage.calculatedBy,
-        calculatedAt: _wage.calculatedAt,
+      // [.82 F1] 휴게 변경도 총액이 바뀌면 세금·보험을 다시 계산한다(서버와 같은 규칙).
+      //   주휴수당은 WageCalculator 가 계산하지 않아(수동 입력 정책) 새 모델에서 0 이 됐다 — 저장값을 이어 붙인다.
+      _wage = TaxDeductionService.recomputeForAdjustment(
+        stored: widget.wage,
+        edited: recalculated.copyWith(
+          appliedScheduledBreakMinutes: appliedScheduledBreak,
+          additionalBreakMinutes: additionalBreak,
+          // 수동 공제 유지
+          deductionAmount: currentDeduction,
+          weeklyHolidayAmount: _wage.weeklyHolidayAmount,
+          totalAmount: recalculated.totalAmount - currentDeduction + _wage.weeklyHolidayAmount,
+          // 계산 타임스탬프 유지
+          calculatedBy: _wage.calculatedBy,
+          calculatedAt: _wage.calculatedAt,
+        ),
+        workYear: TaxDeductionService.kstWorkYear(widget.attendance.workDate),
+        calculatedAdjustment: widget.mode != WageDialogMode.pending,
       );
     });
   }
@@ -535,7 +553,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final name = widget.user?.name ?? '이름 없음';
+    final name = widget.user?.name ??
+        ((widget.fallbackName?.isNotEmpty ?? false) ? widget.fallbackName! : '이름 없음');
 
 
     // [FC-07 FIX] DialogFocusSafeArea — deactivate()에서 unfocus하여
@@ -589,7 +608,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
 
   // A. 헤더 — "급여 명세" 제목 / "이름 · 날짜" / 모드 상태 배지 / 닫기
   Widget _buildHeader(BuildContext context, String name) {
-    final d = widget.attendance.workDate;
+    // [PAYROLL-DETAIL.32] workDate 는 KST 자정 instant — 기기 시간대(GMT 등)로 읽으면 하루 앞 날짜였다.
+    final d = FormatHelper.toKstDate(widget.attendance.workDate);
     final dateStr =
         '${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')}';
     return Container(
@@ -631,16 +651,17 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                       .copyWith(fontWeight: FontWeight.bold, color: AppColors.grey900),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 3)),
-                Row(
+                // [DU1 후속41 B2-W] 320·2.0 에서 상태 배지가 줄지 않아 32px 넘쳤고, 옆 '이름 · 날짜'(Flexible)가 0 폭으로 사라졌다.
+                //   Row → Wrap: 좁으면 배지가 다음 줄로 내려가고 이름·날짜는 낱말 단위로 보인다(말줄임 없음). 넓은 폭은 한 줄 그대로.
+                Wrap(
+                  spacing: ResponsiveHelper.spacing(context, 6),
+                  runSpacing: ResponsiveHelper.spacing(context, 3),
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Flexible(
-                      child: Text(
-                        '$name · $dateStr',
-                        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                    Text(
+                      TextLayout.phrases('$name · $dateStr'),
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
                     ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                       decoration: BoxDecoration(
@@ -666,7 +687,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             icon: Icon(Icons.close, color: AppColors.grey500,
                 size: ResponsiveHelper.iconSize(context, 20)),
             padding: EdgeInsets.zero,
-            visualDensity: VisualDensity.compact,
+            // [DU1 후속41 B2-W] 실측 IconButton 외곽 40×40(compact) — 공통 기준 터치 48×48. 아이콘 크기는 그대로
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           ),
         ],
       ),
@@ -757,7 +779,10 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             context,
             label: '실제 출퇴근',
             labelColor: AppColors.grey700,
-            child: Row(
+            // [DU1 후속41 B2-W] 출근·퇴근 한 쌍이 좁은 폭에서 넘쳤다 — Wrap 으로 줄바꿈 허용(순서·아이콘·값 그대로)
+            child: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              runSpacing: ResponsiveHelper.spacing(context, 2),
               children: [
                 Icon(Icons.login_outlined,
                     size: ResponsiveHelper.iconSize(context, 12),
@@ -827,13 +852,21 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                       ],
                     ),
                   ),
-                  if (_isEditable) ...[
+                  if (_isEditable && !_amountLocked) ...[
                     SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                    // [DU1 후속42 B2-W2] 실측 클릭 외곽 10.8×10.8(392·1.0)·10.2(320·2.0) — 터치 48. 아이콘 크기는 그대로, 누르는 영역만 48×48
                     GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTap: () => _showEditBreakSheet(context),
-                      child: Icon(Icons.edit_outlined,
-                          size: ResponsiveHelper.iconSize(context, 12),
-                          color: isBreakExceeded ? AppColors.errorDark : AppColors.grey400),
+                      child: SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: Center(
+                          child: Icon(Icons.edit_outlined,
+                              size: ResponsiveHelper.iconSize(context, 12),
+                              color: isBreakExceeded ? AppColors.errorDark : AppColors.grey400),
+                        ),
+                      ),
                     ),
                   ],
                 ],
@@ -906,19 +939,30 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   }) {
     final resolvedLabelColor = labelColor ??
         (isHighlight ? AppColors.grey700 : AppColors.grey400);
+    final labelText = Text(
+      TextLayout.keepWords(label),
+      style: ResponsiveHelper.tinyStyle(
+        context,
+        color: resolvedLabelColor,
+      ).copyWith(fontWeight: FontWeight.w600),
+    );
+    // [DU1 후속41 B2-W] 320·2.0 에서 고정 폭 70 레이블이 '계약시|간'·'무급휴|게' 로 끊기고 옆 값이 넘쳤다.
+    //   글자 배율이 클 때(>1.5)만 레이블을 값 위 줄로 올린다 — 기본 배율은 기존 70 폭 한 줄 그대로.
+    if (MediaQuery.textScalerOf(context).scale(1) > 1.5) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          labelText,
+          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+          child,
+        ],
+      );
+    }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        SizedBox(
-          width: 70,
-          child: Text(
-            label,
-            style: ResponsiveHelper.tinyStyle(
-              context,
-              color: resolvedLabelColor,
-            ).copyWith(fontWeight: FontWeight.w600),
-          ),
-        ),
+        SizedBox(width: 70, child: labelText),
         Expanded(child: child),
       ],
     );
@@ -1118,39 +1162,69 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                       setState(() => _isDeductionExpanded = !_isDeductionExpanded),
                   child: Container(
                     color: Colors.transparent,
+                    // [DU1 후속42 B2-W2] 실측 펼침 외곽 332.4×38.8(392·1.0) — 터치 48. 세로 최소만 늘리고 내용은 가운데
+                    constraints: const BoxConstraints(minHeight: 48),
+                    alignment: Alignment.centerLeft,
                     padding: EdgeInsets.symmetric(
                       horizontal: ResponsiveHelper.spacing(context, 14),
                       vertical: ResponsiveHelper.spacing(context, 11),
                     ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.remove_circle_outline,
-                            size: ResponsiveHelper.iconSize(context, 13),
-                            color: AppColors.grey500),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                        Text(
-                          '공제 (${_wage.taxDeductionLabel})',
+                    // [DU1 후속42 B2-W2] 320·2.0 '공제 (3.3% / 원천징 / 수)' — 금액·화살표가 폭을 가져가 레이블 칸이 좁았다.
+                    //   폭/글자 배율이 좁을 때만 [아이콘·레이블·화살표] 한 줄 + 금액 다음 줄 오른쪽. 넓은 폭은 기존 한 줄.
+                    child: LayoutBuilder(builder: (context, constraints) {
+                      final icon = Icon(Icons.remove_circle_outline,
+                          size: ResponsiveHelper.iconSize(context, 13),
+                          color: AppColors.grey500);
+                      // [DU1-B2] Text+Spacer 는 320dp·1.3 / 392dp·2.0 에서 넘쳤다(Spacer 는 flex 가 아니다) — 라벨이 줄바꿈, 금액은 고정
+                      final label = Expanded(
+                        child: Text(
+                          // [DU1 후속41 B2-W] 320·2.0 '원천징|수)' 끊김 — 단어 단위
+                          TextLayout.keepWords('공제 (${_wage.taxDeductionLabel})'),
                           style: ResponsiveHelper.smallStyle(
                                   context, color: AppColors.grey600)
                               .copyWith(fontWeight: FontWeight.w500),
                         ),
-                        const Spacer(),
-                        Text(
-                          '- ${FormatHelper.formatWage(totalDeduction)}',
-                          style: ResponsiveHelper.smallStyle(
-                                  context, color: AppColors.errorDark)
-                              .copyWith(fontWeight: FontWeight.w700),
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                        Icon(
-                          _isDeductionExpanded
-                              ? Icons.keyboard_arrow_up
-                              : Icons.keyboard_arrow_down,
-                          color: AppColors.grey400,
-                          size: ResponsiveHelper.iconSize(context, 16),
-                        ),
-                      ],
-                    ),
+                      );
+                      final amount = Text(
+                        '- ${FormatHelper.formatWage(totalDeduction)}',
+                        style: ResponsiveHelper.smallStyle(
+                                context, color: AppColors.errorDark)
+                            .copyWith(fontWeight: FontWeight.w700),
+                      );
+                      final arrow = Icon(
+                        _isDeductionExpanded
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                        color: AppColors.grey400,
+                        size: ResponsiveHelper.iconSize(context, 16),
+                      );
+                      final narrow = constraints.maxWidth / MediaQuery.textScalerOf(context).scale(1) < 260;
+                      if (!narrow) {
+                        return Row(children: [
+                          icon,
+                          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                          label,
+                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                          amount,
+                          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                          arrow,
+                        ]);
+                      }
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(children: [
+                            icon,
+                            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                            label,
+                            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                            arrow,
+                          ]),
+                          Align(alignment: Alignment.centerRight, child: amount),
+                        ],
+                      );
+                    }),
                   ),
                 ),
                 // 공제 상세 항목 (펼침 시)
@@ -1205,8 +1279,15 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             color: AppColors.infoBg,
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Row(
+          // [DU1-B2] Row+Spacer 는 320dp·1.3 / 392dp·2.0 에서 금액(26sp)이 12~67px 넘쳤다 — 양 끝 Wrap, 금액은 줄이지 않고 다음 줄로
+          child: SizedBox(
+            width: double.infinity, // Wrap 은 내용 폭만 잡는다 — 양 끝 정렬을 위해 전폭
+            child: Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            runSpacing: ResponsiveHelper.spacing(context, 4),
             children: [
+              Row(mainAxisSize: MainAxisSize.min, children: [
               Icon(Icons.account_balance_wallet_outlined,
                   size: ResponsiveHelper.iconSize(context, 18),
                   color: AppColors.brand),
@@ -1216,7 +1297,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                 style: ResponsiveHelper.bodyStyle(context)
                     .copyWith(fontWeight: FontWeight.w700, color: AppColors.brand),
               ),
-              const Spacer(),
+              ]),
               Text(
                 FormatHelper.formatWage(
                     hasDeductions ? _wage.effectiveNetWage : _wage.totalAmount),
@@ -1228,6 +1309,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
               ),
             ],
           ),
+          ),
         ),
       ],
     );
@@ -1236,30 +1318,42 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   /// 공제 상세 항목 행 (compact, 금액만 semantic red)
   Widget _buildDeductionDetailItem(
       BuildContext context, String label, int amount, IconData icon) {
+    final labelRow = [
+      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+      Icon(icon,
+          size: ResponsiveHelper.iconSize(context, 12), color: AppColors.grey400),
+      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+      Expanded(
+        child: Text(
+          TextLayout.keepWords(label),
+          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700),
+        ),
+      ),
+    ];
+    final amountText = Text(
+      '- ${FormatHelper.formatWage(amount)}',
+      style: ResponsiveHelper.tinyStyle(context, color: AppColors.errorDark)
+          .copyWith(fontWeight: FontWeight.w600),
+    );
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 14),
         vertical: ResponsiveHelper.spacing(context, 10),
       ),
-      child: Row(
-        children: [
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Icon(icon,
-              size: ResponsiveHelper.iconSize(context, 12), color: AppColors.grey400),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          Expanded(
-            child: Text(
-              label,
-              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700),
-            ),
-          ),
-          Text(
-            '- ${FormatHelper.formatWage(amount)}',
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.errorDark)
-                .copyWith(fontWeight: FontWeight.w600),
-          ),
-        ],
-      ),
+      // [DU1 후속42 B2-W2] 320·2.0 에서 금액이 줄지 않아 레이블 칸이 좁아져 '소득세·지/방세' 로 끊겼다(keepWords 로도 칸보다 긴 낱말은 강제 분할).
+      //   폭/글자 배율이 좁을 때만 레이블 전폭 한 줄 + 금액을 다음 줄 오른쪽에 둔다. 넓은 폭은 기존 한 줄 그대로. 금액·문구 그대로.
+      child: LayoutBuilder(builder: (context, constraints) {
+        final narrow = constraints.maxWidth / MediaQuery.textScalerOf(context).scale(1) < 260;
+        if (!narrow) return Row(children: [...labelRow, amountText]);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(children: labelRow),
+            Align(alignment: Alignment.centerRight, child: amountText),
+          ],
+        );
+      }),
     );
   }
 
@@ -1276,9 +1370,13 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // [DU1 후속42 B2-W2] 실측 클릭 외곽 105.2×17.0(392·1.0)·175.1×34.0(320·2.0) — 터치 48. 세로 최소 48, 내용 크기·위치(왼쪽) 그대로
         GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onTap: () => setState(() => _isGuideExpanded = !_isGuideExpanded),
-          child: Row(
+          child: ConstrainedBox(
+           constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(Icons.calculate_outlined,
@@ -1299,6 +1397,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                 color: AppColors.grey600,
               ),
             ],
+           ),
           ),
         ),
         // 펼침: floating card 없이 plain key-value rows — tertiary 정보
@@ -1343,11 +1442,26 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
 
+        if (_amountLocked) ...[
+          Text(
+            '8일 이상 근무하면 보험료가 소급되는 공제 방식이라 이 화면에서는 금액을 바꿀 수 없어요. 메모만 수정할 수 있어요.',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+        ],
         // 추가수당 / 추가공제 — 나란히 배치
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        // [DU1 후속41 B2-W] 320·2.0 에서 두 칸을 나란히 두면 '추가수당'·'추가공제' 제목이 각 칸을 넘쳤다(6.3·7.3px).
+        //   폭/글자 배율이 좁을 때만 세로로 쌓는다(각 칸 전폭) — 넓은 폭은 기존처럼 반씩 나란히. 입력·잠금·계산 그대로.
+        LayoutBuilder(builder: (context, constraints) {
+          final gap = ResponsiveHelper.spacing(context, 10);
+          final stacked = constraints.maxWidth / MediaQuery.textScalerOf(context).scale(1) < 260;
+          final fieldW = stacked ? constraints.maxWidth : (constraints.maxWidth - gap) / 2;
+          return Wrap(
+          spacing: gap,
+          runSpacing: ResponsiveHelper.spacing(context, 12),
           children: [
-            Expanded(
+            SizedBox(
+              width: fieldW,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1355,6 +1469,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                   TextField(
                     controller: _additionalController,
+                    enabled: !_amountLocked,
                     keyboardType: TextInputType.number,
                     inputFormatters: [NumberInputFormatter()],
                     style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.grey800),
@@ -1383,8 +1498,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                 ],
               ),
             ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-            Expanded(
+            SizedBox(
+              width: fieldW,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1392,6 +1507,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                   TextField(
                     controller: _deductionController,
+                    enabled: !_amountLocked,
                     keyboardType: TextInputType.number,
                     inputFormatters: [NumberInputFormatter()],
                     style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.grey800),
@@ -1421,7 +1537,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
               ),
             ),
           ],
-        ),
+        );
+        }),
         SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
         // 메모
@@ -1558,6 +1675,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             style: OutlinedButton.styleFrom(
               foregroundColor: AppColors.grey600,
               side: BorderSide(color: theme.dividerColor),
+              // [DU1 후속41 B2-W] 실측 48(392·1.0) → 공통 기준 52(같은 줄 저장과 같은 높이)
+              minimumSize: const Size.fromHeight(52),
               padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 11)),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12))),
@@ -1579,6 +1698,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             style: ElevatedButton.styleFrom(
               backgroundColor: confirmColor,
               foregroundColor: Colors.white,
+              // [DU1 후속41 B2-W] 실측 48 → 기준 주 버튼 52
+              minimumSize: const Size.fromHeight(52),
               padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 11)),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12))),
@@ -1643,7 +1764,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label,
+                // [DU1 후속41 B2-W] 320·2.0 '소득세·지|방세' 끊김 — 단어 단위(문구 그대로)
+                Text(TextLayout.keepWords(label),
                     style: ResponsiveHelper.bodyStyle(context)
                         .copyWith(color: AppColors.grey800)),
                 if (subLabel != null)

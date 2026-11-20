@@ -31,6 +31,7 @@ import 'package:ALfit/models/core/work_detail_model.dart';
 import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/common/job_posting_reads.dart';
+import 'package:ALfit/services/work_type_guide_resolver.dart';
 import 'package:ALfit/screens/common/job_posting_screen.dart';
 
 class _FakeApp extends Fake
@@ -143,7 +144,7 @@ JobPostingReads _reads() => JobPostingReads(
             ),
           ],
       myApplications: (uid) async => const <ApplicationModel>[],
-      businessWorkTypes: (id) async => const <BusinessWorkTypeModel>[],
+      workTypeCatalog: (id) async => WorkTypeCatalog.empty,
       applicationOnce: (id) async => null,
     );
 

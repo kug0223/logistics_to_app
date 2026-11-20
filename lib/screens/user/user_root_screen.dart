@@ -1,16 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../services/fcm_service.dart';
-import '../../theme/app_colors.dart';
+import '../../widgets/common/app_bottom_tab_bar.dart';
 import 'my_schedule_screen.dart';
 import 'user_home_screen.dart';
 import '../../widgets/user/pending_contract_bar.dart';
 import 'user_tab_scope.dart';
 import 'tabs/user_job_tab.dart';
 import 'tabs/user_my_tab.dart';
+import '../../utils/tab_navigator_pop.dart';
 
-/// 지원자 루트 화면 — 4탭 BottomNavigationBar + IndexedStack
+/// 지원자 루트 화면 — 4탭 하단 탭(AppBottomTabBar, 표시부만) + IndexedStack
 ///
 /// 탭 구조:
 ///   0: 홈 (UserHomeScreen)
@@ -56,11 +59,18 @@ class _UserRootScreenState extends State<UserRootScreen> {
     GlobalKey<NavigatorState>(), // 3: MY
   ];
 
+  /// [DU1 R8-TAB-RESELECT] 탭 스택을 첫 화면까지 비운다 — 화면마다 PopScope 를 따르고,
+  ///   거절하는 화면(저장 안 한 변경 확인·진행 중)에서 멈춘다. 예전 popUntil 은 그 보호와 결과를 건너뛰었다.
+  void _popTab(int index) {
+    final nav = _navigatorKeys[index].currentState;
+    if (nav != null) unawaited(popTabToRoot(nav));
+  }
+
   /// 일반 탭 전환 — 이미 선택된 탭 재탭 시 해당 탭 루트로 복귀.
   /// 날짜를 전달하지 않으므로 _pendingJobDate는 건드리지 않는다.
   void switchToTab(int index) {
     if (_currentIndex == index) {
-      _navigatorKeys[index].currentState?.popUntil((r) => r.isFirst);
+      _popTab(index); // [DU1 R8-TAB-RESELECT] 화면 PopScope 를 따른다
     } else {
       setState(() => _currentIndex = index);
     }
@@ -70,7 +80,7 @@ class _UserRootScreenState extends State<UserRootScreen> {
   /// 홈의 날짜 선택 CTA 버튼에서만 호출된다.
   void _switchToTabWithDate(int index, DateTime date) {
     if (_currentIndex == index) {
-      _navigatorKeys[index].currentState?.popUntil((r) => r.isFirst);
+      _popTab(index); // [DU1 R8-TAB-RESELECT] 화면 PopScope 를 따른다
     }
     setState(() {
       _currentIndex = index;
@@ -89,7 +99,7 @@ class _UserRootScreenState extends State<UserRootScreen> {
   /// 홈 "근무 기록 보기" → 일정 탭(index=2) 전환 + 현재 달 리셋 요청.
   void _switchToScheduleNow() {
     if (_currentIndex == 2) {
-      _navigatorKeys[2].currentState?.popUntil((r) => r.isFirst);
+      _popTab(2); // [DU1 R8-TAB-RESELECT]
     }
     setState(() {
       _currentIndex = 2;
@@ -123,7 +133,9 @@ class _UserRootScreenState extends State<UserRootScreen> {
         // 현재 탭 내 라우트가 있으면 탭 안에서 pop, 루트이면 system back 허용
         final navKey = _navigatorKeys[_currentIndex];
         if (navKey.currentState?.canPop() == true) {
-          navKey.currentState!.pop();
+          // [DU1 R8] pop() 은 탭 안 화면의 PopScope(저장 안 한 변경 확인·결과 반환)를 건너뛴다.
+          //   maybePop() 은 그 화면의 규칙을 따른다 — AppBar 뒤로와 같은 경로.
+          navKey.currentState!.maybePop();
         } else {
           SystemNavigator.pop();
         }
@@ -152,20 +164,11 @@ class _UserRootScreenState extends State<UserRootScreen> {
             // 미서명 계약서 배너 — UserHomeScreen에서 이동
             // (내부에서 isAdminMode·hasPendingContract 체크하여 자체 표시 제어)
             const PendingContractBar(),
-            BottomNavigationBar(
+            // [CP02] 표시부만 공용 위젯 — 실제 글자 배율·가변 높이(최소 56)·위 1px 선·inset 1회.
+            //   목적지·순서·switchToTab(재탭 root)·PendingContractBar(위) 그대로. 라벨: 일정→내 일정, MY→내 정보(정본 §7).
+            AppBottomTabBar(
               currentIndex: _currentIndex,
               onTap: switchToTab,
-              type: BottomNavigationBarType.fixed,
-              selectedItemColor: AppColors.infoDark,
-              unselectedItemColor: AppColors.grey400,
-              selectedLabelStyle: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.2,
-              ),
-              unselectedLabelStyle: const TextStyle(fontSize: 12),
-              elevation: 0,
-              backgroundColor: Colors.white,
               items: const [
                 BottomNavigationBarItem(
                   icon: Icon(Icons.home_outlined),
@@ -180,12 +183,12 @@ class _UserRootScreenState extends State<UserRootScreen> {
                 BottomNavigationBarItem(
                   icon: Icon(Icons.calendar_month_outlined),
                   activeIcon: Icon(Icons.calendar_month_rounded),
-                  label: '일정',
+                  label: '내 일정',
                 ),
                 BottomNavigationBarItem(
                   icon: Icon(Icons.person_outline_rounded),
                   activeIcon: Icon(Icons.person_rounded),
-                  label: 'MY',
+                  label: '내 정보',
                 ),
               ],
             ),

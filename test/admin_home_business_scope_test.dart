@@ -411,7 +411,8 @@ void main() {
       expect(m.contains('fontSize: 13, color: AppColors.textSecondary'), isTrue);
       final row = _bodyOf(home, 'Widget _todayIssueRow(')
           .replaceAll(RegExp(r'\s+'), ' ');
-      expect(row.contains('fontSize: 15, fontWeight: FontWeight.w600'), isTrue);
+      // [SCALE-BALANCE.34] 기본은 15 w600. Hero 가 이미 같은 부족을 말할 때만(quiet) 보통 굵기 — 크기 15 는 그대로라 13 보조보다 강하다.
+      expect(row.contains('fontSize: 15, fontWeight: quiet ? FontWeight.w400 : FontWeight.w600'), isTrue);
     });
 
     test('12px 가독성 하한을 지킨다 (TYPO-50)', () {

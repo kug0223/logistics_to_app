@@ -239,7 +239,7 @@ void main() {
 
     test('error 분기가 empty 분기보다 먼저 평가된다', () {
       final body = _codeOf(_bodyOf(_src(_listPath), 'Widget _buildTOList('));
-      final errIdx = body.indexOf('return _buildErrorState();');
+      final errIdx = body.indexOf('return _withSummary(_buildErrorState());'); // [DU249 — DU231 S023 추종] 오류 상태는 요약 카드와 함께
       // [POSTING-V2-02E.1] 성공 empty가 셋으로 갈렸다 — error는 그 **전부**보다 앞선다.
       final emptyIdx = body.indexOf('_buildEmptyState(');
       expect(errIdx, isNot(-1), reason: 'error state 분기가 없다');
@@ -513,10 +513,17 @@ void main() {
           '({int confirmed, int pending, int required, int shortage}) '
           'resolveStats('));
       final flat = _flat(body);
-      expect(flat.contains('if (workDetailStatsFailed) { return ( '
+      // [COLLAPSED-EXPANDED] 폴백은 그대로 있고, **정원만** 출처가 바뀌었다.
+      //   예전: `required: totalRequired` (TO 카운터)
+      //   지금: `required: req` ← `_requiredFromDefinitions` (업무 정의 합)
+      //   카운터가 0 인데 정의는 1+1 인 공고가 DEV 에 실제로 있었고
+      //   (`6jVlL4bry…`), 그래서 요약만 `필요 미설정` 이었다.
+      //   지키는 것은 "실패를 0 으로 말하지 않는다" 이지 리터럴이 아니다.
+      expect(flat.contains('if (workDetailStatsFailed) { final req = '
+          '_requiredFromDefinitions; return ( '
           'confirmed: confirmedCount, pending: pendingCount, '
-          'required: totalRequired, '
-          'shortage: clamp(totalRequired - confirmedCount), ); }'), isTrue);
+          'required: req, '
+          'shortage: clamp(req - confirmedCount), ); }'), isTrue);
       // 폴백이 workDetailStats 분기보다 앞에 있어야 한다
       // [R7-P1-2 DEVICE.1D] 집계 분기의 조건이 `isWorkDetailLoaded` 에서
       //   `workDetailStats != null && details.isNotEmpty` 로 바뀌었다.
@@ -534,15 +541,25 @@ void main() {
       expect(usable.contains('if (workDetailStatsFailed) return false;'), isTrue);
     });
 
-    test('capacity source 통합을 하지 않았다 (범위 밖)', () {
+    test('충원·대기는 여전히 슬롯 counter 폴백이다 (정원만 통합)', () {
+      // 이 셀은 원래 "capacity source 통합을 하지 않았다 (범위 밖)" 였다.
+      //   [COLLAPSED-EXPANDED] 가 **정원만** 통합했다 — 접힌 요약과 펼친 행이
+      //   서로 다른 정원을 말하던 BLOCKER 때문이다. 충원·대기는 건드리지
+      //   않았다(슬롯 counter 는 별도 유효 source 라는 기존 판단 유지).
       final model = _codeOf(_src(_modelPath));
-      // 슬롯 counter 기반 폴백 경로가 그대로 살아 있다
+      final flat = _flat(model);
+      // 충원·대기는 카운터에서 온다.
       expect(
-        _flat(model).contains('return ( confirmed: confirmedCount, '
-            'pending: pendingCount, required: totalRequired, '
-            'shortage: clamp(totalRequired - confirmedCount), );'),
+        flat.contains('return ( confirmed: confirmedCount, '
+            'pending: pendingCount, required: req, '
+            'shortage: clamp(req - confirmedCount), );'),
         isTrue,
+        reason: '폴백 경로 자체가 사라지면 실패가 0 으로 돌아온다',
       );
+      // 정원은 한 곳에서만 온다.
+      expect(flat.contains('int get _requiredFromDefinitions'), isTrue);
+      expect(flat.contains('required: totalRequired,'), isFalse,
+          reason: '정원을 카운터에서 직접 읽는 경로가 남았다');
     });
   });
 
@@ -591,7 +608,7 @@ void main() {
       // root ERROR 판정 조건 자체는 loadError/items만 본다.
       // (카드에 prop을 넘기는 코드는 같은 함수 안에 있으므로 조건절만 검사한다)
       final rootBody = _flat(_codeOf(_bodyOf(list, 'Widget _buildTOList(')));
-      final condIdx = rootBody.indexOf('return _buildErrorState();');
+      final condIdx = rootBody.indexOf('return _withSummary(_buildErrorState());'); // [DU249 — DU231 S023 추종] 오류 상태는 요약 카드와 함께
       expect(condIdx, isNot(-1));
       final cond = rootBody.substring(0, condIdx);
       expect(cond.contains('hasGroupDetailError'), isFalse,
@@ -811,8 +828,9 @@ void main() {
 
     test('empty 문구 세분화(P2-5) 하지 않았다 — empty state는 1종 그대로', () {
       final list = _codeOf(_src(_listPath));
-      expect('AppEmptyState('.allMatches(list).length, 2,
-          reason: 'empty(1) + error(1) 외에 새 상태 surface가 늘었다');
+      // [SUBADMIN-SCOPE.40] error 가 원인별로 둘(네트워크 등 / 권한) — empty 는 1종 그대로.
+      expect('AppEmptyState('.allMatches(list).length, 3,
+          reason: 'empty(1) + error(2) 외에 새 상태 surface가 늘었다');
     });
 
     test('freshness(P2-2) 무변경 — notifyDataChanged 배선 없음', () {

@@ -15,6 +15,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다
 import 'package:intl/date_symbol_data_local.dart';
 
 import 'package:ALfit/models/ui/invite_capacity_state.dart';
@@ -286,7 +287,7 @@ void main() {
         scopeSubtitle: '2026년 9월 28일 월요일',
       ));
       await tester.pump();
-      expect(find.textContaining('공고'), findsNothing,
+      expect(findVisibleTextContaining('공고'), findsNothing,
           reason: '조회가 불완전하면 `공고 0개` 를 만들어 내지 않는다');
       expect(tester.takeException(), isNull);
     });

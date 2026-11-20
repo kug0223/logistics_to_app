@@ -41,11 +41,13 @@ extension ContractStatusVisual on ContractStatus {
         return (fg: AppColors.warningDark, bg: AppColors.warningBg);
       case ContractStatus.pendingWorker:
         // 근무자를 기다리는 중 — 관리자가 할 일은 없다.
-        return (fg: AppColors.infoDark, bg: AppColors.infoBg);
+        // [DU342] infoDark 는 infoBg 위 4.03 — 작은 배지 글자에 모자랐다. infoDeep(Standards 감사04 공통 안내 본문).
+        return (fg: AppColors.infoDeep, bg: AppColors.infoBg);
       case ContractStatus.completed:
         return (fg: AppColors.successDark, bg: AppColors.successBg);
       case ContractStatus.voided:
-        return (fg: AppColors.grey600, bg: AppColors.grey100);
+        // [DU342] grey600 은 grey100 위 4.23 — textSecondary.
+        return (fg: AppColors.textSecondary, bg: AppColors.grey100);
     }
   }
 }

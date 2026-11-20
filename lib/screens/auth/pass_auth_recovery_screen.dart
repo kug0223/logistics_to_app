@@ -6,6 +6,7 @@ import '../../providers/user_provider.dart';
 import '../../services/pass_verification_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/auth/pass_auth_button.dart';
 import '../../widgets/auth/pass_result_display.dart';
@@ -127,8 +128,10 @@ class _PassAuthRecoveryScreenState extends State<PassAuthRecoveryScreen> {
               SizedBox(height: _sp(context, 24)),
 
               // 제목
+              // [DU317] 320·2.0 에서 '본인인증 / 이 필요합니다' 로 낱말 중간이 끊겼다 — 낱말 단위(원문은 낭독용)
               Text(
-                '휴대폰 본인인증이 필요합니다',
+                TextLayout.keepWords('휴대폰 본인인증이 필요합니다'),
+                semanticsLabel: '휴대폰 본인인증이 필요합니다',
                 style: ResponsiveHelper.titleStyle(context,
                     fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center,
@@ -137,10 +140,14 @@ class _PassAuthRecoveryScreenState extends State<PassAuthRecoveryScreen> {
               SizedBox(height: _sp(context, 12)),
 
               // 설명
+              // [DU317] 320·2.0 에서 '이 / 용을' · '완 / 료해주세요' · '유지됩니 / 다.' 로 끊겼다 — 줄바꿈 문자는 두고 낱말 단위
               Text(
-                '공고 지원 및 서비스 이용을 위해\n휴대폰 본인인증을 완료해주세요.\n\n인증 후 별도 가입 없이 기존 계정이 유지됩니다.',
+                TextLayout.phrases('공고 지원 및 서비스 이용을 위해\n휴대폰 본인인증을 완료해주세요.\n\n인증 후 별도 가입 없이 기존 계정이 유지됩니다.'),
+                semanticsLabel: '공고 지원 및 서비스 이용을 위해\n휴대폰 본인인증을 완료해주세요.\n\n인증 후 별도 가입 없이 기존 계정이 유지됩니다.',
+                // [DU1 구현78 F77-1] grey600(#757575) 은 화면 바탕 F6F7FA 위 4.30:1 — 작은 글자 기준 4.5 미달(감사78).
+                //   읽기용 보조색 textSecondary(5.52:1)로. 문구·크기·위계 그대로.
                 style: ResponsiveHelper.bodyStyle(context)
-                    .copyWith(color: AppColors.grey600),
+                    .copyWith(color: AppColors.textSecondary),
                 textAlign: TextAlign.center,
               ),
 
@@ -196,8 +203,9 @@ class _PassAuthRecoveryScreenState extends State<PassAuthRecoveryScreen> {
                 onPressed: () => Navigator.of(context).pop(),
                 child: Text(
                   '나중에 하기',
+                  // [DU1 구현78 F77-1] 위 설명과 같은 이유로 textSecondary — 보조 글자 행동 모양 그대로.
                   style: ResponsiveHelper.bodyStyle(context)
-                      .copyWith(color: AppColors.grey600),
+                      .copyWith(color: AppColors.textSecondary),
                 ),
               ),
             ],

@@ -587,14 +587,17 @@ void main() {
     test('13-a renderer를 상태마다 복제하지 않았다 (§23)', () {
       final code = _codeOf(_src(_listPath));
       expect('Widget _buildEmptyState('.allMatches(code).length, 1);
-      expect('AppEmptyState('.allMatches(code).length, 2,
-          reason: 'empty 1개 + error 1개여야 한다');
+      // [SUBADMIN-SCOPE.40] error 가 둘이다 — 네트워크 등 / 권한(미확인·거절).
+      //   원인마다 할 말이 달라서다. empty 는 여전히 하나다.
+      expect('AppEmptyState('.allMatches(code).length, 3,
+          reason: 'empty 1개 + error 2개여야 한다');
     });
 
     test('13-b AppEmptyState 디자인 시스템 유지 (§24)', () {
       final body = _flat(_codeOf(
           _bodyOf(_src(_listPath), 'Widget _buildEmptyState(')));
-      expect(body.contains('icon: Icons.inbox_outlined,'), true);
+      // [SUBADMIN-SCOPE.40] 권한 없음만 자물쇠다(공고 탭 권한 surface 와 같다).
+      expect(body.contains('? Icons.lock_outline : Icons.inbox_outlined,'), true);
       // 자체 Column/Padding으로 새 레이아웃을 짜지 않았다
       expect(body.contains('Column('), false);
       expect(body.contains('Padding('), false);

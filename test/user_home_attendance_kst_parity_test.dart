@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart'; // [DU253] 출퇴근 카드 이름은 낱말 결합 문자를 품는다
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -19,6 +20,7 @@ import 'package:ALfit/models/core/user_region.dart';
 import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/user/attendance_check_reads.dart';
+import 'support/checkin_contract_fixture.dart';
 import 'package:ALfit/screens/user/attendance_check_screen.dart';
 import 'package:ALfit/screens/user/user_home_reads.dart';
 import 'package:ALfit/services/payroll_correction_service.dart';
@@ -166,6 +168,8 @@ UserHomeReads _homeReads(
 }) =>
     UserHomeReads(
     slotsForTO: (toId) async => const <SlotModel>[],
+      // [CONTRACT-DISPATCH-B4] 홈 CTA 는 계약 동의 판정을 함께 본다 — 이 시험의 전제: 오늘 근무 계약은 양측 서명 완료
+      myContracts: (uid) async => completedContractsFor(apps),
       myApplications: (uid) async => apps,
       myMonthlyAttendances: (
           {required String userId, required int year, required int month}) async {
@@ -185,6 +189,8 @@ AttendanceCheckReads _destReads(
         List<ApplicationModel> apps, List<AttendanceModel> atts) =>
     AttendanceCheckReads(
       myApplications: (uid) async => apps,
+      // [CONTRACT-BEFORE-CHECKIN] 출근 버튼은 계약 양측 서명 완료일 때만 열린다(2026-10-25) — 이 시험의 전제로 명시
+      myContracts: (uid) async => completedContractsFor(apps),
       todayAttendance: (
           {required String userId, required String applicationId}) async {
         for (final a in atts) {
@@ -261,7 +267,7 @@ Future<_Parity> _run(
     AttendanceCheckScreen(reads: _destReads(apps, atts), clock: clock),
   );
   // 목적지가 **그 근무를 찾았는지**를 본다 — 화면이 열렸는지가 아니다.
-  final destListed = find.text('강남 물류센터').evaluate().isNotEmpty;
+  final destListed = findVisibleText('강남 물류센터').evaluate().isNotEmpty; // [DU253] 보이는 글자 기준
 
   return (homeCard: homeCard, destListed: destListed);
 }
@@ -458,6 +464,32 @@ void main() {
       expect(r.destListed, isTrue);
     });
 
+    // [.47 MAT-ROOT 월초] 연도 경계 — 지난달 꼬리가 **전년도 12월**이다. 두 달 자료가 이어지는가.
+    testWidgets('연말 → 1월 1일: 12-31 근무를 01-01 에 퇴근한다(KST 기기)',
+        (tester) async {
+      final r = await _run(
+        tester,
+        nowInstant: _kst(2027, 1, 1, 10, 0),
+        device: _Device.kst,
+        workDateKstMidnight: _kst(2026, 12, 31),
+        checkInInstant: _kst(2026, 12, 31, 23, 0),
+      );
+      expect(r.homeCard, isTrue, reason: '전년도 12월 꼬리의 미퇴근 근무가 홈에 이어져야 한다');
+      expect(r.destListed, isTrue);
+    });
+
+    testWidgets('KDP-C4 1월 1일 꼬리는 전년도 12월이다', (tester) async {
+      final calls = <String>[];
+      await _pump(
+        tester,
+        UserHomeScreen(
+          reads: _homeReads(const [], const [], monthCalls: calls),
+          clock: () => _asDevice(_kst(2027, 1, 1, 10, 0), _Device.kst),
+        ),
+      );
+      expect(calls.toSet(), {'2027-1', '2026-12'});
+    });
+
     testWidgets('같은 날 또 다른 근무 — 어제 퇴근과 오늘 근무가 함께 잡힌다(UTC 기기)',
         (tester) async {
       DateTime dev(DateTime t) => _asDevice(t, _Device.utc);
@@ -481,7 +513,7 @@ void main() {
       await _pump(tester,
           AttendanceCheckScreen(reads: _destReads(apps, atts), clock: clock));
       // 두 근무가 모두 목록에 있다 — 어제(퇴근 대기)와 오늘(출근 대기).
-      expect(find.text('강남 물류센터'), findsNWidgets(2));
+      expect(findVisibleText('강남 물류센터'), findsNWidgets(2)); // [DU253] 보이는 글자 기준
     });
   });
 }

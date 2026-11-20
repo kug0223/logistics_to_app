@@ -22,7 +22,10 @@ import '../../../services/firestore_service.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/person_label.dart';
 import '../../../utils/format_helper.dart';
+import '../../../utils/payroll_due_scope.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/text_layout.dart';
+import '../../../widgets/common/amount_text.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/payroll_excel_helper.dart';
 import '../../../utils/transfer_export_plan.dart';
@@ -47,6 +50,21 @@ import '../../../models/core/business_member_model.dart';  // [BIZCTX-01A] Membe
 import '../../../services/payroll_readiness_service.dart'; // [PII-DOC-R1.6.1]
 import 'package:cloud_functions/cloud_functions.dart';      // [PII-DOC-R1.6.1A]
 
+/// [SIM-XFER-COUNT] 근로자 카드의 이체 완료 처리 뒤 화면이 말할 건수.
+///
+///   [requested] 는 보낸 근태 수, [result] 는 서버 응답에서 만든 결과다.
+///   `processed` = 이번에 새로 이체 완료로 바뀐 건, `already` = 이미 이체돼 있던 건.
+///
+///   예전에는 `requested − skipped` 로 셌다. 이미 이체된 건은 skipped 가 아니라
+///   그렇게 세면 아무것도 바뀌지 않았는데 "N건 이체 완료"가 떴다.
+///   일괄 경로(_markBatch)와 같게 **서버가 말한 건수**를 쓴다.
+@visibleForTesting
+({int processed, int already}) workerTransferOutcome({
+  required int requested,
+  required MarkTransferResult result,
+}) =>
+    (processed: result.transferredNow, already: result.alreadyTransferred.length);
+
 class PayrollPaymentDashboardScreen extends StatefulWidget {
   final String businessId;
   final String? businessName;
@@ -64,6 +82,19 @@ class PayrollPaymentDashboardScreen extends StatefulWidget {
   /// 기존 일반 탭3 진입(PENDING+APPROVED)은 변경 없음.
   final bool showPendingSettlementOnly;
 
+  /// [PAYROLL-BANNER-DUE-SCOPE] 급여 탭 배너(`오늘 처리할 송금`) 진입 시 true.
+  ///   전체 미이체 뷰에서 **오늘(KST)까지 지급 예정**인 건만 보인다 — 배너 숫자와
+  ///   같은 조건(`PayrollDueScope`). [showAllOutstanding] 과 함께 쓴다.
+  ///   홈 `이체 대기` 진입(false)은 미래 예정까지 보이는 지금 의미 그대로다.
+  final bool outstandingDueByToday;
+
+  /// [.81 MONTH-PENDING-SCOPE] 월 상세 `지급 현황` 진입 시 true.
+  ///   미이체 탭이 날짜(지급 예정일 == 선택일) 대신 **이 달 근무의 미이체 전체**를 보인다 —
+  ///   월 상세의 `미이체 N건`·탭 배지와 같은 집합이다. 예전에는 오늘 날짜 보기로 열려
+  ///   지난 지급 예정일의 미이체가 빠지고 `미이체 2` 배지 아래 `0명`이 떴다(.48 관찰·.81 DEV 재현).
+  ///   다른 탭·다른 진입(홈·배너·알림)은 그대로다.
+  final bool pendingWholeMonth;
+
   const PayrollPaymentDashboardScreen({
     super.key,
     required this.businessId,
@@ -73,6 +104,8 @@ class PayrollPaymentDashboardScreen extends StatefulWidget {
     this.initialTab = 0,
     this.showAllOutstanding = false,
     this.showPendingSettlementOnly = false, // [PHASE-2C.2]
+    this.outstandingDueByToday = false,
+    this.pendingWholeMonth = false,
   });
 
   @override
@@ -130,6 +163,41 @@ class _PayrollPaymentDashboardScreenState
   // _outstandingAll.isNotEmpty && _outstandingLoadError = refresh 실패 (기존 데이터 유지)
   // _outstandingAll.isEmpty  && _outstandingLoadError = 초기 진입 실패
   bool _outstandingLoadError = false;
+  /// [PAYROLL-BANNER-COMPLETENESS] 실패 중에서도 "끝까지 읽지 못했다"(상한·읽기 실패).
+  bool _outstandingIncomplete = false;
+
+  /// [PAYROLL-INCOMPLETE-STALE-ACTION] 읽지 못한 급여 기록 수와 참조 코드(진단용, 개인정보 없음).
+  int _outstandingUnreadable = 0;
+  String? _outstandingRef;
+
+  /// [PAYROLL-INCOMPLETE-STALE-ACTION] 새로고침이 실패해 **이전 조회 결과**를 보이는 중.
+  ///   그 목록으로는 이체·스냅샷 갱신·통장사본 검토(쓰기)를 하지 않는다 — 이미 처리됐거나
+  ///   바뀐 급여를 다시 처리할 수 있다. 완전한 재조회가 성공해야 풀린다(재조회 중에도 유지).
+  bool _outstandingStale = false;
+
+  /// 전체 미이체 뷰에서 쓰기 동작을 해도 되는가.
+  bool get _outstandingWritable => !(widget.showAllOutstanding && _outstandingStale);
+
+  /// [PAYROLL-V3-CONNECTED] 이 목록을 만든 조회의 기준 시각(KST 날짜 판정). 그리기 시각이 아니다 —
+  ///   화면을 연 채 자정이 지나도 새 조회 없이 대상이 바뀌지 않는다. 다음 완전한 조회가 바꾼다.
+  DateTime? _outstandingCutoff;
+
+  /// [PAYROLL-V3-CONNECTED] 통장사본 검토 진행 중 — 연타로 열람·결정이 두 번 나가지 않는다.
+  bool _reviewingBank = false;
+
+  /// 쓰기 직전 판정. 각 행동은 **입구와 쓰기 직전** 두 번 부른다 — 확인 창을 기다리는 사이
+  ///   새로고침이 실패해 이 목록이 이전 조회가 될 수 있다.
+  /// 기준 날짜 표시(KST) — 예: `10월 20일`.
+  String _dueCutoffLabel() {
+    final d = FormatHelper.toKstDate(_outstandingCutoff ?? PayrollDueScope.now());
+    return '${d.month}월 ${d.day}일';
+  }
+
+  bool _blockStaleWrite() {
+    if (_outstandingWritable) return false;
+    ToastHelper.showWarning('이전 조회 결과입니다. 다시 조회한 뒤 처리해주세요.');
+    return true;
+  }
 
   // ── 미이체 탭 날짜 (기본: 오늘)
   late DateTime _selectedTransferDate;
@@ -401,6 +469,18 @@ class _PayrollPaymentDashboardScreenState
     if (withRequestTabs) unawaited(_loadRequestTabs());
   }
 
+  /// [PAYROLL-V3-RECOVERY] 화면 전체 오류의 '다시 시도' — **지금 실패한 조회만** 다시 읽는다.
+  ///   이 오류는 월 조회 실패(_loadError)라 늘 월을 다시 읽는다. 전체 미이체 모드에서는 그 오류가
+  ///   목록을 가리므로, 전체 미이체 조회도 실패해 있으면(_outstandingLoadError) 함께 다시 읽는다.
+  ///   예전에는 월만 다시 읽어, 화면이 돌아온 뒤 '이전 조회' 안내의 '다시 조회'를 또 눌러야 풀렸다.
+  ///   진행 중인 전체 미이체 조회는 다시 보내지 않는다. 이전 조회 표시는 완전한 재조회 성공 때만 풀린다.
+  void _retryFailedReads() {
+    _load();
+    if (widget.showAllOutstanding && _outstandingLoadError && !_outstandingLoading) {
+      _loadAllOutstanding();
+    }
+  }
+
   /// [R8-P1D §25·§26] mutation 직후의 갱신.
   ///
   ///   무엇을 다시 읽을지는 **서버가 무엇을 썼는지**로 정한다. UI 버튼 이름이
@@ -412,6 +492,9 @@ class _PayrollPaymentDashboardScreenState
     bool settlements = false,
   }) {
     if (base) unawaited(_load(withRequestTabs: false, afterMutation: true));
+    // [PAYROLL-V3-CONNECTED] 전체 미이체 목록도 같은 attendance 를 보여 준다 — 예전에는 월 목록만 다시 읽어
+    //   방금 이체 처리한 근로자가 이 목록에 남았다(10-19 OPEN). 실패하면 이전 조회로 표시돼 쓰기가 막힌다.
+    if (base && widget.showAllOutstanding) unawaited(_loadAllOutstanding());
     if (changeRequests) unawaited(_reloadChangeRequests(afterMutation: true));
     if (settlements) unawaited(_reloadSettlements(afterMutation: true));
   }
@@ -484,8 +567,13 @@ class _PayrollPaymentDashboardScreenState
 
   // ─── [PHASE-2C] 전체 미이체 로드 ─────────────────────────────────────────────
 
+  /// [PAYROLL-ALL-UNTRANSFERRED] 전체 미이체 조회의 세대 — 새로고침·상세 복귀·당겨서
+  ///   새로고침이 겹치면 **마지막에 시작한** 조회만 화면에 앉는다.
+  int _outstandingGen = 0;
+
   Future<void> _loadAllOutstanding() async {
     if (!mounted) return;
+    final gen = ++_outstandingGen;
     // [ERROR-EMPTY-01] retry 진입 시 error flag 초기화. _outstandingAll은 유지
     // (refresh 중 기존 데이터가 화면에서 사라지지 않도록 함)
     setState(() {
@@ -496,29 +584,53 @@ class _PayrollPaymentDashboardScreenState
       final records = await _payService.getAllOutstandingWages(
         businessId: widget.businessId,
       );
-      if (!mounted) return;
-      // bank info 로드 (이름 표시용)
+      if (!mounted || gen != _outstandingGen) return; // 더 새 조회가 있다
+      // [PAYROLL-ALL-UNTRANSFERRED] 이름과 지급 준비는 서로의 결과를 쓰지 않는다 —
+      //   함께 받고, 목록·지급 준비를 **한 번에** 앉힌다(지급 준비 없는 목록을 먼저
+      //   보이면 그 사이 카드가 '이체처리'를 단다).
+      //   지급 준비는 이름 캐시와 무관하게 항상 이 목록의 근로자 전부를 묻는다 —
+      //   예전에는 이름이 다 캐시돼 있으면 지급 준비 조회까지 건너뛰었다.
       final uids = records.map((r) => r.userId).toSet();
-      await _loadBankInfo(uids);
-      if (!mounted) return;
+      final seq = _issueReadiness(uids);
+      final uncached =
+          uids.where((u) => !_userBankCache.containsKey(u)).toList();
+      final readiness = _fetchReadinessAll(uids);
+      await Future.wait([_loadWorkerNames(uncached), readiness]);
+      final r = await readiness;
+      if (!mounted || gen != _outstandingGen) return;
       setState(() {
         _outstandingAll = records;
+        _outstandingCutoff = PayrollDueScope.now();
+        _applyReadinessScoped(seq, uids, r);
         _outstandingLoading = false;
         _outstandingLoadError = false;
+        _outstandingIncomplete = false;
+        _outstandingStale = false;
+        _outstandingUnreadable = 0;
+        _outstandingRef = null;
       });
     } catch (e) {
       debugPrint('[Payroll] _loadAllOutstanding 실패: $e');
-      if (!mounted) return;
+      if (!mounted || gen != _outstandingGen) return; // 옛 실패가 새 결과를 지우지 않는다
       // [ERROR-EMPTY-01] 기존 data가 있는 refresh 실패 → 데이터 유지 + Toast 안내
       // 초기 진입 실패 → _outstandingLoadError=true → inline error UI 표시
       final hadData = _outstandingAll.isNotEmpty;
+      final incomplete = e is PayrollQueryIncomplete;
       setState(() {
         _outstandingLoading = false;
         _outstandingLoadError = true;
+        _outstandingIncomplete = incomplete;
+        _outstandingStale = hadData;
+        _outstandingUnreadable =
+            e is PayrollQueryIncomplete ? e.unreadable.length : 0;
+        _outstandingRef = e is PayrollQueryIncomplete ? e.reference : null;
         // _outstandingAll: 변경하지 않음 — 기존 성공 데이터 보존
+        //   (잘린 새 결과는 앉히지 않는다 — 이전의 완전한 목록이 남는다)
       });
       if (hadData) {
-        ToastHelper.showError('급여 정보를 새로고침하지 못했습니다');
+        ToastHelper.showError(incomplete
+            ? '급여 정보를 끝까지 새로고침하지 못했습니다'
+            : '급여 정보를 새로고침하지 못했습니다');
       }
     }
   }
@@ -526,9 +638,11 @@ class _PayrollPaymentDashboardScreenState
   /// [PHASE-2C] 전체 미이체 그룹 — 날짜 필터 없음, userId × paymentDueDate grouping
   List<MapEntry<String, List<AttendanceModel>>> _getPendingGroupsAll() {
     // [.6-P1] 서버 srvHomeUnpaidWage 와 같은 population.
-    final recs = _outstandingAll
-        .where((r) => r.isPayableForTransfer)
-        .toList();
+    // [PAYROLL-BANNER-DUE-SCOPE] 배너 진입이면 배너가 센 것과 같은 조건으로 좁힌다.
+    final recs = widget.outstandingDueByToday
+        ? PayrollDueScope.dueByToday(
+            _outstandingAll, _outstandingCutoff ?? PayrollDueScope.now())
+        : _outstandingAll.where((r) => r.isPayableForTransfer).toList();
 
     final map = <String, List<AttendanceModel>>{};
     for (final r in recs) {
@@ -576,25 +690,39 @@ class _PayrollPaymentDashboardScreenState
   ///   준비 상태만 다시 읽어야 하는 쪽은 [_reloadReadiness] 를 쓴다.
   Future<void> _loadBankInfo(Set<String> uids) async {
     final uncached = uids.where((u) => !_userBankCache.containsKey(u)).toList();
-    if (uncached.isEmpty) return;
+    // [PAYROLL-V3-RECOVERY · B] 여기서 '이름이 다 캐시됨'으로 곧장 돌아가면 지급 준비까지 건너뛴다 —
+    //   위 R8-P2.1 이 말한 결함이 이 줄에 남아 있었다. 월을 갔다 돌아오면 지급 준비가 **떠나온 달**
+    //   근로자의 것으로 남아 이 달 카드가 판정 없이 '이체처리'를 달았고, 조회 실패('모름')도
+    //   새로고침으로 풀리지 않았다. 이름만 캐시로 건너뛴다(_loadWorkerNames 가 빈 목록을 거른다).
     // [R8-P1A] 이름 조회와 지급 준비 조회는 서로의 결과를 쓰지 않는다.
     //   둘 다 uids + businessId 만 있으면 되는데 직렬로 붙어 있어서
     //   왕복 한 번이 그냥 더 들었다.
     //   각자 자기 실패를 자기 안에서 끝낸다 — 한쪽이 실패해도 다른 쪽 결과가
     //   사라지지 않고, 급여 목록 자체도 영향받지 않는다.
+    // [PAYROLL-ALL-UNTRANSFERRED] 전체 미이체 모드는 월 목록을 보여주지 않는다.
+    //   여기서 월 근로자만으로 지급 준비를 통째로 갈아끼우면 전 기간 경로가 받은
+    //   다른 달 근로자의 판정이 지워졌다(F4). 이 모드의 지급 준비는
+    //   _loadAllOutstanding 하나가 쓴다.
     await Future.wait([
       _loadWorkerNames(uncached),
-      _loadPayrollReadiness(uids),
+      if (!widget.showAllOutstanding) _loadPayrollReadiness(uids),
     ]);
   }
 
   /// 근로자 이름 배치 조회. 실패해도 이 함수 밖으로 던지지 않는다.
   Future<void> _loadWorkerNames(List<String> uncached) async {
     if (uncached.isEmpty) return;
+    final failed = <String>{};
     try {
       final userMap = await _fsService.getUsersBatch(uncached,
           businessId: widget.businessId,
-          purpose: FirestoreService.purposeWorkerDirectory);
+          purpose: FirestoreService.purposeWorkerDirectory,
+          failedUids: failed);
+      // [PAYROLL-V3-NAME · O2] 이름을 못 받은 이유를 안에서만 구분한다(화면 문구는 같다).
+      //   실패한 사람은 캐시하지 않아 다음 조회 때 다시 묻는다.
+      _nameLookupFailed
+        ..removeAll(uncached)
+        ..addAll(failed);
       for (final uid in uncached) {
         final user = userMap[uid];
         if (user == null) continue;
@@ -604,14 +732,71 @@ class _PayrollPaymentDashboardScreenState
         //   검색(name)은 이름만 쓰고, 표시는 번호가 붙은 쪽을 쓴다.
         _userBankCache[uid] = {
           'name': user.name,
-          'label': user.nameWithPersonNo,
+          // [PAYROLL-V3-NAME · O2] 카드·확인 창이 같은 표시 이름을 쓴다(예전: 카드 name, 창 displayName).
+          'display': user.displayName,
           if (user.personLabel != null) 'personNo': user.personLabel!,
         };
       }
     } catch (e) {
+      _nameLookupFailed.addAll(uncached);
       debugPrint('❌ 근로자 이름 배치 로드 실패: $e');
     }
+    final missing = uncached.where((u) => _knownDisplayName(u) == null).length;
+    if (missing > 0) {
+      debugPrint('[Payroll] 이름 확인 불가 $missing명 (조회 실패 ${failed.length}명)');
+    }
   }
+
+  // ── [PAYROLL-V3-NAME] 이름·인력번호 표시 ─────────────────────────────────────
+  //
+  //   이름은 대상을 정하지 않는다 — 대상은 언제나 카드가 쥔 근태(uid·id)다.
+  //   이름을 모를 때 화면은 카드·확인 창 모두 '이름 확인 불가'라고 말하고, uid 를 이름 자리에
+  //   쓰지 않는다. 서버(알림 문구)에는 아는 이름만 보낸다. 인력번호(P-014)는 서버가 이 사업장
+  //   안에서 발급한 비민감 표시 번호다 — 이름과 따로 보이고, 동명이인을 가른다.
+  //   상태: 캐시에 이름 있음 / 응답에 없음·이름 빈 값(_userBankCache 에 없거나 빈 값) /
+  //   조회 호출 실패(_nameLookupFailed). 화면 문구는 같고, 실패만 다음 조회 때 다시 묻는다.
+
+  static const String _nameUnknownLabel = '이름 확인 불가';
+  final Set<String> _nameLookupFailed = {};
+
+  String? _nonBlank(String? s) {
+    final t = s?.trim();
+    return (t == null || t.isEmpty) ? null : t;
+  }
+
+  /// 화면에 보일 이름. 모르면 null.
+  String? _knownDisplayName(String uid) =>
+      _nonBlank(_userBankCache[uid]?['display']) ??
+      _nonBlank(_userBankCache[uid]?['name']);
+
+  /// 알림 문구에 넣을 이름(사람 이름 그대로). 모르면 null — 대체 문구를 넣지 않는다.
+  String? _knownNotifyName(String uid) => _nonBlank(_userBankCache[uid]?['name']);
+
+  String? _personLabelOf(String uid) => _userBankCache[uid]?['personNo'];
+
+  String _displayNameOf(String uid) => _knownDisplayName(uid) ?? _nameUnknownLabel;
+
+  /// 확인 창 호칭 — `김지현(P-014)`. 번호가 없으면 이름만.
+  String _confirmLabelOf(String uid) {
+    final n = _displayNameOf(uid);
+    final p = _personLabelOf(uid);
+    return p == null ? n : '$n($p)';
+  }
+
+  /// 확인 문구의 받는 사람 — `김지현(P-014)님께` / `이름 확인 불가(P-014) 근로자에게`.
+  ///   '이름 확인 불가님께'처럼 상태 문구에 호칭을 붙이지 않는다.
+  String _addresseeOf(String uid, {bool possessive = false}) {
+    final known = _knownDisplayName(uid) != null;
+    final l = _confirmLabelOf(uid);
+    if (known) return possessive ? '$l님의' : '$l님께';
+    return possessive ? '$l 근로자의' : '$l 근로자에게';
+  }
+
+  /// 알림용 이름 표 — 아는 이름만 담는다(예전: `name ?? uid`).
+  Map<String, String> get _notifyNameByUid => {
+        for (final u in _userBankCache.keys)
+          if (_knownNotifyName(u) != null) u: _knownNotifyName(u)!,
+      };
 
   /// [R8-P2.1] 지금 화면이 보여주고 있는 근로자 전부.
   ///
@@ -638,9 +823,17 @@ class _PayrollPaymentDashboardScreenState
     if (!mounted) return;
     final uids = _visibleWorkerUids;
     if (uids.isEmpty) return;
-    final seq = ++_readinessSeq;
-    // 겹쳐 들어온 갱신 중 오래된 응답이 최신 판정을 덮지 않게 한다.
-    await _loadPayrollReadiness(uids, guard: () => seq == _readinessSeq);
+    if (widget.showAllOutstanding) {
+      // [PAYROLL-ALL-UNTRANSFERRED] 이 모드는 근로자별 최신 요청 규칙을 쓴다.
+      final s = _issueReadiness(uids);
+      final r = await _fetchReadinessAll(uids);
+      if (!mounted) return;
+      setState(() => _applyReadinessScoped(s, uids, r));
+      return;
+    }
+    // 겹쳐 들어온 갱신 중 오래된 응답이 최신 판정을 덮지 않게 한다 — 그 순번은
+    //   [_loadPayrollReadiness] 안에서 매긴다(바깥에서 한 번 더 올리면 안쪽 결과가 늘 버려진다).
+    await _loadPayrollReadiness(uids);
   }
 
   /// [PII-DOC-R1.6.1] 이 근로자들의 **현재** 지급 준비 상태.
@@ -648,33 +841,105 @@ class _PayrollPaymentDashboardScreenState
   ///   급여 기록은 확정 당시만 안다. 근로자가 그 뒤 계좌를 고쳤는지는
   ///   여기서만 알 수 있고, 그것을 알아야 "지급정보 갱신"을 실행 가능한
   ///   버튼으로 보여줄지 판단할 수 있다.
-  /// [R8-P2.1] [guard] 가 false 를 돌려주면 이 응답은 버린다 — 늦게 도착한
-  ///   옛 조회가 최신 판정을 덮지 않게 한다.
-  Future<void> _loadPayrollReadiness(Set<String> uids,
-      {bool Function()? guard}) async {
+  /// [R8-P2.1] 늦게 도착한 옛 조회가 최신 판정을 덮지 않게 한다 — 부를 때마다 순번을 매기고
+  ///   마지막 순번의 답만 반영한다(월 이동·통장사본 검토 뒤 재조회가 겹쳐도).
+  Future<void> _loadPayrollReadiness(Set<String> uids) async {
     if (uids.isEmpty) return;
     // [R8-P1A] 이름 조회와 나란히 돈다. 여기서 던지면 옆의 결과까지 같이
     //   버려지므로, 예기치 못한 실패도 이 안에서 "모름"으로 끝낸다.
     //   (loadBatch 자체는 이미 실패를 삼켜 failed 배치를 돌려준다)
-    PayrollReadinessBatch batch;
-    try {
-      batch = await PayrollReadinessService.loadBatch(
-          businessId: widget.businessId, workerUids: uids.toList());
-    } catch (e) {
-      debugPrint('❌ 지급 준비 배치 로드 실패: $e');
-      batch = PayrollReadinessBatch.failed;
-    }
+    // [PAYROLL-V3-RECOVERY · B] 예전에는 근로자 전부를 한 번에 넘겼고, loadBatch 가 take(200) 으로
+    //   조용히 잘랐다(서버도 한 요청 200명 초과를 거절한다). 201번째부터는 판정도 '모름'도 없어
+    //   판정 없는 카드가 '이체처리'를 달았다. 전체 미이체 경로와 같은 분할 조회를 쓴다 —
+    //   200명씩 나눠 묻고 근로자 id 로 합치며, 답에 없는 사람·실패한 배치는 '모름'으로 둔다.
+    //   월 이동으로 겹친 조회는 마지막 것만 반영한다.
+    final seq = ++_readinessSeq;
+    final r = await _fetchReadinessAll(uids);
     if (!mounted) return;
-    if (guard != null && !guard()) return;
+    if (seq != _readinessSeq) return;
     setState(() {
       _readiness
         ..clear()
-        ..addAll(batch.byUid);
+        ..addAll(r.byUid);
       // 조회하지 못한 사람을 "확인 필요"로 바꾸지 않는다 — 모른다고 둔다.
-      _readinessUnknown = batch.loadFailed
-          ? uids.toSet()
-          : batch.failedUids.toSet();
+      _readinessUnknown = r.unknown;
     });
+  }
+
+  // ── [PAYROLL-ALL-UNTRANSFERRED] 전체 미이체 모드의 지급 준비 ─────────────────
+  //
+  //   이 모드에서 지급 준비를 쓰는 경로는 둘이다(전 기간 조회, 통장사본 검토 뒤 재조회).
+  //   예전처럼 받은 목록으로 통째로 갈아끼우면 늦게 온 쪽이 이긴다 — 그 쪽이 묻지
+  //   않은 근로자는 판정이 사라지고, 판정이 없는 카드는 '이체처리' 버튼을 단다.
+  //   그래서 **근로자마다** 마지막으로 보낸 요청의 답만 반영하고, 묻지 않은 근로자는
+  //   건드리지 않는다.
+
+  /// 근로자 → 그 근로자를 물은 가장 최근 요청 번호.
+  final Map<String, int> _readinessIssued = {};
+
+  int _issueReadiness(Set<String> uids) {
+    final seq = ++_readinessSeq;
+    for (final u in uids) {
+      _readinessIssued[u] = seq;
+    }
+    return seq;
+  }
+
+  /// 200명 단위로 나눠 함께 묻는다(서버 한도 200 — 예전에는 201번째부터 묻지
+  ///   않았다). 답에 없는 근로자는 "모름"이다 — 지급 가능으로 두지 않는다.
+  Future<({Map<String, PayrollReadinessInfo> byUid, Set<String> unknown})>
+      _fetchReadinessAll(Set<String> uids) async {
+    final list = uids.toList();
+    final chunks = <List<String>>[
+      for (var i = 0; i < list.length; i += 200)
+        list.sublist(i, i + 200 > list.length ? list.length : i + 200),
+    ];
+    final batches = await Future.wait(chunks.map((c) async {
+      try {
+        return await PayrollReadinessService.loadBatch(
+            businessId: widget.businessId, workerUids: c);
+      } catch (e) {
+        debugPrint('❌ 지급 준비 배치 로드 실패: $e');
+        return PayrollReadinessBatch.failed;
+      }
+    }));
+    final byUid = <String, PayrollReadinessInfo>{};
+    final unknown = <String>{};
+    for (var i = 0; i < chunks.length; i++) {
+      final b = batches[i];
+      if (b.loadFailed) {
+        unknown.addAll(chunks[i]);
+        continue;
+      }
+      final failed = b.failedUids.toSet();
+      for (final u in chunks[i]) {
+        final info = b.byUid[u];
+        if (failed.contains(u) || info == null) {
+          unknown.add(u);
+        } else {
+          byUid[u] = info;
+        }
+      }
+    }
+    return (byUid: byUid, unknown: unknown);
+  }
+
+  /// setState 안에서 부른다. 더 새 요청이 물은 근로자는 건너뛴다.
+  void _applyReadinessScoped(int seq, Set<String> uids,
+      ({Map<String, PayrollReadinessInfo> byUid, Set<String> unknown}) r) {
+    final unknown = {..._readinessUnknown};
+    for (final u in uids) {
+      if (_readinessIssued[u] != seq) continue;
+      final info = r.byUid[u];
+      if (info != null && !r.unknown.contains(u)) {
+        _readiness[u] = info;
+        unknown.remove(u);
+      } else {
+        _readiness.remove(u);
+        unknown.add(u);
+      }
+    }
+    _readinessUnknown = unknown;
   }
 
   /// 이 근로자의 급여들이 스냅샷 갱신만 하면 이체 가능한 상태인가.
@@ -755,91 +1020,103 @@ class _PayrollPaymentDashboardScreenState
 
   /// [§9·§11] 관리자가 명시적으로 눌렀을 때만 원본을 열고 판정을 받는다.
   Future<void> _reviewBankDocument(List<AttendanceModel> recs) async {
-    if (recs.isEmpty) return;
-    final uid = recs.first.userId;
-    final info = _readiness[uid];
-    if (info == null) return;
-    final name = _userBankCache[uid]?['label'] ?? '이름 없음';
-    // [PII-DOC-R1.6.1B] 지금 보고 있는 **미지급** 건을 목적으로 지목한다.
-    //   이미 이체된 건만 남았으면 서버가 원본을 열어주지 않는다.
-    // [DOC-P2] 0원으로 마감된 노쇼·결근은 지급 사유가 아니다.
-    final target = _payablePurposeRow(recs);
-    if (target == null) return;
-
-    String? url;
+    if (_blockStaleWrite()) return; // [PAYROLL-INCOMPLETE-STALE-ACTION]
+    if (_reviewingBank || recs.isEmpty) return;
+    // [PAYROLL-V3-CONNECTED] 열람·결정이 끝날 때까지 다시 들어오지 않는다(아래 finally 에서 푼다).
+    _reviewingBank = true;
     try {
-      url = await PayrollReadinessService.bankbookUrl(
-        businessId: widget.businessId,
-        targetUid: uid,
-        expectedBankbookVersion: info.bankbookVersion,
-        attendanceId: target.id,
-      );
-    } catch (e) {
-      debugPrint('❌ 통장사본 열람 실패: $e');
-      if (mounted) ToastHelper.showError('통장사본을 열지 못했습니다');
-      return;
-    }
-    if (!mounted || url.isEmpty) return;
+      final uid = recs.first.userId;
+      final info = _readiness[uid];
+      if (info == null) return;
+      final name = _confirmLabelOf(uid);
+      // [PII-DOC-R1.6.1B] 지금 보고 있는 **미지급** 건을 목적으로 지목한다.
+      //   이미 이체된 건만 남았으면 서버가 원본을 열어주지 않는다.
+      // [DOC-P2] 0원으로 마감된 노쇼·결근은 지급 사유가 아니다.
+      final target = _payablePurposeRow(recs);
+      if (target == null) return;
 
-    final decision = await DialogHelper.showSheet<String>(
-      context,
-      isScrollControlled: true,
-      builder: (ctx) => _PayrollBankReviewSheet(
-        workerName: name,
-        imageUrl: url!,
-        readiness: info,
-      ),
-    );
-    if (decision == null || !mounted) return;
+      String? url;
+      try {
+        url = await PayrollReadinessService.bankbookUrl(
+          businessId: widget.businessId,
+          targetUid: uid,
+          expectedBankbookVersion: info.bankbookVersion,
+          attendanceId: target.id,
+        );
+      } catch (e) {
+        debugPrint('❌ 통장사본 열람 실패: $e');
+        if (mounted) ToastHelper.showError('통장사본을 열지 못했습니다');
+        return;
+      }
+      if (!mounted || url.isEmpty) return;
 
-    try {
-      final r = await PayrollReadinessService.reviewBankDocument(
-        businessId: widget.businessId,
-        targetUid: uid,
-        decision: decision,
-        expectedBankbookVersion: info.bankbookVersion,
-        expectedAccountVersion: info.accountVersion,
-        attendanceId: target.id,
+      final decision = await DialogHelper.showSheet<String>(
+        context,
+        isScrollControlled: true,
+        builder: (ctx) => _PayrollBankReviewSheet(
+          workerName: name,
+          imageUrl: url!,
+          readiness: info,
+        ),
       );
-      if (!mounted) return;
-      ToastHelper.showSuccess(r.correctionOpened
-          ? '근로자에게 통장사본 재등록을 요청했습니다'
-          : '확인 완료했습니다. 지급정보를 갱신하면 이체할 수 있어요');
-      // [R8-P2.1] 이 검토가 바꾸는 것은 지급 준비 판정뿐이다 —
-      //   attendance 도 지원서도 쓰지 않는다. 그러니 판정만 다시 읽는다.
-      //   (예전에는 급여 목록을 다시 읽으면서 정작 판정은 캐시에 막혀
-      //    갱신되지 않았고, 방금 안내한 '지급정보 갱신' 버튼이 뜨지 않았다.)
-      await _reloadReadiness();
-    } catch (e) {
-      if (!mounted) return;
-      // 화면을 연 뒤 근로자가 서류를 바꾼 경우 — 낡은 판정은 기록되지 않는다.
-      final msg = e is FirebaseFunctionsException && e.code == 'aborted'
-          ? (e.message ?? '서류가 변경되었습니다. 다시 확인해주세요.')
-          : '검토 결과를 저장하지 못했습니다';
-      ToastHelper.showError(msg);
-      debugPrint('❌ 통장사본 검토 실패: $e');
+      if (decision == null || !mounted) return;
+      // [PAYROLL-V3-CONNECTED] 시트를 보는 사이 이 목록이 이전 조회가 됐으면 결정을 기록하지 않는다.
+      if (_blockStaleWrite()) return;
+
+      try {
+        final r = await PayrollReadinessService.reviewBankDocument(
+          businessId: widget.businessId,
+          targetUid: uid,
+          decision: decision,
+          expectedBankbookVersion: info.bankbookVersion,
+          expectedAccountVersion: info.accountVersion,
+          attendanceId: target.id,
+        );
+        if (!mounted) return;
+        ToastHelper.showSuccess(r.correctionOpened
+            ? '근로자에게 통장사본 재등록을 요청했습니다'
+            : '확인 완료했습니다. 지급정보를 갱신하면 이체할 수 있어요');
+        // [R8-P2.1] 이 검토가 바꾸는 것은 지급 준비 판정뿐이다 —
+        //   attendance 도 지원서도 쓰지 않는다. 그러니 판정만 다시 읽는다.
+        //   (예전에는 급여 목록을 다시 읽으면서 정작 판정은 캐시에 막혀
+        //    갱신되지 않았고, 방금 안내한 '지급정보 갱신' 버튼이 뜨지 않았다.)
+        await _reloadReadiness();
+      } catch (e) {
+        if (!mounted) return;
+        // 화면을 연 뒤 근로자가 서류를 바꾼 경우 — 낡은 판정은 기록되지 않는다.
+        final msg = e is FirebaseFunctionsException && e.code == 'aborted'
+            ? (e.message ?? '서류가 변경되었습니다. 다시 확인해주세요.')
+            : '검토 결과를 저장하지 못했습니다';
+        ToastHelper.showError(msg);
+        debugPrint('❌ 통장사본 검토 실패: $e');
+      }
+    } finally {
+      _reviewingBank = false;
     }
   }
 
   /// [§6] 스냅샷만 갱신한다. 금액·근태는 그대로다.
   Future<void> _refreshSnapshots(List<AttendanceModel> recs) async {
+    if (_blockStaleWrite()) return; // [PAYROLL-INCOMPLETE-STALE-ACTION]
     if (_isTransferring || recs.isEmpty) return;
     final ids = recs
         .where((r) => _readiness[r.userId]?.snapshotNeedsRefresh(r) == true)
         .map((r) => r.id)
         .toList();
     if (ids.isEmpty) return;
-    final name = _userBankCache[recs.first.userId]?['label'] ?? '이름 없음';
-    final ok = await DialogHelper.showConfirm(
-      context,
-      title: '지급정보 갱신',
-      message: '$name님의 지급 계좌를 현재 등록된 계좌로 갱신합니다.\n'
-          '급여 금액과 근무 내역은 바뀌지 않습니다.',
-      confirmText: '갱신',
-    );
-    if (ok != true || !mounted) return;
+    // [PAYROLL-V3-CONNECTED] 진행 중 표시를 확인 창 **전에** 켠다 — 창이 뜨기 전 연타가 두 번 들어오지 않는다.
     setState(() => _isTransferring = true);
     try {
+      final ok = await DialogHelper.showConfirm(
+        context,
+        title: '지급정보 갱신',
+        message: '${_addresseeOf(recs.first.userId, possessive: true)} 지급 계좌를 현재 등록된 계좌로 갱신합니다.\n'
+            '급여 금액과 근무 내역은 바뀌지 않습니다.',
+        confirmText: '갱신',
+      );
+      if (ok != true || !mounted) return;
+      // [PAYROLL-V3-CONNECTED] 확인 창을 보는 사이 이 목록이 이전 조회가 됐으면 갱신하지 않는다.
+      if (_blockStaleWrite()) return;
       final res = await PayrollReadinessService.refreshSnapshots(
           businessId: widget.businessId, attendanceIds: ids);
       if (!mounted) return;
@@ -1182,6 +1459,8 @@ class _PayrollPaymentDashboardScreenState
     final target = _selectedTransferDate;
     final recs = _allRecords.where((r) {
       if (!r.isPayableForTransfer) return false; // [.6-P1]
+      // [.81] 월 범위 진입 — 날짜로 거르지 않는다(지급 예정일이 없는 건도 이 달 미이체다).
+      if (widget.pendingWholeMonth) return true;
       final due = r.paymentDueDate;
       if (due == null) return false;
       return FormatHelper.toKstDate(due) == target;
@@ -1189,9 +1468,10 @@ class _PayrollPaymentDashboardScreenState
 
     final map = <String, List<AttendanceModel>>{};
     for (final r in recs) {
-      final due = r.paymentDueDate!;
-      final duePart =
-          '${due.year}-${due.month.toString().padLeft(2, '0')}-${due.day.toString().padLeft(2, '0')}';
+      final due = r.paymentDueDate;
+      final duePart = due == null
+          ? 'no_date'
+          : '${due.year}-${due.month.toString().padLeft(2, '0')}-${due.day.toString().padLeft(2, '0')}';
       (map['${r.userId}::$duePart'] ??= []).add(r);
     }
 
@@ -1259,6 +1539,7 @@ class _PayrollPaymentDashboardScreenState
   // ══════════════════════════════════════════════════════════
 
   Future<void> _markWorker(List<AttendanceModel> recs) async {
+    if (_blockStaleWrite()) return; // [PAYROLL-INCOMPLETE-STALE-ACTION]
     if (_isTransferring || recs.isEmpty) return;
     setState(() => _isTransferring = true);
     try {
@@ -1266,15 +1547,15 @@ class _PayrollPaymentDashboardScreenState
       if (uid.isEmpty) { ToastHelper.showError('로그인 정보를 확인해주세요'); return; }
 
       // 서버로 가는 값은 사람 이름 그대로다 — 번호를 섞으면 기록이 오염된다.
-      final workerName = _userBankCache[recs.first.userId]?['name'] ?? '이름 없음';
+      // [PAYROLL-V3-NAME · O1] 모르면 null — '이름 없음'을 사람 이름처럼 서버에 넘기지 않는다.
+      final workerName = _knownNotifyName(recs.first.userId);
       // 확인 문구에만 번호를 붙인다 — 이체는 되돌리기 어렵다.
-      final workerLabel =
-          _userBankCache[recs.first.userId]?['label'] ?? workerName;
+      final workerLabel = _addresseeOf(recs.first.userId);
       final net = _sumNet(recs);
       final confirmed = await DialogHelper.showConfirm(
         context,
         title: '이체 완료 처리', // [5C.2-P2] ACTION 용어 통일
-        message: '$workerLabel님께\n${FormatHelper.formatWage(net)} (${recs.length}건)을\n이체 완료 처리하시겠습니까?\n실제 은행 이체를 완료한 건만 처리해 주세요.',
+        message: '$workerLabel\n${FormatHelper.formatWage(net)} (${recs.length}건)을\n이체 완료 처리하시겠습니까?\n실제 은행 이체를 완료한 건만 처리해 주세요.',
         confirmText: '이체 완료 처리',
         cancelText: '취소',
         icon: Icons.payment_outlined,
@@ -1283,16 +1564,18 @@ class _PayrollPaymentDashboardScreenState
 
       final tnResult = await _showTransferNoteDialog();
       if (tnResult.cancelled || !mounted) return; // back = cancel, finally resets _isTransferring
+      // [PAYROLL-V3-CONNECTED] 확인·메모 창을 보는 사이 이 목록이 이전 조회가 됐으면 이체 처리하지 않는다.
+      if (_blockStaleWrite()) return;
       final note = tnResult.note;
 
       // [PAY-09-FIX] skippedCount 추적 후 실제 처리 건수만 성공으로 표시
       // [PAY-08-FIX] skip 원인별 메시지 구분 (계좌 미확인 vs 중간정산 lock)
-      int skippedCount = 0;
+      final MarkTransferResult result;
       if (recs.length == 1) {
         // [PII-DOC-R0.2] 거절은 예외로 올라온다 — 아래 catch에서 사유별로 설명한다.
         final r  = recs.first;
         final wd = r.wageDetail;
-        await _payService.markTransferred(
+        result = await _payService.markTransferred(
           attendanceId:  r.id,
           businessId:    r.businessId,
           transferNote:  note,
@@ -1303,24 +1586,27 @@ class _PayrollPaymentDashboardScreenState
           applicationId: r.applicationId,
         );
       } else {
-        final nameByUid = Map.fromEntries(
-          _userBankCache.entries.map((e) => MapEntry(e.key, e.value['name'] ?? e.key)));
-        final result = await _payService.markTransferredBatch(
+        final nameByUid = _notifyNameByUid;
+        result = await _payService.markTransferredBatch(
           attendanceIds:     recs.map((r) => r.id).toList(),
           businessId:        recs.first.businessId,
           transferNote:      note,
           notificationInfos: buildTransferNotificationInfos(
             records: recs, workerNameByUid: nameByUid),
         );
-        skippedCount = result.allSkipped.length;
         if (mounted && result.allSkipped.isNotEmpty) {
           await _explainTransferBlocks(result);
         }
       }
       if (mounted) {
-        final processedCount = recs.length - skippedCount;
+        final outcome =
+            workerTransferOutcome(requested: recs.length, result: result);
+        final processedCount = outcome.processed;
         if (processedCount > 0) {
           ToastHelper.showSuccess('$processedCount건 이체 완료 처리되었습니다');
+        }
+        if (outcome.already > 0) {
+          ToastHelper.showInfo('${outcome.already}건은 이미 이체 완료된 항목이에요');
         }
         // [R8-P1D] 서버가 바꾼 것은 attendance 뿐이다 — 요청 목록은 그대로다.
         _refreshAfterMutation(base: true);
@@ -1364,8 +1650,7 @@ class _PayrollPaymentDashboardScreenState
         if (mounted) ToastHelper.showError('이체할 항목을 찾을 수 없습니다. 화면을 새로고침하세요');
         return;
       }
-      final nameByUid = Map.fromEntries(
-        _userBankCache.entries.map((e) => MapEntry(e.key, e.value['name'] ?? e.key)));
+      final nameByUid = _notifyNameByUid;
 
       final batchResult = await _payService.markTransferredBatch(
         attendanceIds:     _selectedIds.toList(),
@@ -1517,14 +1802,23 @@ class _PayrollPaymentDashboardScreenState
       isScrollControlled: true,
       builder: (ctx) {
         final s = ResponsiveHelper.bodyStyle(ctx);
+        // [UI-INTEGRATION.33] 대량 사업장 건수·금액 — 천 단위 구분, 값은 남는 폭 안에서 공백·구분점 뒤로 줄바꿈
+        //   ('12,345건' 안에서는 끊지 않는다).
+        String n(int v) => FormatHelper.formatNumber(v);
         Widget line(String label, String value, {Color? color}) => Padding(
               padding: const EdgeInsets.symmetric(vertical: 3),
               child: Row(children: [
                 Expanded(child: Text(label, style: s.copyWith(color: AppColors.grey600))),
-                Text(value,
-                    style: s.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: color ?? AppColors.textPrimary)),
+                const SizedBox(width: 8),
+                Flexible(
+                  flex: 2,
+                  child: Text(TextLayout.phrases(value),
+                      semanticsLabel: value,
+                      textAlign: TextAlign.end,
+                      style: s.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: color ?? AppColors.textPrimary)),
+                ),
               ]),
             );
 
@@ -1544,19 +1838,19 @@ class _PayrollPaymentDashboardScreenState
                           .copyWith(fontWeight: FontWeight.w800)),
                   const SizedBox(height: 14),
                   line('전체 대상',
-                      '${plan.totalWorkers}명 · ${plan.totalRecords}건'),
+                      '${n(plan.totalWorkers)}명 · ${n(plan.totalRecords)}건'),
                   line('엑셀 포함',
-                      '${plan.exportedWorkers}명 · ${plan.exportedRecords}건'
-                      ' (${plan.rowCount}행)',
+                      '${n(plan.exportedWorkers)}명 · ${n(plan.exportedRecords)}건'
+                      ' (${n(plan.rowCount)}행)',
                       color: AppColors.infoDark),
                   if (plan.blockedRecords > 0)
                     line('확인 필요',
-                        '${plan.blockedWorkers}명 · ${plan.blockedRecords}건',
+                        '${n(plan.blockedWorkers)}명 · ${n(plan.blockedRecords)}건',
                         color: AppColors.error),
                   if (plan.notApplicableRecords > 0)
                     line(kNotApplicableLabel,
-                        '${plan.notApplicableWorkers}명 · '
-                        '${plan.notApplicableRecords}건',
+                        '${n(plan.notApplicableWorkers)}명 · '
+                        '${n(plan.notApplicableRecords)}건',
                         color: AppColors.grey500),
                   const Divider(height: 22),
                   line('이체 금액 합계',
@@ -1914,7 +2208,7 @@ class _PayrollPaymentDashboardScreenState
               title: _loadError!,
               subtitle: '미지급 건이 없다는 뜻이 아닙니다. 잠시 후 다시 시도해주세요.',
               action: TextButton.icon(
-                onPressed: _load,
+                onPressed: _retryFailedReads,
                 icon: const Icon(Icons.refresh, size: 18),
                 label: const Text('다시 시도'),
               ),
@@ -1929,9 +2223,16 @@ class _PayrollPaymentDashboardScreenState
               if (!widget.showAllOutstanding)
                 Container(
                   color: AppColors.surface,
+                  // [UI-INTEGRATION.33] 탭 4개 + 네 자리 건수('미이체 8,230')는 392·2.0 에서 잘렸다 —
+                  //   한 줄에 안 들어가면 가로 스크롤로(글자는 줄이지 않는다).
                   child: TabBar(
                     controller: _tabCtrl,
-                    isScrollable: false,
+                    isScrollable: !TextLayout.tabsFit(
+                        context, MediaQuery.sizeOf(context).width, 4, perTab: 92),
+                    tabAlignment: TextLayout.tabsFit(
+                            context, MediaQuery.sizeOf(context).width, 4, perTab: 92)
+                        ? null
+                        : TabAlignment.start,
                     labelColor: theme.primaryColor,
                     unselectedLabelColor: AppColors.grey500,
                     indicatorColor: theme.primaryColor,
@@ -2012,6 +2313,52 @@ class _PayrollPaymentDashboardScreenState
   // ─── [PHASE-2C] 홈 진입 전체 미이체 뷰 ─────────────────────────────────────
   // showAllOutstanding=true 일 때 _buildPendingTransferTab 대신 호출됨.
   // 날짜 필터 없음, 배치모드 없음 — 모든 wageStatus=confirmed 미이체 건 표시.
+  /// [PAYROLL-INCOMPLETE-STALE-ACTION] 읽지 못한 급여 기록 안내 — 재시도로 안 풀리면 확인 필요.
+  String _unreadableGuidance() =>
+      '읽을 수 없는 급여 기록 $_outstandingUnreadable건이 있어 건수·금액을 표시하지 않았습니다. '
+      '다시 시도해도 같으면 확인이 필요합니다'
+      '${_outstandingRef == null ? '' : ' (참조 $_outstandingRef)'}';
+
+  Widget _buildStaleOutstandingNotice() {
+    return Container(
+      key: const ValueKey('payroll-stale-notice'),
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.warningBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _outstandingIncomplete
+                ? '새로고침을 끝까지 하지 못해 이전 조회 결과를 보여주고 있어요'
+                : '새로고침에 실패해 이전 조회 결과를 보여주고 있어요',
+            style: ResponsiveHelper.smallStyle(context,
+                color: AppColors.warningDark, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            _outstandingUnreadable > 0
+                ? _unreadableGuidance()
+                : '이체 처리는 다시 조회한 뒤 할 수 있어요',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.warningDark),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _outstandingLoading ? null : _loadAllOutstanding,
+              child: Text(_outstandingLoading ? '조회 중…' : '다시 조회'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAllOutstandingView() {
     // [ERROR-EMPTY-01] 4-state rendering:
     //   STATE-1: 초기 로딩 (기존 데이터 없음)
@@ -2039,14 +2386,21 @@ class _PayrollPaymentDashboardScreenState
                   color: AppColors.textSecondary),
               const SizedBox(height: 16),
               Text(
-                '급여 정보를 불러오지 못했습니다',
+                _outstandingIncomplete
+                    ? '급여 정보를 끝까지 불러오지 못했습니다'
+                    : '급여 정보를 불러오지 못했습니다',
                 style: ResponsiveHelper.bodyStyle(context,
                     fontWeight: FontWeight.w600),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 6),
               Text(
-                '잠시 후 다시 시도해주세요',
+                // [PAYROLL-BANNER-COMPLETENESS] 일부만 받은 건수·금액은 보이지 않는다.
+                _outstandingIncomplete
+                    ? (_outstandingUnreadable > 0
+                        ? _unreadableGuidance()
+                        : '일부만 받아 건수·금액을 표시하지 않았습니다. 다시 시도해주세요')
+                    : '잠시 후 다시 시도해주세요',
                 style: ResponsiveHelper.tinyStyle(context,
                     color: AppColors.textSecondary),
                 textAlign: TextAlign.center,
@@ -2065,8 +2419,14 @@ class _PayrollPaymentDashboardScreenState
     final groups   = _getPendingGroupsAll();
     final allRecs  = groups.expand((e) => e.value).toList();
     final totalNet = _sumNet(allRecs);
+    // [PAYROLL-V3-CONNECTED] 기준 날짜를 말한다 — 이 목록을 만든 조회의 KST 날짜(자정을 넘겨도 바뀌지 않는다).
+    final headerLabel =
+        '${widget.outstandingDueByToday ? '${_dueCutoffLabel()}까지 지급 예정 미이체' : '전체 미이체'}'
+        '${_outstandingStale ? ' · 이전 조회' : ''}';
 
     return Column(children: [
+      // [PAYROLL-INCOMPLETE-STALE-ACTION] 이전 조회 결과 — 이유·재시도, 쓰기 버튼은 내리고 있다.
+      if (_outstandingStale) _buildStaleOutstandingNotice(),
       // ── 헤더 요약 박스
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -2081,10 +2441,14 @@ class _PayrollPaymentDashboardScreenState
           child: Row(children: [
             const Icon(Icons.schedule_outlined, size: 16, color: AppColors.error),
             const SizedBox(width: 10),
-            Column(
+            // [UI-3] 320dp·글자 1.3 에서 기준 문구가 줄을 못 바꿔 건수 배지를 25px
+            //   밀어냈다(기기 실측). Expanded 로 문구가 줄을 바꾸고 배지는 남는다.
+            Expanded(child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('전체 미이체',
+                // [UI-BALANCE.38] 392·2.0 기기에서 '지급 예 / 정 미이체' 로 음절이 갈렸다 — 낱말 사이에서만 줄을 바꾼다(표시만).
+                Text(TextLayout.keepWords(headerLabel),
+                    semanticsLabel: headerLabel,
                     style: ResponsiveHelper.tinyStyle(context,
                         color: AppColors.errorDark, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 2),
@@ -2094,15 +2458,16 @@ class _PayrollPaymentDashboardScreenState
                       .copyWith(fontSize: 22, fontWeight: FontWeight.w800),
                 ),
               ],
-            ),
-            const Spacer(),
+            )),
+            const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                 color: AppColors.error,
                 borderRadius: BorderRadius.circular(20),
               ),
-              child: Text('${groups.length}건',
+              // [PAYROLL-BANNER-DUE-SCOPE] 배너는 급여 **건수**를 센다 — 배너 진입에선 같은 단위.
+              child: Text('${widget.outstandingDueByToday ? allRecs.length : groups.length}건',
                   style: ResponsiveHelper.tinyStyle(context,
                       color: Colors.white, fontWeight: FontWeight.w700)),
             ),
@@ -2114,9 +2479,11 @@ class _PayrollPaymentDashboardScreenState
       // ── 목록
       Expanded(
         child: groups.isEmpty
-            ? const AppEmptyState(
+            ? AppEmptyState(
                 icon: Icons.check_circle_outline,
-                title: '미이체 급여가 없습니다',
+                title: widget.outstandingDueByToday
+                    ? '오늘까지 지급할 미이체 급여가 없습니다'
+                    : '미이체 급여가 없습니다',
                 subtitle: '확정된 미이체 건이 없거나 모두 처리되었습니다',
               )
             : RefreshIndicator(
@@ -2128,7 +2495,6 @@ class _PayrollPaymentDashboardScreenState
                     final entry      = groups[i];
                     final uid        = _uidFromKey(entry.key);
                     final recs       = entry.value;
-                    final bank       = _userBankCache[uid];
                     final net        = _sumNet(recs);
                     final dueDate    = _dueDateFromKey(entry.key) ?? _earliestDue(recs);
                     final isOver     = _groupIsOverdue(recs);
@@ -2136,10 +2502,11 @@ class _PayrollPaymentDashboardScreenState
                     final schLabel   = _scheduleLabel(recs);
                     final daysUntil  = dueDate?.difference(_today).inDays;
                     final bankStr    = _bankLineFor(recs);
-                    final workerName = bank?['name'] ?? uid;
+                    final workerName = _displayNameOf(uid); // [PAYROLL-V3-NAME] uid 를 이름 자리에 쓰지 않는다
 
                     return RepaintBoundary(child: _WorkerPayCard(
                       workerName:    workerName,
+                      personLabel:   _personLabelOf(uid),
                       bankInfo:      bankStr,
                       businessName:  recs.first.businessName,
                       netAmount:     net,
@@ -2158,7 +2525,7 @@ class _PayrollPaymentDashboardScreenState
                           context,
                           MaterialPageRoute(
                             builder: (_) => _WorkerPayDetailScreen(
-                              workerName:        workerName,
+                              workerName:        _confirmLabelOf(uid),
                               records:           recs,
                               bankInfo:          bankStr,
                               businessId: widget.businessId,
@@ -2168,11 +2535,14 @@ class _PayrollPaymentDashboardScreenState
                         if (result == true && mounted) _loadAllOutstanding();
                       },
                       onSelect:          null,
-                      onMarkTransferred: () => _markWorker(recs),
-                      onRefreshSnapshot: _needsSnapshotRefresh(recs)
+                      // [PAYROLL-INCOMPLETE-STALE-ACTION] 이전 조회 결과에는 쓰기 버튼을 달지 않는다.
+                      onMarkTransferred: _outstandingWritable
+                          ? () => _markWorker(recs)
+                          : null,
+                      onRefreshSnapshot: _outstandingWritable && _needsSnapshotRefresh(recs)
                           ? () => _refreshSnapshots(recs)
                           : null,
-                      onReviewBankDocument: _bankViewEligible(recs)
+                      onReviewBankDocument: _bankViewEligible(recs) && _outstandingWritable
                           ? () => _reviewBankDocument(recs)
                           : null,
                       bankViewAttention: _needsManualReview(recs),
@@ -2207,7 +2577,8 @@ class _PayrollPaymentDashboardScreenState
 
     return Column(children: [
       // ── 날짜 피커
-      _buildPendingDatePicker(d, isToday),
+      // [.81] 월 범위 진입은 날짜 화살표 대신 어떤 범위를 보는지 말한다.
+      if (widget.pendingWholeMonth) _buildPendingMonthScopeLabel() else _buildPendingDatePicker(d, isToday),
 
       // ── 요약 헤더 — 이체현황 탭과 동일한 배경색
       Container(
@@ -2219,8 +2590,9 @@ class _PayrollPaymentDashboardScreenState
             // 액션 버튼 행
             Row(children: [
               const Spacer(),
-              SizedBox(
-                height: 26,
+              ConstrainedBox(
+                // [UI-INTEGRATION.33] 고정 높이 26 은 큰 글자에서 버튼 글자 위아래를 잘랐다 — 최소 높이만.
+                constraints: const BoxConstraints(minHeight: 26),
                 child: TextButton.icon(
                   onPressed: _isExporting ? null : () => _exportPendingCsv(pendingRecs),
                   icon: _isExporting
@@ -2229,6 +2601,8 @@ class _PayrollPaymentDashboardScreenState
                       : const Icon(Icons.download_outlined, size: 13),
                   label: const Text('엑셀'),
                   style: TextButton.styleFrom(
+                    minimumSize: const Size(0, 26),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     foregroundColor: AppColors.infoDark,
                     padding: const EdgeInsets.symmetric(horizontal: 6),
                     textStyle: ResponsiveHelper.tinyStyle(context, fontWeight: FontWeight.w600),
@@ -2236,13 +2610,16 @@ class _PayrollPaymentDashboardScreenState
                 ),
               ),
               const SizedBox(width: 4),
-              SizedBox(
-                height: 26,
+              ConstrainedBox(
+                // [UI-INTEGRATION.33] 고정 높이 26 은 큰 글자에서 버튼 글자 위아래를 잘랐다 — 최소 높이만.
+                constraints: const BoxConstraints(minHeight: 26),
                 child: OutlinedButton.icon(
                   onPressed: _toggleBatchMode,
                   icon: Icon(_batchMode ? Icons.close : Icons.checklist_outlined, size: 13),
                   label: Text(_batchMode ? '취소' : '일괄'),
                   style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 26),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     foregroundColor: _batchMode ? AppColors.error : AppColors.grey600,
                     side: BorderSide(
                         color: _batchMode ? AppColors.error : AppColors.grey300),
@@ -2263,35 +2640,37 @@ class _PayrollPaymentDashboardScreenState
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: AppColors.error.withValues(alpha: 0.2)),
               ),
-              child: Row(children: [
-                const Icon(Icons.schedule_outlined, size: 16, color: AppColors.error),
-                const SizedBox(width: 10),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('미이체',
-                        style: ResponsiveHelper.tinyStyle(context,
-                            color: AppColors.errorDark, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 2),
-                    Text(
-                      FormatHelper.formatWage(totalNet),
-                      style: ResponsiveHelper.titleStyle(context, color: AppColors.errorDark)
-                          .copyWith(fontSize: 22, fontWeight: FontWeight.w800),
+              // [UI-INTEGRATION.33] 12억대 금액 + '1,234명' 이 392·2.0 에서 오른쪽으로 15px 넘쳤다
+              //   (금액 칸에 flex 없음 + Spacer). 금액 칸이 남는 폭을 차지하고 쉼표 뒤로 줄을 바꾼다.
+              // [AMOUNT-LAYOUT.34] 채택 — '미이체'·인원 줄과 금액 줄을 나눈다. 금액은 상자 전체 폭,
+              //   기본 크기 22→19 범위 조정(사용자 배율 유지), 그래도 길면 쉼표 뒤 줄바꿈.
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    const Icon(Icons.schedule_outlined, size: 16, color: AppColors.error),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text('미이체',
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.errorDark, fontWeight: FontWeight.w600)),
                     ),
-                  ],
-                ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.error,
-                    borderRadius: BorderRadius.circular(20),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.error,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text('${FormatHelper.formatNumber(groups.length)}명',
+                          style: ResponsiveHelper.tinyStyle(context,
+                              color: Colors.white, fontWeight: FontWeight.w700)),
+                    ),
+                  ]),
+                  const SizedBox(height: 4),
+                  AmountText.total(
+                    FormatHelper.formatWage(totalNet),
+                    style: ResponsiveHelper.titleStyle(context, color: AppColors.errorDark)
+                        .copyWith(fontSize: 22, fontWeight: FontWeight.w800),
                   ),
-                  child: Text('${groups.length}명',
-                      style: ResponsiveHelper.tinyStyle(context,
-                          color: Colors.white, fontWeight: FontWeight.w700)),
-                ),
-              ]),
+                ]),
             ),
           ],
         ),
@@ -2314,9 +2693,11 @@ class _PayrollPaymentDashboardScreenState
         child: (groups.isEmpty && approvedSettlements.isEmpty)
             ? AppEmptyState(
                 icon: Icons.check_circle_outline,
-                title: isToday
-                    ? '오늘 이체할 내역이 없습니다'
-                    : '${d.month}월 ${d.day}일 이체할 내역이 없습니다',
+                title: widget.pendingWholeMonth
+                    ? '$_selectedMonth월 근무의 미이체 급여가 없습니다'
+                    : isToday
+                        ? '오늘 이체할 내역이 없습니다'
+                        : '${d.month}월 ${d.day}일 이체할 내역이 없습니다',
                 subtitle: '미이체 건이 없거나 모두 처리되었습니다',
               )
             : RefreshIndicator(
@@ -2372,7 +2753,6 @@ class _PayrollPaymentDashboardScreenState
                     final entry    = groups[i - settlementOffset];
                     final uid      = _uidFromKey(entry.key);
                     final recs     = entry.value;
-                    final bank     = _userBankCache[uid];
                     final net      = _sumNet(recs);
                     final dueDate  = _dueDateFromKey(entry.key) ?? _earliestDue(recs);
                     final isOver   = _groupIsOverdue(recs);
@@ -2382,9 +2762,10 @@ class _PayrollPaymentDashboardScreenState
                     final allSel   = recs.every((r) => _selectedIds.contains(r.id));
                     final bankStr  = _bankLineFor(recs);
 
-                    final workerName = bank?['name'] ?? uid;
+                    final workerName = _displayNameOf(uid); // [PAYROLL-V3-NAME] uid 를 이름 자리에 쓰지 않는다
                     return RepaintBoundary(child: _WorkerPayCard(
                       workerName:               workerName,
+                      personLabel:              _personLabelOf(uid),
                       bankInfo:                 bankStr,
                       businessName:             recs.first.businessName,
                       netAmount:                net,
@@ -2403,7 +2784,7 @@ class _PayrollPaymentDashboardScreenState
                           context,
                           MaterialPageRoute(
                             builder: (_) => _WorkerPayDetailScreen(
-                              workerName: workerName,
+                              workerName: _confirmLabelOf(uid),
                               records:    recs,
                               bankInfo:   bankStr,
                               businessId: widget.businessId,
@@ -2444,6 +2825,20 @@ class _PayrollPaymentDashboardScreenState
     ]);
   }
 
+  /// [.81] 월 범위 진입의 범위 표시 — 월 상세의 `미이체 N건`과 같은 집합이다.
+  Widget _buildPendingMonthScopeLabel() {
+    final label = '$_selectedYear년 $_selectedMonth월 근무 · 미이체 전체';
+    return Container(
+      width: double.infinity,
+      color: AppColors.grey50,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Text(TextLayout.keepWords(label),
+          semanticsLabel: label,
+          textAlign: TextAlign.center,
+          style: ResponsiveHelper.bodyStyle(context, fontWeight: FontWeight.w700)),
+    );
+  }
+
   Widget _buildPendingDatePicker(DateTime d, bool isToday) {
     return Container(
       color: AppColors.grey50,
@@ -2464,10 +2859,15 @@ class _PayrollPaymentDashboardScreenState
               children: [
                 const Icon(Icons.calendar_today, size: 14, color: AppColors.grey600),
                 const SizedBox(width: 6),
-                Text(
-                  '${d.year}년 ${d.month}월 ${d.day}일',
-                  style: ResponsiveHelper.bodyStyle(context,
-                      fontWeight: FontWeight.w700),
+                // [UI-INTEGRATION.33] 392·2.0 에서 날짜 + '오늘' 이 1.9px 넘쳤다 — 날짜는 낱말 단위로 줄을 바꾼다.
+                Flexible(
+                  child: Text(
+                    TextLayout.keepWords('${d.year}년 ${d.month}월 ${d.day}일'),
+                    semanticsLabel: '${d.year}년 ${d.month}월 ${d.day}일',
+                    textAlign: TextAlign.center,
+                    style: ResponsiveHelper.bodyStyle(context,
+                        fontWeight: FontWeight.w700),
+                  ),
                 ),
                 if (isToday) ...[
                   const SizedBox(width: 6),
@@ -2559,7 +2959,6 @@ class _PayrollPaymentDashboardScreenState
                     final groupKey   = entry.key;
                     final uid        = _uidFromKey(groupKey);
                     final recs       = entry.value;
-                    final bank       = _userBankCache[uid];
                     final isXfer     = recs.every((r) => r.wageStatus == AttendanceModel.wageTransferred);
                     final isPartial  = !isXfer && recs.any((r) => r.wageStatus == AttendanceModel.wageTransferred);
                     final net        = _sumNet(recs);
@@ -2583,7 +2982,8 @@ class _PayrollPaymentDashboardScreenState
                             : _bankLineFor(recs);
 
                     return RepaintBoundary(child: _WorkerPayCard(
-                      workerName:              bank?['name'] ?? uid,
+                      workerName:              _displayNameOf(uid),
+                      personLabel:             _personLabelOf(uid),
                       bankInfo:                bankInfoStr,
                       businessName:            recs.first.businessName,
                       netAmount:               net,
@@ -2600,7 +3000,7 @@ class _PayrollPaymentDashboardScreenState
                           context,
                           MaterialPageRoute(
                             builder: (_) => _WorkerPayDetailScreen(
-                              workerName: bank?['name'] ?? uid,
+                              workerName: _confirmLabelOf(uid),
                               records:    recs,
                               bankInfo:   _bankLineFor(recs),
                               businessId: widget.businessId,
@@ -2865,6 +3265,8 @@ class _NavArrow extends StatelessWidget {
 // ─── 근무자별 급여 카드 ───────────────────────────────────────────
 class _WorkerPayCard extends StatelessWidget {
   final String workerName;
+  /// [PAYROLL-V3-NAME · O2] 인력번호(P-014) — 확인 창과 같은 값. 동명이인을 가른다. 없으면 null.
+  final String? personLabel;
   final String bankInfo;
   final String? businessName;
   final int netAmount;
@@ -2898,6 +3300,7 @@ class _WorkerPayCard extends StatelessWidget {
 
   const _WorkerPayCard({
     required this.workerName,
+    this.personLabel,
     required this.bankInfo,
     this.businessName,
     required this.netAmount,
@@ -2942,19 +3345,15 @@ class _WorkerPayCard extends StatelessWidget {
       child: Container(
         margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
         decoration: BoxDecoration(
+          // [UI-3] 연체는 왼쪽 막대 + `초과` 칩이 말한다. 카드 전체 분홍 바탕·
+          //   빨간 테두리까지 겹치면 금액·이름보다 색이 먼저 읽혔다.
           color: isSelected
               ? theme.primaryColor.withValues(alpha: 0.05)
-              : isOverdue && !isTransferred
-                  ? AppColors.errorBg.withValues(alpha: 0.4)
-                  : AppColors.surface,
+              : AppColors.surface,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected
-                ? theme.primaryColor
-                : isOverdue && !isTransferred
-                    ? AppColors.error.withValues(alpha: 0.3)
-                    : AppColors.grey200,
-            width: (isSelected || (isOverdue && !isTransferred)) ? 1.5 : 1,
+            color: isSelected ? theme.primaryColor : AppColors.grey200,
+            width: isSelected ? 1.5 : 1,
           ),
           boxShadow: [
             BoxShadow(
@@ -2968,9 +3367,10 @@ class _WorkerPayCard extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
-              child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
+              // [COMMON-TEXT-LAYOUT.28] 오른쪽 금액·버튼 열이 고정이라 큰 글자에서 버튼 글자가 잘리고 겹쳤다 —
+              //   카드 폭이 모자라면(글자 배율 반영) 금액·버튼을 정보 아래로 내린다. 글자는 줄이지 않는다.
+              child: LayoutBuilder(builder: (context, c) {
+                final checkbox = <Widget>[
                         // 배치 체크박스
                         if (isBatchMode) ...[
                           Icon(
@@ -2981,24 +3381,32 @@ class _WorkerPayCard extends StatelessWidget {
                           const SizedBox(width: 8),
                         ],
 
-                        // 이름 + 지급일 칩 + 계좌
-                        Expanded(
-                          child: Column(
+                ];
+                final info = Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               // 1행: 이름 + 지급일/이체상태 칩
-                              Row(children: [
-                                Flexible(
-                                  child: Text(workerName,
-                                      style: ResponsiveHelper.bodyStyle(context)
-                                          .copyWith(fontWeight: FontWeight.w700),
-                                      overflow: TextOverflow.ellipsis),
-                                ),
-                                const SizedBox(width: 6),
+                              // [DEVICE-MISMATCH-FIX] Row 의 Flexible 두 개는 남는 폭을
+                              //   반씩 나눠 칩이 절반만 받았다 — Pixel 5 실기에서
+                              //   `주급 · 10.13 초과` 가 `주급 · 10.13 …` 로 **연체(초과)라는
+                              //   말이 잘렸다.** 줄여 숨기지 않고, 자리가 모자라면 칩이
+                              //   다음 줄로 내려가게 한다(Wrap).
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 3,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                Text(workerName,
+                                    style: ResponsiveHelper.bodyStyle(context)
+                                        .copyWith(fontWeight: FontWeight.w700)),
+                                if (personLabel != null)
+                                  Text(personLabel!,
+                                      style: ResponsiveHelper.tinyStyle(context,
+                                          color: AppColors.grey500,
+                                          fontWeight: FontWeight.w600)),
                                 if (isTransferred)
-                                  Flexible(
-                                    child: Container(
+                                  Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                       decoration: BoxDecoration(
                                         color: AppColors.successBg,
@@ -3012,22 +3420,18 @@ class _WorkerPayCard extends StatelessWidget {
                                                 color: AppColors.successDark,
                                                 fontWeight: FontWeight.w600)),
                                       ]),
-                                    ),
                                   )
                                 else if (dueDate != null)
-                                  Flexible(
-                                    child: _DueDateChip(
-                                      dueDate: dueDate!,
-                                      isOverdue: isOverdue,
-                                      isDueToday: isDueToday,
-                                      scheduleLabel: scheduleLabel,
-                                      daysUntilDue: daysUntilDue,
-                                    ),
+                                  _DueDateChip(
+                                    dueDate: dueDate!,
+                                    isOverdue: isOverdue,
+                                    isDueToday: isDueToday,
+                                    scheduleLabel: scheduleLabel,
+                                    daysUntilDue: daysUntilDue,
                                   )
                                 else
                                   // [PHASE-2C.2] 지급일 미설정 anomaly — 명시적 경고 칩
-                                  Flexible(
-                                    child: Container(
+                                  Container(
                                       padding: const EdgeInsets.symmetric(
                                           horizontal: 6, vertical: 2),
                                       decoration: BoxDecoration(
@@ -3042,13 +3446,11 @@ class _WorkerPayCard extends StatelessWidget {
                                         const SizedBox(width: 3),
                                         Flexible(
                                           child: Text('지급일 확인 필요',
-                                              overflow: TextOverflow.ellipsis,
                                               style: ResponsiveHelper.tinyStyle(context,
                                                   color: AppColors.warningDark,
                                                   fontWeight: FontWeight.w600)),
                                         ),
                                       ]),
-                                    ),
                                   ),
                               ]),
                               // 2행: 사업장 · 계좌 + [계좌상태칩] + 건수
@@ -3057,27 +3459,28 @@ class _WorkerPayCard extends StatelessWidget {
                                 Expanded(child: () { // L3: 동일 리스트 2회 생성 방지
                                     final infoLabel = [
                                       if (businessName != null && businessName!.isNotEmpty) businessName!,
-                                      if (bankInfo.isNotEmpty) bankInfo,
+                                      // [COMMON-TEXT-LAYOUT.28] 계좌번호 안에서 끊지 않는다(기기: 'ENCl- / ****-ocal').
+                                      if (bankInfo.isNotEmpty) TextLayout.keepWords(bankInfo),
                                     ].join(' · ');
+                                    // [DEVICE-MISMATCH-FIX] 사업장·계좌를 말줄임으로
+                                    //   자르지 않는다 — 모자라면 줄을 바꿔 카드가 늘어난다.
                                     return Text(
                                       infoLabel.isNotEmpty ? infoLabel : '계좌 정보 없음',
+                                      semanticsLabel: infoLabel.isNotEmpty ? TextLayout.plain(infoLabel) : null,
                                       style: ResponsiveHelper.tinyStyle(context,
                                           color: bankInfo.isNotEmpty || isTransferred
                                               ? AppColors.grey400
                                               : AppColors.error),
-                                      overflow: TextOverflow.ellipsis,
                                     );
                                   }()),
+                                // [UI-3] 계좌 끝 글자와 건수가 `…ocal1건` 으로 붙었다.
+                                const SizedBox(width: 8),
                                 Text('$recordCount건',
                                     style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
                               ]),
                             ],
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-
-                        // 금액 + 버튼
-                        Column(
+                          );
+                final side = Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
@@ -3087,8 +3490,8 @@ class _WorkerPayCard extends StatelessWidget {
                                 fontWeight: FontWeight.bold,
                                 color: isTransferred ? AppColors.successDark : AppColors.grey800,
                               ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              // [COMMON-TEXT-LAYOUT.28] 금액은 말줄임하지 않는다 — 좁으면 위에서 배치를 바꾼다.
+                              softWrap: false,
                             ),
                             const SizedBox(height: 6),
                             // [DOC-P2] 지급 준비의 일상 동작이다 — 예외일
@@ -3101,19 +3504,23 @@ class _WorkerPayCard extends StatelessWidget {
                             //   봐야 한다는 표시다.
                             if (!isTransferred && !isBatchMode &&
                                 onReviewBankDocument != null)
-                              SizedBox(
-                                height: 28,
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(minHeight: 28),
                                 child: OutlinedButton(
                                   onPressed: onReviewBankDocument,
+                                  // [UI-3] 이체 전에 사람이 해야 하는 단계(확인·갱신)는
+                                  //   브랜드 테두리 하나로, 보기만은 중립 테두리로.
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: bankViewAttention
-                                        ? AppColors.infoDark
+                                        ? AppColors.brand
                                         : AppColors.textSecondary,
                                     side: BorderSide(
                                         color: bankViewAttention
-                                            ? AppColors.infoDark
+                                            ? AppColors.brand
                                             : AppColors.grey300),
-                                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    minimumSize: const Size(0, 28),
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                     textStyle: ResponsiveHelper.tinyStyle(context,
                                         fontWeight: FontWeight.w600),
                                     shape: RoundedRectangleBorder(
@@ -3123,21 +3530,32 @@ class _WorkerPayCard extends StatelessWidget {
                                       ? '통장사본 확인'
                                       : '통장사본 보기'),
                                 ),
-                              )
+                              ),
+                            // [PAYROLL-V3-CONNECTED] 통장사본 보기는 지급 사유가 있으면 늘 열린다(62507e1).
+                            //   그 버튼이 아래 사슬의 첫 갈래라 준비가 끝난 카드에서도 '이체처리'가
+                            //   그려지지 않았다 — 전체 미이체 화면(급여 탭 배너의 도착지)에는 일괄 모드가
+                            //   없어 이체 처리 입구가 사라졌다. 통장사본은 따로 두고 아래 사슬을 그대로 쓴다.
+                            if (!isTransferred && !isBatchMode &&
+                                onReviewBankDocument != null &&
+                                (onRefreshSnapshot != null || waitLabel != null ||
+                                    (onMarkTransferred != null && !bankViewAttention)))
+                              const SizedBox(height: 4),
                             // [PII-DOC-R1.6.1 §5] 지급정보는 멀쩡한데
                             //   스냅샷만 낡은 건 — 관리자가 풀 수 있다.
                             //   '급여 다시 확정'이 아니라 '지급정보 갱신'이다.
-                            else if (!isTransferred && !isBatchMode &&
+                            if (!isTransferred && !isBatchMode &&
                                 onRefreshSnapshot != null)
-                              SizedBox(
-                                height: 28,
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(minHeight: 28),
                                 child: OutlinedButton(
                                   onPressed: onRefreshSnapshot,
                                   style: OutlinedButton.styleFrom(
-                                    foregroundColor: AppColors.warning,
+                                    foregroundColor: AppColors.brand,
                                     side: const BorderSide(
-                                        color: AppColors.warning),
-                                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                                        color: AppColors.brand),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    minimumSize: const Size(0, 28),
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                     textStyle: ResponsiveHelper.tinyStyle(context,
                                         fontWeight: FontWeight.w600),
                                     shape: RoundedRectangleBorder(
@@ -3156,17 +3574,21 @@ class _WorkerPayCard extends StatelessWidget {
                                   style: ResponsiveHelper.tinyStyle(context,
                                       color: AppColors.grey500,
                                       fontWeight: FontWeight.w600))
+                            // [PAYROLL-V3-CONNECTED] 사람이 통장사본을 확인해야 하는 카드(주의 표시)는
+                            //   예전처럼 이체처리를 달지 않는다 — 통장사본 확인이 그 카드의 행동이다.
                             else if (!isTransferred && !isBatchMode &&
-                                onMarkTransferred != null)
-                              SizedBox(
-                                height: 28,
+                                onMarkTransferred != null && !bankViewAttention)
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(minHeight: 28),
                                 child: ElevatedButton(
                                   onPressed: onMarkTransferred,
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: AppColors.success,
+                                    backgroundColor: AppColors.brand,
                                     foregroundColor: Colors.white,
                                     elevation: 0,
-                                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    minimumSize: const Size(0, 28),
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                     textStyle: ResponsiveHelper.tinyStyle(context,
                                         fontWeight: FontWeight.w600),
                                     shape: RoundedRectangleBorder(
@@ -3176,9 +3598,23 @@ class _WorkerPayCard extends StatelessWidget {
                                 ),
                               ),
                           ],
-                        ),
-                      ],
-                    ),
+                        );
+                if (TextLayout.fits(context, c.maxWidth, 300)) {
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [...checkbox, Expanded(child: info), const SizedBox(width: 10), side],
+                  );
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [...checkbox, Expanded(child: info)]),
+                    const SizedBox(height: 8),
+                    Align(alignment: Alignment.centerRight, child: side),
+                  ],
+                );
+              }),
             ),
             Positioned(
               top: 0, left: 0, bottom: 0,
@@ -3390,7 +3826,7 @@ class _DashboardSummaryHeader extends StatelessWidget {
                     const Icon(Icons.warning_amber_rounded,
                         size: 11, color: AppColors.errorDark),
                     const SizedBox(width: 3),
-                    Text('연체 $overdueCount명',
+                    Text('연체 ${FormatHelper.formatNumber(overdueCount)}명',
                         style: ResponsiveHelper.tinyStyle(context,
                             color: AppColors.errorDark,
                             fontWeight: FontWeight.bold)),
@@ -3407,8 +3843,9 @@ class _DashboardSummaryHeader extends StatelessWidget {
                 ]),
               const Spacer(),
               if (onExportCsv != null)
-                SizedBox(
-                  height: 26,
+                ConstrainedBox(
+                  // [UI-INTEGRATION.33] 고정 높이 26 은 큰 글자에서 버튼 글자 위아래를 잘랐다 — 최소 높이만.
+                  constraints: const BoxConstraints(minHeight: 26),
                   child: TextButton.icon(
                     onPressed: isExporting ? null : onExportCsv,
                     icon: isExporting
@@ -3418,6 +3855,8 @@ class _DashboardSummaryHeader extends StatelessWidget {
                         : const Icon(Icons.download_outlined, size: 13),
                     label: const Text('엑셀'),
                     style: TextButton.styleFrom(
+                      minimumSize: const Size(0, 26),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       foregroundColor: AppColors.infoDark,
                       padding:
                           const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
@@ -3459,23 +3898,21 @@ class _DashboardSummaryHeader extends StatelessWidget {
                                 fontWeight: FontWeight.w600)),
                       ]),
                       const SizedBox(height: 4),
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          FormatHelper.formatWage(pendingAmount),
-                          style: ResponsiveHelper.titleStyle(context,
-                                  color: pendingColor)
-                              .copyWith(
-                                  fontSize: 22, fontWeight: FontWeight.w800),
-                        ),
+                      // [UI-INTEGRATION.33] 글자 축소 상자 대신 쉼표 뒤 줄바꿈 — 12억대 금액이
+                      //   반쪽 카드에서 작게 줄어 읽기 어려웠다.
+                      AmountText(
+                        FormatHelper.formatWage(pendingAmount),
+                        style: ResponsiveHelper.titleStyle(context,
+                                color: pendingColor)
+                            .copyWith(
+                                fontSize: 22, fontWeight: FontWeight.w800),
                       ),
                       const SizedBox(height: 3),
                       Row(children: [
                         Icon(Icons.person_outline,
                             size: 11, color: AppColors.grey500),
                         const SizedBox(width: 2),
-                        Text('$pendingCount명',
+                        Text('${FormatHelper.formatNumber(pendingCount)}명',
                             style: ResponsiveHelper.tinyStyle(context,
                                 color: AppColors.grey600,
                                 fontWeight: FontWeight.w600)),
@@ -3508,23 +3945,19 @@ class _DashboardSummaryHeader extends StatelessWidget {
                                 fontWeight: FontWeight.w600)),
                       ]),
                       const SizedBox(height: 4),
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          FormatHelper.formatWage(transferredAmount),
-                          style: ResponsiveHelper.titleStyle(context,
-                                  color: AppColors.successDark)
-                              .copyWith(
-                                  fontSize: 22, fontWeight: FontWeight.w800),
-                        ),
+                      AmountText(
+                        FormatHelper.formatWage(transferredAmount),
+                        style: ResponsiveHelper.titleStyle(context,
+                                color: AppColors.successDark)
+                            .copyWith(
+                                fontSize: 22, fontWeight: FontWeight.w800),
                       ),
                       const SizedBox(height: 3),
                       Row(children: [
                         const Icon(Icons.person_outline,
                             size: 11, color: AppColors.grey500),
                         const SizedBox(width: 2),
-                        Text('$completedCount명',
+                        Text('${FormatHelper.formatNumber(completedCount)}명',
                             style: ResponsiveHelper.tinyStyle(context,
                                 color: AppColors.grey600,
                                 fontWeight: FontWeight.w600)),
@@ -3601,12 +4034,13 @@ class _DueDateChip extends StatelessWidget {
               size: 10, color: chipColor,
             ),
           ),
+        // [DEVICE-MISMATCH-FIX] `초과`(연체)가 잘리면 칩의 뜻이 사라진다 —
+        //   말줄임 대신 줄바꿈.
         Flexible(
           child: Text(chipText,
               style: ResponsiveHelper.tinyStyle(context,
                   color: chipColor,
-                  fontWeight: isUrgent ? FontWeight.w700 : FontWeight.normal),
-              overflow: TextOverflow.ellipsis),
+                  fontWeight: isUrgent ? FontWeight.w700 : FontWeight.normal)),
         ),
       ]),
     );
@@ -3701,7 +4135,7 @@ class _PendingCalendarSheetState extends State<_PendingCalendarSheet> {
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 2),
                   child: Text(
-                    '$count명',
+                    '${FormatHelper.formatNumber(count)}명',
                     style: const TextStyle(
                       fontSize: 12,
                       color: AppColors.error,
@@ -3885,6 +4319,7 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
               const Icon(Icons.remove_circle_outline, size: 13, color: AppColors.grey400),
               const SizedBox(width: 5),
               RichText(
+                textScaler: MediaQuery.textScalerOf(context), // [SCALE-BALANCE.34] RichText 는 배율을 스스로 받지 않는다
                 text: TextSpan(
                   style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
                   children: [

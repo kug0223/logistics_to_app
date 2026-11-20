@@ -1,0 +1,87 @@
+{
+ "items": [
+  {
+   "id": "manual_20261103",
+   "applicationId": "manual",
+   "userId": "w_manual",
+   "businessId": "b1",
+   "businessName": "B",
+   "workDate": {
+    "_seconds": 1793631600,
+    "_nanoseconds": 0
+   },
+   "workType": "QA",
+   "checkIn": {
+    "_seconds": 1793664000,
+    "_nanoseconds": 0
+   },
+   "checkOut": {
+    "_seconds": 1793696400,
+    "_nanoseconds": 0
+   },
+   "status": "present",
+   "wageStatus": "pending",
+   "adminConfirmed": true,
+   "snapshotWage": 13000,
+   "snapshotWageType": "hourly",
+   "createdAt": {
+    "_seconds": 1793664000,
+    "_nanoseconds": 0
+   },
+   "wageApplication": {
+    "applicationId": "manual",
+    "workDate": {
+     "_seconds": 1793631600,
+     "_nanoseconds": 0
+    },
+    "appliedAt": "2026-11-01T10:00:00+09:00",
+    "uid": "w_manual",
+    "businessId": "b1",
+    "status": "CONFIRMED",
+    "toId": "to1",
+    "slotId": "s1",
+    "workDetailId": "QA_09:00_18:00",
+    "wdId": "wd1",
+    "selectedWorkType": "QA",
+    "startTime": "09:00",
+    "endTime": "18:00",
+    "businessName": "B",
+    "wage": 13000,
+    "wageType": "hourly",
+    "baseHourlyWage": 14000,
+    "baseHourlyWageMode": "MANUAL",
+    "breakMinutes": 45,
+    "nightAllowanceApplied": false,
+    "nightIncluded": true,
+    "taxDeductionType": "freelancer_3_3"
+   },
+   "wageWorkDetail": {
+    "workType": "QA",
+    "startTime": "09:00",
+    "endTime": "18:00",
+    "wage": 15000,
+    "wageType": "hourly",
+    "breakMinutes": 60,
+    "shiftType": "day",
+    "baseHourlyWage": 16000,
+    "baseHourlyWageMode": "MANUAL",
+    "nightAllowanceApplied": true,
+    "nightIncluded": false,
+    "taxDeductionType": "none",
+    "payScheduleType": "next_day",
+    "payScheduleDay": 1
+   }
+  }
+ ],
+ "limitReached": false,
+ "wageDay": {
+  "applied": true,
+  "applicationMissing": 0,
+  "applicationMismatch": 0,
+  "mismatchReasons": {},
+  "workDetailMissing": 0,
+  "inputIncomplete": 0,
+  "incompleteReasons": {},
+  "complete": true
+ }
+}

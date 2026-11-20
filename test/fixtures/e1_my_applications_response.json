@@ -1,0 +1,875 @@
+{
+  "at": "2026-10-13T09:58:57.226Z",
+  "count": 8,
+  "applications": [
+    {
+      "id": "DLNt9XP1ETRAJtV6pqXl_4153IoJiCbSCIIQCrm54_ohzwKuAelMehJxIcARuB_7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "toId": "DLNt9XP1ETRAJtV6pqXl",
+      "businessId": "qa_qamv2ef85p_biz",
+      "businessName": "[QA QAMV2EF85P] 골든패스 테스트 사업장",
+      "toTitle": "[QA QAMV2EF85P-K] 노쇼 경계 00:38-00:58",
+      "uid": "7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "applicantName": "QA 지원자1",
+      "type": "short",
+      "startTime": "00:38",
+      "endTime": "00:58",
+      "workDate": {
+        "_seconds": 1791676800,
+        "_nanoseconds": 0
+      },
+      "slotId": "4153IoJiCbSCIIQCrm54",
+      "selectedWorkType": "QA 분류",
+      "wage": 53000,
+      "wageType": "daily",
+      "baseHourlyWageMode": "AUTO",
+      "breakMinutes": 30,
+      "nightAllowanceApplied": true,
+      "nightIncluded": true,
+      "taxDeductionType": "freelancer_3_3",
+      "payScheduleType": "weekly",
+      "payScheduleDay": 2,
+      "payScheduleTime": "17:30",
+      "wdId": "ohzwKuAelMehJxIcARuB",
+      "invitedBy": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+      "invitedAt": {
+        "_seconds": 1791645820,
+        "_nanoseconds": 658000000
+      },
+      "inviteExpiresAt": {
+        "_seconds": 1791732220,
+        "_nanoseconds": 658000000
+      },
+      "appliedAt": {
+        "_seconds": 1791645820,
+        "_nanoseconds": 658000000
+      },
+      "activationGeneration": 0,
+      "attendancePolicyAcknowledgement": {
+        "earlyWindow": 30,
+        "earlyArrivalUnit": 30,
+        "lateGrace": 5,
+        "lateUnit": 30,
+        "lateWindow": 30,
+        "overtimeUnit": 30,
+        "earlyLeaveUnit": 30,
+        "acknowledgedBy": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+        "actorRole": "business_admin",
+        "acknowledgedAt": {
+          "_seconds": 1791645820,
+          "_nanoseconds": 745000000
+        }
+      },
+      "attendancePolicySnapshot": {
+        "earlyWindow": 30,
+        "earlyArrivalUnit": 30,
+        "lateGrace": 5,
+        "lateUnit": 30,
+        "lateWindow": 30,
+        "overtimeUnit": 30,
+        "earlyLeaveUnit": 30,
+        "policySource": "legacy",
+        "capturedAt": {
+          "_seconds": 1791645820,
+          "_nanoseconds": 745000000
+        }
+      },
+      "statusHistory": [
+        {
+          "status": "INVITED",
+          "at": {
+            "_seconds": 1791645820,
+            "_nanoseconds": 658000000
+          },
+          "by": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+          "action": "INVITE_SENT"
+        },
+        {
+          "status": "CONFIRMED",
+          "at": {
+            "_seconds": 1791645822,
+            "_nanoseconds": 947000000
+          },
+          "by": "7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+          "action": "INVITE_ACCEPTED"
+        }
+      ],
+      "documentAccessConsentAt": {
+        "_seconds": 1791645822,
+        "_nanoseconds": 947000000
+      },
+      "idCardConsentGiven": true,
+      "documentAccessConsentGiven": true,
+      "confirmedAt": {
+        "_seconds": 1791645822,
+        "_nanoseconds": 947000000
+      },
+      "idCardConsentAt": {
+        "_seconds": 1791645822,
+        "_nanoseconds": 947000000
+      },
+      "documentAccessConsentVersion": "2026-09-18-v3",
+      "status": "CONFIRMED",
+      "reconfirmSentAt": {
+        "_seconds": 1791666007,
+        "_nanoseconds": 431000000
+      },
+      "reconfirmStatus": "pending"
+    },
+    {
+      "id": "JYAecghTqxksks5F5Cez_r3Up2ZKpf9mSyYsVS5Qw_qwUHu3p4LZzOjGydduFv_7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "uid": "7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "businessId": "qa_qamv2ef85p_biz",
+      "businessName": "[QA QAMV2EF85P] 골든패스 테스트 사업장",
+      "toId": "JYAecghTqxksks5F5Cez",
+      "toTitle": "[QA QAMV2EF85P-D] 0분 역전 22:24-23:24",
+      "selectedWorkType": "QA 분류",
+      "wage": 53000,
+      "wageType": "daily",
+      "baseHourlyWageMode": "AUTO",
+      "breakMinutes": 30,
+      "nightAllowanceApplied": true,
+      "nightIncluded": true,
+      "taxDeductionType": "freelancer_3_3",
+      "payScheduleType": "weekly",
+      "payScheduleDay": 2,
+      "payScheduleTime": "17:30",
+      "startTime": "22:24",
+      "endTime": "23:24",
+      "type": "short",
+      "workDate": {
+        "_seconds": 1791558000,
+        "_nanoseconds": 0
+      },
+      "idCardConsentGiven": true,
+      "idCardConsentVersion": "2026-08-v1",
+      "documentAccessConsentGiven": true,
+      "documentAccessConsentVersion": "2026-09-18-v3",
+      "slotId": "r3Up2ZKpf9mSyYsVS5Qw",
+      "workDetailId": "qwUHu3p4LZzOjGydduFv",
+      "wdId": "qwUHu3p4LZzOjGydduFv",
+      "workTypeIcon": "material:57672",
+      "workTypeColor": "#FFFFFF",
+      "workTypeBackgroundColor": "#2E7D32",
+      "activationGeneration": 0,
+      "attendancePolicySnapshot": {
+        "earlyWindow": 30,
+        "earlyArrivalUnit": 30,
+        "lateGrace": 5,
+        "lateUnit": 30,
+        "lateWindow": 30,
+        "overtimeUnit": 30,
+        "earlyLeaveUnit": 30,
+        "policySource": "legacy",
+        "capturedAt": {
+          "_seconds": 1791637778,
+          "_nanoseconds": 677000000
+        }
+      },
+      "documentAccessConsentAt": {
+        "_seconds": 1791637778,
+        "_nanoseconds": 677000000
+      },
+      "appliedAt": {
+        "_seconds": 1791637778,
+        "_nanoseconds": 677000000
+      },
+      "idCardConsentAt": {
+        "_seconds": 1791637778,
+        "_nanoseconds": 677000000
+      },
+      "confirmedBy": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+      "confirmedAt": {
+        "_seconds": 1791637779,
+        "_nanoseconds": 948000000
+      },
+      "status": "CONTRACT_PENDING",
+      "matchingReadinessState": "READY_MANUAL",
+      "documentReviewIdVersion": 0,
+      "statusHistory": [
+        {
+          "status": "PENDING",
+          "at": {
+            "_seconds": 1791637778,
+            "_nanoseconds": 668000000
+          },
+          "by": null,
+          "action": "APPLY"
+        },
+        {
+          "status": "CONTRACT_PENDING",
+          "at": {
+            "_seconds": 1791637779,
+            "_nanoseconds": 983000000
+          },
+          "by": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+          "action": "CONFIRM"
+        }
+      ],
+      "documentReviewedBy": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+      "documentReviewBankbookVersion": 0,
+      "documentReviewBankAccountVersion": 0,
+      "matchingAutoMatchStatus": "UNASSESSED",
+      "documentReviewedAt": {
+        "_seconds": 1791637779,
+        "_nanoseconds": 419000000
+      },
+      "documentReviewBusinessId": "qa_qamv2ef85p_biz"
+    },
+    {
+      "id": "JmJ4EpvklFmW46BDbL5I_FA3oep5RmVEF1XGUFxdL_gPKLx3HFlKmt7CmcRQb0_7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "uid": "7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "businessId": "qa_qamv2ef85p_biz",
+      "businessName": "[QA QAMV2EF85P] 골든패스 테스트 사업장",
+      "toId": "JmJ4EpvklFmW46BDbL5I",
+      "toTitle": "[QA QAMV2EF85P-F] 겹침 14:00-15:00",
+      "selectedWorkType": "QA 분류",
+      "wage": 53000,
+      "wageType": "daily",
+      "baseHourlyWageMode": "AUTO",
+      "breakMinutes": 30,
+      "nightAllowanceApplied": true,
+      "nightIncluded": true,
+      "taxDeductionType": "freelancer_3_3",
+      "payScheduleType": "weekly",
+      "payScheduleDay": 2,
+      "payScheduleTime": "17:30",
+      "startTime": "14:00",
+      "endTime": "15:00",
+      "type": "short",
+      "workDate": {
+        "_seconds": 1791990000,
+        "_nanoseconds": 0
+      },
+      "idCardConsentGiven": true,
+      "idCardConsentVersion": "2026-08-v1",
+      "documentAccessConsentGiven": true,
+      "documentAccessConsentVersion": "2026-09-18-v3",
+      "slotId": "FA3oep5RmVEF1XGUFxdL",
+      "workDetailId": "gPKLx3HFlKmt7CmcRQb0",
+      "wdId": "gPKLx3HFlKmt7CmcRQb0",
+      "workTypeIcon": "material:57672",
+      "workTypeColor": "#FFFFFF",
+      "workTypeBackgroundColor": "#2E7D32",
+      "activationGeneration": 0,
+      "attendancePolicySnapshot": {
+        "earlyWindow": 30,
+        "earlyArrivalUnit": 30,
+        "lateGrace": 5,
+        "lateUnit": 30,
+        "lateWindow": 30,
+        "overtimeUnit": 30,
+        "earlyLeaveUnit": 30,
+        "policySource": "legacy",
+        "capturedAt": {
+          "_seconds": 1791639369,
+          "_nanoseconds": 910000000
+        }
+      },
+      "documentAccessConsentAt": {
+        "_seconds": 1791639369,
+        "_nanoseconds": 910000000
+      },
+      "appliedAt": {
+        "_seconds": 1791639369,
+        "_nanoseconds": 910000000
+      },
+      "idCardConsentAt": {
+        "_seconds": 1791639369,
+        "_nanoseconds": 910000000
+      },
+      "confirmedBy": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+      "confirmedAt": {
+        "_seconds": 1791639376,
+        "_nanoseconds": 17000000
+      },
+      "matchingReadinessState": "READY_MANUAL",
+      "documentReviewIdVersion": 0,
+      "documentReviewedBy": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+      "documentReviewBankbookVersion": 0,
+      "documentReviewBankAccountVersion": 0,
+      "matchingAutoMatchStatus": "UNASSESSED",
+      "documentReviewedAt": {
+        "_seconds": 1791639373,
+        "_nanoseconds": 501000000
+      },
+      "documentReviewBusinessId": "qa_qamv2ef85p_biz",
+      "confirmedDecrementedAt": {
+        "_seconds": 1791639379,
+        "_nanoseconds": 540000000
+      },
+      "statusHistory": [
+        {
+          "status": "PENDING",
+          "at": {
+            "_seconds": 1791639369,
+            "_nanoseconds": 884000000
+          },
+          "by": null,
+          "action": "APPLY"
+        },
+        {
+          "status": "CONTRACT_PENDING",
+          "at": {
+            "_seconds": 1791639376,
+            "_nanoseconds": 72000000
+          },
+          "by": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+          "action": "CONFIRM"
+        },
+        {
+          "status": "CANCELED",
+          "at": {
+            "_seconds": 1791639379,
+            "_nanoseconds": 344000000
+          },
+          "by": "7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+          "action": "CONFIRM_CANCEL",
+          "reason": "QA QAMV2EF85P 정원 복구 검증"
+        }
+      ],
+      "canceledAt": {
+        "_seconds": 1791639379,
+        "_nanoseconds": 540000000
+      },
+      "cancelReason": "USER_CANCELED",
+      "status": "CANCELED"
+    },
+    {
+      "id": "QAvG8RtFGCUjmFRMpbni_Oyy06GP2khhY2pf1qx3a_q9HfvFLGOmEIntnKM8ev_7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "toId": "QAvG8RtFGCUjmFRMpbni",
+      "businessId": "qa_qamv2ef85p_biz",
+      "businessName": "[QA QAMV2EF85P] 골든패스 테스트 사업장",
+      "toTitle": "[QA QAMV2EF85P-I] 노쇼·대체충원 23:50-23:59",
+      "uid": "7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "applicantName": "QA 지원자1",
+      "type": "short",
+      "startTime": "23:50",
+      "endTime": "23:59",
+      "workDate": {
+        "_seconds": 1791590400,
+        "_nanoseconds": 0
+      },
+      "slotId": "Oyy06GP2khhY2pf1qx3a",
+      "selectedWorkType": "QA 분류",
+      "wage": 53000,
+      "wageType": "daily",
+      "baseHourlyWageMode": "AUTO",
+      "breakMinutes": 30,
+      "nightAllowanceApplied": true,
+      "nightIncluded": true,
+      "taxDeductionType": "freelancer_3_3",
+      "payScheduleType": "weekly",
+      "payScheduleDay": 2,
+      "payScheduleTime": "17:30",
+      "wdId": "q9HfvFLGOmEIntnKM8ev",
+      "invitedBy": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+      "invitedAt": {
+        "_seconds": 1791640961,
+        "_nanoseconds": 303000000
+      },
+      "inviteExpiresAt": {
+        "_seconds": 1791727361,
+        "_nanoseconds": 303000000
+      },
+      "appliedAt": {
+        "_seconds": 1791640961,
+        "_nanoseconds": 303000000
+      },
+      "activationGeneration": 0,
+      "attendancePolicyAcknowledgement": {
+        "earlyWindow": 30,
+        "earlyArrivalUnit": 30,
+        "lateGrace": 5,
+        "lateUnit": 30,
+        "lateWindow": 30,
+        "overtimeUnit": 30,
+        "earlyLeaveUnit": 30,
+        "acknowledgedBy": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+        "actorRole": "business_admin",
+        "acknowledgedAt": {
+          "_seconds": 1791640961,
+          "_nanoseconds": 386000000
+        }
+      },
+      "attendancePolicySnapshot": {
+        "earlyWindow": 30,
+        "earlyArrivalUnit": 30,
+        "lateGrace": 5,
+        "lateUnit": 30,
+        "lateWindow": 30,
+        "overtimeUnit": 30,
+        "earlyLeaveUnit": 30,
+        "policySource": "legacy",
+        "capturedAt": {
+          "_seconds": 1791640961,
+          "_nanoseconds": 386000000
+        }
+      },
+      "statusHistory": [
+        {
+          "status": "INVITED",
+          "at": {
+            "_seconds": 1791640961,
+            "_nanoseconds": 303000000
+          },
+          "by": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+          "action": "INVITE_SENT"
+        },
+        {
+          "status": "CONFIRMED",
+          "at": {
+            "_seconds": 1791640961,
+            "_nanoseconds": 916000000
+          },
+          "by": "7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+          "action": "INVITE_ACCEPTED"
+        }
+      ],
+      "documentAccessConsentAt": {
+        "_seconds": 1791640961,
+        "_nanoseconds": 916000000
+      },
+      "idCardConsentGiven": true,
+      "documentAccessConsentGiven": true,
+      "confirmedAt": {
+        "_seconds": 1791640961,
+        "_nanoseconds": 916000000
+      },
+      "idCardConsentAt": {
+        "_seconds": 1791640961,
+        "_nanoseconds": 916000000
+      },
+      "documentAccessConsentVersion": "2026-09-18-v3",
+      "status": "CONFIRMED"
+    },
+    {
+      "id": "ToliTlYVa9Wu6v5ebH02_BIPTE1S0Ajb9Drr1t1Fb_YNpYnf8yy3lnkpJSx6VV_7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "toId": "ToliTlYVa9Wu6v5ebH02",
+      "businessId": "qa_qamv2ef85p_biz",
+      "businessName": "[QA QAMV2EF85P] 골든패스 테스트 사업장",
+      "toTitle": "[QA QAMV2EF85P-H] 초대·노쇼 16:00-17:00",
+      "uid": "7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "applicantName": "QA 지원자1",
+      "type": "short",
+      "startTime": "16:00",
+      "endTime": "17:00",
+      "workDate": {
+        "_seconds": 1792022400,
+        "_nanoseconds": 0
+      },
+      "slotId": "BIPTE1S0Ajb9Drr1t1Fb",
+      "selectedWorkType": "QA 분류",
+      "wage": 53000,
+      "wageType": "daily",
+      "baseHourlyWageMode": "AUTO",
+      "breakMinutes": 30,
+      "nightAllowanceApplied": true,
+      "nightIncluded": true,
+      "taxDeductionType": "freelancer_3_3",
+      "payScheduleType": "weekly",
+      "payScheduleDay": 2,
+      "payScheduleTime": "17:30",
+      "wdId": "YNpYnf8yy3lnkpJSx6VV",
+      "invitedBy": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+      "invitedAt": {
+        "_seconds": 1791640460,
+        "_nanoseconds": 18000000
+      },
+      "inviteExpiresAt": {
+        "_seconds": 1791726860,
+        "_nanoseconds": 18000000
+      },
+      "appliedAt": {
+        "_seconds": 1791640460,
+        "_nanoseconds": 18000000
+      },
+      "activationGeneration": 0,
+      "attendancePolicyAcknowledgement": {
+        "earlyWindow": 30,
+        "earlyArrivalUnit": 30,
+        "lateGrace": 5,
+        "lateUnit": 30,
+        "lateWindow": 30,
+        "overtimeUnit": 30,
+        "earlyLeaveUnit": 30,
+        "acknowledgedBy": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+        "actorRole": "business_admin",
+        "acknowledgedAt": {
+          "_seconds": 1791640460,
+          "_nanoseconds": 95000000
+        }
+      },
+      "attendancePolicySnapshot": {
+        "earlyWindow": 30,
+        "earlyArrivalUnit": 30,
+        "lateGrace": 5,
+        "lateUnit": 30,
+        "lateWindow": 30,
+        "overtimeUnit": 30,
+        "earlyLeaveUnit": 30,
+        "policySource": "legacy",
+        "capturedAt": {
+          "_seconds": 1791640460,
+          "_nanoseconds": 95000000
+        }
+      },
+      "statusHistory": [
+        {
+          "status": "INVITED",
+          "at": {
+            "_seconds": 1791640460,
+            "_nanoseconds": 18000000
+          },
+          "by": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+          "action": "INVITE_SENT"
+        },
+        {
+          "status": "CONFIRMED",
+          "at": {
+            "_seconds": 1791640464,
+            "_nanoseconds": 96000000
+          },
+          "by": "7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+          "action": "INVITE_ACCEPTED"
+        }
+      ],
+      "documentAccessConsentAt": {
+        "_seconds": 1791640464,
+        "_nanoseconds": 96000000
+      },
+      "idCardConsentGiven": true,
+      "documentAccessConsentGiven": true,
+      "confirmedAt": {
+        "_seconds": 1791640464,
+        "_nanoseconds": 96000000
+      },
+      "idCardConsentAt": {
+        "_seconds": 1791640464,
+        "_nanoseconds": 96000000
+      },
+      "documentAccessConsentVersion": "2026-09-18-v3",
+      "status": "CONFIRMED"
+    },
+    {
+      "id": "XNjJFzVtSMeCHn7jvNKM_zdw6UjeGehbYmeI2VX4m_9GeiAMZxpHzHdCt42C6s_7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "uid": "7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "businessId": "qa_qamv2ef85p_biz",
+      "businessName": "[QA QAMV2EF85P] 골든패스 테스트 사업장",
+      "toId": "XNjJFzVtSMeCHn7jvNKM",
+      "toTitle": "[QA QAMV2EF85P] 골든패스 10:00-11:00",
+      "selectedWorkType": "QA 분류",
+      "wage": 53000,
+      "wageType": "daily",
+      "baseHourlyWageMode": "AUTO",
+      "breakMinutes": 30,
+      "nightAllowanceApplied": true,
+      "nightIncluded": true,
+      "taxDeductionType": "freelancer_3_3",
+      "payScheduleType": "weekly",
+      "payScheduleDay": 2,
+      "payScheduleTime": "17:30",
+      "startTime": "10:00",
+      "endTime": "11:00",
+      "type": "short",
+      "workDate": {
+        "_seconds": 1791817200,
+        "_nanoseconds": 0
+      },
+      "idCardConsentGiven": true,
+      "idCardConsentVersion": "2026-08-v1",
+      "documentAccessConsentGiven": true,
+      "documentAccessConsentVersion": "2026-09-18-v3",
+      "slotId": "zdw6UjeGehbYmeI2VX4m",
+      "workDetailId": "9GeiAMZxpHzHdCt42C6s",
+      "wdId": "9GeiAMZxpHzHdCt42C6s",
+      "workTypeIcon": "material:57672",
+      "workTypeColor": "#FFFFFF",
+      "workTypeBackgroundColor": "#2E7D32",
+      "activationGeneration": 0,
+      "attendancePolicySnapshot": {
+        "earlyWindow": 30,
+        "earlyArrivalUnit": 30,
+        "lateGrace": 5,
+        "lateUnit": 30,
+        "lateWindow": 30,
+        "overtimeUnit": 30,
+        "earlyLeaveUnit": 30,
+        "policySource": "legacy",
+        "capturedAt": {
+          "_seconds": 1791637420,
+          "_nanoseconds": 311000000
+        }
+      },
+      "documentAccessConsentAt": {
+        "_seconds": 1791637420,
+        "_nanoseconds": 311000000
+      },
+      "appliedAt": {
+        "_seconds": 1791637420,
+        "_nanoseconds": 311000000
+      },
+      "idCardConsentAt": {
+        "_seconds": 1791637420,
+        "_nanoseconds": 311000000
+      },
+      "confirmedBy": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+      "confirmedAt": {
+        "_seconds": 1791637514,
+        "_nanoseconds": 328000000
+      },
+      "matchingReadinessState": "READY_MANUAL",
+      "documentReviewIdVersion": 0,
+      "documentReviewedBy": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+      "documentReviewBankbookVersion": 0,
+      "documentReviewBankAccountVersion": 0,
+      "matchingAutoMatchStatus": "UNASSESSED",
+      "documentReviewedAt": {
+        "_seconds": 1791637513,
+        "_nanoseconds": 273000000
+      },
+      "documentReviewBusinessId": "qa_qamv2ef85p_biz",
+      "statusHistory": [
+        {
+          "status": "PENDING",
+          "at": {
+            "_seconds": 1791637420,
+            "_nanoseconds": 282000000
+          },
+          "by": null,
+          "action": "APPLY"
+        },
+        {
+          "status": "CONTRACT_PENDING",
+          "at": {
+            "_seconds": 1791637514,
+            "_nanoseconds": 371000000
+          },
+          "by": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+          "action": "CONFIRM"
+        },
+        {
+          "status": "CONFIRMED",
+          "at": {
+            "_seconds": 1791639094,
+            "_nanoseconds": 94000000
+          },
+          "by": "SYSTEM",
+          "action": "CONTRACT_SIGNED"
+        }
+      ],
+      "status": "CONFIRMED",
+      "reminderSentDate": "2026-10-12",
+      "reconfirmSentAt": {
+        "_seconds": 1791806406,
+        "_nanoseconds": 826000000
+      },
+      "reconfirmStatus": "pending"
+    },
+    {
+      "id": "YvUfLjDOCaRA68KVIfey_CK4VdV5gLjBi61iHjZAN_6y6sxmQcnLYtlkPTsxJX_7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "uid": "7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "businessId": "qa_qamv2ef85p_biz",
+      "businessName": "[QA QAMV2EF85P] 골든패스 테스트 사업장",
+      "toId": "YvUfLjDOCaRA68KVIfey",
+      "toTitle": "[QA QAMV2EF85P-G] 겹침 14:00-15:00",
+      "selectedWorkType": "QA 분류",
+      "wage": 53000,
+      "wageType": "daily",
+      "baseHourlyWageMode": "AUTO",
+      "breakMinutes": 30,
+      "nightAllowanceApplied": true,
+      "nightIncluded": true,
+      "taxDeductionType": "freelancer_3_3",
+      "payScheduleType": "weekly",
+      "payScheduleDay": 2,
+      "payScheduleTime": "17:30",
+      "startTime": "14:00",
+      "endTime": "15:00",
+      "type": "short",
+      "workDate": {
+        "_seconds": 1791990000,
+        "_nanoseconds": 0
+      },
+      "idCardConsentGiven": true,
+      "idCardConsentVersion": "2026-08-v1",
+      "documentAccessConsentGiven": true,
+      "documentAccessConsentVersion": "2026-09-18-v3",
+      "slotId": "CK4VdV5gLjBi61iHjZAN",
+      "workDetailId": "6y6sxmQcnLYtlkPTsxJX",
+      "wdId": "6y6sxmQcnLYtlkPTsxJX",
+      "workTypeIcon": "material:57672",
+      "workTypeColor": "#FFFFFF",
+      "workTypeBackgroundColor": "#2E7D32",
+      "activationGeneration": 0,
+      "attendancePolicySnapshot": {
+        "earlyWindow": 30,
+        "earlyArrivalUnit": 30,
+        "lateGrace": 5,
+        "lateUnit": 30,
+        "lateWindow": 30,
+        "overtimeUnit": 30,
+        "earlyLeaveUnit": 30,
+        "policySource": "legacy",
+        "capturedAt": {
+          "_seconds": 1791639370,
+          "_nanoseconds": 499000000
+        }
+      },
+      "documentAccessConsentAt": {
+        "_seconds": 1791639370,
+        "_nanoseconds": 499000000
+      },
+      "appliedAt": {
+        "_seconds": 1791639370,
+        "_nanoseconds": 499000000
+      },
+      "idCardConsentAt": {
+        "_seconds": 1791639370,
+        "_nanoseconds": 499000000
+      },
+      "statusHistory": [
+        {
+          "status": "PENDING",
+          "at": {
+            "_seconds": 1791639370,
+            "_nanoseconds": 485000000
+          },
+          "by": null,
+          "action": "APPLY"
+        },
+        {
+          "status": "AUTO_CANCELED",
+          "at": {
+            "_seconds": 1791639375,
+            "_nanoseconds": 994000000
+          },
+          "by": "SYSTEM",
+          "action": "AUTO_CANCEL",
+          "reason": "SCHEDULE_CONFLICT"
+        }
+      ],
+      "conflictingTime": "14:00~15:00",
+      "canceledAt": {
+        "_seconds": 1791639375,
+        "_nanoseconds": 994000000
+      },
+      "conflictingAppId": "JmJ4EpvklFmW46BDbL5I_FA3oep5RmVEF1XGUFxdL_gPKLx3HFlKmt7CmcRQb0_7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "conflictingBusiness": "[QA QAMV2EF85P] 골든패스 테스트 사업장",
+      "cancelReason": "SCHEDULE_CONFLICT",
+      "status": "AUTO_CANCELED"
+    },
+    {
+      "id": "n16pxrzkr57WPovl8pOc_P6LZvABNU1xLCacB4Nps_0atIiMOqKR85tYPjnxnr_7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "toId": "n16pxrzkr57WPovl8pOc",
+      "businessId": "qa_qamv2ef85p_biz",
+      "businessName": "[QA QAMV2EF85P] 골든패스 테스트 사업장",
+      "toTitle": "[QA QAMV2EF85P-J] 배포 후 재검증 23:00-23:30",
+      "uid": "7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+      "applicantName": "QA 지원자1",
+      "type": "short",
+      "startTime": "23:00",
+      "endTime": "23:30",
+      "workDate": {
+        "_seconds": 1791676800,
+        "_nanoseconds": 0
+      },
+      "slotId": "P6LZvABNU1xLCacB4Nps",
+      "selectedWorkType": "QA 분류",
+      "wage": 53000,
+      "wageType": "daily",
+      "baseHourlyWageMode": "AUTO",
+      "breakMinutes": 30,
+      "nightAllowanceApplied": true,
+      "nightIncluded": true,
+      "taxDeductionType": "freelancer_3_3",
+      "payScheduleType": "weekly",
+      "payScheduleDay": 2,
+      "payScheduleTime": "17:30",
+      "wdId": "0atIiMOqKR85tYPjnxnr",
+      "invitedBy": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+      "invitedAt": {
+        "_seconds": 1791644433,
+        "_nanoseconds": 838000000
+      },
+      "inviteExpiresAt": {
+        "_seconds": 1791730833,
+        "_nanoseconds": 838000000
+      },
+      "appliedAt": {
+        "_seconds": 1791644433,
+        "_nanoseconds": 838000000
+      },
+      "activationGeneration": 0,
+      "attendancePolicyAcknowledgement": {
+        "earlyWindow": 30,
+        "earlyArrivalUnit": 30,
+        "lateGrace": 5,
+        "lateUnit": 30,
+        "lateWindow": 30,
+        "overtimeUnit": 30,
+        "earlyLeaveUnit": 30,
+        "acknowledgedBy": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+        "actorRole": "business_admin",
+        "acknowledgedAt": {
+          "_seconds": 1791644433,
+          "_nanoseconds": 905000000
+        }
+      },
+      "attendancePolicySnapshot": {
+        "earlyWindow": 30,
+        "earlyArrivalUnit": 30,
+        "lateGrace": 5,
+        "lateUnit": 30,
+        "lateWindow": 30,
+        "overtimeUnit": 30,
+        "earlyLeaveUnit": 30,
+        "policySource": "legacy",
+        "capturedAt": {
+          "_seconds": 1791644433,
+          "_nanoseconds": 905000000
+        }
+      },
+      "statusHistory": [
+        {
+          "status": "INVITED",
+          "at": {
+            "_seconds": 1791644433,
+            "_nanoseconds": 838000000
+          },
+          "by": "gXd6U6qjJhWbXKrmdITfI57b3Wq2",
+          "action": "INVITE_SENT"
+        },
+        {
+          "status": "CONFIRMED",
+          "at": {
+            "_seconds": 1791644436,
+            "_nanoseconds": 890000000
+          },
+          "by": "7oZZD0TtdVRwCZKdnGTYdkUrGdg1",
+          "action": "INVITE_ACCEPTED"
+        }
+      ],
+      "documentAccessConsentAt": {
+        "_seconds": 1791644436,
+        "_nanoseconds": 890000000
+      },
+      "idCardConsentGiven": true,
+      "documentAccessConsentGiven": true,
+      "confirmedAt": {
+        "_seconds": 1791644436,
+        "_nanoseconds": 890000000
+      },
+      "idCardConsentAt": {
+        "_seconds": 1791644436,
+        "_nanoseconds": 890000000
+      },
+      "documentAccessConsentVersion": "2026-09-18-v3",
+      "status": "CONFIRMED",
+      "reconfirmSentAt": {
+        "_seconds": 1791666007,
+        "_nanoseconds": 534000000
+      },
+      "reconfirmStatus": "pending"
+    }
+  ]
+}

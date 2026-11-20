@@ -12,6 +12,8 @@
 // pagination · tab cache · stale response 방지 · _openContract 갱신 로직
 // ─────────────────────────────────────────────────────────────────
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -23,6 +25,7 @@ import '../../utils/format_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../screens/contract/contract_sign_screen.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/app_empty_state.dart';
 
 class UserContractsScreen extends StatefulWidget {
   const UserContractsScreen({super.key});
@@ -294,7 +297,20 @@ class _UserContractsScreenState extends State<UserContractsScreen> {
                 ? const LoadingWidget(message: '계약서 목록을 불러오는 중...')
                 : RefreshIndicator(
                     onRefresh: _refresh,
-                    child: ListView.builder(
+                    // [DU327 b] 빈/실패 상태는 남은 높이를 채우는 공용 빈 상태(sliver) — 큰 글자에서 길어지면 스크롤된다.
+                    //   ListView 항목(높이 제약 없음) 안 고정 50% 상자에서는 320·2.0 이유 문장 · 다시 시도가 잘렸다(a 캡처).
+                    child: _items.isEmpty
+                        ? CustomScrollView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            controller: _scrollCtrl,
+                            slivers: [
+                              SliverPadding(
+                                padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
+                                sliver: _buildEmptyContent(context),
+                              ),
+                            ],
+                          )
+                        : ListView.builder(
                       physics: const AlwaysScrollableScrollPhysics(),
                       controller: _scrollCtrl,
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
@@ -302,9 +318,6 @@ class _UserContractsScreenState extends State<UserContractsScreen> {
                           ? 1
                           : _items.length + (_isLoadingMore ? 1 : 0),
                       itemBuilder: (ctx, i) {
-                        if (_items.isEmpty) {
-                          return _buildEmptyContent(context);
-                        }
                         if (i == _items.length) return const LoadingWidget();
                         return RepaintBoundary(
                           child: _ContractCard(
@@ -383,36 +396,22 @@ class _UserContractsScreenState extends State<UserContractsScreen> {
         ),
     };
 
-    return SizedBox(
-      height: MediaQuery.of(context).size.height * 0.5,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 44, color: AppColors.grey300),
-          const SizedBox(height: 14),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textSecondary,
-              letterSpacing: -0.3,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          if (subtitle.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              subtitle,
-              style: const TextStyle(
-                fontSize: 13,
-                color: AppColors.textHint,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ],
-      ),
+    // [DU327] 인라인 빈 상태 → 공용 AppEmptyState(앱 공통 값 · 낱말 단위). 조회 실패 이유는 textHint(바탕 위 1.75:1)라
+    //   읽히지 않았고 다시 시도는 당겨서 새로고침뿐이었다 — 실패일 때만 이유 textSecondary + '다시 시도'(S006 계약 관리와 같은 모양).
+    final failed = _loadError != null;
+    return AppEmptyState(
+        asSliver: true,
+        icon: icon,
+        title: title,
+        subtitle: subtitle.isEmpty ? null : subtitle,
+        subtitleColor: failed ? AppColors.textSecondary : null,
+        action: failed
+            ? OutlinedButton.icon(
+                onPressed: () => unawaited(_refresh()),
+                icon: const Icon(Icons.refresh),
+                label: const Text('다시 시도'),
+              )
+            : null,
     );
   }
 }

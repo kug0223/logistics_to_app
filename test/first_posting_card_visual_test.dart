@@ -11,6 +11,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/visible_text.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -154,8 +156,8 @@ void main() {
       final labels = ['사업장 등록', '업무 등록', '계약서 템플릿', '인감/서명'];
       final ys = <double>[];
       for (final l in labels) {
-        expect(find.text(l), findsOneWidget, reason: '$l 이 사라졌다');
-        ys.add(tester.getTopLeft(find.text(l)).dy);
+        expect(findVisibleText(l), findsOneWidget, reason: '$l 이 사라졌다');
+        ys.add(tester.getTopLeft(findVisibleText(l)).dy);
       }
       for (var i = 1; i < ys.length; i++) {
         expect(ys[i], greaterThan(ys[i - 1]),
@@ -175,7 +177,7 @@ void main() {
       await _pump(tester, reads: _reads());
       // 라벨을 감싸는 InkWell 이 있어야 한다 — chevron 만 누르게 바꾸지 않았다.
       final ink = find.ancestor(
-        of: find.text('업무 등록'),
+        of: findVisibleText('업무 등록'),
         matching: find.byType(InkWell),
       );
       expect(ink, findsWidgets);
@@ -187,15 +189,15 @@ void main() {
   group('[R7-P4.4E.4] 바뀐 것', () {
     testWidgets('CARD-UI-08 헤더가 같은 사실을 두 번 말하지 않는다', (tester) async {
       await _pump(tester, reads: _reads());
-      expect(find.text('공고 등록까지 3단계 남았어요'), findsOneWidget);
-      expect(find.textContaining('/ 4 완료'), findsNothing,
+      expect(findVisibleText('공고 등록까지 3단계 남았어요'), findsOneWidget);
+      expect(findVisibleTextContaining('/ 4 완료'), findsNothing,
           reason: '제목이 이미 말한 것을 같은 무게로 반복하지 않는다');
     });
 
     testWidgets('CARD-UI-04 설명문이 비활성 톤이 아니다', (tester) async {
       await _pump(tester, reads: _reads());
       final t = tester.widget<Text>(
-          find.text('한 번 만들면 이후 계약에도 계속 사용할 수 있어요'));
+          findVisibleText('한 번 만들면 이후 계약에도 계속 사용할 수 있어요'));
       expect(t.style?.color, AppColors.textSecondary);
       expect(t.style?.color, isNot(AppColors.grey400),
           reason: 'grey400 은 이 화면에서 꺼진 항목의 톤이다');
@@ -224,8 +226,8 @@ void main() {
           '${w.toInt()}dp 넘침 없음', (tester) async {
         await _pump(tester, reads: _reads(), size: Size(w, 1800));
         expect(tester.takeException(), isNull);
-        expect(find.text('공고 등록까지 3단계 남았어요'), findsOneWidget);
-        expect(find.text('계약서 템플릿'), findsOneWidget);
+        expect(findVisibleText('공고 등록까지 3단계 남았어요'), findsOneWidget);
+        expect(findVisibleText('계약서 템플릿'), findsOneWidget);
       });
     }
 
@@ -236,7 +238,7 @@ void main() {
       await _pump(tester,
           reads: _reads(workTypes: true), size: const Size(320, 1800));
       expect(tester.takeException(), isNull);
-      expect(find.text('공고 등록까지 2단계 남았어요'), findsOneWidget);
+      expect(findVisibleText('공고 등록까지 2단계 남았어요'), findsOneWidget);
     });
 
     testWidgets('CARD-UI-09b 3/4 에서 레이아웃이 선다', (tester) async {
@@ -244,7 +246,7 @@ void main() {
           reads: _reads(workTypes: true, template: true),
           size: const Size(320, 1800));
       expect(tester.takeException(), isNull);
-      expect(find.text('공고 등록까지 1단계 남았어요'), findsOneWidget);
+      expect(findVisibleText('공고 등록까지 1단계 남았어요'), findsOneWidget);
     });
 
     testWidgets('CARD-UI-09c 4/4 면 카드가 사라진다', (tester) async {
@@ -252,7 +254,7 @@ void main() {
           reads: _reads(workTypes: true, template: true, seal: true),
           size: const Size(320, 1800));
       expect(tester.takeException(), isNull);
-      expect(find.textContaining('공고 등록까지'), findsNothing,
+      expect(findVisibleTextContaining('공고 등록까지'), findsNothing,
           reason: '준비가 끝나면 할 말이 없다 — 기존 동작 유지');
     });
   });

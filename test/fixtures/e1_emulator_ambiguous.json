@@ -1,0 +1,141 @@
+{
+ "run": "e1mvaragdf",
+ "bundle": "functions",
+ "workDateKey": "2026-10-18",
+ "saved": {
+  "pre": [],
+  "post": [
+   {
+    "id": "TO_S_wd1_W",
+    "toId": "TO",
+    "businessId": "BIZ",
+    "businessName": "biz",
+    "toTitle": "E1 공고",
+    "uid": "W",
+    "applicantName": "worker",
+    "status": "INVITED",
+    "type": "short",
+    "startTime": "14:00",
+    "endTime": "15:00",
+    "workDate": {
+     "_seconds": 1792249200,
+     "_nanoseconds": 0
+    },
+    "slotId": "S",
+    "selectedWorkType": "QA",
+    "wage": 12000,
+    "wageType": "hourly",
+    "baseHourlyWageMode": "AUTO",
+    "breakMinutes": 0,
+    "nightAllowanceApplied": true,
+    "nightIncluded": false,
+    "wdId": "wd1",
+    "invitedBy": "OWNER",
+    "invitedAt": {
+     "_seconds": 1792142416,
+     "_nanoseconds": 227000000
+    },
+    "inviteExpiresAt": {
+     "_seconds": 1792228816,
+     "_nanoseconds": 227000000
+    },
+    "appliedAt": {
+     "_seconds": 1792142416,
+     "_nanoseconds": 227000000
+    },
+    "statusHistory": [
+     {
+      "status": "INVITED",
+      "at": {
+       "_seconds": 1792142416,
+       "_nanoseconds": 227000000
+      },
+      "by": "OWNER",
+      "action": "INVITE_SENT"
+     }
+    ],
+    "activationGeneration": 0,
+    "attendancePolicyAcknowledgement": {
+     "earlyWindow": 30,
+     "earlyArrivalUnit": 10,
+     "lateGrace": 5,
+     "lateUnit": 10,
+     "lateWindow": 60,
+     "overtimeUnit": 10,
+     "earlyLeaveUnit": 10,
+     "acknowledgedBy": "OWNER",
+     "actorRole": "business_admin",
+     "acknowledgedAt": {
+      "_seconds": 1792142416,
+      "_nanoseconds": 361000000
+     }
+    },
+    "attendancePolicySnapshot": {
+     "earlyWindow": 30,
+     "earlyArrivalUnit": 10,
+     "lateGrace": 5,
+     "lateUnit": 10,
+     "lateWindow": 60,
+     "overtimeUnit": 10,
+     "earlyLeaveUnit": 10,
+     "policySource": "legacy",
+     "capturedAt": {
+      "_seconds": 1792142416,
+      "_nanoseconds": 361000000
+     }
+    }
+   }
+  ],
+  "capacity": [
+   {
+    "id": "TO_S_wd1_W",
+    "toId": "TO",
+    "businessId": "BIZ",
+    "status": "INVITED",
+    "type": "short",
+    "startTime": "14:00",
+    "endTime": "15:00",
+    "workDate": {
+     "_seconds": 1792249200,
+     "_nanoseconds": 0
+    },
+    "slotId": "S",
+    "selectedWorkType": "QA",
+    "wdId": "wd1",
+    "appliedAt": {
+     "_seconds": 1792142416,
+     "_nanoseconds": 227000000
+    }
+   }
+  ],
+  "ledger": {
+   "apps": 1,
+   "statuses": [
+    "INVITED"
+   ],
+   "wdPend": 1,
+   "slotPend": 1,
+   "toPend": 1,
+   "notes": 1
+  }
+ },
+ "notSent": {
+  "post": [],
+  "ledger": {
+   "apps": 0,
+   "statuses": [],
+   "wdPend": 0,
+   "slotPend": 0,
+   "toPend": 0,
+   "notes": 0
+  }
+ },
+ "rejected": {
+  "code": "failed-precondition",
+  "post": []
+ },
+ "readFailCodes": [
+  "permission-denied",
+  "invalid-argument"
+ ]
+}

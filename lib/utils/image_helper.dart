@@ -6,7 +6,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dialog_helper.dart';
@@ -16,6 +16,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shimmer/shimmer.dart';
 import '../theme/app_colors.dart';
 import '../widgets/common/loading_widget.dart';
+import 'picker_cache_scope.dart';
 
 /// 🖼️ 이미지 관련 공용 헬퍼
 /// 
@@ -370,6 +371,7 @@ class ImageHelper {
     double maxWidth = 1920,
     double maxHeight = 1080,
     int imageQuality = 85,
+    @visibleForTesting List<String>? pickedPathsOut,
   }) async {
     try {
       // 최대 개수 체크
@@ -384,6 +386,8 @@ class ImageHelper {
         imageQuality: imageQuality,
       );
 
+      // [SIM-PICKER-CACHE] 잘라낸 것까지 picker 가 cache 에 만든 경로 — 정리 범위용.
+      pickedPathsOut?.addAll(images.map((e) => e.path));
       if (images.isEmpty) return [];
 
       // 최대 개수 초과 시 자르기
@@ -534,7 +538,44 @@ class ImageHelper {
     final dir = Directory('${base.path}/$_stagingFolder');
     if (!await dir.exists()) await dir.create(recursive: true);
     unawaited(_sweepStaging(dir));
+    if (!_legacySwept) {
+      _legacySwept = true;
+      unawaited(sweepLegacyCacheCompressed());
+    }
     return dir;
+  }
+
+  static bool _legacySwept = false;
+
+  /// [SIM-PICKER-CACHE] 2026-09-29(48bd6e1) 이전 `compressImage` 가 cache 루트에
+  ///   남긴 `compressed_<밀리초 13자리>.jpg`.
+  ///
+  ///   소유가 확정되는 것만 지운다 — 그 이름·위치로 파일을 만든 코드는 과거의
+  ///   `ImageHelper.compressImage` 하나뿐이고(커밋 이력 전수), 지금 코드는 그 위치에
+  ///   쓰지도 읽지도 않는다(현재 산출물은 support `image_staging/compressed_<µs>`).
+  ///   그래서 사용 중일 수 없다. cache 루트 전체·`scaled_*`·UUID 폴더는 건드리지 않는다
+  ///   — 그것들은 다른 화면이 아직 들고 있을 수 있어 소유를 확정할 수 없다.
+  static final RegExp _legacyCompressed = RegExp(r'^compressed_\d{13}\.jpg$');
+
+  @visibleForTesting
+  static Future<int> sweepLegacyCacheCompressed({Directory? cacheRoot}) async {
+    if (kIsWeb) return 0;
+    var n = 0;
+    try {
+      final root = cacheRoot ?? await getTemporaryDirectory();
+      await for (final e in root.list(followLinks: false)) {
+        if (e is! File) continue;
+        final name = e.uri.pathSegments.last;
+        if (!_legacyCompressed.hasMatch(name)) continue;
+        try {
+          await e.delete();
+          n++;
+        } catch (_) {}
+      }
+    } catch (e) {
+      debugPrint('⚠️ legacy compressed 정리 실패(무시): $e');
+    }
+    return n;
   }
 
   /// 앱이 죽어 호출자의 delete() 가 못 돈 경우를 대비한 청소.
@@ -601,18 +642,29 @@ class ImageHelper {
     ImageType type = ImageType.general,
     bool useBottomSheet = false,
   }) async {
-    final file = await pickSingleImage(
-      context,
-      useBottomSheet: useBottomSheet,
-      // ImagePicker 자체 리사이징은 최소화 (압축에서 처리)
-      maxWidth: 4096,
-      maxHeight: 4096,
-      imageQuality: 100,
-    );
+    // [SIM-PICKER-CACHE] 이 선택이 cache 에 만든 UUID 사본·scaled_ 를 추적한다.
+    //   compressImage 는 언제나 **앱 소유 staging 사본**을 돌려주므로(R7-P4.3B),
+    //   그것이 만들어지면 picker 산출물의 마지막 소비자는 끝났다.
+    final scope = await PickerCacheScope.begin();
+    try {
+      if (!context.mounted) return null;
+      final file = await pickSingleImage(
+        context,
+        useBottomSheet: useBottomSheet,
+        // ImagePicker 자체 리사이징은 최소화 (압축에서 처리)
+        maxWidth: 4096,
+        maxHeight: 4096,
+        imageQuality: 100,
+      );
+      await scope.capture(file?.path);
 
-    if (file == null) return null;
-    
-    return compressImage(file, type: type);
+      if (file == null) return null;
+
+      return await compressImage(file, type: type);
+    } finally {
+      // 웹에서는 compressImage 가 원본을 그대로 돌려주지만, scope 가 웹에서 noop 이다.
+      await scope.release();
+    }
   }
 
   /// 🖼️ 다중 이미지 선택 + 자동 압축 (추천!)
@@ -622,18 +674,29 @@ class ImageHelper {
     int maxImages = 0,
     int currentCount = 0,
   }) async {
-    final files = await pickMultipleImages(
-      context,
-      maxImages: maxImages,
-      currentCount: currentCount,
-      maxWidth: 4096,
-      maxHeight: 4096,
-      imageQuality: 100,
-    );
+    // [SIM-PICKER-CACHE] 단일 선택과 같다 — compressImages 는 앱 소유 staging 사본만
+    //   돌려주므로, 그것이 다 만들어지면 picker 산출물(잘라낸 것 포함)은 쓰는 곳이 없다.
+    final scope = await PickerCacheScope.begin();
+    final raw = <String>[];
+    try {
+      if (!context.mounted) return [];
+      final files = await pickMultipleImages(
+        context,
+        maxImages: maxImages,
+        currentCount: currentCount,
+        maxWidth: 4096,
+        maxHeight: 4096,
+        imageQuality: 100,
+        pickedPathsOut: raw,
+      );
+      await scope.captureAll(raw);
 
-    if (files.isEmpty) return [];
-    
-    return compressImages(files, type: type);
+      if (files.isEmpty) return [];
+
+      return await compressImages(files, type: type);
+    } finally {
+      await scope.release();
+    }
   }
 
   // ==================== 이미지 정보 ====================

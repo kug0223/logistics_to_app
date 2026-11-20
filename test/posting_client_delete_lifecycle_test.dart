@@ -309,7 +309,14 @@ void main() {
       expect(deleteIdx, isNot(-1));
       final deleteCatchIdx = body.indexOf('} catch (e) {', deleteIdx);
       expect(deleteCatchIdx, isNot(-1));
-      expect(body.substring(deleteCatchIdx).contains('widget.onChanged()'), isFalse,
+      // [POSTING-AUTH-45] 예외 하나 — 권한 회수로 **앞 단계가 이미 반영된** 거절
+      //   (PERMISSION_REVOKED_MIDWAY)은 목록을 다시 읽어 반영분을 보여 준다.
+      //   그 분기만 허용하고, 일반 실패 분기는 여전히 갱신하지 않는다.
+      final afterCatch = body.substring(deleteCatchIdx);
+      expect(afterCatch.startsWith('} catch (e) { if (mounted && isPostingPartialRevoke(e)) {'), isTrue);
+      final genericIdx = afterCatch.indexOf('} else if (mounted) {');
+      expect(genericIdx, isNot(-1));
+      expect(afterCatch.substring(genericIdx).contains('widget.onChanged()'), isFalse,
           reason: '삭제 실패 후에도 목록을 갱신한다');
       // 삭제 호출 앞에는 catch가 없다 — 실패 가능한 사전 조회 자체가 없다
       expect(body.indexOf('} catch (e) {'), greaterThan(deleteIdx));
@@ -423,7 +430,9 @@ void main() {
       expect(_flat(menuBody).contains("if (isClosed && isManualClosed) ["), isTrue);
       expect(menuBody.contains("label: '공고 재오픈',"), isTrue);
       expect(
-        _flat(menuBody).contains('if (isClosed && !isManualClosed && !isFull && '
+        // [INVITE-CAPACITY] FLEX 전용 메뉴 — 공고 FULL 은 미충원 날짜 재오픈을 막지 않는다
+        //   (callableReopenSlots 도 flex 에서는 FULL 가드를 쓰지 않는다).
+        _flat(menuBody).contains('if (isClosed && !isManualClosed && '
             'widget.groupItem.hasReopenableManualSlots) ['),
         isTrue,
       );

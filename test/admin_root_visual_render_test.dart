@@ -12,6 +12,7 @@
 // ── 무엇을 재지 않는가 ────────────────────────────────────────────
 //   실제 FMP·프레임 시간·스크롤 성능은 여기서 알 수 없다. NOT SEEN.
 
+import 'support/visible_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -173,9 +174,9 @@ void main() {
         scale: 2.0,
         child: const Scaffold(body: _payrollEmpty),
       );
-      expect(find.text('아직 급여를 관리할 사업장이 없어요'), findsOneWidget);
-      expect(find.text('사업장을 등록하면 근무·급여 관리를 시작할 수 있어요.'), findsOneWidget);
-      expect(find.text('준비 단계 보기'), findsOneWidget);
+      expect(findVisibleText('아직 급여를 관리할 사업장이 없어요'), findsOneWidget);
+      expect(findVisibleText('사업장을 등록하면 근무·급여 관리를 시작할 수 있어요.'), findsOneWidget);
+      expect(findVisibleText('준비 단계 보기'), findsOneWidget);
     });
 
     testWidgets('VR-01y CTA 는 최소 탭 대상 높이를 넘긴다', (tester) async {
@@ -226,7 +227,7 @@ void main() {
         ),
       );
       for (final label in const ['홈', '공고', '근무', '급여', '관리']) {
-        expect(find.text(label), findsOneWidget, reason: label);
+        expect(findVisibleText(label), findsOneWidget, reason: label);
       }
     });
 
@@ -243,13 +244,13 @@ void main() {
       // BottomNavigationBar 는 Text.style 에 직접 쓰지 않고 상위에서 합친다.
       // 그래서 위젯이 아니라 **실제로 칠해진 값**을 읽어야 한다.
       TextStyle styleOf(String label) =>
-          tester.renderObject<RenderParagraph>(find.text(label)).text.style!;
+          tester.renderObject<RenderParagraph>(findVisibleText(label)).text.style!;
 
       final selected = styleOf('근무');
       final other = styleOf('급여');
       // 색만으로 구별하면 색각 이상·저대비 환경에서 사라진다.
       expect(selected.color, isNot(other.color));
-      expect(selected.color, const Color(0xFF1565C0));
+      expect(selected.color, AppColors.brand, reason: '[DU1] 선택 탭 = 브랜드 토큰(#3859E8)');
       expect(selected.fontWeight, FontWeight.w700);
       expect(other.fontWeight, isNot(FontWeight.w700));
     });
@@ -332,9 +333,9 @@ void main() {
           scale: 1.0,
           child: Scaffold(body: Column(children: [_IdentityBlock(variant: v)])),
         );
-        expect(find.text('김의관'), findsOneWidget, reason: v.name);
-        expect(find.text('@adminkug'), findsOneWidget, reason: v.name);
-        expect(find.text('사업장 관리자'), findsOneWidget, reason: v.name);
+        expect(findVisibleText('김의관'), findsOneWidget, reason: v.name);
+        expect(findVisibleText('@adminkug'), findsOneWidget, reason: v.name);
+        expect(findVisibleText('사업장 관리자'), findsOneWidget, reason: v.name);
       }
     });
 

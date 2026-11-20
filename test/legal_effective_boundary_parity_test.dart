@@ -31,6 +31,9 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+// [.54] 동의 목록·재동의 화면 글자가 낱말 단위(TextLayout)로 바뀌어 보이는 글자로 찾는다.
+import 'support/visible_text.dart';
+
 String _read(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('$p 를 찾지 못함');
@@ -340,7 +343,7 @@ void main() {
       for (var i = 0; i < 10; i++) {
         await t.pump(const Duration(milliseconds: 60));
       }
-      expect(find.textContaining('약관 상태를 확인하지 못했어요'), findsOneWidget);
+      expect(findVisibleTextContaining('약관 상태를 확인하지 못했어요'), findsOneWidget);
       expect(find.byType(Checkbox), findsNothing,
           reason: '발행본을 확인할 수 없는 필수 약관으로 동의를 받지 않는다');
       expect(sent, isEmpty);
@@ -433,7 +436,7 @@ void main() {
     Future<void> agreeAndSubmit(WidgetTester t, {String title = '서비스 이용약관'}) async {
       await t.tap(find.descendant(
           of: find.ancestor(
-              of: find.textContaining(title), matching: find.byType(Row)),
+              of: findVisibleTextContaining(title), matching: find.byType(Row)),
           matching: find.widgetWithText(TextButton, '보기')));
       await t.pumpAndSettle();
       await t.tap(find.widgetWithText(ElevatedButton, '동의하고 닫기'));
@@ -453,7 +456,7 @@ void main() {
       expect(probe.sent, hasLength(1), reason: 'STALE 뒤 같은 payload 를 다시 보내지 않는다');
       expect(probe.termsCalls, greaterThan(1), reason: '새 글을 다시 묻지 않았다');
       // 머리글("이용약관이 변경되었습니다")과 겹치지 않는 **복구 안내** 문장으로 본다.
-      expect(find.textContaining('변경된 내용을 확인하고 다시 동의해'), findsOneWidget,
+      expect(findVisibleTextContaining('변경된 내용을 확인하고 다시 동의해'), findsOneWidget,
           reason: '무슨 일이 있었는지 말해야 한다');
     });
 
@@ -484,8 +487,10 @@ void main() {
         await t.pump(const Duration(milliseconds: 60));
       }
       await agreeAndSubmit(t);
-      expect(find.textContaining('저장에 실패했습니다'), findsOneWidget);
-      expect(find.textContaining('변경된 내용을 확인하고 다시 동의해'), findsNothing,
+      // [.54] 응답을 못 받은 실패는 서버 저장 여부를 단정할 수 없다 — '저장에 실패했을 수 있습니다'.
+      //   이 시험이 지키는 것은 "STALE 아닌 실패를 약관 변경으로 말하지 않는다" 이다(legal_consent_54_test L54-2).
+      expect(findVisibleTextContaining('저장에 실패'), findsOneWidget);
+      expect(findVisibleTextContaining('변경된 내용을 확인하고 다시 동의해'), findsNothing,
           reason: '네트워크 실패를 약관 변경으로 말하지 않는다');
       expect(termsCalls, 1, reason: '평범한 실패에 약관을 다시 묻지 않는다');
     });
@@ -508,7 +513,7 @@ void main() {
       for (var i = 0; i < 10; i++) {
         await t.pump(const Duration(milliseconds: 60));
       }
-      expect(find.textContaining('약관 상태를 확인하지 못했어요'), findsOneWidget);
+      expect(findVisibleTextContaining('약관 상태를 확인하지 못했어요'), findsOneWidget);
       expect(find.byType(Checkbox), findsNothing,
           reason: '불완전한 약관으로 동의를 받지 않는다');
     });

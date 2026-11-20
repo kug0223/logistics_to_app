@@ -5,6 +5,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import '../../../models/core/application_model.dart';
 import '../../../models/core/attendance_model.dart';
 import '../../../models/core/user_model.dart';
+import '../../../models/core/wage_detail_model.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
@@ -24,6 +25,7 @@ import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/person_label.dart';
+import '../../../utils/text_layout.dart';
 
 class PayrollWorkerDetailScreen extends StatefulWidget {
   final String businessId;
@@ -46,7 +48,21 @@ class PayrollWorkerDetailScreen extends StatefulWidget {
       _PayrollWorkerDetailScreenState();
 }
 
+/// [PAYROLL-DETAIL.32] 시험 전용 — 원장 조회(callableGetAdminAttendances payload → items)와
+///   인력번호 조회를 바꿔 끼운다. production 은 둘 다 null.
+@visibleForTesting
+class PayrollWorkerDetailScreenTestHooks {
+  PayrollWorkerDetailScreenTestHooks._();
+  static Future<List<Map<String, dynamic>>> Function(Map<String, dynamic> payload)? attendance;
+  static Future<String?> Function(String businessId, String workerId)? personNo;
+  static void reset() {
+    attendance = null;
+    personNo = null;
+  }
+}
+
 class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
+
   bool _isLoading = true;
   bool _isSettling = false;
   List<AttendanceModel> _records = [];
@@ -73,6 +89,12 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
 
   Future<void> _loadPersonNo() async {
     try {
+      if (PayrollWorkerDetailScreenTestHooks.personNo != null) {
+        final no = await PayrollWorkerDetailScreenTestHooks.personNo!(widget.businessId, widget.workerId);
+        if (!mounted || no == null) return;
+        setState(() => _personNo = no);
+        return;
+      }
       final users = await FirestoreService().getUsersBatch(
         [widget.workerId],
         businessId: widget.businessId,
@@ -84,6 +106,13 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
     } catch (e) {
       debugPrint('⚠️ 근로자번호 조회 실패 (파일명에서 생략): $e');
     }
+  }
+
+  /// [PAYROLL-DETAIL.32] 새로고침·다시 시도 — 원장과 함께, 실패로 비어 있던 인력번호도 다시 읽는다
+  ///   (기기: 조회 실패 뒤 회복했는데 머리말의 P-번호만 빠져 있었다).
+  void _reload() {
+    _loadRecords();
+    if (_personNo == null) _loadPersonNo();
   }
 
   Future<void> _loadRecords() async {
@@ -100,16 +129,22 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
 
       // confirmed + transferred 모두 표시 (송금 완료된 레코드도 포함)
       // CF 경유: attendance allow list: if false 이후 서버사이드 권한 검증
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetAdminAttendances',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final cfResult = await callable.call<Map<String, dynamic>>({
+      final payload = <String, dynamic>{
         'businessId': widget.businessId,
         'startMs': monthStart.millisecondsSinceEpoch,
         'endMs': monthEnd.millisecondsSinceEpoch,
         'userId': widget.workerId,
-      });
-      final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
+      };
+      final List<dynamic> cfItems;
+      if (PayrollWorkerDetailScreenTestHooks.attendance != null) {
+        cfItems = await PayrollWorkerDetailScreenTestHooks.attendance!(payload);
+      } else {
+        final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableGetAdminAttendances',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+        final cfResult = await callable.call<Map<String, dynamic>>(payload);
+        cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
+      }
       const allowedStatuses = {
         AttendanceModel.wageConfirmed,
         AttendanceModel.wageTransferred,
@@ -120,7 +155,13 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
         return AttendanceModel.tryFromMap(m, id);
       }).whereType<AttendanceModel>()
           .where((r) => allowedStatuses.contains(r.wageStatus))
-          .toList();
+          .toList()
+        // [PAYROLL-DETAIL.32] 근무일·출근 순 — 같은 날 두 근무가 오전·오후 순서로 읽힌다.
+        ..sort((a, b) {
+          final d = a.workDate.compareTo(b.workDate);
+          if (d != 0) return d;
+          return (a.checkInAt ?? a.workDate).compareTo(b.checkInAt ?? b.workDate);
+        });
 
       if (mounted) {
         _computeTotals(records);
@@ -136,10 +177,16 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   int _totalWorkMinutes = 0;
   int _transferredAmount = 0; // 송금 완료 금액
   int _pendingAmount     = 0; // 미송금 금액 (확정됐지만 아직 미이체)
+  /// [PAYROLL-DETAIL.32] 개요(서버 srvPayrollContribution)가 세는 확정 근무 — 노쇼·결근 0원 제외.
+  ///   이 화면은 그 기록도 **목록에 보인다**(지급 없음 표시). 건수만 개요와 같은 식으로 센다.
+  int _payableCount = 0;
+  int _nonPayableCount = 0;
 
   int _netOf(AttendanceModel r) => r.wageDetail?.effectiveNetWage ?? 0;
 
   void _computeTotals(List<AttendanceModel> records) {
+    _nonPayableCount = records.where((r) => r.isNonPayableZero).length;
+    _payableCount = records.length - _nonPayableCount;
     _totalPayout      = records.fold(0, (acc, r) => acc + _netOf(r));
     _totalWorkMinutes = records.fold(0, (acc, r) => acc + (r.wageDetail?.workMinutes ?? 0));
     _transferredAmount = records
@@ -162,7 +209,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
       actions: [
         IconButton(
           icon: const Icon(Icons.refresh_rounded),
-          onPressed: _loadRecords,
+          onPressed: _reload,
           color: AppColors.textSecondary,
         ),
         IconButton(
@@ -225,8 +272,30 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // [PAYROLL-DETAIL.32] 누구의 어느 달인가 — 개요에서 누른 사람과 같은지 인력번호로 확인한다
+          //   (이름만으로는 동명이인을 가를 수 없다). 번호를 모르면 이름·기간만.
+          Text(
+            TextLayout.phrases([
+              if (_personNo != null) _personNo!,
+              widget.workerName,
+              '${widget.year}년 ${widget.month}월',
+            ].join(' · ')),
+            semanticsLabel: [
+              if (_personNo != null) _personNo!,
+              widget.workerName,
+              '${widget.year}년 ${widget.month}월',
+            ].join(' · '),
+            style: ResponsiveHelper.smallStyle(context,
+                color: AppColors.grey700, fontWeight: FontWeight.w600),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
           // ── 1행: 실수령 합계(히어로) + 명세서 버튼
-          Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+          // [PAYROLL-DETAIL.32] 큰 글자에서 한 줄로 넘치지 않게 Wrap — 금액과 라벨은 한 덩어리.
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: ResponsiveHelper.spacing(context, 8),
+            runSpacing: ResponsiveHelper.spacing(context, 6),
+            children: [
             Row(mainAxisSize: MainAxisSize.min, children: [
               Icon(Icons.payments_outlined, size: 16, color: AppColors.successDark),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
@@ -237,7 +306,6 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             Text('실수령 합계',
                 style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700)),
-            const Spacer(),
             if (_records.isNotEmpty)
               OutlinedButton.icon(
                 onPressed: () => _showPayslipSheet(context),
@@ -262,7 +330,12 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
           // ── 2행: 송금 상태 (NEW)
-          Row(children: [
+          // [PAYROLL-DETAIL.32] 좁은 폭·큰 글자에서 두 묶음이 넘치지 않게 Wrap(구분선은 줄이 바뀌면 빠진다).
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: ResponsiveHelper.spacing(context, 12),
+            runSpacing: ResponsiveHelper.spacing(context, 4),
+            children: [
             // 송금완료
             Row(mainAxisSize: MainAxisSize.min, children: [
               Container(
@@ -283,11 +356,6 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
                     fontWeight: FontWeight.w700),
               ),
             ]),
-            Container(
-                width: 1, height: 12,
-                color: AppColors.grey200,
-                margin: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 12))),
             // 미송금
             Row(mainAxisSize: MainAxisSize.min, children: [
               Container(
@@ -322,45 +390,46 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
           //   2) 아직 확정되지 않은 근무는 여기 없다. 실제로 4일 일했는데
           //      2건만 확정돼 있으면 `2일` 로 보였고, 그것이 근무일 오류처럼
           //      읽혔다. 세는 대상을 이름에 넣어 그 오해를 없앤다.
-          // 외부 Row에 Flexible 없으면 장기근무(100시간+) 시 overflow 가능
-          Row(children: [
-            Flexible(
-              fit: FlexFit.loose,
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
+          // [PAYROLL-DETAIL.32] 320·1.3 / 392·2.0 에서 이 Row 가 13~47px 넘쳤다(안쪽 Row 가 줄지 않는다).
+          //   두 묶음을 Wrap 으로 — 폭이 모자라면 아래 줄로 내려간다. 숫자와 라벨은 한 묶음.
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: ResponsiveHelper.spacing(context, 16),
+            runSpacing: ResponsiveHelper.spacing(context, 4),
+            children: [
+              Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.calendar_today_outlined,
                     size: 12, color: theme.primaryColor),
                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                Text('${_records.length}건',
+                Text('$_payableCount건',
                     style: ResponsiveHelper.smallStyle(context,
-                        color: theme.primaryColor, fontWeight: FontWeight.w600),
-                    overflow: TextOverflow.ellipsis),
+                        color: theme.primaryColor, fontWeight: FontWeight.w600)),
                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                 Text('확정 근무',
-                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700),
-                    overflow: TextOverflow.ellipsis),
+                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700)),
               ]),
-            ),
-            Container(
-                width: 1, height: 14,
-                color: AppColors.grey200,
-                margin: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 12))),
-            Flexible(
-              fit: FlexFit.loose,
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.schedule_outlined, size: 12, color: theme.primaryColor),
                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                 Text(workTimeStr,
                     style: ResponsiveHelper.smallStyle(context,
-                        color: theme.primaryColor, fontWeight: FontWeight.w600),
-                    overflow: TextOverflow.ellipsis),
+                        color: theme.primaryColor, fontWeight: FontWeight.w600)),
                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                 Text('총 근무시간',
-                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700),
-                    overflow: TextOverflow.ellipsis),
+                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700)),
               ]),
+            ],
+          ),
+          // [PAYROLL-DETAIL.32] 노쇼·결근 0원 기록은 지급 대상이 아니다 — 개요의 '확정 근무 N건'과 같은 식으로
+          //   세고, 목록에 남아 있는 이유를 한 줄로 말한다(숨기지 않는다).
+          if (_nonPayableCount > 0) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+            Text(
+              TextLayout.phrases('노쇼·결근 $_nonPayableCount건 · 지급 없음(건수·합계에서 제외)'),
+              semanticsLabel: '노쇼·결근 $_nonPayableCount건 · 지급 없음(건수·합계에서 제외)',
+              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
             ),
-          ]),
+          ],
         ],
       ),
     );
@@ -374,7 +443,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
         title: '데이터를 불러오지 못했습니다',
         iconColor: AppColors.error,
         action: TextButton.icon(
-          onPressed: _loadRecords,
+          onPressed: _reload,
           icon: const Icon(Icons.refresh),
           label: const Text('다시 시도'),
         ),
@@ -399,9 +468,78 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
 
   Widget _buildRecordTile(BuildContext context, ThemeData theme, AttendanceModel record) {
     final wage = record.wageDetail;
-    final workDate = record.workDate;
+    // [PAYROLL-DETAIL.32] workDate 는 KST 자정 instant 다 — 기기 시간대(GMT 등)로 읽으면 하루 앞 날짜가 된다.
+    final workDate = FormatHelper.toKstDate(record.workDate);
     final dateStr = '${workDate.month}/${workDate.day} (${_weekday(workDate.weekday)})';
     final netWage = wage?.effectiveNetWage ?? 0;
+    final nonPayable = record.isNonPayableZero;
+    return _buildRecordTileBody(context, theme, record,
+        wage: wage, dateStr: dateStr, netWage: netWage, nonPayable: nonPayable);
+  }
+
+  /// [PAYROLL-DETAIL.32] 근무 카드 — 날짜·업무·시간을 왼쪽에 다 보이고, 금액·상태·명세서는 오른쪽.
+  ///   폭이 모자라면(큰 글자·좁은 폭) 금액·상태·명세서를 아래 줄로 내린다. 날짜·시간·금액을 말줄임하지 않는다.
+  Widget _buildRecordTileBody(BuildContext context, ThemeData theme, AttendanceModel record, {
+    required WageDetailModel? wage,
+    required String dateStr,
+    required int netWage,
+    required bool nonPayable,
+  }) {
+    final head = [dateStr, if (record.workType.isNotEmpty) record.workType].join(' · ');
+    final time = (record.checkIn != null && record.checkOut != null)
+        ? TextLayout.range(record.checkIn!, record.checkOut!)
+        : null;
+    final amountText = FormatHelper.formatWage(netWage); // 확정 0원은 '0원' — '-'(모름)와 구분
+    final info = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(TextLayout.phrases(head),
+            semanticsLabel: head,
+            style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600)),
+        if (time != null)
+          Text(time,
+              semanticsLabel: '${record.checkIn} ~ ${record.checkOut}',
+              style: ResponsiveHelper.smallStyle(context).copyWith(color: AppColors.grey700)),
+        if (wage != null && !nonPayable)
+          Text('실근무 ${wage.workMinutes ~/ 60}h ${wage.workMinutes % 60}m',
+              style: ResponsiveHelper.tinyStyle(context).copyWith(color: AppColors.grey500)),
+        if (record.businessName.isNotEmpty)
+          Text(TextLayout.identity(record.businessName),
+              semanticsLabel: record.businessName,
+              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
+      ],
+    );
+    final side = <Widget>[
+      Text(amountText,
+          style: ResponsiveHelper.bodyStyle(context).copyWith(
+            fontWeight: FontWeight.bold,
+            color: nonPayable ? AppColors.grey500 : AppColors.successDark,
+          )),
+      _WageStatusBadge(wageStatus: record.wageStatus, nonPayable: nonPayable, status: record.status),
+      if (record.wageDetail != null && !nonPayable)
+        GestureDetector(
+          onTap: () => _openPayslip(context, record),
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 6),
+              vertical: ResponsiveHelper.spacing(context, 2),
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.infoBg,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.receipt_outlined,
+                  size: ResponsiveHelper.iconSize(context, 11),
+                  color: AppColors.infoDark),
+              SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+              Text('명세서',
+                  style: ResponsiveHelper.tinyStyle(context,
+                      color: AppColors.infoDark)),
+            ]),
+          ),
+        ),
+    ];
 
     return GestureDetector(
       onTap: () => _openWageDetail(context, record),
@@ -421,109 +559,35 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
           horizontal: ResponsiveHelper.spacing(context, 16),
           vertical: ResponsiveHelper.spacing(context, 14),
         ),
-        child: Row(
-          children: [
-            // 날짜
-            SizedBox(
-              width: ResponsiveHelper.spacing(context, 70),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        child: LayoutBuilder(builder: (context, c) {
+          // 배율 1.0 기준 오른쪽 묶음(금액·상태) 약 110 + 왼쪽 최소 170.
+          final sideBySide = TextLayout.fits(context, c.maxWidth, 280);
+          if (sideBySide) {
+            return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Expanded(child: info),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text(
-                    dateStr,
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                    // 70px SizedBox 초과 시 2줄로 wrap → 행 높이 불일치 방지
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  if (record.workType.isNotEmpty)
-                    Text(
-                      record.workType,
-                      style: ResponsiveHelper.tinyStyle(context).copyWith(
-                        color: AppColors.grey500,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                  for (var i = 0; i < side.length; i++) ...[
+                    if (i > 0) SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                    side[i],
+                  ],
                 ],
               ),
+            ]);
+          }
+          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            info,
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: ResponsiveHelper.spacing(context, 8),
+              runSpacing: ResponsiveHelper.spacing(context, 4),
+              children: side,
             ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-            // 근무 시간
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (record.businessName.isNotEmpty)
-                    Text(
-                      record.businessName,
-                      style: ResponsiveHelper.tinyStyle(context,
-                          color: AppColors.grey500),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  if (record.checkIn != null && record.checkOut != null)
-                    Text(
-                      '${record.checkIn} ~ ${record.checkOut}',
-                      style: ResponsiveHelper.smallStyle(context).copyWith(
-                        color: AppColors.grey600,
-                      ),
-                    ),
-                  if (wage != null)
-                    Text(
-                      '실근무 ${wage.workMinutes ~/ 60}h ${wage.workMinutes % 60}m',
-                      style: ResponsiveHelper.tinyStyle(context).copyWith(
-                        color: AppColors.grey400,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            // 금액 + 배지
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  _formatAmount(netWage),
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.successDark,
-                  ),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                // 송금 상태 배지
-                _WageStatusBadge(wageStatus: record.wageStatus),
-                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                // 임금명세서 버튼
-                if (record.wageDetail != null)
-                  GestureDetector(
-                    onTap: () => _openPayslip(context, record),
-                    child: Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: ResponsiveHelper.spacing(context, 6),
-                        vertical: ResponsiveHelper.spacing(context, 2),
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.infoBg,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(Icons.receipt_outlined,
-                            size: ResponsiveHelper.iconSize(context, 11),
-                            color: AppColors.infoDark),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-                        Text('명세서',
-                            style: ResponsiveHelper.tinyStyle(context,
-                                color: AppColors.infoDark)),
-                      ]),
-                    ),
-                  ),
-              ],
-            ),
-          ],
-        ),
+          ]);
+        }),
       ),
     );
   }
@@ -576,6 +640,8 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
       mode: WageDialogMode.confirmed,
       businessName: app.businessName,
       scheduledBreakMinutes: record.wageDetail!.scheduledBreakMinutes,
+      // [PAYROLL-DETAIL.32] 관리자는 users 를 읽지 못해 '이름 없음'이 떴다 — 개요에서 받은 이름을 쓴다.
+      fallbackName: widget.workerName,
     );
   }
 
@@ -583,8 +649,10 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   Future<void> _showInterimSettlementDialog(BuildContext ctx) async {
     if (_isSettling) return;
     // 확정 상태 (아직 이체 안 된) 기록만 대상 — 날짜 오름차순 정렬 후 first/last 사용
+    // [PAYROLL-DETAIL.32] 이체 대상 판정은 Home·이체 목록과 같은 식(isPayableForTransfer) —
+    //   노쇼·결근 0원은 '이체 완료'로 바꿀 급여가 아니다(서버 중간정산은 이 판정을 하지 않는다: OPEN).
     final settleableRecords = _records.where((r) =>
-        r.wageStatus == AttendanceModel.wageConfirmed &&
+        r.isPayableForTransfer &&
         r.wageDetail != null)
       .toList()
       ..sort((a, b) => a.workDate.compareTo(b.workDate));
@@ -965,16 +1033,26 @@ class _TypeChip extends StatelessWidget {
 /// 송금 상태 배지 (각 근무 카드에 표시)
 class _WageStatusBadge extends StatelessWidget {
   final String wageStatus;
-  const _WageStatusBadge({required this.wageStatus});
+  /// [PAYROLL-DETAIL.32] 노쇼·결근 0원 — '미이체'가 아니라 지급할 것이 없는 기록이다.
+  final bool nonPayable;
+  final String? status;
+  const _WageStatusBadge({required this.wageStatus, this.nonPayable = false, this.status});
 
   @override
   Widget build(BuildContext context) {
     final isTransferred = wageStatus == AttendanceModel.wageTransferred;
-    final color = isTransferred ? AppColors.success : AppColors.warning;
-    final label = isTransferred ? '이체 완료' : '미이체'; // [5C.2-P3] 용어 통일
-    final icon  = isTransferred
-        ? Icons.check_circle_outline
-        : Icons.schedule_outlined;
+    final color = nonPayable
+        ? AppColors.grey600
+        : (isTransferred ? AppColors.success : AppColors.warning);
+    // '이체 완료'는 앱에서 이체 처리로 기록된 상태다(은행 송금 확인이 아니다) — 문구는 기존 그대로.
+    final label = nonPayable
+        ? '${status == AttendanceModel.statusAbsent ? '결근' : '노쇼'} · 지급 없음'
+        : (isTransferred ? '이체 완료' : '미이체'); // [5C.2-P3] 용어 통일
+    final icon  = nonPayable
+        ? Icons.remove_circle_outline
+        : isTransferred
+            ? Icons.check_circle_outline
+            : Icons.schedule_outlined;
 
     return Container(
       padding: EdgeInsets.symmetric(

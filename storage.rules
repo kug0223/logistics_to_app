@@ -93,17 +93,67 @@ service firebase.storage {
           /databases/(default)/documents/account_deletion_tombstones/$(uid));
     }
 
+    // [FULL13-DOC-INTEGRITY.4] 신분증 객체 — `users/{uid}/idCard_<ms>.<ext>`.
+    //   서버 판정·사업장 검토·선택 열람은 이 경로(`users.idCardImagePath`)와 문서 버전으로
+    //   사진을 가리킨다. 같은 경로의 바이트가 바뀌면 버전은 그대로인데 가리키는 사진이 바뀐다.
+    //   그래서 신분증 객체는 **새로 만들기만** 한다 — 덮어쓰기·메타데이터 변경 금지, 지금
+    //   참조 중인 객체는 클라이언트가 지우지 못한다(지운 뒤 같은 경로로 다시 만드는 우회 차단).
+    //   정상 교체는 새 경로 업로드 → callableMarkIdCardVerified(거래에서 경로·버전 전환)다.
+    //   판정은 객체 이름 문자열(`resource.name`·`request.resource.name`)로 한다 —
+    //   재귀 와일드카드 값은 문자열이 아니어서 `.matches` 가 평가 오류가 된다(에뮬레이터 확인).
+    function isIdCardName(name) {
+      return name.matches('users/[^/]+/idCard_[0-9]{10,}[.](jpg|jpeg|png|webp|heic|heif)');
+    }
+
+    // 지금 users 문서가 이 객체를 참조하는가 — 신분증 객체 delete 에서만 평가한다.
+    function isCurrentIdCard(uid, name) {
+      return firestore.get(/databases/(default)/documents/users/$(uid))
+          .data.get('idCardImagePath', '') == name;
+    }
+
+    // [DOC-PRODUCT-DELETE.8] 서버가 지우기로 한(정리 대기) 이름 — 다시 만들지 못한다. 그래야 늦게 끝나는
+    //   정리가 지우는 generation 이 언제나 정리 대기 전에 있던 그 객체다. users 문서는 위와 같은 문서다
+    //   (평가당 서로 다른 문서 수는 그대로).
+    function isRetiringIdCard(uid, name) {
+      return name in firestore.get(/databases/(default)/documents/users/$(uid))
+          .data.get('idDocumentOrphanPaths', []);
+    }
+
     match /users/{uid}/{allPaths=**} {
-      // [§30] read·delete 는 바꾸지 않는다. 삭제 중 client delete 는 bytes 를
+      // [§30] read 는 바꾸지 않는다. 삭제 중 client delete 는 bytes 를
       //   **줄이는** 쪽이라 고아 경합의 원인이 아니고, 서버 정리는 Admin SDK 라
       //   rules 와 무관하다.
-      allow read, delete:
+      allow read:
           if isLoggedIn() && request.auth.uid == uid;
+      // [DOC-LATE-DELETE.7] 신분증 객체는 클라이언트가 지우지 못한다 — 옛 사진·업로드 실패 정리는
+      //   서버가 한다(callableMarkIdCardVerified 의 정리, callableDiscardIdCardUpload, callableDeleteIdCard).
+      //   서버는 같은 users 거래에서 '현재 아님'을 확인하고 정리 대기에 올린 뒤에만 지우며, 업로드 판정은
+      //   정리 대기 경로를 현재로 받지 않는다. 클라이언트 삭제는 그 순서 밖이라 승인 뒤 늦게 끝날 수 있다.
+      //   그 외 파일은 예전과 같다.
+      allow delete:
+          if isLoggedIn() && request.auth.uid == uid &&
+             !isIdCardName(resource.name);
       // [§36] 권한·정책을 먼저 보고 마지막에 barrier 를 본다 — 무권한
       //   요청 때문에 불필요한 cross-service 조회가 일어나지 않도록.
       //   [§39·§40] 이 평가에서 Firestore 접근은 **정확히 1회**다.
-      allow create, update:
+      //   [FULL13-DOC-INTEGRITY.4] 같은 이름 업로드가 create 로 평가되는 경우가 있다(에뮬레이터
+      //   확인) — 신분증 이름이면 기존 객체가 없을 때만(resource == null) 만든다.
+      //   [STORAGE-FINALIZE.5 · S1] 객체가 없어도 **지금 users 가 참조하는 경로**면 만들지 못한다.
+      //   참조는 남았는데 객체가 없는 상태(DEV 6명)에서 같은 경로로 새 사진을 만들면 옛 판정·검토를
+      //   그대로 물려받는다. 복구는 새 경로 업로드 → 서버 전환(새 버전)으로만 한다.
+      //   Firestore 문서 접근: users(get) + tombstone(exists) — 평가당 서로 다른 문서 최대 2개.
+      allow create:
           if isLoggedIn() && request.auth.uid == uid &&
+             (!isIdCardName(request.resource.name) ||
+              (resource == null && !isCurrentIdCard(uid, request.resource.name) &&
+               !isRetiringIdCard(uid, request.resource.name))) &&
+             isUnder5MB() && isImageType() &&
+             !accountDeletionBarrierExists(uid);
+      // [FULL13-DOC-INTEGRITY.4] update(같은 이름 덮어쓰기·메타데이터 변경)는 신분증 객체에서
+      //   허용하지 않는다. 이름 검사가 barrier 조회보다 먼저다 — 조회 횟수는 그대로 최대 1회.
+      allow update:
+          if isLoggedIn() && request.auth.uid == uid &&
+             !isIdCardName(resource.name) &&
              isUnder5MB() && isImageType() &&
              !accountDeletionBarrierExists(uid);
     }

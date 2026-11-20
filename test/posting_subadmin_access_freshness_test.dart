@@ -673,8 +673,9 @@ void main() {
       // client가 보내는 ids = subAdminBusinessIds. prune이 그것을 줄인다.
       // [POSTING-V2-03N.1] 결정 위치만 _scopeOf로 옮겨졌다.
       final body = _flat(_codeOf(
-          _bodyOf(_src(_ctrlPath), 'List<String>? _scopeOf(UserModel user)')));
-      expect(body.contains('if (user.isSubAdmin) return user.subAdminBusinessIds;'),
+          _bodyOf(_src(_ctrlPath), '({List<String>? ids, List<String> unresolved}) _scopeOf(')));
+      expect(body.contains('final s = up.subAdminBusinessesFor((p) => p.canManageTo); '
+          'return (ids: s.allowed, unresolved: s.unresolved);'),
           true);
       // 서버 정책은 건드리지 않았다
       final fns = _src('functions/src/index.ts');
@@ -831,11 +832,16 @@ void main() {
     test('08-e read scope 계약 무변경', () {
       // [POSTING-V2-03N.1] 결정 위치만 _scopeOf로 옮겨졌다.
       final body = _flat(_codeOf(
-          _bodyOf(_src(_ctrlPath), 'List<String>? _scopeOf(UserModel user)')));
-      expect(body.contains('if (user.isSubAdmin) return user.subAdminBusinessIds;'),
+          _bodyOf(_src(_ctrlPath), '({List<String>? ids, List<String> unresolved}) _scopeOf(')));
+      expect(body.contains('final s = up.subAdminBusinessesFor((p) => p.canManageTo); '
+          'return (ids: s.allowed, unresolved: s.unresolved);'),
           true);
-      expect(body.contains('canManageTo'), false,
-          reason: 'READ scope를 manageable로 좁히면 안 된다');
+      // [SUBADMIN-SCOPE.40] 서브관리자 범위 = 공고 권한이 확인된 배정(서버 R5-D2 가 canManageTo 를 요구한다).
+      //   예전 계약(좁히지 않는다)은 서버가 소속만 보던 때의 것이다. 지금 서버는
+      //   사업장마다 canManageTo 를 보고 전부 아니면 거절하므로, 좁히지 않으면
+      //   권한이 섞인 순간 허용된 사업장 공고까지 못 본다.
+      expect(body.contains('canManageTo'), true,
+          reason: 'READ scope는 서버 guard 와 같은 권한으로 좁힌다');
     });
 
     test('08-f 권한 상태가 비워지는 지점이 모두 남아 있다', () {

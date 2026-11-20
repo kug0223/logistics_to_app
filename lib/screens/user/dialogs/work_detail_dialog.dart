@@ -58,7 +58,7 @@ class WorkDetailDialog {
       ),
       actions: [
         ElevatedButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.info,
             foregroundColor: Colors.white,

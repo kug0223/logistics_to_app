@@ -91,6 +91,14 @@ String _closedBranch(String code) => _branch(code, 'closed');
 String _unknownBranch(String code) => _branch(code, 'unknown');
 const _cfPath = 'functions/src/index.ts';
 
+/// [E2-INVITED-SEAT] 초대 라벨 본문은 날짜별 명단·업무별 창 공용 함수로 옮겼다.
+///   날짜별 명단이 그 함수에 위임하는지 함께 확인하고, 본문은 공용 파일에서 읽는다.
+String _inviteLabelSrc(String dayRaw) {
+  expect(dayRaw.contains('inviteStateLabelOf(app, capacity: capacity)'), isTrue,
+      reason: '날짜별 명단이 공용 라벨을 쓰지 않는다');
+  return File('lib/widgets/admin/invite_state_label.dart').readAsStringSync();
+}
+
 void main() {
   final dayRaw = _src(_dayPath);
   final day = _codeOf(dayRaw);
@@ -122,12 +130,13 @@ void main() {
     });
 
     test('01-c 근로자 capacity 판정도 같은 join을 쓴다', () {
+      // [INVITE-CLOSURE-PROJECTION] 판정은 수락 tx 와 같은 투영 함수 하나다.
       final mine = _tsSliceOf(cf, 'const invitedDocs = docs.filter', 'return {');
-      expect(mine.contains('getWorkDetailCount(sd, wd)'), isTrue);
-      expect(
-          mine.contains(
-              'capStateMap[d.id] = (req > 0 && conf >= req) ? "full" : "available";'),
-          isTrue);
+      expect(mine.contains('srvInviteUnitProjection('), isTrue);
+      expect(mine.contains('capStateMap[d.id] = proj.state;'), isTrue);
+      final proj = _tsSliceOf(cf, 'function srvInviteUnitProjection(', 'async function srvInviteReviewWindowOpen(');
+      expect(proj.contains('getWorkDetailCount(slotData, wd).confirmedCount'), isTrue);
+      expect(proj.contains('(req > 0 && conf >= req)'), isTrue);
     });
 
     test('01-d 관리자 판정식이 서버 판정식과 같다 (req > 0 && conf >= req)', () {
@@ -251,7 +260,8 @@ void main() {
     });
 
     test('01b-g UNKNOWN 초대 행은 `초대 중`도 `모집 완료`도 아니다', () {
-      final label = _after(dayRaw, '(String, Color) _inviteStateLabel', 900);
+      // [INVITE-PREACCEPT] available 분기에 동의 상태 라벨이 붙어 본문이 길어졌다 — 창만 넓힌다.
+      final label = _inviteLabelSrc(dayRaw);
       expect(label.contains('case InviteCapacityState.available:'), isTrue);
       expect(label.contains('case InviteCapacityState.full:'), isTrue);
       expect(label.contains('case InviteCapacityState.unknown:'), isTrue);
@@ -277,26 +287,33 @@ void main() {
     });
 
     test('02-b FULL이면 activeInvites가 비고 staleInvites로 간다', () {
+      // [INVITE-CLOSURE-PROJECTION] 초대 행은 **초대의** 상태(inviteCapacityState)로
+      //   가른다. 공개 모집이 자동 마감돼도 초대는 단위 정원으로만 본다.
       final active = _after(dayRaw, 'List<ApplicationModel> get activeInvites', 200);
       expect(
           active.contains(
-              'capacityState == InviteCapacityState.available ? invitedApps : const []'),
+              'inviteCapacityState == InviteCapacityState.available ? invitedApps : const []'),
           isTrue);
       final stale = _after(dayRaw, 'List<ApplicationModel> get staleInvites', 200);
       expect(
           stale.contains(
-              'capacityState == InviteCapacityState.full ? invitedApps : const []'),
+              'inviteCapacityState == InviteCapacityState.full ? invitedApps : const []'),
           isTrue);
       final unknown =
           _after(dayRaw, 'List<ApplicationModel> get unknownInvites', 200);
       expect(
           unknown.contains(
-              'capacityState == InviteCapacityState.unknown ? invitedApps : const []'),
+              'inviteCapacityState == InviteCapacityState.unknown ? invitedApps : const []'),
           isTrue);
+      // 초대 효력이 끝났거나 공개 모집이 열려 있으면 공개 상태와 같다.
+      final inv = _after(dayRaw, 'InviteCapacityState get inviteCapacityState', 400);
+      expect(inv.contains('if (!invitesOutliveIntake) return capacityState;'), isTrue);
+      expect(inv.contains('isClosed: false'), isTrue);
     });
 
     test('02-c FULL 초대의 라벨이 `초대 중`이 아니다', () {
-      final label = _after(dayRaw, '(String, Color) _inviteStateLabel', 900);
+      // [INVITE-PREACCEPT] available 분기에 동의 상태 라벨이 붙어 본문이 길어졌다 — 창만 넓힌다.
+      final label = _inviteLabelSrc(dayRaw);
       expect(label.contains('case InviteCapacityState.full:'), isTrue);
       // [R2 FINAL] 정원 마감과 모집 종료를 구분한다 (02c 참조).
       expect(label.contains("return ('모집 완료 · 정원 마감'"), isTrue);
@@ -309,7 +326,7 @@ void main() {
 
     test('02-e 근로자 화면이 말하는 것과 같은 의미다', () {
       final mine = _codeOf(_src(_myAppsPath));
-      expect(mine.contains('모집이 완료된 초대예요'), isTrue);
+      expect(mine.contains('모집 인원이 찼어요'), isTrue);
       expect(mine.contains('app.workInstanceCapacityState'), isTrue);
     });
   });
@@ -334,11 +351,9 @@ void main() {
               'type WiCapState = "available" | "full" | "closed" | "unknown"'),
           isTrue);
       expect(getMine.contains('workInstanceCapacityState: cap'), isTrue);
-      expect(
-          getMine.contains(
-              'capStateMap[d.id] = (req > 0 && conf >= req) ? "full" : "available";'),
-          isTrue,
-          reason: '판정식이 관리자·서버와 같아야 한다');
+      expect(getMine.contains('capStateMap[d.id] = proj.state;'), isTrue,
+          reason: '판정식이 관리자·서버와 같아야 한다(투영 함수 하나)');
+      expect(getMine.contains('publicIntakeClosed: intakeClosedSet.has(d.id)'), isTrue);
     });
 
     test('02b-b 판단하지 못한 모든 경우가 unknown이다', () {
@@ -422,12 +437,14 @@ void main() {
           reason: '같은 이름의 다른 업무를 구분해야 한다');
       // [R2 FINAL] 오히려 구멍을 메웠다 — 슬롯/업무 단위 모집 종료는 막혀 있지
       //   않았다. 정원과 무관한 사건이라 정원 guard가 잡지 못한다.
-      expect(
-          accept.contains(
-              'freshSlotData.isManualClosed === true ||'),
-          isTrue);
-      expect(accept.contains('모집이 종료된 근무는 수락할 수 없습니다.'), isTrue);
-      expect(accept.contains("acceptWd[\"closedAt\"] != null"), isTrue);
+      // [INVITE-LIFECYCLE] 슬롯·업무 종료 판정은 동의·검토와 같은 함수로 옮겼다 —
+      //   수동 마감·사유 없는 closed 는 계속 막고 자동 접수 마감만 통과시킨다.
+      expect(accept.contains('srvInviteRecruitClosureBlock('), isTrue);
+      expect(accept.contains('freshToData, freshSlotData as Record<string, unknown>, acceptWdId)'), isTrue);
+      final closure = _tsSliceOf(cf, 'function srvInviteRecruitClosureBlock(', 'function srvInviteUnitProjection(');
+      expect(closure.contains('slotData["isManualClosed"] === true'), isTrue);
+      expect(closure.contains('wd["isManualClosed"] === true'), isTrue);
+      expect(closure.contains('wd["closedReason"] !== SRV_INTAKE_AUTO_UNIT_REASON'), isTrue);
       // 클라이언트가 보낸 capacity 상태를 신뢰하지 않는다
       expect(accept.contains('workInstanceCapacityState'), isFalse);
       expect(accept.contains('workInstanceFull'), isFalse);
@@ -440,9 +457,8 @@ void main() {
       expect(day.contains("import '../../../models/ui/invite_capacity_state.dart'"),
           isTrue);
       // 서버 판정식 == 클라이언트 판정식
-      expect(
-          getMine.contains('(req > 0 && conf >= req) ? "full" : "available"'),
-          isTrue);
+      final proj = _tsSliceOf(cf, 'function srvInviteUnitProjection(', 'async function srvInviteReviewWindowOpen(');
+      expect(proj.contains('(req > 0 && conf >= req)'), isTrue);
       final f = _codeOf(_src('lib/models/ui/invite_capacity_state.dart'));
       expect(
           f.contains('if (requiredCount > 0 && canonicalConfirmed >= requiredCount)'),
@@ -452,12 +468,15 @@ void main() {
     test('02b-i 세 상태가 각각 다른 화면을 낳는다', () {
       // available: 수락 CTA / full: 모집 완료 / unknown: 확인 못 함
       // [R5.3B] available 분기의 라벨이 초대/제안으로 갈렸다 — 분기는 그대로다.
-      const acceptCta = "label: isOffer ? '제안 조건으로 수락' : '수락하기',";
+      // [INVITE-PREACCEPT] 수락 버튼은 단계별 helper 가 만든다 — 라벨 식은 그대로다.
+      //   available 분기의 위치는 그 helper 를 **부르는 자리**로 본다.
+      expect(mine.contains("final acceptLabel = isOffer ? '제안 조건으로 수락' : '수락하기';"), isTrue);
+      const acceptCta = '..._invitePrimaryActions(app, isOffer: isOffer, acceptable: acceptable)';
       expect(mine.contains(acceptCta), isTrue);
-      expect(mine.contains('모집이 완료된 초대예요'), isTrue);
+      expect(mine.contains('모집 인원이 찼어요'), isTrue);
       expect(mine.contains('근무 가능 여부를 확인하지 못했어요'), isTrue);
       // 세 문구가 서로 다른 분기에 있다
-      final a = mine.indexOf('모집이 완료된 초대예요');
+      final a = mine.indexOf('모집 인원이 찼어요');
       final b = mine.indexOf('근무 가능 여부를 확인하지 못했어요');
       final c = mine.indexOf(acceptCta);
       expect(a, greaterThan(0));
@@ -480,31 +499,23 @@ void main() {
     final detail = _tsSliceOf(
         cf, 'export const callableGetDayStaffingDetail', 'return {rows};');
 
-    test('02c-a 서버가 마감을 full이 아니라 closed로 말한다', () {
+    test('02c-a 서버가 (초대 효력) 종료를 full이 아니라 closed로 말한다', () {
       expect(getMine.contains('"available" | "full" | "closed" | "unknown"'),
           isTrue);
-      // 슬롯 전체 종료
-      expect(
-          getMine.contains(
-              'if (sd["isManualClosed"] === true || sd["status"] === "closed") {'),
-          isTrue);
-      // 그 분기가 closed를 쓴다 — full이 아니다
-      final at = getMine.indexOf(
-          'if (sd["isManualClosed"] === true || sd["status"] === "closed") {');
-      final branch = getMine.substring(at, at + 200);
-      expect(branch.contains('capStateMap[d.id] = "closed";'), isTrue);
-      expect(branch.contains('= "full"'), isFalse,
+      // [INVITE-CLOSURE-PROJECTION] closed 는 수락 tx 의 종료 판정 그대로다.
+      final proj = _tsSliceOf(cf, 'function srvInviteUnitProjection(', 'async function srvInviteReviewWindowOpen(');
+      final at = proj.indexOf('const ended = srvInviteRecruitClosureBlock(toData, slotData, wdId);');
+      expect(at, greaterThan(0));
+      final branch = proj.substring(at, at + 300);
+      expect(branch.contains('state: "closed"'), isTrue);
+      expect(branch.contains('"full"'), isFalse,
           reason: '마감을 정원 마감이라고 말하고 있다');
     });
 
-    test('02c-b 업무 단위 종료도 closed다', () {
-      expect(
-          getMine.contains(
-              'if (wd["isManualClosed"] === true || wd["closedAt"] != null) {'),
-          isTrue);
-      final at = getMine.indexOf(
-          'if (wd["isManualClosed"] === true || wd["closedAt"] != null) {');
-      expect(getMine.substring(at, at + 200).contains('= "closed";'), isTrue);
+    test('02c-b 공개 접수의 자동 마감은 closed 가 아니라 publicIntakeClosed 다', () {
+      final proj = _tsSliceOf(cf, 'function srvInviteUnitProjection(', 'async function srvInviteReviewWindowOpen(');
+      expect(proj.contains('slotData["status"] === "closed" || wd["closedAt"] != null'), isTrue);
+      expect(proj.contains('return {state: full ? "full" : "available", endedReason: null, publicIntakeClosed};'), isTrue);
     });
 
     test('02c-c 존재하지 않는 필드로 마감을 판정하지 않는다', () {
@@ -540,11 +551,13 @@ void main() {
       //   얻었다 — 머리말 범위 count 가 본문과 **같은 규칙**을 쓰려면 그
       //   판정이 한 곳에 있어야 했다. 계약은 그대로다.
       expect(day.contains('if (!row.seedsGroup) continue;'), isTrue);
-      expect(row.contains('bool get seedsGroup => !isClosed;'), isTrue);
+      // [INVITE-TERMINAL] 공개 지원만 자동 마감되고 서버가 새 초대 가능이라고 할 때만 그룹을 세운다.
+      expect(row.contains('bool get seedsGroup => !isClosed || inviteOpen;'), isTrue);
     });
 
     test('02c-f 관리자 라벨이 두 이유를 구분한다', () {
-      final label = _after(dayRaw, '(String, Color) _inviteStateLabel', 1200);
+      // [INVITE-PREACCEPT] 위와 같은 이유로 창만 넓힌다.
+      final label = _inviteLabelSrc(dayRaw);
       expect(label.contains("return ('모집 완료 · 정원 마감'"), isTrue);
       expect(label.contains("return ('모집 종료'"), isTrue);
       expect(day.contains(r"'모집 완료 · 정원 마감 (${stale.length}명)'"), isTrue);
@@ -553,8 +566,9 @@ void main() {
 
     test('02c-g 근로자 closed 문구가 정원을 말하지 않는다', () {
       final branch = _closedBranch(mine);
-      expect(branch.contains('모집이 종료된 초대예요'), isTrue);
-      expect(branch.contains('이 근무는 더 이상 모집하지 않아요'), isTrue);
+      expect(branch.contains('모집이 마감된 초대예요'), isTrue);
+      expect(branch.contains('사업장이 모집을 마감해 수락할 수 없어요'), isTrue);
+      expect(branch.contains('삭제된 공고의 초대예요'), isTrue);
       // 핵심 — 자리가 남아 있을 수 있으므로 이 말을 하면 안 된다
       expect(branch.contains('인원이 모두 찼어요'), isFalse,
           reason: 'CLOSED에서 정원 마감을 주장하고 있다');
@@ -562,14 +576,20 @@ void main() {
       // 수락 CTA 없음
       expect(branch.contains("label: '수락하기'"), isFalse);
       expect(branch.contains('_acceptInvite'), isFalse);
-      // 정리는 가능
-      expect(branch.contains('_declineInvite(app.id)'), isTrue);
+      // [INVITE-CLOSURE-PROJECTION] 정리(=근로자 거절 기록) 버튼을 두지 않는다 —
+      //   종료는 사업장 쪽 사건이라 REJECTED 를 쓰면 원장 사유와 어긋난다.
+      expect(branch.contains('_declineInvite'), isFalse);
+      expect(branch.contains('초대 정리'), isFalse);
     });
 
     test('02c-h full 문구는 정원 마감만 말한다', () {
       final branch = _fullBranch(mine);
-      expect(branch.contains('이 근무는 인원이 모두 찼어요'), isTrue);
+      expect(branch.contains('모집 인원이 찼어요'), isTrue);
+      expect(branch.contains('자리가 다시 생기면 수락할 수 있어요'), isTrue);
       expect(branch.contains('더 이상 모집하지 않아요'), isFalse);
+      // 정원이 찬 초대는 끝난 초대가 아니다 — 초대 정리가 아니라 본인 결정인 거절.
+      expect(branch.contains("label: '초대 정리'"), isFalse);
+      expect(branch.contains("label: '거절'"), isTrue);
     });
 
     test('02c-i 내부 상태명을 노출하지 않는다', () {
@@ -653,7 +673,8 @@ void main() {
     });
 
     test('04-b 초대 수락은 `초대 수락 · 확정`으로 보인다', () {
-      final label = _after(dayRaw, '(String, Color) _inviteStateLabel', 1200);
+      // [INVITE-PREACCEPT] 위와 같은 이유로 창만 넓힌다.
+      final label = _inviteLabelSrc(dayRaw);
       expect(label.contains('case AppStatus.confirmed:'), isTrue);
       expect(label.contains('case AppStatus.contractPending:'), isTrue);
       expect(label.contains("return ('초대 수락 · 확정'"), isTrue);

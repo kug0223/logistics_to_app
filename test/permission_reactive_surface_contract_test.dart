@@ -91,8 +91,10 @@ void main() {
           true);
       expect(s.contains('if (!allowed) { if (_accessDenied) return;'), true,
           reason: '회수 방향');
-      expect(s.contains('if (!_accessDenied) return; setState(() { '
-          '_accessDenied = false;'), true, reason: '부여 방향');
+      // [DU243 — DU238 R1 추종] 거부→허용은 그대로 다시 읽고, 진입 때 확인 실패·모름이었던 화면도
+      //   첫 확인된 허용에서 다시 읽는다(사업장을 아직 고르지 않았을 때만). 부여 방향의 성질은 같다.
+      expect(s.contains('if (!_accessDenied && !(wasUnverified && _businessId == null)) return; '
+          'setState(() { _accessDenied = false;'), true, reason: '부여 방향');
     });
 
     test('거부는 빈 목록이 아니라 거부 상태다', () {

@@ -60,7 +60,7 @@ void main() {
       final code = _codeOf(_read(fsSvc));
       final body = _flat(_slice(code,
           'final allApps = await getApplicationsByTOId(',
-          'const activeStatuses'));
+          'tallyWorkDetailSeats(workStats'));
       expect(body.contains('slotId: slotId'), isTrue,
           reason: '한 슬롯을 세려고 TO 전체를 받는 상태로 되돌아갔다');
     });
@@ -68,12 +68,14 @@ void main() {
     test('APLC-4 USER 경로가 좌석 계산 술어를 바꾸지 않는다', () {
       // 서버가 걸러도 클라이언트 술어는 그대로여야 같은 사실을 말한다.
       final code = _codeOf(_read(fsSvc));
+      // [E2-INVITED-SEAT] 집계 본체는 tallyWorkDetailSeats 로 옮겼고, 상태 집합은
+      //   서버 PENDING_STATUSES 짝(AppStatus.seatCountedStatuses — INVITED 를 `대기` 로 센다).
       final body = _flat(_slice(code,
-          'const activeStatuses',
+          'final activeStatuses =',
           "workStats[key] ??="));
       expect(body.contains('!a.isStaffingReleased'), isTrue,
           reason: '좌석을 반납한 확정은 정원을 소모하지 않는다 — 이 술어가 빠지면 Home 과 어긋난다');
-      expect(body.contains("'PENDING', 'CONFIRMED', 'CONTRACT_PENDING'"), isTrue);
+      expect(body.contains('countedStatuses ?? AppStatus.seatCountedStatuses.toSet()'), isTrue);
     });
   });
 

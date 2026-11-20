@@ -22,8 +22,10 @@ import '../../services/pass_verification_service.dart';
 
 // Utils
 import '../../utils/image_helper.dart';
+import '../../utils/picker_cache_scope.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/dialog_helper.dart';
 
 // Widgets
 import '../../models/core/user_region.dart';
@@ -84,8 +86,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     final user = context.read<UserProvider>().currentUser;
     if (user == null) return;
     setState(() {
-      _hasChanges =
-          _addressController.text != (user.address ?? '') ||
+      _hasChanges = _addressController.text != (user.address ?? '') ||
           _detailAddressController.text != (user.detailAddress ?? '') ||
           (_pendingHomeRegion != null && _pendingHomeRegion != user.homeRegion);
     });
@@ -172,20 +173,34 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     final user = context.read<UserProvider>().currentUser;
     if (user == null) return;
 
-    final picked = await ImagePicker().pickImage(
-      source: source,
-      imageQuality: 75,
-      maxWidth: 600,
-      maxHeight: 600,
-    );
-    if (picked == null || !mounted) return;
+    // [SIM-PICKER-CACHE] 프로필 사진 — `readAsBytes()` 뒤로는 메모리의 bytes 만 쓴다.
+    //   picker 가 cache 에 만든 UUID 사본·scaled_ 는 그 직후 이 선택의 것만 지운다.
+    final pickScope = await PickerCacheScope.begin();
+    final XFile? picked;
+    try {
+      picked = await ImagePicker().pickImage(
+        source: source,
+        imageQuality: 75,
+        maxWidth: 600,
+        maxHeight: 600,
+      );
+    } catch (e) {
+      await pickScope.release();
+      rethrow;
+    }
+    await pickScope.capture(picked?.path);
+    if (picked == null || !mounted) {
+      await pickScope.release();
+      return;
+    }
 
     setState(() => _isUploadingPhoto = true);
     final ref =
         FirebaseStorage.instance.ref('users/${user.uid}/profile/photo.jpg');
     String? uploadedUrl;
     try {
-      final bytes = await picked.readAsBytes();
+      // 마지막 소비자 — 읽기가 실패해도 놓는다
+      final bytes = await picked.readAsBytes().whenComplete(pickScope.release);
       final task =
           await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
       uploadedUrl = await task.ref.getDownloadURL();
@@ -294,138 +309,165 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final user =
-        context.select<UserProvider, UserModel?>((p) => p.currentUser);
+    final user = context.select<UserProvider, UserModel?>((p) => p.currentUser);
     if (user == null) return const Scaffold(body: LoadingWidget());
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text(
-          '프로필 관리',
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
-            letterSpacing: -0.3,
+    // [DU1 R4-1] 저장하지 않고 나가면 입력이 조용히 사라졌다. AppBar 뒤로·시스템 뒤로가 같은 규칙을 따른다.
+    //   미변경 → 바로 복귀 · 변경 있음 → 계속 편집/나가기 확인 · 저장 중 → 나가지 않는다(진행 보호). 자동 저장·초안 없음.
+    return PopScope(
+      canPop: !_hasChanges && !_isLoading,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop || _isLoading) return;
+        final nav = Navigator.of(context);
+        final leave = await DialogHelper.showDangerConfirm(
+          context,
+          title: '변경 취소',
+          message: '저장하지 않은 변경사항이 있어요.\n나가면 입력한 내용이 사라져요.',
+          confirmText: '나가기',
+          cancelText: '계속 편집',
+        );
+        if (!mounted || !leave) return;
+        nav.pop();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          title: const Text(
+            '프로필 관리',
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+              letterSpacing: -0.3,
+            ),
+          ),
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          iconTheme: const IconThemeData(color: AppColors.textPrimary),
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(1),
+            child: Container(height: 1, color: AppColors.borderLight),
           ),
         ),
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: AppColors.textPrimary),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(height: 1, color: AppColors.borderLight),
-        ),
-      ),
-      // 변경사항이 있을 때만 하단 저장 CTA 활성화 — SafeArea(top:false)로 홈버튼 영역 처리
-      bottomNavigationBar: _hasChanges
-          ? SafeArea(
-              top: false,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border(
-                      top: BorderSide(color: AppColors.borderLight)),
-                ),
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _saveProfile,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: theme.primaryColor,
-                    disabledBackgroundColor: AppColors.grey200,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                    elevation: 0,
+        // 변경사항이 있을 때만 하단 저장 CTA 활성화 — SafeArea(top:false)로 홈버튼 영역 처리
+        // [DU1 C0 S044 · followup_7 §1] 키보드가 열리면 bottomNavigationBar 는 화면 맨 아래에 남아 키보드에 가려졌다
+        //   (320×640@2.0·inset 300 실측: '변경사항 저장' 라벨 Text 586~616). 하단 바 자체에 키보드 높이만큼 아래 여백을 준다 —
+        //   Scaffold 는 본문 아래 끝을 max(키보드, 하단 바 높이)로 잡으므로 본문과 이중으로 빠지지 않고,
+        //   키보드를 닫으면 0 이라 빈 공간이 남지 않는다. 저장·이탈 규칙은 그대로다.
+        bottomNavigationBar: _hasChanges
+            ? Padding(
+                padding: EdgeInsets.only(
+                    bottom: MediaQuery.viewInsetsOf(context).bottom),
+                child: SafeArea(
+                top: false,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border:
+                        Border(top: BorderSide(color: AppColors.borderLight)),
                   ),
-                  child: _isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Text(
-                          '변경사항 저장',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                          ),
-                        ),
-                ),
-              ),
-            )
-          : null,
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 24, 16, 40),
-          children: [
-            // ── 프로필 헤더 ──────────────────────────────────────────
-            _buildProfileHeader(user),
-            const SizedBox(height: 28),
-
-            // ── 본인 정보 (본인인증 기반, 변경 불가) ─────────────────
-            _buildVerifiedSectionLabel(),
-            const SizedBox(height: 8),
-            _buildPersonalInfoCard(user),
-            // 잠금 안내 + 재인증 링크 (내국인 PASS 인증 계정에만 표시)
-            _buildLockedNote(user: user),
-            const SizedBox(height: 20),
-
-            // ── 주소 (편집 가능 — Input UI로 명확히 구분) ───────────
-            _buildSectionLabel('주소', Icons.location_on_outlined),
-            const SizedBox(height: 8),
-            _buildSimpleCard(
-              child: Column(
-                children: [
-                  if (kIsWeb)
-                    _buildField(
-                      controller: _addressController,
-                      label: '주소',
-                      hint: '주소를 직접 입력해주세요',
-                    )
-                  else
-                    _buildField(
-                      controller: _addressController,
-                      label: '주소',
-                      hint: '주소 검색 버튼을 눌러주세요',
-                      readOnly: true,
-                      onTap: _searchAddress,
-                      suffixIcon: IconButton(
-                        onPressed: _searchAddress,
-                        icon: Icon(Icons.search,
-                            color: theme.primaryColor, size: 20),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _saveProfile,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: theme.primaryColor,
+                      disabledBackgroundColor: AppColors.grey200,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      // [DU1 후속39 B2-I] 실측 50px(392·1.0) — 공통 기준 주 버튼 높이 52. 글자 배율이 크면 내용만큼 더 커진다.
+                      minimumSize: const Size.fromHeight(52),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
                     ),
-                  const SizedBox(height: 12),
-                  _buildField(
-                    controller: _detailAddressController,
-                    label: '상세주소',
-                    hint: '동/호수 입력',
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Text(
+                            '변경사항 저장',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
                   ),
-                ],
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
+              )
+            : null,
+        body: Form(
+          key: _formKey,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 24, 16, 40),
+            children: [
+              // ── 프로필 헤더 ──────────────────────────────────────────
+              _buildProfileHeader(user),
+              const SizedBox(height: 28),
 
-            // ── 주로 일할 지역 (USER 전용, 편집 가능) ────────────────
-            _buildSectionLabel('주로 일할 지역', Icons.location_on_outlined),
-            const SizedBox(height: 8),
-            _buildHomeRegionCard(user),
-            const SizedBox(height: 20),
+              // ── 본인 정보 (본인인증 기반, 변경 불가) ─────────────────
+              _buildVerifiedSectionLabel(),
+              const SizedBox(height: 8),
+              _buildPersonalInfoCard(user),
+              // 잠금 안내 + 재인증 링크 (내국인 PASS 인증 계정에만 표시)
+              _buildLockedNote(user: user),
+              const SizedBox(height: 20),
 
-            // ── 보안 ────────────────────────────────────────────────
-            _buildSectionLabel('보안', Icons.security_outlined),
-            const SizedBox(height: 8),
-            _buildSecurityCard(),
-          ],
+              // ── 주소 (편집 가능 — Input UI로 명확히 구분) ───────────
+              _buildSectionLabel('주소', Icons.location_on_outlined),
+              const SizedBox(height: 8),
+              _buildSimpleCard(
+                child: Column(
+                  children: [
+                    if (kIsWeb)
+                      _buildField(
+                        controller: _addressController,
+                        label: '주소',
+                        hint: '주소를 직접 입력해주세요',
+                      )
+                    else
+                      _buildField(
+                        controller: _addressController,
+                        label: '주소',
+                        hint: '주소 검색 버튼을 눌러주세요',
+                        readOnly: true,
+                        onTap: _searchAddress,
+                        suffixIcon: IconButton(
+                          onPressed: _searchAddress,
+                          icon: Icon(Icons.search,
+                              color: theme.primaryColor, size: 20),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                      ),
+                    const SizedBox(height: 12),
+                    _buildField(
+                      controller: _detailAddressController,
+                      label: '상세주소',
+                      hint: '동/호수 입력',
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // ── 주로 일할 지역 (USER 전용, 편집 가능) ────────────────
+              _buildSectionLabel('주로 일할 지역', Icons.location_on_outlined),
+              const SizedBox(height: 8),
+              _buildHomeRegionCard(user),
+              const SizedBox(height: 20),
+
+              // ── 보안 ────────────────────────────────────────────────
+              _buildSectionLabel('보안', Icons.security_outlined),
+              const SizedBox(height: 8),
+              _buildSecurityCard(),
+            ],
+          ),
         ),
       ),
     );
@@ -484,8 +526,8 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                       ),
                     if (_isUploadingPhoto)
                       Center(
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: theme.primaryColor))
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: theme.primaryColor))
                     else if (!hasPhoto)
                       Center(
                         child: Text(
@@ -532,7 +574,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
               SizedBox(height: ResponsiveHelper.spacing(context, 2)),
               Text('@${user.username}',
                   style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.grey500)),
+                      color: AppColors.textSecondary)),
             ],
           ),
         ),
@@ -554,53 +596,56 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   Widget _buildVerifiedSectionLabel() {
     return Padding(
       padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 4)),
-      child: Row(children: [
-        Icon(Icons.person_outline,
-            size: ResponsiveHelper.iconSize(context, 14),
-            color: AppColors.grey500),
-        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-        Text('본인 정보',
-            style: ResponsiveHelper.smallStyle(context,
-                color: AppColors.grey500, fontWeight: FontWeight.w600)),
-        const Spacer(),
-        // 본인인증 완료 상태 뱃지 — 왜 잠겨 있는지 바로 인지 가능
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-          decoration: BoxDecoration(
-            color: AppColors.successBg,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.verified_outlined,
-                  size: 11, color: AppColors.successDark),
-              const SizedBox(width: 3),
-              Text(
-                '본인인증 완료',
-                style: ResponsiveHelper.tinyStyle(context,
-                    color: AppColors.successDark, fontWeight: FontWeight.w600),
+      // [DU1 C0 S044] 320dp·2.0 에서 아이콘·라벨·배지(비유연 형제)의 요구 폭 합이 줄 폭을 63px 넘었다 — 양 끝 Wrap, 모자라면 배지가 다음 줄
+      child: SizedBox(
+        width: double.infinity,
+        child: Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          runSpacing: ResponsiveHelper.spacing(context, 4),
+          children: [
+            // [DU312 ③] 섹션 제목 — S010 · S045 · S082 · S040 과 같은 16 bold 본문색, 글자만(반복 장식 아이콘 생략).
+            const Text('본인 정보',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary)),
+            // 본인인증 완료 상태 뱃지 — 왜 잠겨 있는지 바로 인지 가능
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppColors.successBg,
+                borderRadius: BorderRadius.circular(20),
               ),
-            ],
-          ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.verified_outlined,
+                      size: 11, color: AppColors.successDark),
+                  const SizedBox(width: 3),
+                  Text(
+                    '본인인증 완료',
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: AppColors.successDark,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-      ]),
+      ),
     );
   }
 
   /// 일반 섹션 레이블 (아이콘 + 텍스트)
   Widget _buildSectionLabel(String title, IconData icon) {
+    // [DU312 ③] 섹션 제목 — 16 bold 본문색, 글자만. [icon] 은 남겨 두고 그리지 않는다(DU246 과 같은 처리, 시안의 섹션 제목은 아이콘이 없다).
     return Padding(
       padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 4)),
-      child: Row(children: [
-        Icon(icon,
-            size: ResponsiveHelper.iconSize(context, 14),
-            color: AppColors.grey500),
-        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-        Text(title,
-            style: ResponsiveHelper.smallStyle(context,
-                color: AppColors.grey500, fontWeight: FontWeight.w600)),
-      ]),
+      child: Text(title,
+          style: const TextStyle(
+              fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
     );
   }
 
@@ -680,13 +725,15 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.lock_outline, size: 12, color: AppColors.grey400),
+              const Icon(Icons.lock_outline,
+                  size: 12, color: AppColors.grey400),
               SizedBox(width: ResponsiveHelper.spacing(context, 5)),
               Expanded(
                 child: Text(
                   '본인인증 정보는 직접 변경할 수 없습니다.',
+                  // [DU1 C0] 읽어야 하는 안내 — grey400(1.8:1) → textSecondary
                   style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.grey400),
+                      color: AppColors.textSecondary),
                 ),
               ),
             ],
@@ -714,7 +761,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                           Text(
                             '재인증 진행 중...',
                             style: ResponsiveHelper.tinyStyle(context,
-                                color: AppColors.grey500),
+                                color: AppColors.textSecondary),
                           ),
                         ],
                       )
@@ -778,7 +825,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
               child: Text(
                 label,
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: hasRegion ? AppColors.textPrimary : AppColors.grey400,
+                  color: hasRegion ? AppColors.textPrimary : AppColors.textTertiary,
                   fontWeight: hasRegion ? FontWeight.w500 : FontWeight.normal,
                 ),
               ),
@@ -786,7 +833,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             Icon(
               Icons.chevron_right,
               size: ResponsiveHelper.iconSize(context, 20),
-              color: AppColors.grey400,
+              color: AppColors.grey600, // [DU312] grey400 1.88 → grey600 4.61(흰 면) — 누를 수 있는 행 표시
             ),
           ],
         ),
@@ -808,25 +855,34 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     VoidCallback? onTap,
   }) {
     final theme = Theme.of(context);
+    final labelStyle = ResponsiveHelper.smallStyle(context,
+        color: AppColors.grey600, fontWeight: FontWeight.w500);
+    final labelGap = ResponsiveHelper.spacing(context, 6);
+    // [DU1 후속39 B2-I] 포커스 시 프레임워크는 **입력 칸만** 화면에 넣는다(scrollPadding 기본 20). 320·2.0·키보드에서 위 레이블
+    //   ('상세주소')이 고정 머리 밑으로 올라가 무엇을 입력하는지 보이지 않았다(실측 label 24.9~61.9 / 표시 영역 top 57).
+    //   위쪽 여백에 레이블 한 줄 높이(글자 배율 반영)+간격을 더해 레이블까지 함께 보이게 한다. 입력·저장·검증 동작은 그대로.
+    final labelExtent =
+        MediaQuery.textScalerOf(context).scale(labelStyle.fontSize ?? 13) * (labelStyle.height ?? 1.5) + labelGap;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,
-          style: ResponsiveHelper.smallStyle(context,
-              color: AppColors.grey600, fontWeight: FontWeight.w500),
+          style: labelStyle,
         ),
-        SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+        SizedBox(height: labelGap),
         TextFormField(
           controller: controller,
+          scrollPadding: EdgeInsets.fromLTRB(20, 20 + labelExtent, 20, 20),
           readOnly: readOnly,
           keyboardType: keyboardType,
           onTap: onTap,
           style: ResponsiveHelper.bodyStyle(context),
           decoration: InputDecoration(
             hintText: hint,
+            // [DU312 ②] 입력 안내 grey400(흰 면 1.88) → textTertiary(흰 5.25 · 읽기 전용 #FAFAFA 5.03)
             hintStyle:
-                ResponsiveHelper.bodyStyle(context, color: AppColors.grey400),
+                ResponsiveHelper.bodyStyle(context, color: AppColors.textTertiary),
             filled: true,
             fillColor: readOnly ? AppColors.grey50 : Colors.white,
             contentPadding: EdgeInsets.symmetric(
@@ -894,7 +950,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
               ),
               Icon(Icons.chevron_right,
                   size: ResponsiveHelper.iconSize(context, 18),
-                  color: AppColors.grey400),
+                  color: AppColors.grey600), // [DU312] grey400 → grey600(행동명 옆 진입 표시)
             ]),
           ),
         ),
@@ -1004,7 +1060,7 @@ class _PasswordChangeDialogState extends State<_PasswordChangeDialog> {
             StyledDialogButton.primary(
               text: '확인',
               onPressed: () {
-                Navigator.pop(rc);            // 중첩 dialog 닫기 → _onSubmit await 해제
+                Navigator.pop(rc); // 중첩 dialog 닫기 → _onSubmit await 해제
                 Navigator.pop(context, true); // 메인 dialog 닫기 (result: true)
               },
             ),
@@ -1090,13 +1146,14 @@ class _PasswordChangeDialogState extends State<_PasswordChangeDialog> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.info_outline, size: 13, color: AppColors.grey400),
+              const Icon(Icons.info_outline,
+                  size: 13, color: AppColors.grey400),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Expanded(
                 child: Text(
                   '영문, 숫자, 특수문자를 조합하여 8자 이상 입력해주세요.',
                   style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.grey500),
+                      color: AppColors.textSecondary),
                 ),
               ),
             ],

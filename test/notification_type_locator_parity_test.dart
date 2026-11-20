@@ -25,6 +25,9 @@ Set<String> serverEmittedTypes(String raw) {
   for (var i = 0; i < lines.length; i++) {
     final m = re.firstMatch(lines[i]);
     if (m == null) continue;
+    // [.11 2026-10-27] 종료 결정 기록의 행위자 객체(`{type: "SYSTEM", uid: null, job: ...}`)는 알림 문서가 아니다.
+    //   같은 거래 안에서 알림 payload 와 몇 줄 떨어져 있을 뿐이라 title 근접 규칙에 걸린다.
+    if (RegExp(r'type: "[A-Z_]+", uid:').hasMatch(lines[i])) continue;
     final lo = (i - 3).clamp(0, lines.length - 1);
     final hi = (i + 6).clamp(0, lines.length - 1);
     var hasTitle = false;
@@ -156,11 +159,16 @@ void main() {
       );
     });
 
-    test('G 정말 모르는 type 은 조용히 멈춘다', () {
+    // [.66] '조용히' 멈추던 것을 바꿨다 — 무반응이었고 카드 본문은 2줄로 잘려 전문을 읽을 곳이 없었다.
+    //   아무 화면도 열지 않는다는 원래 의도는 그대로다: 전문과 '열 화면 없음' 안내만 띄운다.
+    test('G 정말 모르는 type 은 다른 화면을 열지 않고 전문·안내만 보인다', () {
       expect(model.contains('default: return NotificationType.other;'), isTrue);
       final i = router.indexOf('case NotificationType.other:');
       expect(i, greaterThan(-1));
-      expect(router.substring(i, i + 160).contains('break;'), isTrue,
+      // 이 case 가 switch 의 마지막이다 — 끝(finally)까지가 그 본문(푸시 합성 알림의 이른 break 포함).
+      final block = router.substring(i, router.indexOf('} finally', i));
+      expect(block.contains('DialogHelper.showAlert'), isTrue);
+      expect(block.contains('Navigator'), isFalse,
           reason: '모르는 알림으로 아무 화면이나 열지 않는다');
     });
   });

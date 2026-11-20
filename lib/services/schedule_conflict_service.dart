@@ -358,10 +358,45 @@ class ScheduleConflictService {
     }
   }
 
+  /// [E1-CUTOFF] 이 취소가 **노쇼 상당**인가 — 서버와 같은 식.
+  ///
+  ///   canonical 은 `callableCancelConfirmedApplication` 이다:
+  ///
+  ///     scheduledStartMs = workDate.toMillis() + (hh * 60 + mm) * 60000
+  ///     noShowEquivalent = Date.now() >= scheduledStartMs - 5 * 60 * 1000
+  ///
+  ///   `workDate.toMillis()` 는 **KST 자정 instant** 다. 그래서 여기서도
+  ///   `kstMidnightOfKstDay` 에서 출발하는 [FormatHelper.kstWallClockInstant]
+  ///   를 쓴다 — `toKstDate()` 가 돌려주는 `DateTime.utc(y, m, d)` 에 시각을
+  ///   그냥 더하면 그 값은 UTC 벽시계라 **모든 기기에서 9시간 늦다**.
+  ///
+  ///   서버가 어차피 독립 판정하므로 이 값은 **안내용**이지만, 틀리면
+  ///   노쇼가 기록된 취소를 "그냥 취소됐다"고 알려 주게 된다.
+  ///
+  ///   시각을 못 읽으면 null — 호출부가 기존 fallback 을 쓴다.
+  ///   `now` 는 테스트 주입용이다.
+  bool? isNoShowEquivalentCancel({
+    required DateTime workDate,
+    required String startTime,
+    DateTime? now,
+  }) {
+    final start = FormatHelper.kstWallClockInstant(
+        FormatHelper.toKstDate(workDate), startTime);
+    if (start == null) return null;
+    final cutoff = start.subtract(const Duration(minutes: 5));
+    // 서버 연산자와 같다: `>=`
+    return !(now ?? DateTime.now()).isBefore(cutoff);
+  }
+
   /// 확정 취소 시 패널티 여부 확인
-  /// 
+  ///
   /// [workDate] 근무 날짜
   /// 반환: true면 패널티 적용 (당일 취소)
+  ///
+  /// [E1-CUTOFF] 이것은 **날짜 단위** 근사다(당일이면 패널티). 서버의
+  ///   `start - 5분` 경계보다 넓게 잡는 보수적 판정이라, 시각을 읽을 수
+  ///   없을 때의 fallback 으로만 쓴다. 정확한 판정은
+  ///   [isNoShowEquivalentCancel] 이다.
   bool shouldApplyPenalty(DateTime workDate) {
     final today = FormatHelper.toKstDate(DateTime.now());
     final workDay = FormatHelper.toKstDate(workDate);

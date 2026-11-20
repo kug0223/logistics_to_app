@@ -459,15 +459,22 @@ void main() {
       final body = _codeOf(_bodyOf(src, 'Widget _buildWhenLine('));
       expect(body.contains('_buildStatusBadge('), false,
           reason: '배지는 1행 메타로 올라갔다');
-      expect(body.contains('maxLines: 1'), true);
-      expect(body.contains('TextOverflow.ellipsis'), true);
-      // 1행: 배지가 메뉴 버튼을 밀어내지 못하게 Flexible로 감쌌다.
+      // [SCALE-BALANCE.34] 날짜 줄은 사용자 글자 배율을 따르고(RichText → Text.rich), 큰 글자에서는
+      //   1줄 말줄임으로 날짜·사업장을 지우지 않고 줄을 바꾼다. 배지와 서로 밀어내지 않는 것은 아래 그대로.
+      // [UI-BALANCE.38] Text.rich 를 원문 접근성 이름과 함께 감싼 헬퍼(_richWithPlainLabel)로.
+      expect(body.contains('_richWithPlainLabel('), true);
+      expect(body.contains('TextOverflow.ellipsis'), false);
+      // 1행: 배지가 메뉴 버튼을 밀어내지 못하게 flex 칸(Flexible 계열)으로 감쌌다.
+      // [DU1 후속107 C106-2] Flexible + Spacer 는 남은 폭을 반씩 나눠 큰 글자에서 `모집중` 라벨이 사라졌다 —
+      //   이제 Expanded(= tight Flexible) 하나가 남은 폭 전체를 배지에 준다. 메뉴를 밀어내지 못하는 계약은 그대로다:
+      //   배지는 flex 칸 안에 있고, 배지와 메뉴 사이에 폭을 나눠 갖는 Spacer 가 없다.
       final build = _flat(_codeOf(_bodyOf(src, 'Widget build(BuildContext context)')));
       final badge = build.indexOf('_buildStatusBadge(');
       final menu = build.indexOf('_buildSingleTOMenu(');
       expect(badge, greaterThan(-1));
       expect(badge, lessThan(menu));
-      expect(build.contains('Flexible( child: Align('), true);
+      expect(build.contains('Expanded( child: Align( alignment: Alignment.centerLeft, child: _buildStatusBadge('), true);
+      expect(build.substring(badge, menu).contains('Spacer('), false, reason: '배지와 메뉴 사이에 폭을 나눠 갖는 Spacer 가 없다');
     });
   });
 

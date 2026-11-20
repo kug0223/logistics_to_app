@@ -292,7 +292,13 @@ void main() {
           'lib/screens/business_admin/dialogs/work_applicants_dialog.dart'));
       final day = _codeOf(_read(
           'lib/screens/business_admin/dialogs/day_applicants_dialog.dart'));
-      expect('FirestoreService.purposeApplicantReview'.allMatches(work).length, 2);
+      // [E2-INVITED-SEAT] 이 창의 읽기는 WorkApplicantsReads 경계를 지난다(테스트 seam).
+      //   계약은 그대로다 — 창이 목적·인자를 넘기고, 경계가 같은 서비스로 전달한다.
+      expect('FirestoreService.purposeApplicantReview'.allMatches(work).length, 1);
+      final reads = _codeOf(_read('lib/screens/business_admin/dialogs/work_applicants_reads.dart'));
+      expect(reads, contains('getApplicationsBySlotId(to.id, slotId,'));
+      expect('purpose: purpose'.allMatches(reads).length, greaterThanOrEqualTo(3),
+          reason: '두 지원서 경로 + 사용자 batch 가 목적을 그대로 전달한다');
       expect(day, contains('FirestoreService.purposeApplicantReview'));
     });
   });

@@ -121,7 +121,8 @@ void main() {
     test('이 검사가 좌석 커밋보다 먼저다', () {
       // [PII-DOC-R1.5.1] 기준점을 통장사본에서 신분 확인으로 옮겼다.
       final readiness = accept.indexOf('"신분증 등록이 필요합니다."');
-      final matching = accept.indexOf('srvResolveMatchingReadiness(freshUserData,');
+      // [DOC-LATE-DELETE.7 갱신] 예전 기준점: srvResolveMatchingReadiness(freshUserData, …). 판정 입력이 예전 문서 확인을 덧씌운 사본이 됐다.
+      final matching = accept.indexOf('srvWithLegacyIdCardObject(freshUserData,');
       final seat = accept.indexOf('totalConfirmed: admin.firestore.FieldValue.increment(1)');
       expect(readiness, greaterThan(-1));
       expect(matching, greaterThan(-1));
@@ -159,7 +160,8 @@ void main() {
       expect(
           accept.contains('const acceptConsentVersion = '
               'srvResolveCommitmentConsentVersion( acceptDocConsentVersionRaw, '
-              'acceptDocConsentGiven);'),
+              // [INVITE-PREACCEPT] 세 번째 인자 = 초대 문구(초대 v1) 허용. 초대 수락만.
+              'acceptDocConsentGiven, true);'),
           true,
           reason: '미지원 버전을 조용히 최신으로 치환하지 않는다');
       expect(accept.contains('resolveDocumentAccessConsentVersion( '
@@ -286,7 +288,7 @@ void main() {
     });
 
     test('동의 문구를 복제하지 않고 canonical 카드를 쓴다', () {
-      expect(myApps.contains('DocumentAccessConsent.card(item.application.businessName),'),
+      expect(myApps.contains('DocumentAccessConsent.inviteCard(item.application.businessName),'),
           true);
       // 문구·버전의 단일 소유자는 그대로다.
       //   [R1.2] 버전 문자열을 여기서 다시 고정하지 않는다 — 그러면 문구를
@@ -300,7 +302,7 @@ void main() {
       // [R5.3B] 초대 수락과 제안 수락으로 갈렸다 — 두 문구 모두 동의를 말한다.
       expect(
           myApps.contains(
-              "child: Text(isOfferAccept ? '동의하고 제안 수락' : '동의하고 초대 수락',"),
+              "TextLayout.keepWords(isOfferAccept ? '동의하고 제안 수락' : '동의하고 초대 수락'),"),
           true);
       for (final label in ['동의하고 초대 수락', '동의하고 제안 수락']) {
         expect(myApps.contains(label), true, reason: 'CTA 누락: $label');
@@ -310,7 +312,7 @@ void main() {
     test('수락 호출에 동의와 버전을 함께 보낸다', () {
       expect(
           myApps.contains("'documentAccessConsentGiven': true, "
-              "'documentAccessConsentVersion': DocumentAccessConsent.version,"),
+              "'documentAccessConsentVersion': DocumentAccessConsent.inviteVersion,"),
           true,
           reason: '사용자가 방금 본 문구의 버전을 보낸다');
     });

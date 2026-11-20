@@ -62,19 +62,19 @@ class LegalTermsService {
   /// 실패하면 발행되지 않은 코드 기본값을 현재 약관으로 보여 준 뒤 동의를
   /// 받았다. 그 동의는 사용자가 본 글을 가리키지 않는다.
   /// 동의를 받는 화면은 [fetchEffectiveTerms] 를 쓴다.
+  ///
+  /// [.54] **읽기 실패는 throw 한다.** 기본값은 "문서가 아직 없다" 일 때만이다.
+  /// 예전에는 읽기 실패도 기본값으로 바꿔서, 연결이 끊긴 SA 화면이 발행된
+  /// 적 없는 코드 기본값을 지금 약관처럼 보여 줬다 — 그 글을 고쳐 발행하면
+  /// 실제 시행 중인 글이 아니라 기본값을 바탕으로 새 판이 나간다.
   Future<LegalTerms> getTermsForEditing() async {
-    try {
-      final snap = await _ref.get();
-      if (!snap.exists || snap.data() == null) {
-        debugPrint('⚠️ 약관 문서 없음 — 기본값(메모리)으로 표시. '
-            '발행은 슈퍼관리자가 약관 관리 화면에서 수행한다.');
-        return LegalTerms.defaultTerms();
-      }
-      return LegalTerms.fromFirestore(snap);
-    } catch (e) {
-      debugPrint('⚠️ 약관 로드 실패, 기본값 사용: $e');
+    final snap = await _ref.get();
+    if (!snap.exists || snap.data() == null) {
+      debugPrint('⚠️ 약관 문서 없음 — 기본값(메모리)으로 표시. '
+          '발행은 슈퍼관리자가 약관 관리 화면에서 수행한다.');
       return LegalTerms.defaultTerms();
     }
+    return LegalTerms.fromFirestore(snap);
   }
 
   /// [R7-PAYROLL-POLICY.5B] 이 실패가 "동의하는 사이에 약관이 바뀌었다"
@@ -97,7 +97,12 @@ class LegalTermsService {
   /// [R7-PAYROLL-POLICY.5A] 발행은 시행이 아니다. 새 본문을 발행할 때는
   /// 변경 방향(`changeType`)과 시행일(`effectiveAt`)을 함께 보내야 하고,
   /// 서버가 `service_terms` 제3조 ② 의 사전고지 기간을 강제한다.
-  Future<void> updateItem(
+  ///
+  /// [.54] 돌려주는 값: 서버가 **시행일을 받아 처리했는가**. 시행일을 모르는
+  /// 이전 판 서버(1B)는 받은 날짜를 무시하고 지금 바로 시행한다 — 그 응답에는
+  /// `effectiveAtMs` 가 없다. 화면이 그 경우에 "시행일부터 적용" 이라고 말하지
+  /// 않게 한다.
+  Future<bool> updateItem(
     LegalTermsItem item, {
     required String updatedBy,
     required LegalChangeType changeType,
@@ -129,12 +134,15 @@ class LegalTermsService {
         effectiveAtMs: at.millisecondsSinceEpoch);
   }
 
-  Future<void> _publish(
+  /// [.55] `expectedUpcomingVersion` — SA 가 화면에서 본 이 항목의 시행 예정 판(없었으면 null).
+  ///   서버가 지금 예정 판과 다르면 덮지 않고 거절한다(시행일 후보). 이전 판 서버는 이 값을 읽지 않는다.
+  ///   돌려주는 값은 서버가 시행일을 처리했는가(`effectiveAtMs` 존재)이다 — 같은 판 재전달도 같다.
+  Future<bool> _publish(
     LegalTermsItem item, {
     required LegalChangeType changeType,
     required int effectiveAtMs,
   }) async {
-    await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+    final res = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callablePublishLegalRevision',
             options:
                 HttpsCallableOptions(timeout: const Duration(seconds: 20)))
@@ -148,6 +156,26 @@ class LegalTermsService {
       'order': item.order,
       'changeType': changeType.wire,
       'effectiveAt': effectiveAtMs,
+      'expectedUpcomingVersion': item.upcoming?.version,
     });
+    final data = res.data;
+    return data is Map && data['effectiveAtMs'] is int;
   }
+
+  /// [.54] 같은 버전에 다른 본문을 보냈는가. 이 거절에는 `details.reason` 이
+  /// 없어서 화면이 "발행에 실패했습니다" 로만 말했다.
+  static bool isVersionReused(Object error) =>
+      error is FirebaseFunctionsException &&
+      (error.message ?? '').contains('LEGAL_VERSION_REUSED');
+
+  /// [.55] 같은 버전의 제목·필수 여부를 바꾸려 했는가(시행일 후보 서버).
+  static bool isVersionMeaningChanged(Object error) =>
+      error is FirebaseFunctionsException &&
+      (error.message ?? '').contains('LEGAL_VERSION_MEANING_CHANGED');
+
+  /// [.55] SA 가 본 예정 판과 지금 예정 판이 달라 거절됐는가(시행일 후보 서버).
+  ///   저장 전 거절이다 — 아무것도 바뀌지 않았다. 목록을 다시 읽어야 한다.
+  static bool isUpcomingStale(Object error) =>
+      error is FirebaseFunctionsException &&
+      (error.message ?? '').contains('LEGAL_UPCOMING_STALE');
 }

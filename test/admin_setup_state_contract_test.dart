@@ -139,8 +139,11 @@ void main() {
       expect(ctrl.contains('bool get scopeEmpty => _scopeEmpty;'), isTrue);
       final i = ctrl.indexOf('if (businessIds != null && businessIds.isEmpty) {');
       expect(i, greaterThan(-1));
-      final block = ctrl.substring(i, i + 600);
-      expect(block.contains('_scopeEmpty = true'), isTrue);
+      final block = ctrl.substring(i, i + 1600);
+      // [SUBADMIN-SCOPE.40] 서브관리자 범위 = 공고 권한이 확인된 배정(서버 R5-D2 가 canManageTo 를 요구한다).
+      //   빈 범위의 이유(사업장 없음/권한 없음)는 한 함수가 정한다.
+      expect(block.contains('_markEmptyScope(user);'), isTrue);
+      expect(ctrl.contains('_scopeEmpty = !denied;'), isTrue);
       expect(block.contains('_scopeEmpty = false'), isTrue,
           reason: '사업장이 생기면 풀려야 한다');
     });

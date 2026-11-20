@@ -136,6 +136,13 @@ class ApplicationRelationResolver {
         app.endTime == work.endTime;
   }
 
+  /// 지원서 하나가 **새 지원을 막는 관계**인가 — [match] 와 같은 상태 대응.
+  ///
+  /// [SIM-EXPIRED-JOB-CARD] 근무(업무)를 모르고 공고·슬롯 단위로 보는 목록 카드가 쓴다.
+  ///   카드가 상태를 따로 해석하자 EXPIRED 가 `지원완료`로 보였다(DEVICE 10-19).
+  static bool holdsRelation(ApplicationModel app) =>
+      _relationOf(app).blocksNewApplication;
+
   /// 지원서 상태 → 관계. canonical 상태 그룹을 그대로 쓴다.
   static WorkApplyRelation _relationOf(ApplicationModel app) {
     // 퇴사·해지 결정이 내려진 약속은 끝난 관계다 — 서버도 중복 guard 를

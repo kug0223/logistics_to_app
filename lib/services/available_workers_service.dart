@@ -1,4 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import '../utils/e1_debug_fault.dart';
 import '../models/core/available_worker_model.dart';
 
 /// Phase 8.1B — 근무 가능 인력 조회 + 제안 서비스
@@ -100,6 +101,8 @@ class AvailableWorkersService {
       if (workDetailEndTime != null && workDetailEndTime.isNotEmpty)
         'workDetailEndTime': workDetailEndTime,
     });
+    // [E1-CANARY] 디버그 빌드 + 빌드 정의일 때만, 성공 뒤 1회 응답 유실을 흉내 낸다.
+    E1DebugFault.afterInviteCommitted();
     return result.data['applicationId'] as String? ?? '';
   }
 }

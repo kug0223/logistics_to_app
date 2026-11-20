@@ -14,7 +14,9 @@ import '../../services/contract_service.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/contract_status_visual.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/work_detail_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
@@ -623,20 +625,10 @@ class _AdminContractManagementScreenState
       if (freshApp == null) throw Exception('지원서 데이터가 손상되었습니다');
       if (!mounted) return;
 
-      final WorkDetailData workDetail;
-      if (app.workDetailId?.isNotEmpty == true) {
-        workDetail = workDetails.firstWhere(
-          (w) => w.id == app.workDetailId || w.legacyId == app.workDetailId,
-          orElse: () => workDetails.firstWhere(
-            (w) => w.workType == app.selectedWorkType,
-            orElse: () => workDetails.first,
-          ),
-        );
-      } else {
-        workDetail = workDetails.firstWhere(
-          (w) => w.workType == app.selectedWorkType,
-          orElse: () => workDetails.first,
-        );
+      final workDetail = WorkDetailHelper.contractWorkDetailFor(app, workDetails);
+      if (workDetail == null) {
+        ToastHelper.showError('이 근무의 업무를 공고에서 찾지 못해 계약서를 만들지 못했어요.');
+        return;
       }
 
       // ⑥ 계약서 생성 (번들 있으면 슬롯 추가, 없으면 신규)
@@ -729,7 +721,7 @@ class _AdminContractManagementScreenState
         isScrollable: true,
         tabAlignment: TabAlignment.start,
         labelColor: theme.primaryColor,
-        unselectedLabelColor: AppColors.grey500,
+        unselectedLabelColor: AppColors.textSecondary, // [DU342] grey500(2.68) → textSecondary
         indicatorColor: theme.primaryColor,
         indicatorWeight: 2,
         dividerColor: Colors.transparent,
@@ -922,72 +914,98 @@ class _ContractCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 헤더: 이름 · 업무 한 줄 + 상태 배지
-                Row(
-                  children: [
-                    Container(
-                      width: 26,
-                      height: 26,
-                      decoration: BoxDecoration(
-                        color: theme.primaryColor.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(7),
-                      ),
-                      child: Icon(Icons.person_outline,
-                          color: theme.primaryColor,
-                          size: ResponsiveHelper.iconSize(context, 14)),
+                // 헤더: 이름 · 업무 + 상태 배지
+                // [DU342] '무효' 글자 버튼은 카드 아래 왼쪽 행으로 옮겼다(320 · 2.0 머리 27px 넘침 · 터치 높이 · 위험색 진입).
+                // [DU342 r2] 320 · 2.0 에서 배지가 이름 칸을 46px 로 좁혀 이름이 한 글자씩 세로로 쌓였다. 배지 폭(실제 글자 배율 ·
+                //   스타일)과 이름 최소 폭(본문 굵은 글자 6자)을 재서, 한 줄에 같이 못 두면 배지를 이름 아래 줄로 내린다.
+                LayoutBuilder(builder: (ctx, cons) {
+                  final nameStyle = ResponsiveHelper.bodyStyle(ctx)
+                      .copyWith(fontWeight: FontWeight.w700);
+                  final badgeStyle = ResponsiveHelper.tinyStyle(ctx).copyWith(
+                    color: statusColor,
+                    fontWeight: FontWeight.w600,
+                  );
+                  double oneLine(String text, TextStyle style) {
+                    final tp = TextPainter(
+                      text: TextSpan(text: text, style: DefaultTextStyle.of(ctx).style.merge(style)),
+                      textDirection: Directionality.of(ctx),
+                      textScaler: MediaQuery.textScalerOf(ctx),
+                      maxLines: 1,
+                    )..layout();
+                    final width = tp.width;
+                    tp.dispose();
+                    return width;
+                  }
+
+                  final iconBox = Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      color: theme.primaryColor.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(7),
                     ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                    Expanded(
-                      child: Text(
-                        '${contract.snapshot.workerName}  ·  ${contract.snapshot.workType}',
-                        style: ResponsiveHelper.bodyStyle(context)
-                            .copyWith(fontWeight: FontWeight.w700),
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
+                    child: Icon(Icons.person_outline,
+                        color: theme.primaryColor,
+                        size: ResponsiveHelper.iconSize(ctx, 14)),
+                  );
+                  final iconGap = ResponsiveHelper.spacing(ctx, 8);
+                  // [TEXT-LAYOUT-CONSUMER.29] 이름 · 업무는 식별 정보 — 말줄임('합성 초대 · …') 대신
+                  //   구분점 뒤에서 줄을 바꾼다.
+                  // [DU342 r3] joinParts → phrases — 조각 안 공백에서도 줄을 바꿀 수 있게('검수 보 / 조' 해소)
+                  final name = Text(
+                    TextLayout.phrases(
+                        '${contract.snapshot.workerName} · ${contract.snapshot.workType}'),
+                    semanticsLabel:
+                        '${contract.snapshot.workerName} · ${contract.snapshot.workType}',
+                    style: nameStyle,
+                  );
+                  // 상태 배지
+                  final badgePad = ResponsiveHelper.spacing(ctx, 8);
+                  final badge = Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: badgePad,
+                      vertical: ResponsiveHelper.spacing(ctx, 3),
                     ),
-                    if (onVoid != null &&
-                        contract.status != ContractStatus.voided) ...[
-                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                      TextButton.icon(
-                        onPressed: onVoid,
-                        icon: Icon(Icons.block_outlined,
-                            size: ResponsiveHelper.iconSize(context, 13),
-                            color: AppColors.errorMedium),
-                        label: Text('무효',
-                            style: ResponsiveHelper.tinyStyle(context,
-                                color: AppColors.errorMedium)),
-                        style: TextButton.styleFrom(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: ResponsiveHelper.spacing(context, 6),
-                            vertical: ResponsiveHelper.spacing(context, 2),
-                          ),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
+                    decoration: BoxDecoration(
+                      color: statusBg,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(contract.status.label, style: badgeStyle),
+                  );
+                  final badgeWidth = oneLine(contract.status.label, badgeStyle) + badgePad * 2;
+                  final nameMin = oneLine('가나다라마바', nameStyle);
+                  final sideBySide = !cons.hasBoundedWidth ||
+                      cons.maxWidth - 26 - iconGap * 2 - badgeWidth >= nameMin;
+                  if (sideBySide) {
+                    return Row(
+                      children: [
+                        iconBox,
+                        SizedBox(width: iconGap),
+                        Expanded(child: name),
+                        SizedBox(width: iconGap),
+                        badge,
+                      ],
+                    );
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          iconBox,
+                          SizedBox(width: iconGap),
+                          Expanded(child: name),
+                        ],
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(ctx, 6)),
+                      Padding(
+                        padding: EdgeInsets.only(left: 26 + iconGap),
+                        child: badge,
                       ),
                     ],
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                    // 상태 배지
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: ResponsiveHelper.spacing(context, 8),
-                        vertical: ResponsiveHelper.spacing(context, 3),
-                      ),
-                      decoration: BoxDecoration(
-                        color: statusBg,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        contract.status.label,
-                        style: ResponsiveHelper.tinyStyle(context).copyWith(
-                          color: statusColor,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                  );
+                }),
 
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 const Divider(height: 1, color: AppColors.grey100),
@@ -1021,6 +1039,33 @@ class _ContractCard extends StatelessWidget {
 
                 // 서명 진행 인디케이터
                 _SignProgressBar(contract: contract),
+
+                // [DU342] 무효 처리 진입 — UI-1(보조 · 위험은 테두리 없는 글자 · 왼쪽), 중립색(위험색은 확인창에서만),
+                //   실제 터치 높이 48. 누르면 기존 onVoid(확인창 → 무효 처리) 그대로.
+                if (onVoid != null &&
+                    contract.status != ContractStatus.voided) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: onVoid,
+                      icon: Icon(Icons.block_outlined,
+                          size: ResponsiveHelper.iconSize(context, 14),
+                          color: AppColors.grey600),
+                      label: Text('무효 처리',
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.textSecondary)),
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: ResponsiveHelper.spacing(context, 4),
+                        ),
+                        minimumSize: const Size(48, 48),
+                        tapTargetSize: MaterialTapTargetSize.padded,
+                        foregroundColor: AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                ],
 
                 // [V-001] voidFailedAppIds 경고 배너 — 앱 취소 실패 시 재처리 유도
                 if (contract.hasVoidFailedApps) ...[
@@ -1112,11 +1157,59 @@ class _SignProgressBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final employerDone = contract.employerSignatureUrl != null;
-    final workerDone = contract.workerSignatureUrl != null;
-    final employerColor = employerDone ? AppColors.success : AppColors.grey400;
-    final workerColor = workerDone ? AppColors.success : AppColors.grey400;
+    // [R8P6-STAGE-B] 서명 **여부**는 서명한 시각이 말한다 — URL 이 아니다.
+    //
+    //   예전에는 `employerSignatureUrl != null` 로 판정했다. 그런데 레거시
+    //   토큰 이관이 그 필드를 **지우므로**, 이관이 끝난 계약은 멀쩡히 서명돼
+    //   있는데도 이 막대가 "미서명"으로 보였다(DEV QA 계약에서 실제로 그 상태).
+    //   Stage C 의 신규 계약도 URL 을 아예 받지 않는다.
+    final employerDone = contract.employerSignedAt != null ||
+        contract.hasEmployerSignature;
+    final workerDone = contract.workerSignedAt != null ||
+        contract.hasWorkerSignature;
+    // [DU342] 아이콘: 서명 success · 미서명 grey400(1.88) → grey600. 글자: 서명 success → successDark · 미서명 → textTertiary.
+    final employerColor = employerDone ? AppColors.success : AppColors.grey600;
+    final workerColor = workerDone ? AppColors.success : AppColors.grey600;
+    final employerText = employerDone ? AppColors.successDark : AppColors.textTertiary;
+    final workerText = workerDone ? AppColors.successDark : AppColors.textTertiary;
 
+    // [TEXT-LAYOUT-CONSUMER.29] 기기 320dp·1.3 / 392dp·2.0 에서 두 서명 상태가 한 줄을 넘쳐
+    //   'RIGHT OVERFLOWED' 가 났다. 들어가면 한 줄(사이 연결선), 아니면 사업주·근무자 두 줄로 쌓는다.
+    Widget unit(bool done, Color color, Color textColor, String label, DateTime? at) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(done ? Icons.check_circle : Icons.radio_button_unchecked,
+                color: color, size: ResponsiveHelper.iconSize(context, 14)),
+            SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+            Text(label, softWrap: false,
+                style: ResponsiveHelper.tinyStyle(context, color: textColor)),
+            if (done && at != null) ...[
+              SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+              Text(_shortDate(at), softWrap: false,
+                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary)),
+            ],
+          ],
+        );
+    return LayoutBuilder(builder: (context, c) {
+      if (!TextLayout.fits(context, c.maxWidth, _rowMinWidth)) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            unit(employerDone, employerColor, employerText, '사업주 서명', contract.employerSignedAt),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            unit(workerDone, workerColor, workerText, '근무자 서명', contract.workerSignedAt),
+          ],
+        );
+      }
+      return _row(context, employerDone, workerDone, employerColor, workerColor, employerText, workerText);
+    });
+  }
+
+  /// 두 상태(아이콘·이름·날짜) + 최소 연결선이 한 줄에 드는 폭(글자 배율 1.0 기준).
+  static const double _rowMinWidth = 280;
+
+  Widget _row(BuildContext context, bool employerDone, bool workerDone,
+      Color employerColor, Color workerColor, Color employerText, Color workerText) {
     return Row(
       children: [
         Icon(
@@ -1127,14 +1220,14 @@ class _SignProgressBar extends StatelessWidget {
         SizedBox(width: ResponsiveHelper.spacing(context, 3)),
         Text(
           '사업주 서명',
-          style: ResponsiveHelper.tinyStyle(context, color: employerColor),
+          style: ResponsiveHelper.tinyStyle(context, color: employerText),
         ),
         if (employerDone && contract.employerSignedAt != null) ...[
           SizedBox(width: ResponsiveHelper.spacing(context, 3)),
           Text(
             _shortDate(contract.employerSignedAt!),
             style:
-                ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+                ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary),
           ),
         ],
         Expanded(
@@ -1153,14 +1246,14 @@ class _SignProgressBar extends StatelessWidget {
         SizedBox(width: ResponsiveHelper.spacing(context, 3)),
         Text(
           '근무자 서명',
-          style: ResponsiveHelper.tinyStyle(context, color: workerColor),
+          style: ResponsiveHelper.tinyStyle(context, color: workerText),
         ),
         if (workerDone && contract.workerSignedAt != null) ...[
           SizedBox(width: ResponsiveHelper.spacing(context, 3)),
           Text(
             _shortDate(contract.workerSignedAt!),
             style:
-                ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+                ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary),
           ),
         ],
       ],
@@ -1239,7 +1332,7 @@ class _UnsentAppCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(Icons.assignment_late_outlined,
-                      color: AppColors.warning,
+                      color: AppColors.warningDark, // [DU342] warning → warningDark
                       size: ResponsiveHelper.iconSize(context, 18)),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1247,17 +1340,19 @@ class _UnsentAppCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // [TEXT-LAYOUT-CONSUMER.29] 계약 카드와 같은 규칙 — 말줄임 없이 구분점 뒤 줄바꿈.
+                      // [DU342 r3] joinParts → phrases(계약 카드와 같은 규칙)
                       Text(
-                        '$name  ·  ${app.selectedWorkType}',
+                        TextLayout.phrases('$name · ${app.selectedWorkType}'),
+                        semanticsLabel: '$name · ${app.selectedWorkType}',
                         style: ResponsiveHelper.bodyStyle(context)
                             .copyWith(fontWeight: FontWeight.w700),
-                        overflow: TextOverflow.ellipsis,
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 3)),
                       Text(
                         FormatHelper.formatDateDot(app.workDate),
                         style: ResponsiveHelper.tinyStyle(context,
-                            color: AppColors.grey500),
+                            color: AppColors.textSecondary), // [DU342] grey500(2.68) → textSecondary
                       ),
                     ],
                   ),

@@ -7,7 +7,7 @@ import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/loading_state_mixin.dart';
-import '../../../utils/format_helper.dart';
+import '../../../utils/resign_auto_approval.dart';
 import '../../../widgets/common/loading_button.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
@@ -128,13 +128,14 @@ class _ResignRequestManagementDialogState
   /// 요청 카드
   Widget _buildRequestCard(_ResignRequestWithUser item, DateTime now) {
     final app = item.application;
-    final daysLeft = () {
-      if (app.resignRequestedAt == null) return 0;
-      final today = FormatHelper.toKstDate(now);
-      final reqDay = FormatHelper.toKstDate(app.resignRequestedAt!);
-      return (3 - today.difference(reqDay).inDays).clamp(0, 3);
-    }();
-    final isUrgent = daysLeft <= 1;
+    // [D3-RETRO-EXCLUDE] 소급 요청은 자동 승인되지 않는다 — 일정은 서버와 같은 식으로 정한다.
+    final plan = ResignAutoApproval.of(
+      requestedAt: app.resignRequestedAt,
+      requestDate: app.resignRequestDate,
+      now: now,
+    );
+    final isUrgent = plan.isUrgent;
+    final planText = plan.adminCardText;
 
     return Container(
       margin: EdgeInsets.only(
@@ -308,14 +309,14 @@ class _ResignRequestManagementDialogState
                         color: isUrgent ? AppColors.error : AppColors.warning,
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
-                      Text(
-                        daysLeft > 0
-                            ? '$daysLeft일 후 자동 승인'
-                            : '오늘 자정 자동 승인',
-                        style: ResponsiveHelper.smallStyle(  // ⭐ 변경
-                          context,
-                          color: isUrgent ? AppColors.error : AppColors.warning,
-                        ).copyWith(fontWeight: FontWeight.bold),
+                      Expanded(
+                        child: Text(
+                          planText,
+                          style: ResponsiveHelper.smallStyle(  // ⭐ 변경
+                            context,
+                            color: isUrgent ? AppColors.error : AppColors.warning,
+                          ).copyWith(fontWeight: FontWeight.bold),
+                        ),
                       ),
                     ],
                   ),
@@ -392,7 +393,8 @@ class _ResignRequestManagementDialogState
           '퇴사일: ${item.application.resignRequestDate != null ? DateFormat('yyyy년 M월 d일').format(item.application.resignRequestDate!) : '미지정'}\n\n'
           '승인 후에는 취소할 수 없습니다.',
       confirmText: '승인',
-      confirmColor: AppColors.success,
+      // [DU309] 취소할 수 없는 퇴사 확정: 책임 실행의 errorDark.
+      confirmColor: AppColors.errorDark,
     );
 
     if (!confirmed || !mounted) return;

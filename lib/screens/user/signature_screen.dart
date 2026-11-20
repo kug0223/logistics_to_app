@@ -12,6 +12,7 @@ import '../../providers/user_provider.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../widgets/contract/signature_pad_widget.dart';
 
 /// 사용자 개인 서명 관리 화면
@@ -97,11 +98,13 @@ class _SignatureScreenState extends State<SignatureScreen> {
   // ── 서명 카드 ──────────────────────────────────────────────────
 
   Widget _buildSignatureCard(BuildContext context, bool hasSignature) {
+    final subtitle = hasSignature ? '계약서 서명 시 자동 사용' : '계약서 서명에 사용됩니다';
     return Container(
       padding: const EdgeInsets.all(20),
+      // [DU261] 흰·grey200 선, 반경 14 → 16(앱 카드 기준)
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.borderLight),
       ),
       child: Column(
@@ -113,12 +116,13 @@ class _SignatureScreenState extends State<SignatureScreen> {
               Container(
                 width: 38,
                 height: 38,
+                // [DU261] 파랑 상자 → S082 설정 아이콘 상자와 같은 중립(grey100·grey600)
                 decoration: BoxDecoration(
-                  color: AppColors.infoBg,
+                  color: AppColors.grey100,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Icon(Icons.draw_outlined,
-                    color: AppColors.infoDark, size: 18),
+                    color: AppColors.grey600, size: 18),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -136,13 +140,13 @@ class _SignatureScreenState extends State<SignatureScreen> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      hasSignature
-                          ? '계약서 서명 시 자동 사용'
-                          : '계약서 서명에 사용됩니다',
-                      style: TextStyle(
-                        fontSize: 12,
+                      TextLayout.keepWords(subtitle),
+                      semanticsLabel: subtitle,
+                      style: const TextStyle(
+                        fontSize: 13,
                         // 완료 상태는 right-side badge로만 표현 — 텍스트에 green 중복 금지
-                        color: AppColors.grey500,
+                        // [DU261] grey500 12(2.68) → 보조색 13, 낱말 단위 줄바꿈
+                        color: AppColors.textSecondary,
                       ),
                     ),
                   ],
@@ -194,85 +198,103 @@ class _SignatureScreenState extends State<SignatureScreen> {
           // ── 미등록 상태 빈 영역 안내 ────────────────────────────
           if (!hasSignature) ...[
             const SizedBox(height: 16),
+            // [DU261 r1] 고정 높이 80 → 최소 80(큰 글자에서 잘리지 않게), 낱말 단위 줄바꿈·가운데 정렬
+            //   (B320 에서 '없습니/다' 로 끊겼다).
             Container(
               width: double.infinity,
-              height: 80,
+              constraints: const BoxConstraints(minHeight: 80),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: AppColors.grey50,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: AppColors.grey200),
               ),
-              child: const Center(
-                child: Text(
-                  '등록된 서명이 없습니다',
-                  style: TextStyle(fontSize: 13, color: AppColors.grey400),
-                ),
+              child: Text(
+                TextLayout.keepWords('등록된 서명이 없습니다'),
+                semanticsLabel: '등록된 서명이 없습니다',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 13, color: AppColors.textSecondary), // [DU261] grey400(1.8)
               ),
             ),
           ],
 
-          // ── 액션 행 ────────────────────────────────────────────
-          // 내 서류 관리와 동일한 TextButton 패턴 — 대형 OutlinedButton 대체
-          const SizedBox(height: 12),
-          const Divider(height: 1, color: AppColors.borderLight),
-          const SizedBox(height: 4),
-
-          Row(
-            children: [
-              TextButton.icon(
-                onPressed: _isSaving ? null : () => _register(context, isChange: hasSignature),
-                icon: Icon(
-                  hasSignature ? Icons.edit_outlined : Icons.add_outlined,
-                  size: 14,
-                  color: AppColors.grey600,
-                ),
-                label: Text(
-                  hasSignature ? '서명 변경' : '서명 등록',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppColors.grey600,
-                    fontWeight: FontWeight.w500,
+          // ── 액션 ───────────────────────────────────────────────
+          // [DU261] UI-1 버튼 기준 — 주 행동은 대표색, 보조·위험은 테두리 없는 중립 글자(왼쪽). 터치 48 이상.
+          //   이전: 회색 12 글자·padding 0·최소 크기 0(터치 17), 삭제는 연한 빨강(진입에 위험색 — 빨강은 확인 대화에만).
+          //   서명 없음: 전체 폭 대표색 채움 '서명 등록'(이 화면의 주 행동).
+          //   서명 있음: 왼쪽 '삭제'(중립), 오른쪽 '서명 변경'(대표색). 좁은 폭·큰 글자에서는 다음 줄로 내려간다(Wrap).
+          if (!hasSignature) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _isSaving ? null : () => _register(context, isChange: false),
+                    icon: const Icon(Icons.add_outlined, size: 18),
+                    label: const Text('서명 등록'),
                   ),
                 ),
-                style: TextButton.styleFrom(
-                  padding: EdgeInsets.zero,
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-              if (_isSaving) ...[
-                const SizedBox(width: 8),
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 1.5),
-                ),
+                if (_isSaving) ...[
+                  const SizedBox(width: 12),
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 1.5),
+                  ),
+                ],
               ],
-              const Spacer(),
-              if (hasSignature)
+            ),
+          ] else ...[
+            const SizedBox(height: 12),
+            const Divider(height: 1, color: AppColors.borderLight),
+            const SizedBox(height: 4),
+            // [DU261 r1] Wrap 이 내용 폭으로 줄어 양 끝 정렬이 안 됐다(삭제·변경이 모두 왼쪽) — 카드 폭으로 편다.
+            SizedBox(
+              width: double.infinity,
+              child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
                 TextButton.icon(
                   onPressed: _isSaving ? null : () => _delete(context),
-                  icon: const Icon(
-                    Icons.delete_outline,
-                    size: 13,
-                    color: AppColors.errorFaded,
-                  ),
-                  label: const Text(
-                    '삭제',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.errorFaded,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('삭제'),
                   style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    foregroundColor: AppColors.textSecondary,
+                    minimumSize: const Size(48, 48),
+                    textStyle: const TextStyle(
+                        fontFamily: 'NotoSansKR', fontSize: 14, fontWeight: FontWeight.w600),
                   ),
                 ),
-            ],
-          ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_isSaving) ...[
+                      const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 1.5),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    TextButton.icon(
+                      onPressed: _isSaving ? null : () => _register(context, isChange: true),
+                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      label: const Text('서명 변경'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.brand,
+                        minimumSize: const Size(48, 48),
+                        textStyle: const TextStyle(
+                            fontFamily: 'NotoSansKR', fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            ),
+          ],
 
           const SizedBox(height: 2),
         ],
@@ -282,18 +304,22 @@ class _SignatureScreenState extends State<SignatureScreen> {
 
   // ── 안내 텍스트 ────────────────────────────────────────────────
 
+  static const _helpText = '서명은 계약서·근무확인서 서명 시 자동으로 사용됩니다. '
+      '본인 서명만 등록해 주세요.';
+
   Widget _buildHelpText() {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Icon(Icons.info_outline,
-            size: 14, color: AppColors.textHint),
+            size: 14, color: AppColors.textTertiary), // [DU261] textHint(1.75) → textTertiary
         const SizedBox(width: 6),
-        const Expanded(
+        Expanded(
           child: Text(
-            '서명은 계약서·근무확인서 서명 시 자동으로 사용됩니다. '
-            '본인 서명만 등록해 주세요.',
-            style: TextStyle(fontSize: 12, color: AppColors.textHint),
+            TextLayout.keepWords(_helpText),
+            semanticsLabel: _helpText,
+            // [DU261] textHint 12(1.75) → 보조색 13, 낱말 단위 줄바꿈
+            style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
           ),
         ),
       ],

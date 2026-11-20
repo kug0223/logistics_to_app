@@ -350,7 +350,8 @@ void main() {
     test('05-b 서버 배선: scope는 회차마다 다시 계산된다 (§16)', () {
       final body = _flat(_codeOf(
           _bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad(UserProvider userProvider)')));
-      expect(body.contains('final List<String>? businessIds = _scopeOf(user);'),
+      expect(body.contains('final scope = _scopeOf(user, userProvider); '
+              'final List<String>? businessIds = scope.ids;'),
           true);
       expect(body.contains('final user = userProvider.currentUser;'), true,
           reason: 'context가 아니라 provider에서 매번 읽는다');

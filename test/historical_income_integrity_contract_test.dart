@@ -240,7 +240,13 @@ void main() {
     test('6b 금액·상태는 근태 스냅샷에서 온다', () {
       final f = _fnOf(screen, 'Widget _buildWorkRecord(', 2600);
       expect(f.contains('att.finalWage'), isTrue);
-      expect(f.contains('att.wageStatus == AttendanceModel.wageTransferred'),
+      // [SIM-WORKER-WAGE-VIEW] 상태 판정은 급여 상세와 한 벌(WorkerWageStatus)로
+      //   옮겼다 — 그 판정도 근태 스냅샷(wageStatus)을 읽는다.
+      expect(f.contains('WorkerWageStatus.of(att)'), isTrue);
+      final util = _codeOf(
+          File('lib/utils/worker_wage_status.dart').readAsStringSync());
+      expect(
+          util.contains('att.wageStatus == AttendanceModel.wageTransferred'),
           isTrue);
     });
 
@@ -290,7 +296,10 @@ void main() {
     test('10c 리더가 실패를 빈 목록으로 바꾸지 않는다', () {
       final att = _codeOf(File(
           'lib/services/firestore/attendance_firestore.dart').readAsStringSync());
-      final f = _fnOf(att, 'Future<List<AttendanceModel>> getMyMonthlyAttendances(', 2000);
+      // [WORKER-HOME-STARTUP.23] 진행 중 공유를 넣으며 실제 읽기는 _fetchMyMonthlyAttendances 로 나뉘었다.
+      final entry = _fnOf(att, 'Future<List<AttendanceModel>> getMyMonthlyAttendances(', 2000);
+      expect(entry.contains('_fetchMyMonthlyAttendances('), isTrue);
+      final f = _fnOf(att, 'Future<List<AttendanceModel>> _fetchMyMonthlyAttendances(', 2600);
       expect(f.contains('rethrow'), isTrue,
           reason: '빈 목록을 돌려주면 화면은 실패를 알 수 없다');
     });

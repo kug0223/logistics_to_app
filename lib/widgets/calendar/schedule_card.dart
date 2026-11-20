@@ -146,14 +146,14 @@ class ScheduleCard extends StatelessWidget {
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                     // 사업장명
+                    // [DU1 후속68 · 감사68 F67-2] 1줄 말줄임을 풀었다 — 긴 사업장명(320@2.0·360@1.0)이
+                    //   `QA 송파 …` 로 잘려 근무지를 식별할 수 없었다. 글자를 줄이지 않고 줄바꿈한다.
                     Expanded(
                       child: Text(
                         application.businessName,
                         style: ResponsiveHelper.bodyStyle(context).copyWith(
                           fontWeight: FontWeight.bold,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -209,30 +209,39 @@ class ScheduleCard extends StatelessWidget {
                 // ═══════════════════════════════════════════════════
                 // 세 번째 줄: 근무시간 · 급여
                 // ═══════════════════════════════════════════════════
-                Row(
+                // [DU1 후속68 · 감사68 F67-2] 시간과 급여를 한 Row 에 두면 320@2.0 에서 급여가 폭을 먼저
+                //   가져가 예정시간 `09:00~13:00` 이 `0…` 로 잘렸다. Wrap 으로 바꿔 둘 다 전문을 보이고,
+                //   자리가 모자라면 급여가 다음 줄로 내려간다(글자 축소 없음·원문 그대로).
+                Wrap(
+                  spacing: ResponsiveHelper.spacing(context, 8),
+                  runSpacing: ResponsiveHelper.spacing(context, 4),
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Icon(
-                      Icons.access_time,
-                      size: ResponsiveHelper.iconSize(context, 14),
-                      color: AppColors.grey500,
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                    Expanded(
-                      child: Text(
-                        '${application.startTime}~${application.endTime}',
-                        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.access_time,
+                          size: ResponsiveHelper.iconSize(context, 14),
+                          color: AppColors.grey500,
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                        // [DU1 구현72 S073] 예정시간이 작은 회색(small·grey700)이라 굵은 급여보다 약하게 읽혔다 —
+                        //   대표 패턴(구현69 홈·S041 업무 카드)처럼 시간과 급여는 같은 주 정보. 본문 크기·w600·본문색.
+                        Text(
+                          '${application.startTime}~${application.endTime}',
+                          style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary)
+                              .copyWith(fontWeight: FontWeight.w600),
+                        ),
+                      ],
                     ),
                     // 급여 (금액 + 타입)
+                    // [DU1 구현72 S073] 녹색은 확정 상태 배지가 맡는다(달성 의미, R7-P1-2) — 급여는 S041 업무 카드와 같은 브랜드색.
                     Text(
                       _getWageDisplay(),
-                      style: ResponsiveHelper.bodyStyle(context, color: AppColors.success).copyWith(
+                      style: ResponsiveHelper.bodyStyle(context, color: AppColors.brand).copyWith(
                         fontWeight: FontWeight.bold,
                       ),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
                     ),
                   ],
                 ),
@@ -454,26 +463,47 @@ class ScheduleCard extends StatelessWidget {
 
   /// ✅ 출근 기록 기반 표시 상태 결정
   _StatusInfo _getDisplayStatus() {
+    // [DEVICE-MISMATCH-FIX] 근태 결말(노쇼·결근)은 지원서 상태보다 먼저다.
+    //   CONTRACT_PENDING 으로 남은 노쇼 근무가 `계약 진행 중`으로 보였다(DEV 실측).
+    if (AppStatus.confirmedStatuses.contains(application.status) &&
+        attendance != null) {
+      if (attendance!.status == AttendanceModel.statusNoShow) {
+        return _StatusInfo(
+          text: '노쇼',
+          color: AppColors.error,
+          icon: Icons.cancel,
+        );
+      }
+      if (attendance!.status == AttendanceModel.statusAbsent) {
+        return _StatusInfo(
+          text: '결근',
+          color: AppColors.warning,
+          icon: Icons.event_busy,
+        );
+      }
+    }
+
     // 1. CONFIRMED가 아니면 기존 로직
     if (application.status != AppStatus.confirmed) {
       return _getStatusInfo(application.status);
     }
 
-    // 2. attendance 없으면 "확정"
+    // 2. attendance 없으면 "확정" — 단, 출근 기록 없이 예정 시간이 끝났으면
+    //    더 이상 앞으로의 약속이 아니다(DEV 실측 Zdn7).
+    if (attendance == null || attendance!.checkIn == null) {
+      if (application.hasShiftEndedAt(DateTime.now())) {
+        return _StatusInfo(
+          text: '출근 기록 없음',
+          color: AppColors.warning,
+          icon: Icons.event_busy,
+        );
+      }
+    }
     if (attendance == null) {
       return _StatusInfo(
         text: '확정',
         color: AppColors.success,
         icon: Icons.check_circle,
-      );
-    }
-
-    // 3. 노쇼 처리됨
-    if (attendance!.status == 'NO_SHOW') {
-      return _StatusInfo(
-        text: '노쇼',
-        color: AppColors.error,
-        icon: Icons.cancel,
       );
     }
 
@@ -495,10 +525,11 @@ class ScheduleCard extends StatelessWidget {
       );
     }
 
-    // 6. 퇴근 완료
+    // 6. 퇴근 완료 — 급여는 아직 확정 전이다.
+    //    [DEVICE-MISMATCH-FIX] 홈·수입의 `정산 중`과 같은 이름으로 부른다.
     if (attendance!.checkOut != null) {
       return _StatusInfo(
-        text: '근무 완료',
+        text: '정산 중',
         color: AppColors.purple,
         icon: Icons.task_alt,
       );

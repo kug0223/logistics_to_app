@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 
 import '../../../models/core/work_detail_data.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
+import '../../../models/ui/invite_refresh_outcome.dart';
+import '../../../services/invite_save_verifier.dart';
 import '../../../services/member_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/responsive_helper.dart';
@@ -12,6 +14,7 @@ import '../../../utils/toast_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/common_widgets.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
+import '../../../utils/e1_debug_fault.dart';
 
 /// 근로자 초대 다이얼로그
 ///
@@ -36,7 +39,20 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 /// [InviteWorkerDialog.contextual] 팩토리로 생성.
 ///
 /// 수락 시 CF(callableAcceptTOInvitation)에서 스케줄 충돌 검증 → CONFIRMED 전환.
+///
+/// ## [E1-AMBIGUOUS-INVITE] 닫힘 결과
+/// [InviteDialogResult] 를 돌려준다. 저장 시도 뒤 응답이 불명확하면 대상
+/// 지원서를 다시 읽어 확인하고, 확인되면 sent 로 닫는다. 확인하지 못한 채
+/// 닫으면 canceled 가 아니라 unconfirmed 다 — 호출자가 한 번 더 확인한다.
 class InviteWorkerDialog extends StatefulWidget {
+  /// 테스트 전용 — 전화번호 검색 대체.
+  @visibleForTesting
+  static Future<Map<String, dynamic>?> Function(String phone)? debugFindUser;
+
+  /// 테스트 전용 — `callableInviteWorker` 호출 대체.
+  @visibleForTesting
+  static Future<void> Function(Map<String, dynamic> payload)? debugSendInvite;
+
   // ── 공통 필드 ────────────────────────────────────────────────────
   final String businessId;
   final String businessName;
@@ -139,7 +155,7 @@ class InviteWorkerDialog extends StatefulWidget {
 }
 
 class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
-  final _memberService = MemberService();
+  late final _memberService = MemberService();
   final _phoneCtrl = TextEditingController();
   final _phoneFmt = PhoneNumberFormatter();
 
@@ -147,6 +163,26 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
   Map<String, dynamic>? _found;
   bool _searching = false;
   bool _sending = false;
+
+  // [E1-AMBIGUOUS-INVITE] 응답이 불명확했던 시도의 대상. 있으면 이 창은
+  //   "아무 일도 없었다"로 닫히지 않는다.
+  InviteVerifyTarget? _ambiguousTarget;
+  // 대상 지원서를 다시 읽는 중
+  bool _verifying = false;
+  // 다시 읽기에 실패했다 — 저장 여부를 모른다. 이 동안 발송 버튼은
+  //   새 요청이 아니라 `다시 확인`이다.
+  bool _unconfirmed = false;
+
+  bool get _busy => _sending || _verifying;
+
+  InviteDialogResult get _closeResult => _ambiguousTarget == null
+      ? const InviteDialogResult.canceled()
+      : InviteDialogResult.unconfirmed(_ambiguousTarget!);
+
+  void _close() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    Navigator.pop(context, _closeResult);
+  }
 
   // 단기 TO: 선택된 날짜 + slotId (slotId는 CF 연결 시 전달)
   DateTime? _selectedDate;
@@ -261,7 +297,10 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
       _found = null;
     });
     try {
-      final result = await _memberService.findUserByPhone(raw);
+      final find = InviteWorkerDialog.debugFindUser;
+      final result = find != null
+          ? await find(raw)
+          : await _memberService.findUserByPhone(raw);
       if (!mounted) return;
 
       // 자기 자신에게 초대 발송 차단 (SubAdmin → 본인 계정 검색 케이스)
@@ -313,7 +352,7 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
   // ── 초대 발송 ───────────────────────────────────────────────────
 
   bool get _canSend {
-    if (_found == null || _sending) return false;
+    if (_found == null || _busy || _unconfirmed) return false;
     // 컨텍스트 모드: date/workDetail pre-filled → 재선택 불필요
     if (widget.isContextualMode) return true;
     // [POSTING-V2-01A] 업무(workDetail)가 확정되지 않으면 발송 금지.
@@ -327,6 +366,8 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
     if (!_canSend) return;
     setState(() => _sending = true);
 
+    // [E1-AMBIGUOUS-INVITE] 이 시도의 대상 — 응답이 불명확하면 이걸 다시 읽는다.
+    InviteVerifyTarget? target;
     try {
       final up = context.read<UserProvider>();
       final adminUid = up.currentUser?.uid;
@@ -345,15 +386,20 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
         return;
       }
 
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableInviteWorker');
-
       // toId: 컨텍스트 모드는 contextualToId, 일반 모드는 groupItem에서 취득
       final toId = widget.isContextualMode
           ? widget.contextualToId!
           : widget.groupItem!.masterTO.id;
+      final slotId = widget.isContextualMode
+          ? widget.prefilledSlotId
+          : (_isLong ? null : _selectedSlotId);
+      target = InviteVerifyTarget(
+        toId: toId,
+        targetUid: _found!['uid'] as String,
+        slotId: (slotId == null || slotId.isEmpty) ? null : slotId,
+      );
 
-      await callable.call({
+      await _callInvite({
         'toId': toId,
         'businessId': widget.businessId,
         'targetUid': _found!['uid'],
@@ -405,15 +451,77 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
       } else {
         ToastHelper.showSuccess('$name님에게 초대를 발송했습니다');
       }
-      Navigator.pop(context, true);
-    } on FirebaseFunctionsException catch (e) {
-      debugPrint('❌ 초대 발송 오류: ${e.code} — ${e.message}');
-      if (mounted) ToastHelper.showError(e.message ?? '초대 발송 중 오류가 발생했습니다');
+      Navigator.pop(context, const InviteDialogResult.sent());
     } catch (e) {
-      debugPrint('❌ 초대 발송 오류: $e');
-      if (mounted) ToastHelper.showError('초대 발송 중 오류가 발생했습니다');
+      debugPrint('❌ 초대 발송 오류: '
+          '${e is FirebaseFunctionsException ? '${e.code} — ${e.message}' : e}');
+      if (!mounted) return;
+      final t = target;
+      // [E1-AMBIGUOUS-INVITE] 둘은 "저장됐을 수 있다"이다.
+      //   (1) 응답이 불명확한 오류(시간 초과·연결 끊김·internal 등)
+      //   (2) 불명확했던 바로 그 대상에 다시 보냈더니 already-exists —
+      //       앞선 시도가 실제로 커밋됐을 가능성이 높다
+      final retriedAfterAmbiguous =
+          _ambiguousTarget != null && _ambiguousTarget == t;
+      if (t != null &&
+          (isAmbiguousInviteError(e) ||
+              (retriedAfterAmbiguous && isAlreadyExistsInviteError(e)))) {
+        setState(() {
+          _sending = false;
+          _ambiguousTarget = t;
+        });
+        await _verifyAmbiguous();
+        return;
+      }
+      // 명확한 실패 — 서버가 쓰기 전에 거절했다.
+      ToastHelper.showError(e is FirebaseFunctionsException
+          ? (e.message ?? '초대 발송 중 오류가 발생했습니다')
+          : '초대 발송 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _callInvite(Map<String, dynamic> payload) async {
+    final fake = InviteWorkerDialog.debugSendInvite;
+    if (fake != null) {
+      await fake(payload);
+    } else {
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableInviteWorker')
+          .call(payload);
+    }
+    // [E1-CANARY] 디버그 빌드 + 빌드 정의일 때만, 성공 뒤 1회 응답 유실을 흉내 낸다.
+    E1DebugFault.afterInviteCommitted();
+  }
+
+  /// [E1-AMBIGUOUS-INVITE] 대상 지원서를 다시 읽어 저장 여부를 정한다.
+  ///   saved    → 성공으로 닫는다(상위 전파)
+  ///   notSaved → 창을 유지한다. 다시 보내도 서버가 중복을 막는다
+  ///   unknown  → 창을 유지하고 발송 대신 `다시 확인`만 허용한다
+  Future<void> _verifyAmbiguous() async {
+    final t = _ambiguousTarget;
+    if (t == null || _verifying) return;
+    setState(() => _verifying = true);
+    final c = await InviteSaveVerifier.check(
+      businessId: widget.businessId,
+      toId: t.toId,
+      targetUid: t.targetUid,
+      slotId: t.slotId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _verifying = false;
+      _unconfirmed = c == InviteSaveCheck.unknown;
+    });
+    switch (c) {
+      case InviteSaveCheck.saved:
+        ToastHelper.showSuccess('응답이 늦었지만 초대가 저장된 것을 확인했어요.');
+        Navigator.pop(context, const InviteDialogResult.sent());
+      case InviteSaveCheck.notSaved:
+        ToastHelper.showError('초대가 저장되지 않았어요. 다시 보내도 중복으로 저장되지 않아요.');
+      case InviteSaveCheck.unknown:
+        ToastHelper.showWarning('초대 저장 여부를 확인하지 못했어요.');
     }
   }
 
@@ -466,18 +574,19 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
             : '단기 · ${widget.groupItem?.title ?? ''}';
 
     return PopScope(
-      canPop: !_sending,
+      canPop: false,
+      // [E1-AMBIGUOUS-INVITE] 뒤로 가기도 같은 닫힘 결과를 돌려준다 —
+      //   기본 pop 은 null 이라 "불명확한 시도"가 사라졌다.
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || _busy) return;
+        _close();
+      },
       child: AppModalShell(
         children: [
           AppModalHeader(
             title: widget.isContextualMode ? '직접 초대' : '인력 초대',
             subtitle: subtitle,
-            onClose: _sending
-                ? null
-                : () {
-                    FocusManager.instance.primaryFocus?.unfocus();
-                    Navigator.pop(context, false);
-                  },
+            onClose: _busy ? null : _close,
           ),
           Expanded(
             child: SingleChildScrollView(
@@ -487,6 +596,8 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                 children: [
                   // 컨텍스트 모드: 근무 정보 요약 (날짜·슬롯 재선택 불필요)
                   if (widget.isContextualMode) _buildContextSummary(s),
+                  if (_ambiguousTarget != null && !_verifying)
+                    _buildAmbiguousNotice(s),
                   _buildPhoneSearchSection(theme, s),
                   if (_found != null) ...[
                     SizedBox(height: 12 * s),
@@ -575,6 +686,45 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
     );
   }
 
+  // ── [E1-AMBIGUOUS-INVITE] 불명확한 시도 안내 ────────────────────
+
+  Widget _buildAmbiguousNotice(double s) {
+    final unknown = _unconfirmed;
+    final text = unknown
+        ? '초대 저장 여부를 아직 확인하지 못했어요.\n'
+            '[다시 확인]을 누르거나, 닫은 뒤 목록에서 확인해 주세요.'
+        : '앞선 초대는 저장되지 않은 것으로 확인됐어요.\n'
+            '다시 보내도 중복으로 저장되지 않아요.';
+    return Padding(
+      padding: EdgeInsets.only(bottom: 12 * s),
+      child: Container(
+        padding: EdgeInsets.all(12 * s),
+        decoration: BoxDecoration(
+          color: unknown ? AppColors.warningBg : AppColors.infoBg,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              unknown ? Icons.help_outline : Icons.info_outline,
+              size: ResponsiveHelper.iconSize(context, 16),
+              color: unknown ? AppColors.warningDark : AppColors.info,
+            ),
+            SizedBox(width: 8 * s),
+            Expanded(
+              child: Text(
+                text,
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.grey800),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ── 전화번호 검색 섹션 ──────────────────────────────────────────
 
   Widget _buildPhoneSearchSection(ThemeData theme, double s) {
@@ -603,7 +753,9 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                     controller: _phoneCtrl,
                     inputFormatters: [_phoneFmt],
                     keyboardType: TextInputType.phone,
-                    enabled: !_sending,
+                    // [E1-AMBIGUOUS-INVITE] 저장 여부를 모르는 동안 대상을
+                    //   바꾸지 않는다 — 확인할 사람이 바뀐다.
+                    enabled: !_busy && !_unconfirmed,
                     style: ResponsiveHelper.bodyStyle(context),
                     decoration: InputDecoration(
                       hintText: '010-0000-0000',
@@ -632,7 +784,8 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                 SizedBox(
                   height: 42 * s,
                   child: ElevatedButton(
-                    onPressed: _searching || _sending ? null : _search,
+                    onPressed:
+                        _searching || _busy || _unconfirmed ? null : _search,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: theme.primaryColor,
                       foregroundColor: Colors.white,
@@ -774,7 +927,7 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                     _selectedDate != null &&
                     DateUtils.isSameDay(_selectedDate!, entry.date);
                 return InkWell(
-                  onTap: _sending
+                  onTap: _busy || _unconfirmed
                       ? null
                       : () => setState(() {
                             _selectedDate = entry.date;
@@ -870,7 +1023,7 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                 final wd = options[i];
                 final isSelected = _selectedWorkDetailKey == wd.id;
                 return InkWell(
-                  onTap: _sending
+                  onTap: _busy || _unconfirmed
                       ? null
                       : () =>
                           setState(() => _selectedWorkDetailKey = wd.id),
@@ -1005,7 +1158,7 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
       required VoidCallback onTap}) {
     final hasDate = date != null;
     return GestureDetector(
-      onTap: _sending ? null : onTap,
+      onTap: _busy || _unconfirmed ? null : onTap,
       child: Container(
         padding: EdgeInsets.symmetric(horizontal: 10 * s, vertical: 10 * s),
         decoration: BoxDecoration(
@@ -1051,12 +1204,7 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
       children: [
         Expanded(
           child: OutlinedButton(
-            onPressed: _sending
-                ? null
-                : () {
-                    FocusManager.instance.primaryFocus?.unfocus();
-                    Navigator.pop(context, false);
-                  },
+            onPressed: _busy ? null : _close,
             style: OutlinedButton.styleFrom(
               foregroundColor: AppColors.grey600,
               side: const BorderSide(color: AppColors.grey300),
@@ -1064,7 +1212,8 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                   borderRadius: BorderRadius.circular(12)),
               padding: EdgeInsets.symmetric(vertical: 13 * s),
             ),
-            child: Text('취소',
+            // 불명확한 시도 뒤에는 `취소`가 아니다 — 시도는 이미 있었다.
+            child: Text(_ambiguousTarget == null ? '취소' : '닫기',
                 style: ResponsiveHelper.bodyStyle(context)
                     .copyWith(color: AppColors.grey600)),
           ),
@@ -1073,7 +1222,9 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
         Expanded(
           flex: 2,
           child: ElevatedButton(
-            onPressed: _canSend ? _send : null,
+            onPressed: _unconfirmed && !_busy
+                ? _verifyAmbiguous
+                : (_canSend ? _send : null),
             style: ElevatedButton.styleFrom(
               backgroundColor: theme.primaryColor,
               foregroundColor: Colors.white,
@@ -1083,7 +1234,7 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
               padding: EdgeInsets.symmetric(vertical: 13 * s),
               elevation: 0,
             ),
-            child: _sending
+            child: _busy
                 ? SizedBox(
                     width: 18 * s,
                     height: 18 * s,
@@ -1093,13 +1244,15 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                 : Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.send_outlined,
+                      Icon(_unconfirmed ? Icons.refresh : Icons.send_outlined,
                           size: ResponsiveHelper.iconSize(context, 16),
                           color: Colors.white),
                       SizedBox(width: 6 * s),
                       Text(
                         // 컨텍스트 모드: "근무 제안" / 일반 모드: "초대 발송"
-                        widget.isContextualMode ? '근무 제안' : '초대 발송',
+                        _unconfirmed
+                            ? '다시 확인'
+                            : (widget.isContextualMode ? '근무 제안' : '초대 발송'),
                         style: ResponsiveHelper.bodyStyle(context).copyWith(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,

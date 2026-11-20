@@ -16,6 +16,8 @@ import '../../widgets/calendar/schedule_calendar.dart';
 import '../../widgets/calendar/schedule_card.dart';
 import '../../models/core/attendance_model.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/concept_tokens.dart';
+import '../../utils/text_layout.dart';
 import '../../screens/payroll/payslip_period_helper.dart';
 import '../../screens/payroll/payslip_pdf_builder.dart';
 import 'package:printing/printing.dart';
@@ -57,6 +59,26 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
 
   /// [R5-R0.1 §20] 조회 실패 사유 — "없음"과 다른 축이다.
   String? _loadError;
+
+  /// [DU213 C18] 현재 표시월의 월근태 조회 실패 — 일정 실패(_loadError)와 다른 축이다.
+  ///   근태 실패를 정상 0 으로 말하지 않는다(실근무·확정수입·예상수입이 모두 근태에 기댄다).
+  String? _attError;
+
+  /// [DU213 C17] 현재 표시월의 일정+월근태 조회가 진행 중이다(두 번째 단계·월 이동·재시도).
+  bool _monthLoading = false;
+
+  /// [DU213 C17] 일정+월근태가 **모두 성공**한 달. 표시월과 다르면 요약 숫자는 그 달의 사실이 아니다.
+  DateTime? _loadedMonth;
+
+  /// [DU213] 표시월 자료가 완결됐는가 — 요약 숫자·일정 표식·카드 목록은 이때만 보인다.
+  bool get _monthComplete =>
+      !_isLoading &&
+      !_monthLoading &&
+      _loadError == null &&
+      _attError == null &&
+      _loadedMonth != null &&
+      _loadedMonth!.year == _focusedDay.year &&
+      _loadedMonth!.month == _focusedDay.month;
   bool _initialLoadStarted = false;
 
   // 필터: ALL / CONFIRMED / PENDING
@@ -70,8 +92,49 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   Map<String, AttendanceModel> _attendanceMap = {};
 
   // ─── Phase 8.1A: 근무 가능일 ────────────────────────────────
-  /// 저장된 가능일 날짜 키 Set — 캘린더 파란 dot, 배너 카운트에 사용
+  /// 저장된 가능일 날짜 키 Set — 캘린더 윤곽선, 배너 카운트에 사용.
+  ///
+  /// [E1-AVAIL] 이 값만으로는 **등록이 0일인지 못 읽었는지** 알 수 없다.
+  ///   판단은 반드시 [_availLoad] 를 먼저 본다.
   Set<String> _availabilityDates = {};
+
+  /// [E1-AVAIL] 가능일을 **읽었는가**.
+  ///
+  ///   예전에는 `_loadAvailability` 가 catch 에서 `debugPrint` 만 하고
+  ///   `_availabilityDates` 를 `{}` 로 남겼다. 그래서 조회가 실패하면
+  ///   화면이 `근무 가능일 0일 등록됨` 과 미등록 안내를 띄웠고, 등록해 둔
+  ///   사람에게 **등록을 다시 하라**고 말했다. 더 나쁜 것은 그 상태에서
+  ///   수정에 들어가면 `_editingDates` 가 빈 세트로 시작해, 저장 한 번에
+  ///   **기존 가능일이 전부 지워진다**는 점이다.
+  ///
+  ///   같은 화면의 초대 지역은 이미 `InviteRegionPreference.unknown()` 으로
+  ///   ERROR 와 OFF 를 가른다([R2.3] §8). 같은 자를 가능일에도 쓴다.
+  _AvailLoad _availLoad = _AvailLoad.loading;
+
+  /// 재조회 중이지만 이전에 읽은 값이 남아 있다(stale). 숫자는 보여 주되
+  ///   방금 확인한 값이라고 말하지 않는다.
+  bool _availRefreshing = false;
+
+  /// [E1-DATE] **지금 유효한** 가능일. 저장 원본(`_availabilityDates`)과 다르다.
+  ///
+  ///   `callableSetAvailability` 는 `today ~ +90일`(KST) 밖을 떨어내고 60개로
+  ///   자른다. 그런데 화면은 저장 원본을 그대로 세어 `2일 등록됨`·`2일 저장`
+  ///   이라고 말했고, 그 중 하루는 이미 지난 날이라 저장하면 사라졌다
+  ///   (DEV 실측: 원본 2일 · 유효 1일). 사용자는 모르는 채 하루를 잃는다.
+  ///
+  ///   그래서 **배너·달력·수정 초기 선택·저장 payload 가 모두 이 한 집합**을
+  ///   쓴다. 서버 정책을 여기에 다시 적지 않고 canonical
+  ///   `WorkerAvailabilityModel.filterValidDates` 를 그대로 호출한다.
+  ///
+  ///   저장 원본은 지우지 않는다 — 과거 기록의 보관은 별개 문제다.
+  Set<String> get _validAvailabilityDates =>
+      WorkerAvailabilityModel.filterValidDates(_availabilityDates.toList())
+          .toSet();
+
+  /// [E1-DATE] 지금 저장 버튼을 누르면 **서버가 받게 될** 집합.
+  ///   버튼 문구와 실제 전송이 같은 값을 쓰도록 한 곳에서 만든다.
+  Set<String> get _editingPayload =>
+      WorkerAvailabilityModel.filterValidDates(_editingDates.toList()).toSet();
   /// 에디트 모드 활성화 여부
   bool _isEditMode = false;
   /// 에디트 모드에서 현재 선택 중인 날짜 키 Set
@@ -96,7 +159,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     // [PREDEVICE-INCOME-NOSHOW] 근태를 함께 넘긴다 — NO_SHOW·결근으로 마감된
     //   날이 예상수입에 남지 않도록.
     _cachedTotalIncome     = CalendarHelper.getTotalIncome(
-        thisMonth, _focusedDay, attendances: attendances);
+        thisMonth, _focusedDay, attendances: attendances, now: DateTime.now());
     _cachedActualDays      = CalendarHelper.getActualWorkDays(attendances, _focusedDay);
     _cachedConfirmedIncome = CalendarHelper.getConfirmedIncome(attendances, _focusedDay);
     // H2: 확정 급여 기록 — 월 기준으로 필터링 후 캐시
@@ -175,47 +238,68 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     if (!mounted) return;
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) {
-      ToastHelper.showError('로그인이 필요합니다.');
+      ToastHelper.showError('로그인이 필요해요');
       setState(() => _isLoading = false);
       return;
     }
-    setState(() { _isLoading = true; _loadError = null; });
+    // [DU213 C17·C19] 이 요청의 세대·표시월 — 늦게 온 응답·오류·toast 가 새 상태를 덮지 않는다.
+    final gen = ++_monthGeneration;
+    final month = DateTime(_focusedDay.year, _focusedDay.month);
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+      _attError = null;
+      _monthLoading = true;
+    });
 
     // Phase 1: 지원 내역 먼저 로드 (1분 TTL 캐시 — 재방문 시 즉시 반환)
     try {
       final applications = await _reads.myApplications(uid);
-      if (!mounted) return;
+      if (!mounted || gen != _monthGeneration) return;
       _applications = applications;
       _attendanceMap = {};
       _recomputeStats();
       setState(() => _isLoading = false);
     } catch (e) {
       debugPrint('❌ 지원 내역 로드 실패: $e');
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _loadError = '일정을 불러오지 못했습니다.';
-        });
-        ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
-      }
+      if (!mounted || gen != _monthGeneration) return;
+      setState(() {
+        _isLoading = false;
+        _monthLoading = false;
+        _loadError = '일정을 불러오지 못했습니다.';
+        // [DU213 C19] 실패한 조회의 이전 목록을 현재 사실로 남기지 않는다.
+        _applications = [];
+        _attendanceMap = {};
+        _loadedMonth = null;
+        _recomputeStats();
+      });
+      ToastHelper.showError('일정을 불러오지 못했어요');
       return;
     }
 
-    // Phase 2: 출근 기록 백그라운드 로드 (2분 TTL 캐시)
-    // 실패해도 스케줄 카드는 이미 표시되어 있으므로 토스트 없이 조용히 처리
+    // Phase 2: 출근 기록 로드 (2분 TTL 캐시)
+    // [DU213 C18] 실패를 조용히 삼키지 않는다 — 요약은 '확인하지 못함', 목록 자리에 지속 안내·다시 시도.
     try {
       final attendances = await _reads.myMonthlyAttendances(
         userId: uid,
-        year: _focusedDay.year,
-        month: _focusedDay.month,
+        year: month.year,
+        month: month.month,
       );
-      if (!mounted) return;
+      if (!mounted || gen != _monthGeneration) return;
       setState(() {
         _attendanceMap = _buildAttendanceMap(attendances);
         _recomputeStats();
+        _monthLoading = false;
+        _loadedMonth = month;
       });
     } catch (e) {
       debugPrint('❌ 출근 기록 로드 실패: $e');
+      if (!mounted || gen != _monthGeneration) return;
+      setState(() {
+        _monthLoading = false;
+        _attError = '출근 기록을 불러오지 못했습니다';
+        _loadedMonth = null;
+      });
     }
   }
 
@@ -228,53 +312,173 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   /// 통계·캘린더 인덱스가 올바르게 갱신된다.
   Future<void> _loadMonthlyAttendances(DateTime focusedDay) async {
     if (!mounted) return;
-    final gen = _monthGeneration; // 빠른 전환 시 stale 배치 폐기용
+    final gen = ++_monthGeneration; // 빠른 전환 시 stale 배치 폐기용
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) return;
-    try {
-      final results = await Future.wait([
-        _reads.myApplications(uid),
-        _reads.myMonthlyAttendances(
-          userId: uid,
-          year: focusedDay.year,
-          month: focusedDay.month,
-        ),
-      ]);
-      if (!mounted || _monthGeneration != gen) return;
+    final month = DateTime(focusedDay.year, focusedDay.month);
+    // [DU213 C17] 새 표시월의 두 read 가 끝나기 전에는 이전 월 값·목록·표식을 보이지 않는다.
+    setState(() {
+      _monthLoading = true;
+      _loadError = null;
+      _attError = null;
+      _loadedMonth = null;
+    });
+    // 두 read 를 함께 보내고 실패를 각각 붙잡는다 — 먼저 끝난 실패가 처리되지 않은 채 남지 않게.
+    final results = await Future.wait<Object?>([
+      _reads
+          .myApplications(uid)
+          .then<Object?>((v) => v, onError: (Object e) => _ReadFail(e)),
+      _reads
+          .myMonthlyAttendances(
+              userId: uid, year: month.year, month: month.month)
+          .then<Object?>((v) => v, onError: (Object e) => _ReadFail(e)),
+    ]);
+    if (!mounted || _monthGeneration != gen) return;
+    final apps = results[0];
+    final atts = results[1];
+    if (apps is _ReadFail) {
+      debugPrint('❌ 월별 지원 내역 로드 실패: ${apps.error}');
       setState(() {
-        _applications  = results[0] as List<ApplicationModel>;
-        _attendanceMap = _buildAttendanceMap(results[1] as List<AttendanceModel>);
+        _monthLoading = false;
+        _loadError = '일정을 불러오지 못했습니다.';
+        _applications = [];
+        _attendanceMap = {};
         _recomputeStats();
       });
-    } catch (e) {
-      debugPrint('❌ 월별 출근 기록 로드 실패: $e');
-      if (mounted) ToastHelper.showError('출근 기록을 불러오지 못했습니다');
+      ToastHelper.showError('일정을 불러오지 못했어요');
+      return;
     }
+    if (atts is _ReadFail) {
+      debugPrint('❌ 월별 출근 기록 로드 실패: ${atts.error}');
+      setState(() {
+        _monthLoading = false;
+        _attError = '출근 기록을 불러오지 못했습니다';
+        // 근태를 모르는 카드·표식(미완결 자료)은 노출하지 않는다 — 화면 로컬 자료만 비운다.
+        _applications = [];
+        _attendanceMap = {};
+        _recomputeStats();
+      });
+      ToastHelper.showError('출근 기록을 불러오지 못했어요');
+      return;
+    }
+    setState(() {
+      _applications = apps as List<ApplicationModel>;
+      _attendanceMap = _buildAttendanceMap(atts as List<AttendanceModel>);
+      _recomputeStats();
+      _monthLoading = false;
+      _loadedMonth = month;
+    });
   }
 
   // ─── Phase 8.1A: 근무 가능일 CRUD ──────────────────────────
 
-  /// 저장된 근무 가능일 로드. 실패 시 조용히 무시 (핵심 기능이 아님).
+  /// [E1-AVAIL] 가능일 축의 상태 한 줄. 배너와 같은 자리를 쓰되 숫자를
+  ///   주장하지 않는다 — 모르면 모른다고 말하고 다시 시도할 길을 준다.
+  Widget _availabilityNotice(
+    String text, {
+    required IconData icon,
+    bool isError = false,
+    VoidCallback? onRetry,
+  }) {
+    final color = isError ? AppColors.errorDark : AppColors.grey600;
+    return Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 8),
+      ),
+      decoration: BoxDecoration(
+        color: isError ? AppColors.errorBg : AppColors.grey100,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 18), color: color),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              text,
+              style: ResponsiveHelper.smallStyle(context, color: color),
+            ),
+          ),
+          if (onRetry != null)
+            TextButton(
+              onPressed: onRetry,
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 8)),
+                // [DU1 구현67 · 감사67 §5] 가능일 다시 시도 터치 최소 48×48 — 320@2.0 115.6×37.0,
+                //   360@1.0 65.7×19.0 였다(Size.zero+shrinkWrap). 배율로 줄이지 않는 고정 하한.
+                minimumSize: const Size(48, 48),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text('다시 시도',
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.brand)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 저장된 근무 가능일 로드.
+  ///
+  /// [E1-AVAIL] 실패를 조용히 삼키지 않는다 — 삼키면 등록해 둔 날짜가
+  ///   `0일` 로 보이고, 그 상태에서 수정에 들어가면 저장 한 번에 지워진다.
+  ///   읽은 값이 이미 있으면 유지하되(stale) 새로 읽는 중임을 표시한다.
   Future<void> _loadAvailability() async {
     if (!mounted) return;
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) return;
+    final hadValue = _availLoad == _AvailLoad.ok;
+    setState(() {
+      if (hadValue) {
+        _availRefreshing = true;
+      } else {
+        _availLoad = _AvailLoad.loading;
+      }
+    });
     try {
       final model = await _reads.myAvailability(uid);
       if (!mounted) return;
       setState(() {
         _availabilityDates = model?.dateSet ?? {};
+        _availLoad = _AvailLoad.ok;
+        _availRefreshing = false;
       });
     } catch (e) {
       debugPrint('❌ 근무 가능일 로드 실패: $e');
+      if (!mounted) return;
+      setState(() {
+        _availRefreshing = false;
+        // 이전에 읽은 값이 있으면 지우지 않는다 — 0 으로 덮어쓰는 것이
+        //   바로 이 Phase 가 고치는 결함이다.
+        if (!hadValue) _availLoad = _AvailLoad.failed;
+      });
     }
   }
 
   /// 에디트 모드 진입. 기존 가능일로 editingDates 초기화.
+  ///
+  /// [E1-AVAIL] 기존 값을 **모르는 채로** 들어가지 않는다. 읽지 못한 상태에서
+  ///   진입하면 `_editingDates` 가 빈 세트로 시작하고, 저장 한 번에 등록해 둔
+  ///   날짜가 전부 사라진다. 저장은 `dates` 전체를 덮어쓰는 계약이기 때문이다.
   void _enterEditMode() {
+    if (_availLoad != _AvailLoad.ok) {
+      ToastHelper.showWarning(
+          '등록한 근무 가능일을 불러오지 못해 수정할 수 없어요. 다시 시도해 주세요.');
+      _loadAvailability();
+      return;
+    }
     setState(() {
       _isEditMode = true;
-      _editingDates = Set<String>.from(_availabilityDates);
+      // [E1-DATE] 수정은 **지금 유효한** 날짜에서 시작한다 — 과거 날짜를
+      //   담고 들어가면 저장 버튼이 그만큼 더 큰 수를 말하고, 서버는
+      //   그 날짜를 떨어낸다.
+      _editingDates = Set<String>.from(_validAvailabilityDates);
     });
   }
 
@@ -284,6 +488,16 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       _isEditMode = false;
       _editingDates = {};
     });
+    _ensureMonthLoaded();
+  }
+
+  /// [DU213 C17] 에디트 모드에서 달을 옮겼다면 나올 때 그 달을 읽는다 — 이전 월 값을 새 월로 보이지 않게.
+  void _ensureMonthLoaded() {
+    if (_isLoading || _monthLoading) return;
+    if (_loadError != null || _attError != null) return;
+    final lm = _loadedMonth;
+    if (lm != null && lm.year == _focusedDay.year && lm.month == _focusedDay.month) return;
+    _loadMonthlyAttendances(_focusedDay);
   }
 
   /// 에디트 모드에서 날짜 토글 (tap = 선택/해제)
@@ -294,7 +508,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         _editingDates.remove(key);
       } else {
         if (_editingDates.length >= 60) {
-          ToastHelper.showWarning('최대 60일까지 등록할 수 있습니다.');
+          ToastHelper.showWarning('최대 60일까지 등록할 수 있어요');
           return;
         }
         _editingDates.add(key);
@@ -307,37 +521,46 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     if (_isSavingAvailability) return;
     final user = context.read<UserProvider>().currentUser;
     if (user == null) {
-      ToastHelper.showError('로그인이 필요합니다.');
+      ToastHelper.showError('로그인이 필요해요');
       return;
     }
     final city = user.homeRegion?.city;
     if (city == null || city.isEmpty) {
-      ToastHelper.showError('지역 정보가 없습니다. 프로필에서 거주 지역을 먼저 설정해주세요.');
+      ToastHelper.showError('지역 정보가 없어요. 프로필에서 거주 지역을 먼저 설정해 주세요.');
       return;
     }
+
+    final payload = _editingPayload;
 
     setState(() => _isSavingAvailability = true);
     try {
       await _availabilityService.saveAvailability(
         uid: user.uid,
-        dates: _editingDates,
+        // [E1-DATE] 전송 직전에 한 번 더 canonical 필터를 통과시킨다.
+        //   수정 화면을 열어 둔 채 KST 자정이 지나면 고를 때는 유효했던
+        //   날짜가 과거가 된다. 그대로 보내면 서버가 떨어내는데 화면은
+        //   보낸 수를 저장했다고 말해 또 어긋난다.
+        dates: payload,
         city: city,
         district: user.homeRegion?.district,
       );
       if (!mounted) return;
-      final saved = Set<String>.from(_editingDates);
+      // 서버가 실제로 받은 집합을 화면 상태로 삼는다 — 보낸 것과 저장된 것이
+      //   다르면 다음 조회까지 화면이 거짓말을 한다.
+      final saved = Set<String>.from(payload);
       setState(() {
         _availabilityDates = saved;
         _isEditMode = false;
         _editingDates = {};
         _isSavingAvailability = false;
       });
-      ToastHelper.showSuccess('${saved.length}일 근무 가능일이 저장되었습니다.');
+      ToastHelper.showSuccess('근무 가능일 ${saved.length}일을 저장했어요');
+      _ensureMonthLoaded();
     } catch (e) {
       debugPrint('❌ 근무 가능일 저장 실패: $e');
       if (mounted) {
         setState(() => _isSavingAvailability = false);
-        ToastHelper.showError('저장에 실패했습니다. 다시 시도해주세요.');
+        ToastHelper.showError('근무 가능일을 저장하지 못했어요. 다시 시도해 주세요.');
       }
     }
   }
@@ -361,18 +584,91 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
 
   // ─── Build ───────────────────────────────────────────────────
 
+  /// [DU311 A1] 머리 행동 글자(측정과 표시 공용).
+  static const String _kAvailAction = '가능일 설정'; // [DU311 B3] 대상+행동(등록·수정 공용)
+
+  /// [DU311 A1] 머리 높이 — 1.0 기준 kToolbarHeight(56)는 그대로 두고, 실제 사용자 배율의 제목(최대 두 줄)이 56 안에
+  ///   들어가지 않으면 줄 높이 + 위아래 8 로 늘린다. 제목 폭은 화면 폭 − 가운데 간격 16×2 − (일반 모드) 행동 폭으로 보수적으로
+  ///   잡는다(행동 폭 = 좌우 padding 12×2 + 아이콘 18 + 간격 8 + 같은 배율의 '가능일' 글자 폭). 글자를 줄이거나 자르지 않는다.
+  double _titleBarHeight(BuildContext context, TextScaler scaler, String text, TextStyle style) {
+    final theme = Theme.of(context);
+    // AppBar 의 DefaultTextStyle(바탕 = appBarTheme.titleTextStyle ?? titleLarge) ← style ← boldText 와 같은 병합.
+    var base = (theme.appBarTheme.titleTextStyle ?? theme.textTheme.titleLarge ?? const TextStyle()).merge(style);
+    if (MediaQuery.boldTextOf(context)) {
+      base = base.merge(const TextStyle(fontWeight: FontWeight.bold));
+    }
+    final width = MediaQuery.sizeOf(context).width;
+    var reserve = 32.0;
+    if (!_isEditMode) {
+      final ap = TextPainter(
+        text: TextSpan(text: _kAvailAction, style: theme.textTheme.labelLarge),
+        textDirection: Directionality.of(context),
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      reserve += 12 + 18 + 8 + 12 + ap.width;
+      ap.dispose();
+    }
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: base),
+      textDirection: Directionality.of(context),
+      textScaler: scaler,
+      locale: Localizations.maybeLocaleOf(context),
+      textHeightBehavior: DefaultTextHeightBehavior.maybeOf(context),
+      maxLines: 2,
+    )..layout(maxWidth: (width - reserve).clamp(48.0, width));
+    final need = tp.height + 16;
+    tp.dispose();
+    return need > kToolbarHeight ? need : kToolbarHeight;
+  }
+
+  /// [DU311 A3·A4] 누름 영역 — 보이는 모양·크기는 그대로 두고 receiver 만 최소 48×48(DU310 _chipReceiver 와 같은 방식).
+  ///   [alignment] 로 보이는 요소 자리를 고정한다(배너 링크 = 위·오른쪽, 칩 = 가운데). 버튼·선택 의미는 이 노드가 말한다.
+  Widget _tapReceiver({
+    required Widget child,
+    required VoidCallback onTap,
+    bool? selected,
+    Alignment alignment = Alignment.center,
+  }) {
+    return Semantics(
+      container: true,
+      button: true,
+      selected: selected,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          child: Align(alignment: alignment, widthFactor: 1, heightFactor: 1, child: child),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    // [DU311 A1] AppBar 바깥의 실제 사용자 배율(AppBar 가 제목에 거는 1.34 상한 적용 전 — DU310 J13 과 같은 방식).
+    //   큰 글자에서 제목이 1.34 에 묶이고 '가능일' 행동만 커져 위계가 뒤집히던 것을 바로잡는다.
+    final titleScaler = MediaQuery.textScalerOf(context);
+    // [DU311 B1] 하단 탭 이름('내 일정')과 같은 머리 제목.
+    final titleText = _isEditMode ? '근무 가능일 선택' : '내 일정';
+    final titleStyle = ResponsiveHelper.subtitleStyle(context)
+        .copyWith(fontWeight: FontWeight.bold, color: AppColors.textPrimary);
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
         scrolledUnderElevation: 0,
+        toolbarHeight: _titleBarHeight(context, titleScaler, titleText, titleStyle),
         title: Text(
-          _isEditMode ? '근무 가능일 선택' : '일정',
-          style: ResponsiveHelper.subtitleStyle(context)
-              .copyWith(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+          titleText,
+          style: titleStyle,
+          // [DU311 A1] Text.textScaler 가 AppBar 의 MediaQuery 상한보다 우선한다. 두 줄까지 허용해 말줄임 0.
+          textScaler: titleScaler,
+          maxLines: 2,
+          softWrap: true,
+          overflow: TextOverflow.visible,
         ),
         centerTitle: false,
         // 에디트 모드가 아닐 때만 "근무 가능일 등록" CTA 표시
@@ -382,9 +678,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                 TextButton.icon(
                   onPressed: _enterEditMode,
                   icon: const Icon(Icons.event_available_outlined, size: 18),
-                  label: const Text('가능일'),
+                  label: const Text(_kAvailAction),
                   style: TextButton.styleFrom(
-                    foregroundColor: AppColors.info,
+                    foregroundColor: AppColors.brand, // [DU311 B3] 머리 행동은 brand(info 계열 아님)
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                   ),
                 ),
@@ -396,69 +692,79 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               top: false,
               child: Container(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                decoration: BoxDecoration(
+                // [DU437 · F113-1] 바 위 그림자 → 옅은 경계선(Standards 그림자 0 기본 · 공용 하단 바와 같은 grey200).
+                decoration: const BoxDecoration(
                   color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.06),
-                      blurRadius: 8,
-                      offset: const Offset(0, -2),
-                    ),
-                  ],
+                  border: Border(top: BorderSide(color: AppColors.grey200)),
                 ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: _cancelEdit,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.textSecondary,
-                          side: const BorderSide(color: AppColors.grey300),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
+                // [DU442] B(320 · 2.0)에서 두 버튼 글자 크기가 달라(테마 Elevated · Outlined 기본) 저장 74 · 취소 68 로 높이가 어긋났다.
+                //   같은 줄의 두 버튼을 더 큰 쪽 높이로 맞춘다(IntrinsicHeight + stretch). W 는 둘 다 최소 52 라 그대로다.
+                child: IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: _cancelEdit,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.textSecondary,
+                            side: const BorderSide(color: AppColors.grey300),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            // [DU437 · F113-1] 최소 높이 52(주 행동과 같은 줄) · 반경 12(버튼 기준)
+                            minimumSize: const Size(0, 52),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
+                          child: const Text('취소'),
                         ),
-                        child: const Text('취소'),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 2,
-                      child: ElevatedButton(
-                        onPressed: _isSavingAvailability ? null : _saveAvailability,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.info,
-                          foregroundColor: Colors.white,
-                          disabledBackgroundColor: AppColors.grey300,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton(
+                          onPressed: _isSavingAvailability ? null : _saveAvailability,
+                          style: ElevatedButton.styleFrom(
+                            // [DU434] 저장(주 행동) 채움 info(흰 글자 3.12) → brand(5.58) — 같은 화면 머리 행동과 같다([DU311 B3] info 계열 아님).
+                            backgroundColor: AppColors.brand,
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor: AppColors.grey300,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            // [DU437 · F113-1] W 51 → 최소 52 · 반경 12 · 평면(그림자 0 · 공용 primaryButton 과 같다)
+                            minimumSize: const Size(0, 52),
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
-                        ),
-                        child: _isSavingAvailability
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
+                          child: _isSavingAvailability
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Text(
+                                  // [E1-DATE] 버튼의 수는 **실제 저장될 수**다.
+                                  //   선택 집합을 그대로 세면, 화면을 열어 둔
+                                  //   채 자정이 지났을 때 서버가 떨어낼 날짜까지
+                                  //   세어 저장되지 않을 수를 약속하게 된다.
+                                  _editingPayload.isEmpty
+                                      ? '저장 (삭제)'
+                                      : '${_editingPayload.length}일 저장',
                                 ),
-                              )
-                            : Text(
-                                _editingDates.isEmpty
-                                    ? '저장 (삭제)'
-                                    : '${_editingDates.length}일 저장',
-                              ),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             )
           : null,
       body: _isLoading
-          ? const LoadingWidget(message: '일정을 불러오는 중...')
+          ? const LoadingWidget(message: '일정을 불러오고 있어요')
           : _buildContent(),
     );
   }
@@ -477,7 +783,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     // SliverFillRemaining(hasScrollBody: false) 은 반드시 마지막 sliver이어야 한다.
     // 뒤에 SliverToBoxAdapter를 추가하면 그 높이만큼 스크롤이 발생한다.
     // 빈 상태(선택 날짜 있고 이벤트 없음)일 때 trailing 여백 sliver를 제외한다.
-    final showEmptyState = _selectedDay != null && _selectedDayEvents.isEmpty;
+    // [DU213] 조회 미완결(조회 중·실패)이면 목록 자리는 상태 안내(SliverFillRemaining)다.
+    final showEmptyState = !_monthComplete ||
+        (_selectedDay != null && _selectedDayEvents.isEmpty);
 
     return RefreshIndicator(
       onRefresh: _loadApplications,
@@ -503,7 +811,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
 
           // 선택 날짜 헤더 — 일정이 있을 때만 표시
           // 일정이 없으면 헤더 없이 빈 상태 바로 시작 (헤더가 기대감을 유발하는 문제 방지)
-          if (_selectedDay != null && _selectedDayEvents.isNotEmpty)
+          if (_monthComplete && _selectedDay != null && _selectedDayEvents.isNotEmpty)
             SliverToBoxAdapter(child: _buildDayHeader()),
 
           // 일정 리스트 or 빈 상태(SliverFillRemaining)
@@ -535,11 +843,13 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           ScheduleCalendar(
             focusedDay: _focusedDay,
             selectedDay: _isEditMode ? null : _selectedDay,
-            applications: _applications,
+            // [DU213] 조회가 완결된 달의 일정만 표식으로 그린다(조회 중·실패 달에 이전·미완결 표식 0).
+            applications: _monthComplete ? _applications : const [],
             selectedFilter: _selectedFilter,
-            dateIndex: _dateIndex,
+            dateIndex: _monthComplete ? _dateIndex : const {},
             // Phase 8.1A: 가능일 마커 + 에디트 모드 파라미터
-            availabilityDates: _availabilityDates,
+            // [E1-DATE] 달력도 지금 유효한 날짜만 가능일로 강조한다.
+            availabilityDates: _validAvailabilityDates,
             editingDates: _isEditMode ? _editingDates : null,
             isEditMode: _isEditMode,
             onDaySelected: (selectedDay, focusedDay) {
@@ -582,8 +892,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           // N월 요약 (2×2 KPI) — 에디트 모드에서는 숨김
           if (!_isEditMode) _buildMonthlySummary(),
 
-          // 흰→회색 전환 구분선 (에디트 모드에서는 회색 구역 없음)
-          if (!_isEditMode) Container(height: 8, color: AppColors.grey100),
+          // [DU1 구현72 S073] 8px 회색 띠가 요약과 필터·선택일 목록을 토막냈다(구현69 홈·구현70 상세와 같은 결정 —
+          //   한 흰 면 + 제목·간격으로 구분). 띠 대신 같은 높이 간격. 에디트 모드에서 없는 것은 그대로.
+          if (!_isEditMode) const SizedBox(height: 8),
         ],
       ),
     );
@@ -599,8 +910,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   Widget _buildInviteRegionRow() {
     final pref = _invitePref;
     final (label, color) = switch (pref?.state) {
-      null => ('불러오는 중…', AppColors.grey500),
-      InvitePreferenceState.unknown => ('확인하지 못함', AppColors.grey500),
+      // [DU311 C8→Q3] 상태 값은 읽혀야 한다 — grey500(흰 바탕 약 2.68:1) 대신 textSecondary.
+      null => ('불러오는 중…', AppColors.textSecondary),
+      InvitePreferenceState.unknown => ('확인하지 못함', AppColors.textSecondary),
       InvitePreferenceState.unset => ('설정하기', AppColors.infoDark),
       InvitePreferenceState.off => ('받지 않음', AppColors.grey600),
       InvitePreferenceState.on => (
@@ -611,47 +923,66 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         ),
     };
 
-    return InkWell(
-      onTap: () async {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-              builder: (_) => const InviteRegionSettingsScreen()),
-        );
-        if (mounted) _loadInvitePref();
-      },
-      child: Container(
-        margin: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 12),
-          vertical: ResponsiveHelper.spacing(context, 2),
-        ),
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 12),
-          vertical: ResponsiveHelper.spacing(context, 10),
-        ),
-        decoration: BoxDecoration(
-          color: Colors.white,
+    // [DU311 A5] 행 전체가 누름 영역(최소 48). 물결이 보이도록 행 자체를 Material(흰 바탕 + 둥근 테두리)로 둔다 —
+    //   Ink 는 Scaffold 의 ink 층(흰 구역 Container 아래)에 그려져 가려지므로 쓰지 않는다.
+    //   상태 값은 최대 45% 폭에서 줄바꿈해 큰 글자·긴 지역명에서도 넘치지 않는다. 바깥 여백은 누름 영역 밖이다.
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 2),
+      ),
+      child: Material(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.borderLight),
+          side: const BorderSide(color: AppColors.borderLight),
         ),
-        child: Row(
-          children: [
-            const Icon(Icons.place_outlined, size: 16, color: AppColors.grey600),
-            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-            Expanded(
-              child: Text(
-                '초대 받을 지역',
-                style: ResponsiveHelper.smallStyle(context)
-                    .copyWith(fontWeight: FontWeight.w600),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () async {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => const InviteRegionSettingsScreen()),
+            );
+            if (mounted) _loadInvitePref();
+          },
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 12),
+                vertical: ResponsiveHelper.spacing(context, 10),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.place_outlined, size: 16, color: AppColors.grey600),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                  // [DU311 r7 자체검토] 2.0/320 에서 라벨 `초대 받 / 을 지역`·값 `강남구 · 송 / 파구` 처럼 낱말 가운데서 끊겼다 —
+                  //   라벨은 낱말 사이에서만(keepWords), 값은 ` · ` 구분점에서만(phrases) 줄을 바꾼다. 의미 이름은 원문.
+                  Expanded(
+                    child: Text(
+                      TextLayout.keepWords('초대 받을 지역'),
+                      semanticsLabel: '초대 받을 지역',
+                      style: ResponsiveHelper.smallStyle(context)
+                          .copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.45),
+                    child: Text(
+                      TextLayout.phrases(label),
+                      semanticsLabel: label,
+                      textAlign: TextAlign.end,
+                      style: ResponsiveHelper.smallStyle(context, color: color)
+                          .copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, size: 16, color: AppColors.grey400),
+                ],
               ),
             ),
-            Text(
-              label,
-              style: ResponsiveHelper.smallStyle(context, color: color)
-                  .copyWith(fontWeight: FontWeight.w600),
-            ),
-            const Icon(Icons.chevron_right, size: 16, color: AppColors.grey400),
-          ],
+          ),
         ),
       ),
     );
@@ -671,7 +1002,24 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   /// count == 0 : 가능일 미등록 → 근무 제안 안내 타일 표시
   /// count > 0  : 등록된 일 수 표시 + 근무 제안 설명 부제목
   Widget _buildAvailabilityBanner() {
-    final count = _availabilityDates.length;
+    // [E1-AVAIL] 읽기 전·읽기 실패를 0 일로 말하지 않는다.
+    //   아래 등록 유도 타일은 **등록이 없다는 사실을 확인했을 때만** 쓴다.
+    if (_availLoad == _AvailLoad.loading) {
+      return _availabilityNotice(
+        '근무 가능일을 확인하고 있어요',
+        icon: Icons.hourglass_empty_rounded,
+      );
+    }
+    if (_availLoad == _AvailLoad.failed) {
+      return _availabilityNotice(
+        '등록한 근무 가능일을 불러오지 못했어요',
+        icon: Icons.error_outline_rounded,
+        isError: true,
+        onRetry: _loadAvailability,
+      );
+    }
+
+    final count = _validAvailabilityDates.length;
 
     // [R7-P2-3] 가능일만으로는 제안이 오지 않는다.
     //
@@ -724,19 +1072,28 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           color: AppColors.infoBg,
           borderRadius: BorderRadius.circular(8),
         ),
+        // [SCALE-BALANCE.34] 큰 글자에서 안내가 5줄이 되면 아이콘·'등록'이 세로 가운데에 떴다 — 첫 줄에 맞춘다.
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.info_outline, size: 16, color: AppColors.info),
+            Padding(
+              padding: EdgeInsets.only(top: ((MediaQuery.textScalerOf(context).scale(13) * 1.4 - 16) / 2).clamp(0.0, 30.0)),
+              child: const Icon(Icons.info_outline, size: 16, color: AppColors.info),
+            ),
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             Expanded(
+              // [DU311 B5] '근무 제/안도' 처럼 낱말 가운데서 끊기지 않게 낱말 단위로 줄바꿈. 읽기는 원문.
               child: Text(
-                descText,
+                TextLayout.keepWords(descText),
+                semanticsLabel: descText,
                 style: ResponsiveHelper.smallStyle(
                     context, color: AppColors.infoDark),
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-            GestureDetector(
+            // [DU311 A3] 보이는 '등록' 은 그대로, 누름 영역만 최소 48×48 + 버튼 의미(글자는 첫 줄 위·오른쪽 끝 그대로).
+            _tapReceiver(
+              alignment: Alignment.topRight,
               onTap: _enterEditMode,
               child: Text(
                 '등록',
@@ -776,14 +1133,21 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '근무 가능일 $count일 등록됨',
+                  // [E1-AVAIL] 다시 읽는 중이면 지금 숫자가 방금 확인한
+                  //   값이라고 말하지 않는다(stale ≠ 최신).
+                  _availRefreshing
+                      ? '근무 가능일 $count일 등록됨 · 확인 중'
+                      : '근무 가능일 $count일 등록됨',
+                  // [DU311 A2] '..copyWith' 는 결과를 버려 w600 이 적용되지 않았다 → '.copyWith'.
                   style: ResponsiveHelper.smallStyle(
                       context, color: AppColors.infoDark)
-                    ..copyWith(fontWeight: FontWeight.w600),
+                    .copyWith(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 2),
+                // [DU311 B5] 낱말 단위 줄바꿈, 읽기는 원문.
                 Text(
-                  descText,
+                  TextLayout.keepWords(descText),
+                  semanticsLabel: descText,
                   style: ResponsiveHelper.tinyStyle(
                       context, color: AppColors.infoDark),
                 ),
@@ -791,7 +1155,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
             ),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          GestureDetector(
+          // [DU311 A3] 보이는 '수정' 은 그대로, 누름 영역만 최소 48×48 + 버튼 의미(글자는 위·오른쪽 끝 그대로).
+          _tapReceiver(
+            alignment: Alignment.topRight,
             onTap: _enterEditMode,
             child: Text(
               '수정',
@@ -833,7 +1199,8 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
           Text(
             '제안을 수락해야 근무가 확정돼요 · 최대 60일, 오늘~90일 이내',
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+            // [DU463] grey500(2.68) → grey600 — 바로 위 첫 줄 · 같은 화면 작은 중립 글자와 같은 짝(4.61).
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
             textAlign: TextAlign.center,
           ),
         ],
@@ -888,13 +1255,41 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         spacing: ResponsiveHelper.spacing(context, 10),
         runSpacing: ResponsiveHelper.spacing(context, 6),
         children: [
-          _legendDot(primaryColor, '확정', star: false),
-          _legendDot(AppColors.amberDark, '장기', star: true),
-          _legendDot(AppColors.warningMedium, '대기', star: false),
-          _legendDot(AppColors.grey400, '휴무', star: true),
-          _legendDot(AppColors.info, '가능', star: false),
+          // [DU1 구현100 셀B] 달력 단기 확정 점과 같은 successDark(홈과 같은 '확정' 색)
+          _legendDot(AppColors.successDark, '확정', star: false),
+          // [DU1 후속102 C102-1] 달력 장기 근무 별과 같은 색 #946200(흰 5.24)
+          _legendDot(AppColors.warningDark, '장기', star: true),
+          // [DU1 후속101 C101-3] 달력 셀과 같은 색: 대기 #E65100(흰 3.79) · 휴무 #757575(흰 4.61)
+          _legendDot(AppColors.warningDarkest, '대기', star: false),
+          _legendDot(AppColors.grey600, '휴무', star: true),
+          // [E1-AVAIL] 가능일은 점이 아니라 **날짜 테두리**다 — 범례도 셀과
+          //   같은 형태로 보여야 서로를 가리킨다는 것이 읽힌다.
+          //   `가능` 한 글자는 무엇이 가능한지 모호해 이름을 그대로 쓴다.
+          _legendOutline('근무 가능일'),
         ],
       ),
+    );
+  }
+
+  /// [E1-AVAIL] 캘린더 셀의 가능일 윤곽선과 **같은 모양**의 범례 항목.
+  Widget _legendOutline(String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: AppColors.info, width: 1.5),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
+        ),
+      ],
     );
   }
 
@@ -905,8 +1300,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         star
             ? Icon(Icons.star, size: 10, color: color)
             : Container(
-                width: 8,
-                height: 8,
+                // [DU311 A8] 달력 표식 점(schedule_calendar _dot 7×7)과 같은 크기.
+                width: 7,
+                height: 7,
                 decoration: BoxDecoration(color: color, shape: BoxShape.circle),
               ),
         const SizedBox(width: 4),
@@ -923,6 +1319,14 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   Widget _buildMonthlySummary() {
     final month = _focusedDay.month;
     final primaryColor = Theme.of(context).primaryColor;
+    // [DU213 C17·C18] 표시월의 일정+월근태가 모두 성공했을 때만 숫자를 말한다.
+    //   조회 중은 '확인 중', 실패는 '확인하지 못함'(단위 없음·중립 글자색). 산식은 그대로다.
+    final String? unknown = _monthComplete
+        ? null
+        : (_loadError != null || _attError != null)
+            ? '확인하지 못함'
+            : '확인 중';
+    const unknownColor = AppColors.textSecondary;
     // 값이 0이면 비활성(textTertiary), 값이 있으면 semantic 색상 활성화
     final confirmedWorkColor = _cachedConfirmedCount > 0
         ? AppColors.textPrimary
@@ -932,7 +1336,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         : AppColors.textTertiary;
     final incomeColor = _cachedTotalIncome > 0 ? primaryColor : AppColors.textTertiary;
     final confirmedIncomeColor = _cachedConfirmedIncome > 0
-        ? const Color(0xFF2E9D45)
+        ? AppColors.successDark // [DU311 A6] 비토큰 #2E9D45 → 확정 표식과 같은 토큰
         : AppColors.textTertiary;
 
     return Padding(
@@ -940,40 +1344,80 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // [DU311 B6] 섹션 제목 위계(ConceptText.section 20/w700) — 홈 '오늘의 약속'과 같은 단계.
           Text(
             '$month월 요약',
-            style: ResponsiveHelper.bodyStyle(context)
-                .copyWith(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+            style: ConceptText.section(),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 14)),
           Row(
             children: [
               Expanded(
-                child: _kpiItem('확정 근무', '$_cachedConfirmedCount일', confirmedWorkColor),
+                // [DEVICE-MISMATCH-FIX] 세는 단위는 지원서(근무 건)다 — 같은 날
+                //   두 근무면 2건이다(DEV 실측: 5개 날짜에 6건인데 `6일`).
+                child: _kpiItem('확정 근무', unknown ?? '$_cachedConfirmedCount건',
+                    unknown != null ? unknownColor : confirmedWorkColor),
               ),
               Expanded(
-                child: _kpiItem('실근무', '$_cachedActualDays일', actualDaysColor),
+                child: _kpiItem('실근무', unknown ?? '$_cachedActualDays일',
+                    unknown != null ? unknownColor : actualDaysColor),
               ),
             ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          Row(
-            children: [
-              Expanded(
-                child: _kpiItem(
-                  '예상수입',
-                  '${_fmt.format(_cachedTotalIncome)}원',
-                  incomeColor,
-                ),
-              ),
-              Expanded(
-                child: _kpiItem(
-                  '확정수입',
-                  '${_fmt.format(_cachedConfirmedIncome)}원',
-                  confirmedIncomeColor,
-                ),
-              ),
-            ],
+          // [DU217 B] 큰 글자에서 두 수입 값이 간격 없이 붙어 읽히지 않게 한다.
+          //   두 값이 각 칸에 최소 간격(spacing 12)을 두고 한 줄로 들어갈 때만 기존 2열을 그대로 쓰고,
+          //   아니면 수입 두 항목만 세로로 쌓는다. 글자 축소·말줄임·단위 제거는 하지 않는다.
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final expected = unknown ?? '${_fmt.format(_cachedTotalIncome)}원';
+              final confirmed = unknown ?? '${_fmt.format(_cachedConfirmedIncome)}원';
+              final expectedItem = _kpiItem(
+                '예상수입',
+                expected,
+                unknown != null ? unknownColor : incomeColor,
+              );
+              final confirmedItem = _kpiItem(
+                '확정수입',
+                confirmed,
+                unknown != null ? unknownColor : confirmedIncomeColor,
+              );
+              final valueStyle = DefaultTextStyle.of(context).style.merge(
+                  ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold));
+              final scaler = MediaQuery.textScalerOf(context);
+              final direction = Directionality.of(context);
+              double widthOf(String s) {
+                final tp = TextPainter(
+                  text: TextSpan(text: s, style: valueStyle),
+                  textDirection: direction,
+                  textScaler: scaler,
+                  maxLines: 1,
+                )..layout();
+                final w = tp.width;
+                tp.dispose();
+                return w;
+              }
+
+              final half = constraints.maxWidth / 2;
+              final gap = ResponsiveHelper.spacing(context, 12);
+              final fits = widthOf(expected) + gap <= half && widthOf(confirmed) <= half;
+              if (fits) {
+                return Row(
+                  children: [
+                    Expanded(child: expectedItem),
+                    Expanded(child: confirmedItem),
+                  ],
+                );
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  expectedItem,
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                  confirmedItem,
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -1069,7 +1513,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         final selected = _selectedFilter == value;
         return Padding(
           padding: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
-          child: GestureDetector(
+          // [DU311 A4] 보이는 칩은 그대로, 누름 영역만 최소 48×48 + 버튼·선택 의미.
+          child: _tapReceiver(
+            selected: selected,
             onTap: () => setState(() {
               _selectedFilter = value;
               _recomputeStats();
@@ -1148,7 +1594,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         '${_selectedDayEvents.length}건',
         style: ResponsiveHelper.tinyStyle(
           context,
-          color: Theme.of(context).primaryColor,
+          // [DU1 구현125 C124-1] brand 글자는 이 알약 바탕(brand 15% · 날짜 칩 #F5F6F8 위 = #D9DEF6)에서 4.18:1 —
+          //   작은 글 4.5 미만(구현124 관측). 같은 brand 계열의 진한 토큰으로 글자만 바꾼다(5.73:1). 바탕·크기는 그대로.
+          color: AppColors.brandDark,
           fontWeight: FontWeight.bold,
         ),
       ),
@@ -1158,6 +1606,8 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   // ─── 일정 리스트 ─────────────────────────────────────────────
 
   Widget _buildSliverScheduleList() {
+    // [DU213 C19] 조회 상태(실패·조회 중)가 선택일·이벤트 유무보다 먼저다 — 이전 카드가 오류를 가리지 않는다.
+    if (!_monthComplete) return _buildEmptyState();
     if (_selectedDay == null) return const SliverToBoxAdapter(child: SizedBox.shrink());
     // H1: 캐시된 _selectedDayEvents 사용 — 중복 조회·정렬 제거
     if (_selectedDayEvents.isEmpty) return _buildEmptyState();
@@ -1200,13 +1650,38 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       return AppEmptyState(
         icon: Icons.cloud_off_outlined,
         iconColor: AppColors.grey500,
-        title: '일정을 불러오지 못했습니다',
-        subtitle: '일정이 없다는 뜻이 아닙니다. 잠시 후 다시 시도해주세요.',
+        title: '일정을 불러오지 못했어요',
+        subtitle: '일정이 없다는 뜻은 아니에요. 잠시 후 다시 시도해 주세요.',
         action: TextButton.icon(
           onPressed: _isLoading ? null : _loadApplications,
           icon: const Icon(Icons.refresh, size: 18),
           label: const Text('다시 시도'),
         ),
+        asSliver: true,
+      );
+    }
+    // [DU213 C18] 월근태 실패 — toast 가 사라져도 남는 안내와 다시 시도(현재 표시월 두 read 재조회).
+    if (_attError != null) {
+      return AppEmptyState(
+        icon: Icons.cloud_off_outlined,
+        iconColor: AppColors.grey500,
+        title: '출근 기록을 불러오지 못했어요',
+        subtitle: '월 요약을 확인할 수 없어요. 잠시 후 다시 시도해 주세요.',
+        action: TextButton.icon(
+          onPressed:
+              _monthLoading ? null : () => _loadMonthlyAttendances(_focusedDay),
+          icon: const Icon(Icons.refresh, size: 18),
+          label: const Text('다시 시도'),
+        ),
+        asSliver: true,
+      );
+    }
+    // [DU213 C17] 조회 중(또는 아직 읽지 않은 달) — 이전 월 목록을 보이지 않는다.
+    if (!_monthComplete) {
+      return AppEmptyState(
+        icon: Icons.hourglass_empty_rounded,
+        iconColor: AppColors.grey300,
+        title: '월 일정을 확인하고 있어요',
         asSliver: true,
       );
     }
@@ -1264,4 +1739,23 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         return 6;
     }
   }
+}
+
+/// [E1-AVAIL] 근무 가능일을 **읽었는가**. 초대 지역의
+///   `InvitePreferenceState` 와 같은 자다 — ERROR 를 0 으로 번역하지 않는다.
+enum _AvailLoad {
+  /// 아직 읽지 않았다. 0 일이 아니다.
+  loading,
+
+  /// 읽었다. `_availabilityDates` 가 사실이다(0 일도 사실이다).
+  ok,
+
+  /// 읽지 못했다. 등록 여부를 말할 수 없다.
+  failed,
+}
+
+/// [DU213] 월 조회 read 실패 표식 — 두 read 를 함께 기다리며 실패를 각각 붙잡는다.
+class _ReadFail {
+  const _ReadFail(this.error);
+  final Object error;
 }

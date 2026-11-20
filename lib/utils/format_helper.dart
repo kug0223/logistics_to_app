@@ -80,6 +80,19 @@ class FormatHelper {
            '${kst.minute.toString().padLeft(2, '0')}';
   }
 
+  /// 연도까지 쓰는 날짜+시간 — **KST** 기준(기기 시간대 무관).
+  ///
+  /// 예시: formatDateTimeFull(2026-10-15T14:00Z) → '2026.10.15 23:00'
+  ///
+  /// [E2-DETAIL-KST] `DateFormat('yyyy.MM.dd HH:mm').format(x)` 는 기기 시간대로
+  /// 그린다 — UTC 기기에서 23:00 KST 사건이 `14:00` 으로 보였다.
+  static String formatDateTimeFull(DateTime dateTime) {
+    final kst = _toKst(dateTime);
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${kst.year}.${two(kst.month)}.${two(kst.day)} '
+        '${two(kst.hour)}:${two(kst.minute)}';
+  }
+
   static const _weekdays = ['월', '화', '수', '목', '금', '토', '일'];
   static const _kst = Duration(hours: 9);
   static DateTime _toKst(DateTime dt) => dt.toUtc().add(_kst);
@@ -194,6 +207,69 @@ class FormatHelper {
   /// 키다. 다른 instant 를 줘도 그 날의 KST 자정으로 정규화된다.
   static DateTime kstMidnightOfKstDay(DateTime kstDayKey) =>
       toKstDate(kstDayKey).subtract(_kst);
+
+  /// [E1-TZ] KST 달력일 + `'HH:MM'`(KST 벽시계) → **절대 시각**.
+  ///
+  /// `startTime`/`endTime` 은 KST 벽시계 문자열이다. 그런데 이 값을 기기
+  /// local 자정(`DateTime(y, m, d)`)에 더하면 **기기 시간대만큼 통째로
+  /// 어긋난다** — GMT 기기에서 KST 10:00 근무가 19:00 로 해석돼 "출근까지
+  /// 9시간" 같은 잘못된 안내가 나온다(DEV 에뮬레이터 실측). 반대로
+  /// `toKstDate()` 가 돌려준 `DateTime.utc(y, m, d)` 에 그냥 더하면 그 값은
+  /// UTC 벽시계라 **모든 기기에서** 9시간 빠르다.
+  ///
+  /// 기준은 사용자의 시스템 시간대가 아니라 canonical KST 다. 그래서 그 날의
+  /// KST 자정 instant([kstMidnightOfKstDay])에서 출발한다 — 같은 식을 화면마다
+  /// 다시 적지 않기 위해 이름을 준다.
+  ///
+  /// 입력 `kstDayKey` 는 [toKstDate] / [kstDayKeyOfCivil] 가 만든 키다.
+  /// 형식이 어긋나면 null — 한 건 때문에 화면을 깨지 않는다.
+  /// `24:00` 같은 값도 null 이다(표기 관례를 여기서 늘리지 않는다).
+  static DateTime? kstWallClockInstant(DateTime kstDayKey, String hhmm) {
+    final parts = hhmm.split(':');
+    if (parts.length < 2) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return null;
+    if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+    return kstMidnightOfKstDay(kstDayKey)
+        .add(Duration(hours: h, minutes: m));
+  }
+
+  /// [ISG2] 절대 시각 → **KST 기준** `MM.dd HH:mm`.
+  ///
+  /// 마감처럼 사용자가 그 시각에 맞춰 행동하는 짧은 표기에 쓴다.
+  /// `DateFormat(...).format(dt)` 은 받은 DateTime 의 **자기 성분**을 쓴다 —
+  /// UTC DateTime 이면 UTC 시각이, local DateTime 이면 기기 시각이 찍힌다.
+  /// 그래서 같은 초대 마감이 기기마다 다른 시각으로 보였다(실측: KST 20:00
+  /// 마감이 UTC 성분 기준 11:00 으로 렌더됨). 판정은 절대 시각 비교 그대로
+  /// 두고, **표시만** 이 한 곳을 지난다.
+  /// [dateSeparator] 는 화면마다 이미 쓰던 표기를 유지하기 위한 것이다
+  /// (지원자 카드 `MM.dd`, 관리자 초대 목록 `MM/dd`). 시각 계산은 같다.
+  static String formatKstMonthDayTime(DateTime instant,
+      {String dateSeparator = '.'}) {
+    final k = _toKst(instant);
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(k.month)}$dateSeparator${two(k.day)} '
+        '${two(k.hour)}:${two(k.minute)}';
+  }
+
+  /// [E1-RESTRICT] 절대 시각 → **KST 기준** 한국어 날짜·시각.
+  ///
+  /// 예: `2026년 10월 15일 오전 6시` · 분이 있으면 `… 오전 6시 30분`.
+  ///
+  /// 제재 만료처럼 **사용자가 그 시각에 맞춰 행동하는 안내**에 쓴다.
+  /// `DateTime.toLocal()` 의 연·월·일 성분을 그대로 쓰면 기기 시간대에 따라
+  /// 날짜가 달라진다 — 같은 제재가 GMT 기기에서는 전날로 보였다(실측).
+  /// 판정은 절대 시각 비교 그대로 두고, **표시만** 이 한 곳을 지난다.
+  static String formatKstDateTimeKorean(DateTime instant) {
+    final k = _toKst(instant);
+    final isAm = k.hour < 12;
+    var h = k.hour % 12;
+    if (h == 0) h = 12;
+    final minute = k.minute == 0 ? '' : ' ${k.minute}분';
+    return '${k.year}년 ${k.month}월 ${k.day}일 '
+        '${isAm ? '오전' : '오후'} $h시$minute';
+  }
 
   /// [R1.2.1] KST 기준 그 달 전체 구간 — `kstDayRange`와 같은 계약의 월 단위.
   ///

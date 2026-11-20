@@ -3,6 +3,7 @@
 // 지금까지 이 두 화면은 소스 원문만 읽은 CODE only 였다. 여기서는 production
 // 위젯을 SUPER_ADMIN 조건으로 세우고, 표본 값을 넣어 본문이 무엇을 말하는지 잰다.
 // 쓰기(블랙리스트·제재 해제·한도 저장)는 **한 번도 호출하지 않는다.**
+import 'support/visible_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -158,14 +159,14 @@ void main() {
         reads: AllUsersReads(allUsersRaw: () async => _sameNamePair));
 
     // 같은 이름이 세 번.
-    expect(find.text('김민수'), findsNWidgets(3));
+    expect(findVisibleText('김민수'), findsNWidgets(3));
 
     // 목록 카드가 보여주는 것은 이름 · 역할 배지 · (있으면)연락처 · 근무일수뿐이다.
     // **`@아이디` 는 목록에 없다.** 연락처가 없는 표본이면 지원자 둘은
     // 화면상 완전히 같아 보인다 — 이름만으로 문의 대상을 고를 수 없다.
-    expect(find.textContaining('@minsu'), findsNothing);
-    expect(find.text('지원자'), findsNWidgets(2)); // 역할 배지도 둘이 같다
-    expect(find.text('사업장관리자'), findsOneWidget);
+    expect(findVisibleTextContaining('@minsu'), findsNothing);
+    expect(findVisibleText('지원자'), findsNWidgets(2)); // 역할 배지도 둘이 같다
+    expect(findVisibleText('사업장관리자'), findsOneWidget);
   });
 
   testWidgets('[SAU-2] 카드를 열어야 @아이디가 나온다 — 사업체명은 관리자에게만',
@@ -174,16 +175,16 @@ void main() {
         reads: AllUsersReads(allUsersRaw: () async => _sameNamePair));
 
     // 첫 번째 김민수(지원자) 카드를 실제로 탭한다.
-    await tester.tap(find.text('김민수').first);
+    await tester.tap(findVisibleText('김민수').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
     // 상세 시트에서 비로소 식별자가 보인다.
-    expect(find.text('@minsu01 · 지원자'), findsOneWidget);
+    expect(findVisibleText('@minsu01 · 지원자'), findsOneWidget);
 
     // 지원자에게는 `businessName` 자체가 없으므로 사업체명 행이 없다.
-    expect(find.text('사업체명'), findsNothing);
-    expect(find.text('강남 물류센터'), findsNothing);
+    expect(findVisibleText('사업체명'), findsNothing);
+    expect(findVisibleText('강남 물류센터'), findsNothing);
   });
 
   testWidgets('[SAU-2b] 관리자 카드를 열면 사업체명이 문맥으로 붙는다 (양성 대조)',
@@ -191,13 +192,43 @@ void main() {
     await _pumpUsers(tester,
         reads: AllUsersReads(allUsersRaw: () async => _sameNamePair));
 
-    await tester.tap(find.text('김민수').last);
+    await tester.tap(findVisibleText('김민수').last);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('@bizminsu · 사업장관리자'), findsOneWidget);
-    expect(find.text('사업체명'), findsOneWidget);
-    expect(find.text('강남 물류센터'), findsOneWidget);
+    expect(findVisibleText('@bizminsu · 사업장관리자'), findsOneWidget);
+    expect(findVisibleText('사업체명'), findsOneWidget);
+    expect(findVisibleText('강남 물류센터'), findsOneWidget);
+  });
+
+  // [SA-SHEET-BG] Pixel 5 10-23: 상세 시트가 투명해 뒤 목록과 겹쳐 보였다.
+  testWidgets('[SAU-6] 상세 시트는 불투명하고, 끌어서 스크롤되고, 뒤로 가기로 닫힌다',
+      (tester) async {
+    await _pumpUsers(tester,
+        reads: AllUsersReads(allUsersRaw: () async => _sameNamePair),
+        size: const Size(390, 844));
+
+    await tester.tap(findVisibleText('김민수').first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(findVisibleText('@minsu01 · 지원자'), findsOneWidget);
+
+    // 시트 자체가 칠해진다 — 투명이면 뒤 목록 글자가 비친다.
+    final sheet = tester.widget<BottomSheet>(find.byType(BottomSheet));
+    expect(sheet.backgroundColor, isNotNull);
+    expect(sheet.backgroundColor!.a, 1.0);
+
+    // 시트 안을 끌면 예외 없이 움직인다(DraggableScrollableSheet 컨트롤러 연결).
+    await tester.drag(findVisibleText('@minsu01 · 지원자'), const Offset(0, -300));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull);
+
+    // 시스템 뒤로 가기 → 시트만 닫히고 목록은 남는다.
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(BottomSheet), findsNothing);
+    expect(findVisibleText('김민수'), findsNWidgets(3));
   });
 
   testWidgets('[SAU-3] 조회 실패를 "대상 없음"이라고 말하지 않는다', (tester) async {
@@ -205,11 +236,11 @@ void main() {
         reads: AllUsersReads(
             allUsersRaw: () async => throw Exception('unavailable')));
 
-    expect(find.text('사용자 목록을 불러오지 못했습니다'), findsOneWidget);
-    expect(find.text('해당하는 사용자가 없다는 뜻이 아닙니다.'), findsOneWidget);
-    expect(find.text('다시 시도'), findsOneWidget);
+    expect(findVisibleText('사용자 목록을 불러오지 못했습니다'), findsOneWidget);
+    expect(findVisibleText('해당하는 사용자가 없다는 뜻이 아닙니다.'), findsOneWidget);
+    expect(findVisibleText('다시 시도'), findsOneWidget);
     // 이 문구가 남아 있으면 문의 대상이 없다고 단정한 것이다.
-    expect(find.text('해당하는 사용자가 없습니다'), findsNothing);
+    expect(findVisibleText('해당하는 사용자가 없습니다'), findsNothing);
   });
 
   testWidgets('[SAU-4] 정말 비었을 때는 여전히 "없습니다" 라고 말한다 (양성 대조)',
@@ -217,8 +248,8 @@ void main() {
     await _pumpUsers(tester,
         reads: AllUsersReads(allUsersRaw: () async => const []));
 
-    expect(find.text('해당하는 사용자가 없습니다'), findsOneWidget);
-    expect(find.text('사용자 목록을 불러오지 못했습니다'), findsNothing);
+    expect(findVisibleText('해당하는 사용자가 없습니다'), findsOneWidget);
+    expect(findVisibleText('사용자 목록을 불러오지 못했습니다'), findsNothing);
   });
 
   testWidgets('[SAU-5] 320dp × 2.0 — 이름·식별자가 예외 없이 그려진다', (tester) async {
@@ -228,8 +259,8 @@ void main() {
         textScale: 2.0);
 
     expect(tester.takeException(), isNull);
-    expect(find.text('김민수'), findsNWidgets(3));
-    expect(find.textContaining('@minsu'), findsNothing);
+    expect(findVisibleText('김민수'), findsNWidgets(3));
+    expect(findVisibleTextContaining('@minsu'), findsNothing);
   });
 
   // ══ P32-X2 — TO 한도의 의미 ════════════════════════════════════════════════
@@ -260,28 +291,28 @@ void main() {
   testWidgets('[TOL-1] 전역/개별 구분과 draft 예외를 본문이 말한다', (tester) async {
     await _pumpLimit(tester, reads: _okLimit());
 
-    expect(find.text('현재 기본 한도: 7개'), findsOneWidget);
+    expect(findVisibleText('현재 기본 한도: 7개'), findsOneWidget);
     expect(
-        find.textContaining('관리자별 개별 한도가 설정되지 않은 경우 이 값이 적용됩니다.'),
+        findVisibleTextContaining('관리자별 개별 한도가 설정되지 않은 경우 이 값이 적용됩니다.'),
         findsOneWidget);
-    expect(find.textContaining('draft 상태로는 제한 없이 저장 가능합니다.'),
+    expect(findVisibleTextContaining('draft 상태로는 제한 없이 저장 가능합니다.'),
         findsOneWidget);
   });
 
   testWidgets('[TOL-2] 사업장 수와 한도가 각각 다른 수로 나란히 뜬다', (tester) async {
     await _pumpLimit(tester, reads: _okLimit());
-    await tester.tap(find.text('관리자별 한도'));
+    await tester.tap(findVisibleText('관리자별 한도'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
     // 개별 한도가 있는 관리자: 사업장 2개인데 한도는 3개다 — 다른 수다.
-    expect(find.text('2개 사업장 관리 중'), findsOneWidget);
-    expect(find.text('개별 3개'), findsOneWidget);
+    expect(findVisibleText('2개 사업장 관리 중'), findsOneWidget);
+    expect(findVisibleText('개별 3개'), findsOneWidget);
 
     // 개별 한도가 없는 관리자: 사업장이 1개면 그 줄 자체가 없고(>1 조건),
     // 한도는 전역값을 쓴다고만 말한다.
-    expect(find.text('1개 사업장 관리 중'), findsNothing);
-    expect(find.text('전역 7개'), findsOneWidget);
+    expect(findVisibleText('1개 사업장 관리 중'), findsNothing);
+    expect(findVisibleText('전역 7개'), findsOneWidget);
 
     // 화면 어디에도 **현재 활성 공고 수**는 없다 — 남은 여유를 알 수 없다.
     // (자료가 reader 에 없다. 새 집계를 이 단계에서 만들지 않는다.)
@@ -295,9 +326,9 @@ void main() {
         ));
 
     // 예전에는 실패해도 `현재 기본 한도: 4개` 가 남고 입력칸에 4 가 채워졌다.
-    expect(find.textContaining('현재 기본 한도:'), findsNothing);
-    expect(find.textContaining('현재 기본 한도를 불러오지 못했습니다.'), findsOneWidget);
-    expect(find.textContaining('지금 값을 저장하면 실제 설정을 덮어씁니다.'),
+    expect(findVisibleTextContaining('현재 기본 한도:'), findsNothing);
+    expect(findVisibleTextContaining('현재 기본 한도를 불러오지 못했습니다.'), findsOneWidget);
+    expect(findVisibleTextContaining('지금 값을 저장하면 실제 설정을 덮어씁니다.'),
         findsOneWidget);
 
     // 입력칸이 추측값으로 미리 채워져 있지 않다.
@@ -312,13 +343,13 @@ void main() {
           globalConfigRaw: () async => {'maxActiveTOPerBusiness': 7},
           businessAdminsRaw: () async => throw Exception('unavailable'),
         ));
-    await tester.tap(find.text('관리자별 한도'));
+    await tester.tap(findVisibleText('관리자별 한도'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('관리자 목록을 불러오지 못했습니다'), findsOneWidget);
-    expect(find.text('등록된 관리자가 없다는 뜻이 아닙니다.'), findsOneWidget);
-    expect(find.text('등록된 사업장 관리자가 없습니다'), findsNothing);
+    expect(findVisibleText('관리자 목록을 불러오지 못했습니다'), findsOneWidget);
+    expect(findVisibleText('등록된 관리자가 없다는 뜻이 아닙니다.'), findsOneWidget);
+    expect(findVisibleText('등록된 사업장 관리자가 없습니다'), findsNothing);
   });
 
   testWidgets('[TOL-5] 정말 비었을 때는 여전히 "없습니다" 라고 말한다 (양성 대조)',
@@ -328,12 +359,12 @@ void main() {
           globalConfigRaw: () async => {'maxActiveTOPerBusiness': 7},
           businessAdminsRaw: () async => const [],
         ));
-    await tester.tap(find.text('관리자별 한도'));
+    await tester.tap(findVisibleText('관리자별 한도'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('등록된 사업장 관리자가 없습니다'), findsOneWidget);
-    expect(find.text('관리자 목록을 불러오지 못했습니다'), findsNothing);
+    expect(findVisibleText('등록된 사업장 관리자가 없습니다'), findsOneWidget);
+    expect(findVisibleText('관리자 목록을 불러오지 못했습니다'), findsNothing);
   });
 
   testWidgets('[TOL-6] 320dp × 2.0 — 한도 수치와 저장 행동이 예외 없이 그려진다',
@@ -344,7 +375,7 @@ void main() {
         textScale: 2.0);
 
     expect(tester.takeException(), isNull);
-    expect(find.text('현재 기본 한도: 7개'), findsOneWidget);
-    expect(find.text('저장'), findsWidgets);
+    expect(findVisibleText('현재 기본 한도: 7개'), findsOneWidget);
+    expect(findVisibleText('저장'), findsWidgets);
   });
 }

@@ -9,6 +9,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다 · [DU267] 카드 제목·사업장명·요청자도 같다
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -173,35 +174,35 @@ void main() {
       (tester) async {
     await _open(tester, _reads(idReqs: [_idReq()]));
 
-    expect(find.text('신분증 열람 요청'), findsOneWidget);
+    expect(findVisibleText('신분증 열람 요청'), findsOneWidget);
     // 정확한 사업장·요청자·목적이 그 카드에 있다.
-    expect(find.text('강남 물류센터'), findsOneWidget);
-    expect(find.textContaining('박사장'), findsOneWidget);
+    expect(findVisibleText('강남 물류센터'), findsOneWidget);
+    expect(findVisibleTextContaining('박사장'), findsOneWidget);
     expect(find.textContaining('사유:'), findsOneWidget);
     // 해지 카드는 없다 — 유형이 섞이지 않는다.
-    expect(find.text('계약해지 요청'), findsNothing);
+    expect(findVisibleText('계약해지 요청'), findsNothing);
   });
 
   testWidgets('[MRI-2] 계약해지 요청만 있으면 그 카드만 서고 신분증으로 합쳐지지 않는다',
       (tester) async {
     await _open(tester, _reads(terms: [_termination()]));
 
-    expect(find.text('계약해지 요청'), findsOneWidget);
+    expect(findVisibleText('계약해지 요청'), findsOneWidget);
     // 별도 요청 key(applicationId)의 근무·사유가 그 카드에 있다.
-    expect(find.textContaining('성수 창고'), findsWidgets);
+    expect(findVisibleTextContaining('성수 창고'), findsWidgets);
     expect(find.textContaining('개인 사정'), findsOneWidget);
-    expect(find.text('신분증 열람 요청'), findsNothing);
+    expect(findVisibleText('신분증 열람 요청'), findsNothing);
   });
 
   testWidgets('[MRI-3] 둘 다 있으면 서로 다른 두 카드로 구별된다', (tester) async {
     await _open(tester,
         _reads(idReqs: [_idReq()], terms: [_termination()]));
 
-    expect(find.text('신분증 열람 요청'), findsOneWidget);
-    expect(find.text('계약해지 요청'), findsOneWidget);
+    expect(findVisibleText('신분증 열람 요청'), findsOneWidget);
+    expect(findVisibleText('계약해지 요청'), findsOneWidget);
     // 다른 사업장이 각자 자기 카드에 붙는다 — 행이 섞이지 않는다.
-    expect(find.text('강남 물류센터'), findsOneWidget);
-    expect(find.textContaining('성수 창고'), findsWidgets);
+    expect(findVisibleText('강남 물류센터'), findsOneWidget);
+    expect(findVisibleTextContaining('성수 창고'), findsWidgets);
   });
 
   testWidgets('[MRI-4] 한 읽기가 실패하면 두 요청 모두 없음/완료로 바꾸지 않는다',
@@ -211,16 +212,16 @@ void main() {
 
     // `Future.wait` 계약이라 하나가 던지면 전체가 오류로 간다.
     //   중요한 것은 **없음이라고 말하지 않는 것**이다.
-    expect(find.text('신분증 열람 요청'), findsNothing);
-    expect(find.text('계약해지 요청'), findsNothing);
-    expect(find.textContaining('요청이 없습니다'), findsNothing);
+    expect(findVisibleText('신분증 열람 요청'), findsNothing);
+    expect(findVisibleText('계약해지 요청'), findsNothing);
+    expect(findVisibleTextContaining('요청이 없습니다'), findsNothing);
     expect(find.textContaining('처리할 요청이 없'), findsNothing);
   });
 
   testWidgets('[MRI-5] 정말 비었을 때만 없음을 말한다 (정상 대조)', (tester) async {
     await _open(tester, _reads());
 
-    expect(find.text('신분증 열람 요청'), findsNothing);
-    expect(find.text('계약해지 요청'), findsNothing);
+    expect(findVisibleText('신분증 열람 요청'), findsNothing);
+    expect(findVisibleText('계약해지 요청'), findsNothing);
   });
 }

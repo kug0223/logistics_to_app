@@ -1,5 +1,7 @@
 import '../../models/core/application_model.dart';
 import '../../models/core/attendance_model.dart';
+import '../../models/core/employment_contract_model.dart';
+import '../../services/contract_service.dart';
 import '../../services/firestore_service.dart';
 
 /// [R7-P2-1 잔여] 출퇴근 화면이 **목록을 만들 때** 나가는 읽기 경계.
@@ -13,6 +15,7 @@ class AttendanceCheckReads {
   const AttendanceCheckReads({
     required this.myApplications,
     required this.todayAttendance,
+    required this.myContracts,
   });
 
   final Future<List<ApplicationModel>> Function(String uid) myApplications;
@@ -22,12 +25,18 @@ class AttendanceCheckReads {
     required String applicationId,
   }) todayAttendance;
 
+  /// [CONTRACT-BEFORE-CHECKIN] 내 계약 목록 — 출근 버튼 gate 의 근거.
+  ///   화면을 읽을 때마다 새로 받는다(UserProvider 의 서명 대기 캐시를 쓰지 않는다).
+  ///   실패는 throw 로 올린다 — 빈 목록으로 바꾸면 "계약 없음"과 구별되지 않는다.
+  final Future<List<EmploymentContractModel>> Function(String uid) myContracts;
+
   factory AttendanceCheckReads.of([FirestoreService? service]) {
     final svc = service ?? FirestoreService();
     return AttendanceCheckReads(
       myApplications: svc.getMyApplications,
       todayAttendance: ({required String userId, required String applicationId}) =>
           svc.getTodayAttendance(userId: userId, applicationId: applicationId),
+      myContracts: (uid) => ContractService().getByWorker(uid),
     );
   }
 }

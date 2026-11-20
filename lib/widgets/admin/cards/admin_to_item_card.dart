@@ -402,8 +402,10 @@ class _TOItemCardState extends State<TOItemCard> {
                                               //   0명으로 말하지 않는다. 집계는 업무마다
                                               //   {confirmed:0,pending:0} 으로 미리 채워지므로
                                               //   null 은 "모른다" 뿐이다.
+                                              // [DATE-SCOPE] 요약과 같은 판정.
                                               statsFailed:
                                                   widget.toItem.workDetailStatsFailed ||
+                                                      !widget.toItem.hasLoadedStats ||
                                                       stats == null,
                                             );
                                           }),
@@ -521,11 +523,14 @@ class _TOItemCardState extends State<TOItemCard> {
         : to.publishAt;
     // [4I.1A] group card와 badge parity — closed 상태 contextual 레이블 동기화
     // [POSTING-V2-03S.1] group card와 동일하게 인원 충족을 색·아이콘까지 분리한다.
+    // [INVITE-CAPACITY] 날짜 행은 **그 날짜의** 충원으로 말한다. 공고 FULL 은 열린
+    //   날짜들의 이야기라, 미충원으로 닫힌 날짜를 `모집 완료`로 칠하면 FULL≠DONE 위반.
+    final rowFull = slot != null ? slot.isFull : to.isFull;
     final isRecruitmentComplete =
-        status == SlotDisplayStatus.closed && (to.isFull || slot?.isFull == true);
+        status == SlotDisplayStatus.closed && rowFull;
     String? closedLabel;
     if (status == SlotDisplayStatus.closed) {
-      if (to.isFull) {
+      if (rowFull) {
         closedLabel = SlotStatusBadge.recruitmentCompleteLabel;
       } else if (slot?.isManualClosed == true || to.isManualClosed) {
         closedLabel = '종료';

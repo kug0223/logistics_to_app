@@ -397,9 +397,10 @@ void main() {
       //   조건부로 감추는 대신 항상 그리고, null 이면 안내를 보여준다.
       expect(
           mine.contains(
-              '_attendancePolicyBlock(offerApp.attendancePolicySnapshot)'),
+              '_attendancePolicyBlock(offerApp.attendancePolicySnapshot, offerApp)'),
           isTrue);
-      expect(mine.contains('attendancePolicyGroups('), isTrue,
+      // [.29-A1] 7개 전부를 공용 '근태 인정 기준' 생성에서 받는다.
+      expect(mine.contains('attendanceRuleGuide('), isTrue,
           reason: '7개 전부를 공용 formatter 에서 받는다');
       // 사업장 문서를 다시 읽지 않는다.
       expect(mine.contains('getBusinessById'), isFalse,

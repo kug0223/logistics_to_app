@@ -50,12 +50,19 @@ class AdminHomeResignRequestSection {
   /// 다음 자정 스케줄러에서 자동 승인될 건수 (서버가 스케줄러와 동일 기준으로 계산)
   final int soonCount;
 
+  /// [D3-RETRO-EXCLUDE] 자동 승인되지 않아 관리자가 직접 결정해야 하는 소급 요청 수.
+  ///
+  /// null = 서버가 이 값을 보내지 않았다(구버전 서버). 0 으로 바꾸지 않는다 —
+  /// 모르는 것을 "수동 검토 0건"으로 확정해 말하지 않기 위해서다.
+  final int? manualReviewCount;
+
   final List<AdminHomeSimpleBizCount> byBusiness;
 
   const AdminHomeResignRequestSection({
     required this.available,
     required this.count,
     required this.soonCount,
+    this.manualReviewCount,
     required this.byBusiness,
   });
 
@@ -64,6 +71,7 @@ class AdminHomeResignRequestSection {
       available: (map['available'] as bool?) ?? false,
       count: (map['count'] as num?)?.toInt() ?? 0,
       soonCount: (map['soonCount'] as num?)?.toInt() ?? 0,
+      manualReviewCount: (map['manualReviewCount'] as num?)?.toInt(),
       byBusiness: ((map['byBusiness'] as List?) ?? [])
           .whereType<Map>()
           .map((e) => AdminHomeSimpleBizCount.fromMap(Map<String, dynamic>.from(e)))

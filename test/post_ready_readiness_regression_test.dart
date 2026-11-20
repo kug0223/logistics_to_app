@@ -162,15 +162,22 @@ void main() {
   // WRITER. 각 축을 실제로 없앨 수 있는 자
   // ══════════════════════════════════════════════════════════════
   group('WRITER 상실 경로', () {
-    test('WRITER-01 승인 해제는 관리 callable 의 deactivate 하나다', () {
+    test('WRITER-01 승인 해제는 관리 callable 의 deactivate 와 소유자 운영 종료 둘이다', () {
       final s = _fns();
-      expect(s.contains('isApproved: false,'), isTrue);
-      final i = s.indexOf('isApproved: false,');
-      final head = s.substring((i - 300).clamp(0, i), i);
-      expect(head.contains('action === "deactivate"'), isTrue);
-      // 비활성 표시가 같이 남고, 공고 생성은 그것만으로도 막힌다.
-      final tail = s.substring(i, i + 260);
-      expect(tail.contains('deactivatedAt'), isTrue);
+      // [BUSINESS-ARCHIVE 2026-10-16] 소유자 운영 종료(callableArchiveOwnBusiness)가
+      //   두 번째 writer 다 — 하드 삭제 대신 같은 비활성화 연쇄를 탄다.
+      final writers = RegExp(r'isApproved: false,').allMatches(s).toList();
+      expect(writers.length, 2);
+      final heads = writers
+          // 운영 종료 callable 은 사전 조회(preview) 분기가 쓰기 앞에 있어 창을 넓게 본다.
+          .map((m) => s.substring((m.start - 3000).clamp(0, m.start), m.start))
+          .toList();
+      expect(heads.any((h) => h.contains('action === "deactivate"')), isTrue);
+      expect(heads.any((h) => h.contains('callableArchiveOwnBusiness')), isTrue);
+      // 둘 다 비활성 표시가 같이 남고, 공고 생성은 그것만으로도 막힌다.
+      for (final m in writers) {
+        expect(s.substring(m.start, m.start + 260).contains('deactivatedAt'), isTrue);
+      }
     });
 
     test('WRITER-02 업무는 soft delete 다 — 기존 snapshot 을 지우지 않는다', () {

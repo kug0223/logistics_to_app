@@ -9,6 +9,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -31,6 +32,7 @@ import 'package:ALfit/screens/user/interim_settlement_request_screen.dart';
 import 'package:ALfit/screens/user/my_reviews_reads.dart';
 import 'package:ALfit/screens/user/my_reviews_screen.dart';
 import 'package:ALfit/screens/user/subadmin_leave_screen.dart';
+import 'package:ALfit/screens/user/user_tab_scope.dart';
 import 'package:ALfit/widgets/common/app_page_scaffold.dart';
 import 'package:ALfit/widgets/common/gradient_scaffold.dart';
 import 'package:ALfit/widgets/user/pending_contract_bar.dart';
@@ -132,6 +134,7 @@ Future<void> _pump(
 
 AttendanceCheckReads _attReads() => AttendanceCheckReads(
       myApplications: (uid) async => <ApplicationModel>[],
+      myContracts: (uid) async => const [],
       todayAttendance: ({required userId, required applicationId}) async =>
           null as AttendanceModel?,
     );
@@ -207,7 +210,7 @@ void main() {
 
     expect(find.byType(AppPageScaffold), findsOneWidget);
     expect(find.byType(GradientScaffold), findsNothing);
-    expect(find.text('출퇴근 체크'), findsOneWidget);
+    expect(findVisibleText('출퇴근 체크'), findsOneWidget);
 
     // 우상단 버튼 세 개 — 당겨서 새로고침으로 의미가 바뀌지 않았다.
     expect(find.byIcon(Icons.refresh), findsOneWidget);
@@ -220,12 +223,33 @@ void main() {
     await _pump(tester, AttendanceCheckScreen(reads: _attReads()),
         up: _Worker(pending: true));
     expect(find.byType(PendingContractBar), findsOneWidget);
-    expect(find.text('계약서 서명이 필요해요'), findsOneWidget);
+    expect(findVisibleText('계약서 서명이 필요해요'), findsOneWidget);
 
     // 서명할 것이 없으면 거짓 대기를 만들지 않는다.
     await _pump(tester, AttendanceCheckScreen(reads: _attReads()),
         up: _Worker(pending: false));
-    expect(find.text('계약서 서명이 필요해요'), findsNothing);
+    expect(findVisibleText('계약서 서명이 필요해요'), findsNothing);
+  });
+
+  // [CONTRACT-DISPATCH-B5] 근로자 셸(UserTabScope) 안에서는 셸이 하단 탭 위에 배너를 이미 그린다.
+  //   탭 안으로 push 된 출퇴근 화면이 자기 배너를 또 그려 두 장이 겹쳤다(DEVICE 10-25).
+  //   셸 안 → 화면 배너는 그리지 않는다 / 셸 밖(위 SHU-2) → 그대로 그린다.
+  testWidgets('[SHU-2b] 출퇴근 — 셸 안에서는 화면 배너가 겹치지 않는다', (tester) async {
+    await _pump(
+        tester,
+        UserTabScope(
+          switchToTab: (_) {},
+          switchToTabWithDate: (_, __) {},
+          pendingJobDate: null,
+          clearPendingJobDate: () {},
+          pendingScheduleMonth: null,
+          clearPendingScheduleMonth: () {},
+          switchToScheduleNow: () {},
+          child: AttendanceCheckScreen(reads: _attReads()),
+        ),
+        up: _Worker(pending: true));
+    expect(findVisibleText('계약서 서명이 필요해요'), findsNothing,
+        reason: '셸 배너가 이미 있다 — 화면 배너까지 그리면 두 장');
   });
 
   // ══ 내 리뷰 ═══════════════════════════════════════════════════════════════
@@ -235,13 +259,13 @@ void main() {
         up: _Worker(pending: true));
 
     expect(find.byType(AppPageScaffold), findsOneWidget);
-    expect(find.text('내 근무 평가'), findsOneWidget);
+    expect(findVisibleText('내 근무 평가'), findsOneWidget);
     expect(find.byIcon(Icons.refresh), findsOneWidget);
     expect(find.byIcon(Icons.home_outlined), findsOneWidget);
     expect(find.byIcon(Icons.notifications_outlined), findsOneWidget);
-    expect(find.text('계약서 서명이 필요해요'), findsOneWidget);
+    expect(findVisibleText('계약서 서명이 필요해요'), findsOneWidget);
     // 본문 내용도 살아 있다.
-    expect(find.text('아직 받은 평가가 없습니다'), findsOneWidget);
+    expect(findVisibleText('아직 받은 평가가 없습니다'), findsOneWidget);
   });
 
   // ══ 중간정산 ═══════════════════════════════════════════════════════════════
@@ -266,7 +290,7 @@ void main() {
     expect(_appBarIcon(Icons.refresh), findsOneWidget);
     expect(_appBarIcon(Icons.home_outlined), findsOneWidget);
     expect(_appBarIcon(Icons.notifications_outlined), findsOneWidget);
-    expect(find.text('계약서 서명이 필요해요'), findsOneWidget);
+    expect(findVisibleText('계약서 서명이 필요해요'), findsOneWidget);
   });
 
   // ══ 서브관리자 탈퇴 ════════════════════════════════════════════════════════
@@ -276,13 +300,13 @@ void main() {
         up: _Worker(subAdmin: true, pending: true));
 
     expect(find.byType(AppPageScaffold), findsOneWidget);
-    expect(find.text('서브관리자 탈퇴'), findsOneWidget);
+    expect(findVisibleText('서브관리자 탈퇴'), findsOneWidget);
     // 되돌릴 수 없는 결정 화면에 옆길을 만들지 않는다 — 전환 전과 같다.
     expect(find.byIcon(Icons.home_outlined), findsNothing);
     expect(find.byIcon(Icons.notifications_outlined), findsNothing);
     expect(find.byIcon(Icons.refresh), findsNothing);
     // 계약 Task 는 유지된다.
-    expect(find.text('계약서 서명이 필요해요'), findsOneWidget);
+    expect(findVisibleText('계약서 서명이 필요해요'), findsOneWidget);
   });
 
   // ══ 공용 설정 — 역할별 ═════════════════════════════════════════════════════
@@ -294,18 +318,18 @@ void main() {
 
     expect(find.byType(AppPageScaffold), findsOneWidget);
     expect(find.byType(GradientScaffold), findsNothing);
-    expect(find.text('설정'), findsWidgets);
+    expect(findVisibleText('설정'), findsWidgets);
     // 본문 메뉴에도 같은 아이콘이 있으므로 **AppBar 안**만 센다.
     expect(_appBarIcon(Icons.home_outlined), findsOneWidget);
     expect(_appBarIcon(Icons.notifications_outlined), findsOneWidget);
     // 원래 새로고침은 없었다 — 없던 것을 만들지 않았다.
     expect(_appBarIcon(Icons.refresh), findsNothing);
-    expect(find.text('계약서 서명이 필요해요'), findsOneWidget);
+    expect(findVisibleText('계약서 서명이 필요해요'), findsOneWidget);
 
     // [R7-P4-1 정정] 이전 기록은 '내 리뷰의 상시 입구가 없다(알림·FCM·관리자
     //   Settings 뿐)' 였다. 사실이 아니다 — 지원자 설정의 showUserItems
     //   블록에 '내 평가 확인' 이 상시 있다. F2/VJ14 의 전제를 여기서 고정한다.
-    expect(find.text('내 평가 확인'), findsOneWidget);
+    expect(findVisibleText('내 평가 확인'), findsOneWidget);
   });
 
   testWidgets('[SHU-6] 설정(서브관리자 관리자 모드) — 없던 버튼을 더하지 않았다',
@@ -317,7 +341,7 @@ void main() {
     // 관리자 경로에는 원래 홈·알림·계약 바가 없었다. 그대로다.
     expect(_appBarIcon(Icons.home_outlined), findsNothing);
     expect(_appBarIcon(Icons.notifications_outlined), findsNothing);
-    expect(find.text('계약서 서명이 필요해요'), findsNothing);
+    expect(findVisibleText('계약서 서명이 필요해요'), findsNothing);
   });
 
   // ══ 좁은 화면·큰 배율 ══════════════════════════════════════════════════════
@@ -334,11 +358,11 @@ void main() {
             textScale: scale);
 
         expect(tester.takeException(), isNull);
-        expect(find.text('출퇴근 체크'), findsOneWidget);
+        expect(findVisibleText('출퇴근 체크'), findsOneWidget);
         expect(find.byIcon(Icons.refresh), findsOneWidget);
         expect(find.byIcon(Icons.home_outlined), findsOneWidget);
         expect(find.byIcon(Icons.notifications_outlined), findsOneWidget);
-        expect(find.text('계약서 서명이 필요해요'), findsOneWidget);
+        expect(findVisibleText('계약서 서명이 필요해요'), findsOneWidget);
       });
     }
   }

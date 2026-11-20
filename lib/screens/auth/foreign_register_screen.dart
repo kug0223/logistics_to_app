@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,15 +18,23 @@ import '../../services/auth_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/foreign_id_ocr_service.dart';
 import '../../services/legal_terms_service.dart';
+import '../../services/tax_identity_service.dart';
 import '../../services/phone_verification_service.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/document_upload_helper.dart';
+import '../../utils/format_helper.dart';
+import '../../utils/identity_identifier.dart';
+import '../../utils/terms_submit_guard.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../widgets/common/common_widgets.dart';
+import '../../widgets/common/first_line_icon.dart';
+import '../../widgets/common/keep_words_text.dart';
 import '../../widgets/inputs/home_region_picker_sheet.dart';
 import '../../widgets/auth/terms_viewer_screen.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/picker_cache_scope.dart';
 
 /// V3 외국인 Document-First 회원가입 마법사
 ///
@@ -42,6 +51,37 @@ import '../../theme/app_colors.dart';
 ///   - documentScan 단계부터 시작 (basicInfo/phone 건너뜀)
 ///   - _processRegistration() 내에서 fingerprint 여부를 Firestore로 확인 후
 ///     미완료 단계(finalizeForeignIdentity / markIdCardVerified)만 선택적으로 실행
+/// [FULL13-REEVAL.3] 위젯 시험용 주입 지점 — 사진 선택·OCR·Storage·callable 대신 합성 함수.
+///   운영 코드는 설정하지 않는다(null 이면 실제 구현).
+@visibleForTesting
+class ForeignRegisterHooks {
+  /// 새 사진 선택 + OCR. result 가 null 이면 "사진은 골랐고 OCR 이 예외로 끝남"이다.
+  static Future<({String path, ForeignIdOcrResult? result})> Function()? pickAndOcr;
+  /// [CASE C] 기존 사진 다운로드 + OCR.
+  static Future<ForeignIdOcrResult> Function(String storagePath)? reuseOcr;
+  static String? Function()? currentUid;
+  static Future<void> Function(String localPath, String storagePath)? upload;
+  static Future<Map<String, dynamic>?> Function(String uid)? readUser;
+  static Future<String?> Function(String rawId, String legalName, String koreanName,
+      String visaType, Map<String, dynamic>? documentEvidence)? finalize;
+  static Future<void> Function(Map<String, dynamic> payload)? mark;
+  static bool Function()? collectionEnabled;
+  /// [DU354] 휴대폰 인증 서비스(SMS 발송 · 확인). null 이면 실제 PhoneVerificationService.
+  static PhoneVerificationService Function()? phoneService;
+
+  static void reset() {
+    pickAndOcr = null;
+    reuseOcr = null;
+    currentUid = null;
+    upload = null;
+    readUser = null;
+    finalize = null;
+    mark = null;
+    collectionEnabled = null;
+    phoneService = null;
+  }
+}
+
 class ForeignRegisterScreen extends StatefulWidget {
   final UserRole role;
 
@@ -80,7 +120,8 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
   static final _foreignId13Re = RegExp(r'^\d{13}$');
 
   final LegalTermsService _legalTermsService = LegalTermsService();
-  final PhoneVerificationService _phoneSvc = PhoneVerificationService();
+  final PhoneVerificationService _phoneSvc =
+      ForeignRegisterHooks.phoneService?.call() ?? PhoneVerificationService();
   final ScrollController _scrollCtrl = ScrollController();
 
   _Step _step = _Step.basicInfo;
@@ -101,13 +142,37 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
   final _codeCtrl  = TextEditingController();
   bool _codeSent = false;
   bool _phoneVerified = false;
+  // [DU378] 인증 없이 '다음'을 눌렀다 — 번호/인증번호 묶음 아래 지속 안내(편집 · 새 발송 · 성공 · 재인증 · 단계 이동 때 지움)
+  bool _phoneGateShown = false;
+  final _phoneGateKey = GlobalKey();
   bool _codeSending = false;
   bool _codeVerifying = false;
+  /// [DU358] 지금 발송 · 확인 흐름이 묶인 번호(정규화 숫자, 발송 시작 때 정함)와 인증에 성공한 번호.
+  ///   칸 값이 묶인 번호와 달라지면 그 흐름은 이 번호와 무관하다 — 보낸 상태 · 확인 결과를 쓰지 않는다.
+  String? _boundPhone;
+  String? _verifiedPhone;
+  /// [DU358] 발송 · 확인 요청 세대. await 뒤 세대가 바뀌었으면(번호 편집 · 재발송 · 재인증) 결과를 버린다.
+  int _phoneReqGen = 0;
+  /// [DU363] 인증번호 확인 진행 플래그(_codeVerifying)의 소유 토큰 — 최신 확인만 플래그를 내린다.
+  ///   구세대 확인이 늦게 끝나며 새 확인의 진행 · 중복 잠금을 풀던 경로(이전 확인 → 재발송 → 새 확인 → 이전 완료)를 막는다.
+  int _verifyToken = 0;
+  static String _normPhone(String s) => s.replaceAll(RegExp(r'\D'), '');
   String? _phoneError;
+  /// [DU354] 인증번호 확인 오류는 인증번호 칸 아래에 붙인다(번호 칸 아래면 번호가 틀린 것처럼 읽힌다).
+  String? _codeError;
+  /// [DU354] 발송 뒤 인증번호 칸으로 포커스를 옮긴다 — autofocus 는 번호 칸이 포커스를 쥐고 있으면 듣지 않는다.
+  final FocusNode _codeFocus = FocusNode();
 
   // ── Step 2: 문서 스캔 ─────────────────────────────────────────
   String? _imagePath; // 로컬 임시 파일 경로 (OCR 후 업로드까지 유지)
+  // [SIM-PICKER-CACHE] _imagePath 를 만든 선택의 picker cache 산출물(UUID 사본·scaled_).
+  //   업로드까지 그 경로를 그대로 쓰므로 **재선택·기존 이미지 재사용·화면 종료** 때만 놓는다.
+  PickerCacheScope? _imagePickScope;
   bool _ocrRunning = false;
+  /// [DU355] 이전에 올린 등록증을 지금 불러오는 중인가(처리 중 문구용 — 위젯 값이 아니라 실제 작업으로 정한다).
+  bool _reuseRunning = false;
+  /// [DU355] CASE C 재사용이 실패해 스캔 화면에 남았는가(안내용). 새 사진을 고르면(_ocrAttempted) 안내는 사라진다.
+  bool _reuseFailed = false;
 
   /// [CASE C] 기존 Storage idCard를 재사용 중 — 재업로드 / markIdCardVerified 불필요
   bool _usingExistingIdCard = false;
@@ -117,9 +182,80 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
   /// 재시도 시 이미 업로드된 이미지를 재사용할 수 있다.
   /// 새 이미지가 선택되면 null로 리셋.
   String? _uploadedStoragePath;
+  /// [DOC-LATE-DELETE.7 · D] 마지막 제출이 서버에서 거절된 이유. 다시 시도하거나 입력을 고치면 지운다.
+  String? _submitError;
 
   // ── Step 3: OCR 확인 ─────────────────────────────────────────
   ForeignIdOcrResult? _ocrResult;
+
+  /// [FULL13-REEVAL.2] 지금 사진에 대해 OCR 을 돌렸는가 / 예외로 끝났는가.
+  ///   번호 OCR 값은 `_ocrResult.foreignIdRaw` 에만 둔다 — 입력 칸에 넣지 않는다.
+  bool _ocrAttempted = false;
+  bool _ocrThrew = false;
+
+  /// [FULL13-REEVAL.2] 업로드 판정 근거. 예전에는 OCR 값이 곧 입력값이라
+  ///   (INV-3) 무판정만 보냈다. 이제 번호는 직접 입력이므로 같은 사진의 OCR
+  ///   번호를 후보로 보내 서버가 입력 번호와 대조한다. 수집이 꺼져 있으면
+  ///   예전처럼 무판정만 보낸다.
+  ///   [FULL13-REEVAL.3] 이름도 직접 입력이므로 입력 이름 ↔ 같은 사진의 OCR 이름
+  ///   비교 결과를 함께 보낸다(서버는 이름·번호가 모두 MATCHED 일 때만 MATCHED).
+  Map<String, dynamic> _markSelfCheck() => DocumentPickResult.foreignSignupSelfCheck(
+        collectionEnabled: _collectionEnabled,
+        ocrAttempted: _ocrAttempted,
+        ocrThrew: _ocrThrew,
+        ocrForeignIdRaw: _ocrResult?.foreignIdRaw,
+        nameOutcome: _ocrThrew
+            ? DocFieldOutcome.unassessed
+            : ForeignIdOcrService.compareTypedLegalName(
+                _legalNameCtrl.text, _ocrResult),
+      );
+
+  bool get _collectionEnabled =>
+      ForeignRegisterHooks.collectionEnabled?.call() ??
+      TaxIdentityService.collectionEnabledLocally;
+
+  String? get _currentUid => ForeignRegisterHooks.currentUid != null
+      ? ForeignRegisterHooks.currentUid!()
+      : FirebaseAuth.instance.currentUser?.uid;
+
+  /// [FULL13-REEVAL.3] [CASE C] 업로드 없이 기존 사진을 쓰는 복구 — 그 사진의 현재 버전에
+  ///   묶은 근거를 가입 확정과 함께 보낸다. 수집 OFF·OCR 예외·버전 모름이면 보내지 않는다.
+  Map<String, dynamic>? _existingPhotoEvidence(int? currentIdDocumentVersion) {
+    if (!_usingExistingIdCard || !_collectionEnabled || !_ocrAttempted || _ocrThrew) {
+      return null;
+    }
+    if (currentIdDocumentVersion == null || currentIdDocumentVersion <= 0) return null;
+    final raw = (_ocrResult?.foreignIdRaw ?? '').replaceAll(RegExp(r'\D'), '');
+    return {
+      'idDocumentVersion': currentIdDocumentVersion,
+      'name': ForeignIdOcrService.compareTypedLegalName(_legalNameCtrl.text, _ocrResult).wire,
+      'identifierCandidates': raw.length == 13 ? [raw] : const <String>[],
+    };
+  }
+
+  Future<void> _callMark(Map<String, dynamic> payload) {
+    final hook = ForeignRegisterHooks.mark;
+    if (hook != null) return hook(payload);
+    return FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableMarkIdCardVerified',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+        .call(payload);
+  }
+
+  Future<String?> _callFinalize(String rawId, String legalName, String koreanName,
+      String visaType, {Map<String, dynamic>? documentEvidence}) {
+    final hook = ForeignRegisterHooks.finalize;
+    if (hook != null) {
+      return hook(rawId, legalName, koreanName, visaType, documentEvidence);
+    }
+    return AuthService().finalizeForeignIdentity(
+      rawId,
+      legalName: legalName.isNotEmpty ? legalName : null,
+      koreanName: koreanName.isNotEmpty ? koreanName : null,
+      visaType: visaType.isNotEmpty ? visaType : null,
+      documentEvidence: documentEvidence,
+    );
+  }
   final _legalNameCtrl      = TextEditingController();
   final _rawForeignIdCtrl   = TextEditingController(); // 13자리 평문
   final _visaTypeCtrl       = TextEditingController(); // 필수
@@ -153,19 +289,36 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       // existingIdCardPath가 있으면 먼저 재사용 시도, 실패 시 documentScan 유지
       if (widget.existingIdCardPath != null) {
         _ocrRunning = true; // documentScan 로딩 표시
+        _reuseRunning = true;
         _tryReuseExistingIdCard(widget.existingIdCardPath!);
       }
     }
   }
 
+  /// 들고 있던 선택의 picker 산출물을 놓는다 — 그 경로를 더 쓰지 않을 때만 부른다.
+  void _releaseHeldPick() {
+    final s = _imagePickScope;
+    _imagePickScope = null;
+    if (s != null) unawaited(s.release());
+  }
+
+  /// 새 선택을 _imagePath 로 채택한다. 이전 선택의 산출물은 이제 아무도 쓰지 않는다.
+  void _adoptPickedImage(String path, PickerCacheScope scope) {
+    _releaseHeldPick();
+    _imagePickScope = scope;
+    _imagePath = path;
+  }
+
   @override
   void dispose() {
+    _releaseHeldPick();
     _scrollCtrl.dispose();
     _usernameCtrl.dispose();
     _passwordCtrl.dispose();
     _confirmCtrl.dispose();
     _phoneCtrl.dispose();
     _codeCtrl.dispose();
+    _codeFocus.dispose();
     _legalNameCtrl.dispose();
     _rawForeignIdCtrl.dispose();
     _visaTypeCtrl.dispose();
@@ -181,6 +334,13 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
     setState(() {
       _termsLoading = true;
       _termsError = null;
+      // [DU359] 시행본이 바뀌었다(reset) — 고른 것과 열람 표시를 조회를 기다리기 **전에** 지운다.
+      //   성공 분기에서만 지우면 재조회가 실패/필수 0 일 때 reset 의도가 사라지고, 뒤의 일반 재시도 성공에서
+      //   같은 ID 새 버전에 이전 열람 표시가 남아 새 글을 열지 않고 체크할 수 있었다(소급 11 P1).
+      if (resetChoices) {
+        _consentMap.clear();
+        _viewedTermIds.clear();
+      }
     });
     try {
       final terms = await _legalTermsService.fetchEffectiveTerms();
@@ -195,7 +355,7 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       }
       setState(() {
         _legalTerms = terms;
-        if (resetChoices) _consentMap.clear();
+        // [DU359] reset 의 동의 · 열람 지움은 조회 전으로 옮겼다(위). 여기서는 새 항목을 미동의로 둔다.
         for (final item in terms.activeItems) {
           _consentMap[item.id] = false;
         }
@@ -217,7 +377,10 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
   // ============================================================
 
   void _goTo(_Step step) {
-    setState(() => _step = step);
+    setState(() {
+      _step = step;
+      _phoneGateShown = false; // [DU378]
+    });
     Future.microtask(() {
       if (_scrollCtrl.hasClients) {
         _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
@@ -275,19 +438,40 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       setState(() => _phoneError = '올바른 휴대폰 번호를 입력해주세요');
       return;
     }
-    setState(() { _codeSending = true; _phoneError = null; });
+    final gen = ++_phoneReqGen; // [DU358] 이 발송의 세대 — 진행 중이던 확인 결과는 버린다
+    final bound = _normPhone(phone);
+    _verifyToken++; // [DU363] 진행 중이던 확인은 더 이상 플래그 소유자가 아니다
+    setState(() { _codeSending = true; _phoneError = null; _boundPhone = bound; _codeVerifying = false; _phoneGateShown = false; });
     try {
       await _phoneSvc.sendCode(phone);
       if (!mounted) return;
-      setState(() { _codeSent = true; _codeSending = false; _codeCtrl.clear(); });
+      if (gen != _phoneReqGen || _normPhone(_phoneCtrl.text) != bound) {
+        // [DU358] 발송 중 번호가 바뀌었다 — 이 발송은 지금 번호와 무관하다(보낸 상태를 켜지 않는다)
+        setState(() => _codeSending = false);
+        return;
+      }
+      setState(() { _codeSent = true; _codeSending = false; _codeCtrl.clear(); _codeError = null; });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _codeSent && !_phoneVerified) _codeFocus.requestFocus();
+      });
       ToastHelper.showSuccess('인증번호가 발송되었습니다');
     } catch (e) {
       if (!mounted) return;
+      if (gen != _phoneReqGen) {
+        setState(() => _codeSending = false); // [DU358] 이미 무효가 된 발송의 실패 — 지금 번호 칸에 오류를 붙이지 않는다
+        return;
+      }
       final code = e is FirebaseAuthException ? e.code : e.runtimeType.toString();
-      debugPrint('❌ [_sendCode] 에러: $e');
+      debugPrint('❌ [_sendCode] 에러($code): $e');
+      // [DU354] 진단 코드는 로그에만 남기고, 화면에는 내국인 가입(register_screen)과 같은 안내를 보인다.
       setState(() {
         _codeSending = false;
-        _phoneError = '발송 실패 ($code)';  // TODO: 진단 후 원래 메시지로 복원
+        _phoneError = switch (code) {
+          'too-many-requests'    => '잠시 후 다시 시도해주세요',
+          'invalid-phone-number' => '올바른 휴대폰 번호를 입력해주세요',
+          'quota-exceeded'       => '인증번호 발송 횟수를 초과했습니다. 잠시 후 다시 시도해주세요',
+          _                      => '발송에 실패했습니다. 다시 시도해주세요',
+        };
       });
     }
   }
@@ -296,34 +480,107 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
     if (_codeVerifying) return;
     final code = _codeCtrl.text.trim();
     if (code.length != 6) return;
-    setState(() { _codeVerifying = true; _phoneError = null; });
+    // [DU358] 보낸 번호와 지금 칸 값이 같을 때만 확인한다(다르면 보낸 상태가 이미 무효다)
+    final bound = _boundPhone;
+    if (!_codeSent || bound == null || _normPhone(_phoneCtrl.text) != bound) return;
+    final gen = _phoneReqGen;
+    final my = ++_verifyToken; // [DU363] 이 확인이 진행 플래그의 소유자다
+    setState(() { _codeVerifying = true; _codeError = null; });
     try {
       final result = await _phoneSvc.verifyCode(_phoneCtrl.text.trim(), code);
       if (!mounted) return;
+      if (my != _verifyToken) return; // [DU363] 더 새 확인 · 무효화가 소유권을 가져갔다 — 플래그를 건드리지 않는다
+      if (gen != _phoneReqGen || _normPhone(_phoneCtrl.text) != bound) {
+        // [DU358] 확인 중 번호 편집 · 재발송 · 재인증이 있었다 — 늦게 온 결과를 쓰지 않는다
+        setState(() => _codeVerifying = false);
+        return;
+      }
       if (result.valid) {
-        setState(() { _phoneVerified = true; _codeVerifying = false; });
+        setState(() { _phoneVerified = true; _verifiedPhone = bound; _codeVerifying = false; _codeError = null; _phoneGateShown = false; });
         ToastHelper.showSuccess('휴대폰 인증이 완료되었습니다');
       } else {
         final msg = switch (result.reason) {
           'expired' => '인증번호가 만료됐습니다. 재발송해주세요',
           'too_many_attempts' => '시도 횟수를 초과했습니다. 재발송해주세요',
+          // [DU367] 확인 기준이 없다(보낸 번호와 다름 · 재발송으로 대체됨) — 숫자를 잘못 넣은 것(wrong_code)과 구별한다
+          'no_code' => '인증번호를 다시 발송한 뒤 확인해주세요',
           _ => '인증번호가 일치하지 않습니다',
         };
-        setState(() { _codeVerifying = false; _phoneError = msg; });
+        setState(() { _codeVerifying = false; _codeError = msg; });
         ToastHelper.showError(msg);
       }
     } catch (_) {
       if (!mounted) return;
-      setState(() { _codeVerifying = false; _phoneError = '확인에 실패했습니다. 다시 시도해주세요'; });
+      if (my != _verifyToken) return; // [DU363] 소유자가 아니면 플래그를 건드리지 않는다
+      if (gen != _phoneReqGen) {
+        setState(() => _codeVerifying = false);
+        return;
+      }
+      setState(() { _codeVerifying = false; _codeError = '확인에 실패했습니다. 다시 시도해주세요'; });
     }
   }
 
+  /// [DU358] 번호 칸 편집 — 지금 흐름이 묶인 번호와 달라지면 보낸 상태 · 확인 진행 · 인증번호 · 오류를 무효화한다.
+  ///   발송 진행 중이면 발송 버튼은 그 응답이 올 때까지 막혀 있다(응답은 세대가 달라 버려진다).
+  void _onPhoneEdited() {
+    final now = _normPhone(_phoneCtrl.text);
+    setState(() {
+      _phoneError = null;
+      _phoneGateShown = false; // [DU378]
+      if (_boundPhone != null && now != _boundPhone) {
+        _phoneReqGen++;
+        _verifyToken++; // [DU363]
+        _boundPhone = null;
+        _codeSent = false;
+        _codeVerifying = false;
+        _codeCtrl.clear();
+        _codeError = null;
+      }
+    });
+  }
+
+  /// [DU358] 인증에 성공한 번호와 지금 칸 값이 같은가(신규 가입 경로).
+  bool get _phoneBindingOk =>
+      _phoneVerified && _verifiedPhone != null && _verifiedPhone == _normPhone(_phoneCtrl.text);
+
   bool _validatePhone() {
-    if (!_phoneVerified) {
-      ToastHelper.showWarning('휴대폰 번호 인증을 완료해주세요');
+    if (!_phoneBindingOk) {
+      // [DU378] 토스트 → 번호/인증번호 묶음 아래 지속 안내(같은 문구). 안내 끝이 보이게 스크롤하면 바로 위 행동도 함께 보인다.
+      setState(() => _phoneGateShown = true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final ctx = _phoneGateKey.currentContext;
+        if (!mounted || ctx == null) return;
+        Scrollable.ensureVisible(ctx,
+            duration: const Duration(milliseconds: 200),
+            alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd);
+      });
       return false;
     }
     return true;
+  }
+
+  /// [DU378] 휴대폰 인증 사전조건 안내 — 예전 경고 토스트와 같은 문구, OCR 일부 인식 실패 안내와 같은 경고 면.
+  ///   나타날 때 낭독(liveRegion). 아이콘은 첫 줄 가운데, 글은 낱말 사이에서만 줄바꿈.
+  Widget _phoneGateNotice() {
+    const style = TextStyle(fontSize: 13);
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        key: _phoneGateKey,
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.warningBg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.warningLight),
+        ),
+        child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          FirstLineIcon(Icons.warning_amber, size: 18, color: AppColors.warningDark, textStyle: style),
+          SizedBox(width: 8),
+          Expanded(child: KeepWordsText('휴대폰 번호 인증을 완료해주세요', style: style)),
+        ]),
+      ),
+    );
   }
 
   // ============================================================
@@ -336,48 +593,61 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
   Future<void> _tryReuseExistingIdCard(String storagePath) async {
     String? tempFilePath;
     try {
-      // ① Storage에서 bytes 다운로드 (max 10MB)
-      final bytes = await FirebaseStorage.instance
-          .ref(storagePath)
-          .getData(10 * 1024 * 1024);
+      final ForeignIdOcrResult result;
+      final reuseHook = ForeignRegisterHooks.reuseOcr;
+      if (reuseHook != null) {
+        result = await reuseHook(storagePath);
+      } else {
+        // ① Storage에서 bytes 다운로드 (max 10MB)
+        final bytes = await FirebaseStorage.instance
+            .ref(storagePath)
+            .getData(10 * 1024 * 1024);
 
-      if (bytes == null || !mounted) {
-        if (mounted) setState(() => _ocrRunning = false);
-        return;
+        if (bytes == null || !mounted) {
+          if (mounted) setState(() { _ocrRunning = false; _reuseRunning = false; _reuseFailed = true; });
+          return;
+        }
+
+        // ② 임시 파일 저장 (OCR용 — 업로드 재사용 안 함)
+        final dir = await getTemporaryDirectory();
+        final ts = DateTime.now().millisecondsSinceEpoch;
+        final tempFile = File('${dir.path}/idCard_resume_$ts.jpg');
+        await tempFile.writeAsBytes(bytes);
+        tempFilePath = tempFile.path;
+
+        // ③ OCR 실행
+        result = await ForeignIdOcrService.recognizeFromPath(tempFile.path);
       }
-
-      // ② 임시 파일 저장 (OCR용 — 업로드 재사용 안 함)
-      final dir = await getTemporaryDirectory();
-      final ts = DateTime.now().millisecondsSinceEpoch;
-      final tempFile = File('${dir.path}/idCard_resume_$ts.jpg');
-      await tempFile.writeAsBytes(bytes);
-      tempFilePath = tempFile.path;
-
-      // ③ OCR 실행
-      final result = await ForeignIdOcrService.recognizeFromPath(tempFile.path);
 
       if (!mounted) return;
 
       // ④ OCR 결과로 폼 초기화 (실패 필드는 '직접 입력 필요' 표시)
       _ocrResult = result;
-      _legalNameCtrl.text = result.legalName ?? '';
-      _rawForeignIdCtrl.text = result.foreignIdRaw ?? '';
+      _ocrAttempted = true;
+      _ocrThrew = false;
+      // [FULL13-REEVAL.3] 영문 이름도 직접 입력 — OCR 이름은 비교 근거로만 쓴다.
+      _legalNameCtrl.clear();
+      // [FULL13-REEVAL.2] 번호는 직접 입력받는다 — OCR 값을 칸에 넣으면
+      //   같은 사진과의 대조가 자기 대조가 된다.
+      _rawForeignIdCtrl.clear();
       _visaTypeCtrl.text = result.visaType ?? '';
       // stayExpiryDate — 가입 필수정보 최소화 정책으로 수집 안 함
       _koreanNameCtrl.clear();
+      _releaseHeldPick();         // 이전에 고른 사진은 더 쓰지 않는다
       _imagePath = null;          // 재업로드 없음
       _uploadedStoragePath = null; // [B.1] 기존 Storage 경로가 있어도 이 흐름에서는 무관
       _usingExistingIdCard = true;
 
       setState(() {
         _ocrRunning = false;
+        _reuseRunning = false;
         _step = _Step.ocrConfirm;
       });
 
       debugPrint('✅ [ForeignReg CASE C] 기존 idCard 재사용 성공 → ocrConfirm');
     } catch (e) {
       debugPrint('⚠️ [ForeignReg CASE C] 기존 idCard 재사용 실패 → documentScan 유지: $e');
-      if (mounted) setState(() => _ocrRunning = false);
+      if (mounted) setState(() { _ocrRunning = false; _reuseRunning = false; _reuseFailed = true; });
       // documentScan 단계 유지 — 사용자가 직접 재촬영
     } finally {
       // 임시 파일 정리 (OCR 전용, 업로드하지 않음)
@@ -392,40 +662,81 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
   // ============================================================
 
   Future<void> _pickAndOcr(ImageSource source) async {
+    final pickHook = ForeignRegisterHooks.pickAndOcr;
+    if (pickHook != null) {
+      // [FULL13-REEVAL.3] 시험 경로 — 실제 경로와 같은 상태 전이(번호·이름 칸은 비움).
+      setState(() => _ocrRunning = true);
+      final r = await pickHook();
+      if (!mounted) return;
+      _imagePath = r.path;
+      _ocrAttempted = true;
+      _ocrThrew = r.result == null;
+      _ocrResult = r.result ?? const ForeignIdOcrResult(
+        legalNameFailed: true, foreignIdFailed: true, visaTypeFailed: true,
+      );
+      _legalNameCtrl.clear();
+      _rawForeignIdCtrl.clear();
+      _visaTypeCtrl.text = _ocrResult?.visaType ?? '';
+      _koreanNameCtrl.clear();
+      _uploadedStoragePath = null;
+      _submitError = null;
+      setState(() => _ocrRunning = false);
+      _goTo(_Step.ocrConfirm);
+      return;
+    }
     final picker = ImagePicker();
+    final scope = await PickerCacheScope.begin();
     final picked = await picker.pickImage(source: source, imageQuality: 90, maxWidth: 2000);
-    if (picked == null || !mounted) return;
+    await scope.capture(picked?.path);
+    if (picked == null || !mounted) {
+      await scope.release();
+      return;
+    }
 
     setState(() { _ocrRunning = true; });
 
     try {
       final result = await ForeignIdOcrService.recognizeFromPath(picked.path);
-      if (!mounted) return;
+      if (!mounted) {
+        await scope.release(); // 채택되지 않은 선택
+        return;
+      }
 
       // OCR 결과로 확인 폼 초기화
       _ocrResult = result;
-      _legalNameCtrl.text = result.legalName ?? '';
-      _rawForeignIdCtrl.text = result.foreignIdRaw ?? '';
+      _ocrAttempted = true;
+      _ocrThrew = false;
+      // [FULL13-REEVAL.3] 영문 이름도 직접 입력 — OCR 이름은 비교 근거로만 쓴다.
+      _legalNameCtrl.clear();
+      // [FULL13-REEVAL.2] 번호는 직접 입력받는다(OCR 값은 대조 근거로만 쓴다).
+      _rawForeignIdCtrl.clear();
       _visaTypeCtrl.text = result.visaType ?? '';
       // stayExpiryDate — 가입 필수정보 최소화 정책으로 수집 안 함
       _koreanNameCtrl.clear();
-      _imagePath = picked.path;
-      _uploadedStoragePath = null; // [B.1] 새 이미지 선택 → 이전 업로드 경로 무효화
+      _adoptPickedImage(picked.path, scope);
+      _uploadedStoragePath = null; // [B.1] 새 이미지 선택 → 이전 업로드 경로 무효화 · 이전 거절 사유도 지운다
+      _submitError = null;
 
       setState(() => _ocrRunning = false);
       _goTo(_Step.ocrConfirm);
     } catch (e) {
       debugPrint('❌ [ForeignReg] OCR 실패: $e');
-      if (!mounted) return;
+      if (!mounted) {
+        await scope.release(); // 채택되지 않은 선택
+        return;
+      }
       // OCR 예외 → 모든 필드 수동 입력 허용
       _ocrResult = const ForeignIdOcrResult(
         legalNameFailed: true, foreignIdFailed: true, visaTypeFailed: true,
       );
+      _ocrAttempted = true;
+      _ocrThrew = true;
       _legalNameCtrl.clear();
       _rawForeignIdCtrl.clear();
       _visaTypeCtrl.clear();
-      _imagePath = picked.path;
-      _uploadedStoragePath = null; // [B.1] 새 이미지 선택 → 이전 업로드 경로 무효화
+      _adoptPickedImage(picked.path, scope);
+      _uploadedStoragePath = null; // [B.1] 새 이미지 선택 → 이전 업로드 경로 무효화 · 이전 거절 사유도 지운다
+      _submitError = null;
 
       setState(() { _ocrRunning = false; });
       _goTo(_Step.ocrConfirm);
@@ -467,7 +778,10 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
 
   Future<void> _processRegistration() async {
     if (_isBusy) return;
-    setState(() => _isBusy = true);
+    setState(() {
+      _isBusy = true;
+      _submitError = null; // [DOC-LATE-DELETE.7 · D] 새 시도 — 이전 거절 사유를 지운다
+    });
 
     final rawId = _rawForeignIdCtrl.text.trim().replaceAll(RegExp(r'\D'), '');
     final legalName = _legalNameCtrl.text.trim();
@@ -485,14 +799,14 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
     //
     //   debugPrint는 릴리스 빌드에서 제거되지 않는다. 그래서 kDebugMode로
     //   감싸는 것으로 끝내지 않고 **값 자체를 만들지 않는다**. (§3·§4)
-    final dbgCurrentUid = FirebaseAuth.instance.currentUser?.uid;
+    final dbgCurrentUid = _currentUid;
     debugPrint('🔷 [ForeignReg] _processRegistration 시작 | isResume=${widget.isResume} | existingAuth=${dbgCurrentUid ?? "null"} | idLen=${rawId.length} | hasLegalName=${legalName.isNotEmpty} | imagePath=${imagePath != null}');
 
     // ================================================================
     // [RESUME MODE] 기존 uid 유지 — 새 Auth 계정 생성 금지
     // ================================================================
     if (widget.isResume) {
-      final uid = FirebaseAuth.instance.currentUser?.uid;
+      final uid = _currentUid;
       if (uid == null) {
         setState(() => _isBusy = false);
         ToastHelper.showError('세션이 만료되었습니다. 다시 로그인해주세요.');
@@ -504,13 +818,24 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       //   isIdVerified = true 이미 설정됨 → 업로드·markIdCardVerified 불필요
       // [CASE B/D] _usingExistingIdCard == false → 새 이미지 업로드
       String? uploadedPath;
-      if (!_usingExistingIdCard && imagePath != null) {
+      // [DOC-LATE-DELETE.7 · D] 같은 사진으로 다시 시도하면 이미 올린 객체를 다시 쓴다
+      //   (신규 가입 흐름의 재시도 계약과 같다). 예전에는 가입 확정이 거절될 때마다
+      //   새로 올려 쓰지 않는 사진이 쌓였다. 새 사진을 고르면 _pickAndOcr 가 지운다.
+      if (!_usingExistingIdCard && imagePath != null && _uploadedStoragePath != null) {
+        uploadedPath = _uploadedStoragePath;
+      } else if (!_usingExistingIdCard && imagePath != null) {
         try {
           final ts = DateTime.now().millisecondsSinceEpoch;
           final storagePath = 'users/$uid/idCard_$ts.jpg';
-          final ref = FirebaseStorage.instance.ref(storagePath);
-          await ref.putFile(File(imagePath));
+          final uploadHook = ForeignRegisterHooks.upload;
+          if (uploadHook != null) {
+            await uploadHook(imagePath, storagePath);
+          } else {
+            final ref = FirebaseStorage.instance.ref(storagePath);
+            await ref.putFile(File(imagePath), _idCardUploadMetadata(imagePath));
+          }
           uploadedPath = storagePath;
+          _uploadedStoragePath = storagePath;
         } catch (e) {
           debugPrint('⚠️ [ForeignReg resume] 이미지 업로드 실패: $e');
         }
@@ -526,11 +851,16 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       //   (예전에는 그 자리를 users 직접 update가 메우려 했고, 그건 항상 실패했다.)
       //   저장할 이름이 실제로 달라졌을 때만 finalize를 부른다.
       String? storedKoreanName;
+      // [FULL13-REEVAL.3] CASE C 근거를 현재 문서 버전에 묶기 위해 같은 읽기에서 본다.
+      int? storedIdDocumentVersion;
       try {
-        final docSnap = await FirebaseFirestore.instance
-            .collection('users').doc(uid).get();
-        hasFingerprint = docSnap.data()?['foreignIdentityFingerprint'] != null;
-        storedKoreanName = docSnap.data()?['koreanName'] as String?;
+        final readHook = ForeignRegisterHooks.readUser;
+        final data = readHook != null
+            ? await readHook(uid)
+            : (await FirebaseFirestore.instance.collection('users').doc(uid).get()).data();
+        hasFingerprint = data?['foreignIdentityFingerprint'] != null;
+        storedKoreanName = data?['koreanName'] as String?;
+        storedIdDocumentVersion = (data?['idDocumentVersion'] as num?)?.toInt();
       } catch (e) {
         debugPrint('⚠️ [ForeignReg resume] Firestore 읽기 실패 — finalize 시도: $e');
         // 읽기 실패 시 finalize 호출로 폴백 (CF 내부에서 중복 방지)
@@ -542,15 +872,17 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
           koreanName.isNotEmpty && koreanName != storedKoreanName;
 
       if (!hasFingerprint || koreanNameNeedsSave) {
-        final finalizeErr = await AuthService().finalizeForeignIdentity(
-          rawId,
-          legalName: legalName.isNotEmpty ? legalName : null,
-          koreanName: koreanName.isNotEmpty ? koreanName : null,
-          visaType: visaType.isNotEmpty ? visaType : null,
+        final finalizeErr = await _callFinalize(
+          rawId, legalName, koreanName, visaType,
+          // [FULL13-REEVAL.3] CASE C(업로드 없음)일 때만 — 새 사진은 아래 업로드 판정이 본다.
+          documentEvidence: _existingPhotoEvidence(storedIdDocumentVersion),
         );
         if (!mounted) return;
         if (finalizeErr != null) {
-          setState(() => _isBusy = false);
+          setState(() {
+            _isBusy = false;
+            _submitError = finalizeErr;
+          });
           ToastHelper.showError(finalizeErr);
           return;
         }
@@ -559,17 +891,11 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       // ── ③ callableMarkIdCardVerified (이미 있으면 CF가 갱신) ──────
       if (uploadedPath != null) {
         try {
-          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-              .httpsCallable('callableMarkIdCardVerified',
-                  options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
-              .call({
-                'storagePath': uploadedPath,
-                // [PII-DOC-R1.2 / INV-3] 최초 가입에서는 등록번호 OCR 값이
-                //   곧 신원의 source다. 그 값으로 자기 자신을 검증할 수 없으므로
-                //   판정은 UNASSESSED이고, 그 사실을 **보낸다**.
-                //   보내지 않는 것과 '없다고 말하는 것'은 다르다.
-                'selfCheck': DocumentPickResult.unassessedSelfCheck(),
-              });
+          await _callMark({
+            'storagePath': uploadedPath,
+            // [FULL13-REEVAL.2] 번호는 직접 입력, OCR 번호는 후보로만(_markSelfCheck).
+            'selfCheck': _markSelfCheck(),
+          });
         } catch (e) {
           debugPrint('⚠️ [ForeignReg resume] markIdCardVerified 실패 (재시도 가능): $e');
         }
@@ -599,25 +925,25 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
   // finalSetup 유효성 검사 (지역 + 약관)
   // ============================================================
 
+  /// [DU356] 마지막 단계 진행을 막을 이유(지역 · 약관 준비 · 필수 동의), 통과면 null — 진행 · '가입 완료' 활성 · writer 직전이 모두 이것 하나를 본다.
+  ///   예전 판정은 `_legalTerms?.… ?? []` 로 시작해 약관 로딩 · 실패 · 필수 0 일 때 빈 목록 every = true 가 되어
+  ///   '가입 완료' 가 켜지고 진행이 통과했다(내국인 C0-TERMS-SUBMIT-GUARD 와 같은 결함, 소급 9 채택 범위).
+  String? _finalSetupBlockReason() {
+    if (widget.role == UserRole.USER && _homeRegion == null) return '주로 일할 지역을 선택해주세요';
+    return termsSubmitBlockReason(
+        loading: _termsLoading, error: _termsError, terms: _legalTerms, consent: _consentMap);
+  }
+
   bool _validateFinalSetup() {
-    if (widget.role == UserRole.USER && _homeRegion == null) {
-      ToastHelper.showWarning('주로 일할 지역을 선택해주세요');
-      return false;
-    }
-    final required = _legalTerms?.activeItems.where((t) => t.isRequired).toList() ?? [];
-    final allAgreed = required.every((t) => _consentMap[t.id] == true);
-    if (!allAgreed) {
-      ToastHelper.showWarning('필수 약관에 모두 동의해주세요');
+    final reason = _finalSetupBlockReason();
+    if (reason != null) {
+      ToastHelper.showWarning(reason);
       return false;
     }
     return true;
   }
 
-  bool get _isFinalSetupComplete {
-    if (widget.role == UserRole.USER && _homeRegion == null) return false;
-    final required = _legalTerms?.activeItems.where((t) => t.isRequired).toList() ?? [];
-    return required.every((t) => _consentMap[t.id] == true);
-  }
+  bool get _isFinalSetupComplete => _finalSetupBlockReason() == null;
 
   // ================================================================
   // FRESH 신규 가입 최종 커밋 — finalSetup '가입 완료' 버튼에서 실행
@@ -626,7 +952,17 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
   // ================================================================
   Future<void> _commitFreshRegistration() async {
     if (_isBusy) return;
-    setState(() => _isBusy = true);
+    // [DU356] writer 직전에도 같은 판정 — 진행 버튼 밖 경로로 들어와도 약관 준비 · 필수 동의 없이 가입을 시작하지 않는다.
+    if (!_validateFinalSetup()) return;
+    // [DU358] 저장할 번호(authPhone · otp_verified)가 인증에 성공한 번호와 같을 때만 가입을 시작한다.
+    if (!_phoneBindingOk) {
+      ToastHelper.showWarning('휴대폰 번호 인증을 다시 완료해주세요');
+      return;
+    }
+    setState(() {
+      _isBusy = true;
+      _submitError = null; // [DOC-LATE-DELETE.7 · D] 새 시도 — 이전 거절 사유를 지운다
+    });
 
     // Draft 값 먼저 읽기 (async gap 이전)
     final rawId = _rawForeignIdCtrl.text.trim().replaceAll(RegExp(r'\D'), '');
@@ -687,7 +1023,7 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
           try {
             final ts = DateTime.now().millisecondsSinceEpoch;
             final retryPath = 'users/$retryUid/idCard_$ts.jpg';
-            await FirebaseStorage.instance.ref(retryPath).putFile(File(imagePath));
+            await FirebaseStorage.instance.ref(retryPath).putFile(File(imagePath), _idCardUploadMetadata(imagePath));
             _uploadedStoragePath = retryPath;
           } catch (e) {
             debugPrint('⚠️ [ForeignReg commit retry] 이미지 업로드 실패: $e');
@@ -701,7 +1037,10 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
         );
         if (!mounted) return;
         if (finalizeErr != null) {
-          setState(() => _isBusy = false);
+          setState(() {
+            _isBusy = false;
+            _submitError = finalizeErr;
+          });
           ToastHelper.showError(finalizeErr);
           return;
         }
@@ -712,8 +1051,8 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
                     options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
                 .call({
                   'storagePath': _uploadedStoragePath,
-                  // [PII-DOC-R1.2 / INV-3] 위와 같은 이유로 UNASSESSED.
-                  'selfCheck': DocumentPickResult.unassessedSelfCheck(),
+                  // [FULL13-REEVAL.2] 위와 같다(_markSelfCheck).
+                  'selfCheck': _markSelfCheck(),
                 });
           } catch (e) {
             debugPrint('⚠️ [ForeignReg commit retry] markIdCardVerified 실패: $e');
@@ -788,7 +1127,7 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
         try {
           final ts = DateTime.now().millisecondsSinceEpoch;
           final storagePath = 'users/$uid/idCard_$ts.jpg';
-          await FirebaseStorage.instance.ref(storagePath).putFile(File(imagePath));
+          await FirebaseStorage.instance.ref(storagePath).putFile(File(imagePath), _idCardUploadMetadata(imagePath));
           uploadedPath = storagePath;
           _uploadedStoragePath = storagePath;
         } catch (e) {
@@ -805,7 +1144,10 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       );
       if (!mounted) return;
       if (finalizeErr != null) {
-        setState(() => _isBusy = false);
+        setState(() {
+          _isBusy = false;
+          _submitError = finalizeErr;
+        });
         ToastHelper.showError(finalizeErr);
         return;
       }
@@ -818,11 +1160,10 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
                   options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
               .call({
                 'storagePath': uploadedPath,
-                // [PII-DOC-R1.2 / INV-3] 최초 가입에서는 등록번호 OCR 값이
-                //   곧 신원의 source다. 그 값으로 자기 자신을 검증할 수 없으므로
-                //   판정은 UNASSESSED이고, 그 사실을 **보낸다**.
-                //   보내지 않는 것과 '없다고 말하는 것'은 다르다.
-                'selfCheck': DocumentPickResult.unassessedSelfCheck(),
+                // [FULL13-REEVAL.2] 예전(INV-3)에는 OCR 값이 곧 입력값이라 무판정만
+                //   보냈다. 이제 번호는 직접 입력이므로 같은 사진의 OCR 번호를
+                //   후보로 보낸다. 수집 OFF 면 여전히 무판정이다.
+                'selfCheck': _markSelfCheck(),
               });
         } catch (e) {
           debugPrint('⚠️ [ForeignReg commit] markIdCardVerified 실패: $e');
@@ -839,6 +1180,10 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
     }
 
     // ── region + terms → active (fresh + retry 공통) ─────────────
+    // [DOC-LATE-DELETE.7 · D] _finalizeRegistration 은 진행 중이면 바로 돌아간다. 여기까지 _isBusy 가
+    //   true 로 남아 있어 약관 동의·활성화가 한 번도 실행되지 않고 "처리 중"에 멈췄다(기기 실측).
+    if (!mounted) return;
+    setState(() => _isBusy = false);
     await _finalizeRegistration();
   }
 
@@ -847,11 +1192,24 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
   // Step 5 (USER) 또는 최종: recordTermsConsent → active
   // ============================================================
 
+  /// [DOC-LATE-DELETE.7 · D] 신분증 사진 업로드 형식을 명시한다. 메타데이터 없이 putFile 하면 Android SDK 가
+  ///   file:// 에서 형식을 못 찾아 형식 없는 업로드가 되고, Storage 규칙(isImageType)이 거절한다(에뮬레이터 실측).
+  ///   문서 관리 화면(StorageService)은 이미 형식을 지정한다 — 같은 방식으로 맞춘다.
+  SettableMetadata _idCardUploadMetadata(String localPath) => SettableMetadata(contentType: switch (localPath.split('.').last.toLowerCase()) {
+        'png' => 'image/png',
+        'webp' => 'image/webp',
+        'heic' || 'heif' => 'image/heic',
+        _ => 'image/jpeg',
+      });
+
   Future<void> _finalizeRegistration() async {
     if (_isBusy) return;
+    // [DU356] writer(지역 저장 · 동의 기록) 직전에도 같은 판정.
+    if (!_validateFinalSetup()) return;
     setState(() => _isBusy = true);
 
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    // [DU359 seam] 위 _processRegistration 과 같은 uid 출처(시험 주입 없으면 FirebaseAuth.currentUser — 운영 동작 같음)
+    final uid = _currentUid;
     if (uid == null) {
       setState(() => _isBusy = false);
       ToastHelper.showError('세션이 만료되었습니다. 다시 로그인해주세요.');
@@ -1014,13 +1372,17 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
             ),
           ]),
         ),
-        bottomNavigationBar: SafeArea(
+        bottomNavigationBar: _phoneStepToastAvoid(SafeArea(
           top: false,
           child: _buildBottomButtons(theme),
-        ),
+        )),
       ),
     );
   }
+
+  // [DU370] 휴대폰 단계에서 토스트가 하단 '다음'을 덮었다 — 그 단계의 고정 '다음' 영역만 회피 영역으로 등록한다
+  //   (DU1 구현57 F56-1 공용 부품, 소급 14 §2-4 좁은 후속). 다른 단계 · 공용 토스트 위치 규칙은 그대로다.
+  Widget _phoneStepToastAvoid(Widget bar) => _step == _Step.phone ? ToastAvoidArea(child: bar) : bar;
 
   // 현재 스텝에 따른 헤더 부제목
   String get _stepSubtitle => switch (_step) {
@@ -1055,14 +1417,19 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // [DU1 구현47 S001] 실측 뒤로 터치 32.3×32.3(320·2.0) — 기준 48. 아이콘 크기는 그대로, 누르는 영역만 최소 48×48
           GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: _handleBack,
-            child: Padding(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-              child: Icon(
-                Icons.arrow_back,
-                color: AppColors.textPrimary,
-                size: ResponsiveHelper.iconSize(context, 22),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              child: Padding(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                child: Icon(
+                  Icons.arrow_back,
+                  color: AppColors.textPrimary,
+                  size: ResponsiveHelper.iconSize(context, 22),
+                ),
               ),
             ),
           ),
@@ -1149,7 +1516,28 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
 
     return Padding(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-      child: SizedBox(
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        // [DOC-LATE-DELETE.7 · D] 서버가 거절한 이유를 토스트로만 흘려보내지 않는다 —
+        //   같은 단계에 남아 다시 시도하거나 새 사진을 고를 때까지 보인다.
+        if (_submitError != null)
+          Container(
+            key: const ValueKey('foreign-submit-error'),
+            width: double.infinity,
+            margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+            decoration: BoxDecoration(
+              color: AppColors.errorBg,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.errorLight),
+            ),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.error_outline, color: AppColors.errorDark, size: 18),
+              const SizedBox(width: 8),
+              Expanded(child: Text(_submitError!,
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.errorDark))),
+            ]),
+          ),
+        SizedBox(
         width: double.infinity,
         child: ElevatedButton(
           onPressed: isDisabled ? null : _onNext,
@@ -1165,6 +1553,7 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
           child: Text(isLast ? '가입 완료' : '다음'),
         ),
       ),
+      ]),
     );
   }
 
@@ -1270,80 +1659,209 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
             color: AppColors.successBg,
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Row(children: [
-            const Icon(Icons.check_circle, color: AppColors.success),
-            const SizedBox(width: 10),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('인증 완료', style: ResponsiveHelper.smallStyle(context, color: AppColors.successDark, fontWeight: FontWeight.w600)),
-              Text(_phoneCtrl.text, style: ResponsiveHelper.bodyStyle(context)),
-            ])),
-            TextButton(
-              onPressed: () => setState(() { _phoneVerified = false; _codeSent = false; _codeCtrl.clear(); }),
-              child: const Text('재인증'),
-            ),
-          ]),
+          child: _buildPhoneVerifiedBody(),
         ),
       ] else ...[
         _buildLabel('휴대폰 번호', Icons.phone_outlined),
-        Row(children: [
-          Expanded(
-            child: TextField(
-              controller: _phoneCtrl,
-              keyboardType: TextInputType.phone,
-              decoration: InputDecoration(
-                hintText: '010-0000-0000',
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                errorText: _phoneError,
-              ),
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              onChanged: (_) => setState(() => _phoneError = null),
+        _buildFieldWithAction(
+          hint: '010-0000-0000',
+          actionLabels: const ['인증번호 받기', '재발송'],
+          field: TextField(
+            controller: _phoneCtrl,
+            keyboardType: TextInputType.phone,
+            decoration: InputDecoration(
+              hintText: '010-0000-0000',
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              error: _fieldError(_phoneError),
             ),
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            onChanged: (_) => _onPhoneEdited(),
           ),
-          const SizedBox(width: 8),
-          ElevatedButton(
+          action: ElevatedButton(
             onPressed: _codeSending ? null : _sendCode,
             style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14)),
             child: _codeSending
                 ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                 : Text(_codeSent ? '재발송' : '인증번호 받기'),
           ),
-        ]),
+        ),
 
         if (_codeSent) ...[
           const SizedBox(height: 12),
-          Row(children: [
-            Expanded(
-              child: TextField(
-                controller: _codeCtrl,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                autofocus: true,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                onChanged: (v) { if (v.length == 6) _verifyCode(); },
-                decoration: InputDecoration(
-                  hintText: '인증번호 6자리',
-                  counterText: '',
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                ),
+          _buildFieldWithAction(
+            hint: '인증번호 6자리',
+            actionLabels: const ['확인'],
+            field: TextField(
+              controller: _codeCtrl,
+              focusNode: _codeFocus,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              autofocus: true,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              onChanged: (v) {
+                if (_codeError != null) setState(() => _codeError = null);
+                if (v.length == 6) _verifyCode();
+              },
+              decoration: InputDecoration(
+                hintText: '인증번호 6자리',
+                counterText: '',
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                error: _fieldError(_codeError),
               ),
             ),
-            const SizedBox(width: 8),
-            ElevatedButton(
+            action: ElevatedButton(
               onPressed: _codeVerifying ? null : _verifyCode,
               style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14)),
               child: _codeVerifying
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                   : const Text('확인'),
             ),
-          ]),
+          ),
+        ],
+        // [DU378] 인증 없이 '다음' → 묶음 바로 아래 지속 안내(발송 전 '인증번호 받기' · 발송 뒤 '확인'과 함께 보인다)
+        if (_phoneGateShown) ...[
+          const SizedBox(height: 12),
+          _phoneGateNotice(),
         ],
       ],
     ]);
   }
+
+  /// [DU354 r2] 칸 오류 안내 — 낱말 단위 줄바꿈(B 에서 '입|력해주세요' 음절 끊김), 읽기는 원문.
+  ///   모양은 M3 기본 오류 글과 같다(bodySmall · colorScheme.error, 앱 테마에 errorStyle 덮어쓰기 없음). 줄 수 제한 없음.
+  Widget? _fieldError(String? msg) {
+    if (msg == null) return null;
+    final theme = Theme.of(context);
+    return Text(
+      TextLayout.keepWords(msg),
+      semanticsLabel: msg,
+      style: (theme.textTheme.bodySmall ?? const TextStyle()).copyWith(color: theme.colorScheme.error),
+    );
+  }
+
+  /// [DU354] 입력 칸 + 옆 버튼. 칸이 예시 글(hint)을 다 보이지 못할 만큼 좁으면(큰 글자 · 좁은 화면)
+  ///   버튼을 칸 아래 전체 폭으로 내린다 — 칸이 몇 글자만 보이고 오류 안내가 사라지던 문제(320 · 2.0).
+  ///   잴 때 글자 배율 · 버튼 글자 스타일(테마) · 칸 글자 스타일 · 안쪽 여백(12×2)을 쓴다.
+  Widget _buildFieldWithAction({
+    required String hint,
+    required List<String> actionLabels,
+    required Widget field,
+    required Widget action,
+  }) {
+    return LayoutBuilder(builder: (context, cons) {
+      final theme = Theme.of(context);
+      final scaler = MediaQuery.textScalerOf(context);
+      final dir = Directionality.of(context);
+      final base = DefaultTextStyle.of(context).style;
+      double widthOf(String text, TextStyle style) {
+        final tp = TextPainter(
+          text: TextSpan(text: text, style: style),
+          textDirection: dir,
+          textScaler: scaler,
+          maxLines: 1,
+        )..layout();
+        final w = tp.width;
+        tp.dispose();
+        return w;
+      }
+
+      final actionStyle = base.merge(theme.elevatedButtonTheme.style?.textStyle?.resolve(const <WidgetState>{}));
+      final fieldStyle = base.merge(theme.textTheme.bodyLarge);
+      var labelW = 0.0;
+      for (final l in actionLabels) {
+        final w = widthOf(l, actionStyle);
+        if (w > labelW) labelW = w;
+      }
+      final actionW = (labelW + 32) < 64 ? 64.0 : labelW + 32; // 좌우 16 · 테마 최소 폭 64
+      final fieldMinW = widthOf(hint, fieldStyle) + 24 + 4; // 안쪽 여백 12×2 + 테두리
+      if (cons.maxWidth - 8 - actionW >= fieldMinW) {
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: field),
+          const SizedBox(width: 8),
+          action,
+        ]);
+      }
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        field,
+        const SizedBox(height: 8),
+        action,
+      ]);
+    });
+  }
+
+  /// [DU354] 인증 완료 카드 — 번호는 표시 형식(010-1234-5678, 저장값은 그대로)으로 보이고,
+  ///   번호가 '재인증' 옆 한 줄에 다 들어가지 않으면 '재인증' 을 아래 오른쪽으로 내린다(숫자 중간 줄바꿈 방지).
+  Widget _buildPhoneVerifiedBody() {
+    final shown = FormatHelper.formatPhone(_phoneCtrl.text);
+    final reauth = TextButton(
+      // [DU358] 재인증 — 진행 중 결과도 버리고 묶인 번호 · 인증 번호를 지운다
+      onPressed: () => setState(() {
+        _phoneReqGen++;
+        _verifyToken++; // [DU363]
+        _phoneVerified = false;
+        _verifiedPhone = null;
+        _boundPhone = null;
+        _codeSent = false;
+        _codeVerifying = false;
+        _codeCtrl.clear();
+        _codeError = null;
+        _phoneGateShown = false; // [DU378]
+      }),
+      child: const Text('재인증'),
+    );
+    final numberStyle = ResponsiveHelper.bodyStyle(context);
+    return LayoutBuilder(builder: (context, cons) {
+      final theme = Theme.of(context);
+      final scaler = MediaQuery.textScalerOf(context);
+      final dir = Directionality.of(context);
+      final base = DefaultTextStyle.of(context).style;
+      double widthOf(String text, TextStyle style) {
+        final tp = TextPainter(
+          text: TextSpan(text: text, style: style),
+          textDirection: dir,
+          textScaler: scaler,
+          maxLines: 1,
+        )..layout();
+        final w = tp.width;
+        tp.dispose();
+        return w;
+      }
+
+      final reauthStyle = base.merge(theme.textButtonTheme.style?.textStyle?.resolve(const <WidgetState>{}) ??
+          theme.textTheme.labelLarge);
+      final reauthW = (widthOf('재인증', reauthStyle) + 24) < 64 ? 64.0 : widthOf('재인증', reauthStyle) + 24;
+      final numberW = widthOf(shown, base.merge(numberStyle));
+      final info = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('인증 완료', style: ResponsiveHelper.smallStyle(context, color: AppColors.successDark, fontWeight: FontWeight.w600)),
+        Text(shown, semanticsLabel: shown, style: numberStyle),
+      ]);
+      const icon = Icon(Icons.check_circle, color: AppColors.success);
+      final iconW = IconTheme.of(context).size ?? 24;
+      if (cons.maxWidth - iconW - 10 - reauthW >= numberW) {
+        return Row(children: [icon, const SizedBox(width: 10), Expanded(child: info), reauth]);
+      }
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [icon, const SizedBox(width: 10), Expanded(child: info)]),
+        Align(alignment: Alignment.centerRight, child: reauth),
+      ]);
+    });
+  }
+
+  String get _ocrRunningMsg =>
+      _reuseRunning ? '이전에 등록한 외국인등록증을 불러오는 중...' : '이미지 인식 중...';
+
+  static const String _kReuseFailed =
+      '이전에 올린 외국인등록증을 불러오지 못했습니다. 다시 촬영하거나 갤러리에서 선택해주세요.';
+
+  // [DU349] OCR 목적 안내 — 문구 그대로. 화면용은 낱말 단위 + '·' 뒤 줄바꿈(긴 괄호 낱말이 음절로 갈리지 않게).
+  static const String _kOcrPurposeRaw = 'OCR로 성명·번호·체류자격 등 정보를 자동으로 인식합니다. '
+      '인식된 내용은 다음 화면에서 직접 확인하고 수정할 수 있습니다.';
+  static final String _kOcrPurpose =
+      TextLayout.keepWords(_kOcrPurposeRaw).replaceAll('·\u2060', '·\u200B');
 
   Widget _buildDocumentScan(ThemeData theme) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1358,17 +1876,18 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.3)),
         ),
-        child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Row(children: [
             Icon(Icons.info_outline, size: 15, color: AppColors.grey600),
             SizedBox(width: 6),
             Text('입력 보조 수단', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.grey700)),
           ]),
-          SizedBox(height: 6),
+          const SizedBox(height: 6),
+          // [DU349] 본문 grey600(안내 면 위 4.28) → textSecondary, 낱말 단위 · '·' 뒤 줄바꿈 허용(문구 그대로)
           Text(
-            'OCR로 성명·번호·체류자격 등 정보를 자동으로 인식합니다. '
-            '인식된 내용은 다음 화면에서 직접 확인하고 수정할 수 있습니다.',
-            style: TextStyle(fontSize: 12, color: AppColors.grey600),
+            _kOcrPurpose,
+            semanticsLabel: _kOcrPurposeRaw,
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
           ),
         ]),
       ),
@@ -1379,13 +1898,34 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
           const CircularProgressIndicator(),
           const SizedBox(height: 16),
           // [CASE C] 기존 idCard 재사용 시도 중 vs. 신규 OCR 실행 중 구분
-          Text(
-            widget.isResume && widget.existingIdCardPath != null
-                ? '이전에 등록한 외국인등록증을 불러오는 중...'
-                : '이미지 인식 중...',
-          ),
+          // [DU355] 위젯 값이 아니라 지금 하는 작업으로 고른다(재사용 실패 뒤 새 사진 인식에 '이전…' 이 보이던 문제), 낱말 줄바꿈 · 가운데
+          Text(TextLayout.keepWords(_ocrRunningMsg), semanticsLabel: _ocrRunningMsg, textAlign: TextAlign.center),
         ])),
       ] else ...[
+        // [DU355] CASE C 재사용 실패 — 말없이 돌아오지 않고 다시 고르게 안내한다(새 사진을 고르면 사라진다).
+        if (_reuseFailed && !_ocrAttempted) ...[
+          Container(
+            key: const ValueKey('foreign-reuse-failed'),
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.infoBg,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              // [DU361] 첫 줄 가운데(크기 그대로)
+              FirstLineIcon(Icons.info_outline, size: 16, color: AppColors.infoDeep,
+                  textStyle: ResponsiveHelper.smallStyle(context, color: AppColors.infoDeep)),
+              const SizedBox(width: 8),
+              Expanded(child: Text(
+                TextLayout.keepWords(_kReuseFailed),
+                semanticsLabel: _kReuseFailed,
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDeep),
+              )),
+            ]),
+          ),
+          const SizedBox(height: 16),
+        ],
         // 촬영 버튼
         _buildScanOption(
           icon: Icons.camera_alt_outlined,
@@ -1431,18 +1971,21 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
         child: Row(children: [
           Icon(icon, color: isPrimary ? Colors.white : AppColors.grey600, size: 28),
           const SizedBox(width: 14),
+          // [DU1 구현47 S001] 320·2.0 '갤러리에서 선/택' 끊김 — 단어 단위(문구 그대로)
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(label, style: TextStyle(
+            Text(TextLayout.keepWords(label), style: TextStyle(
               fontWeight: FontWeight.w600,
               color: isPrimary ? Colors.white : AppColors.grey800,
             )),
             const SizedBox(height: 2),
-            Text(sublabel, style: TextStyle(
+            // [DU349] 보조 설명 grey500(2.57) → textSecondary, chevron grey400 → grey600
+            // [DU355] 주 버튼 위 보조 설명 white70(brand 위 실제 3.60) → 흰색(5.58). 위계는 글자 크기 · 굵기로 남긴다(소급 10)
+            Text(TextLayout.keepWords(sublabel), semanticsLabel: sublabel, style: TextStyle(
               fontSize: 12,
-              color: isPrimary ? Colors.white70 : AppColors.grey500,
+              color: isPrimary ? Colors.white : AppColors.textSecondary,
             )),
           ])),
-          Icon(Icons.chevron_right, color: isPrimary ? Colors.white70 : AppColors.grey400),
+          Icon(Icons.chevron_right, color: isPrimary ? Colors.white70 : AppColors.grey600),
         ]),
       ),
     );
@@ -1456,7 +1999,7 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
         borderRadius: BorderRadius.circular(10),
       ),
       child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('촬영 팁', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: AppColors.grey600)),
+        Text('촬영 팁', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: AppColors.textSecondary)), // [DU349] grey600(grey50 위 4.41)
         SizedBox(height: 8),
         _TipRow(icon: Icons.light_mode_outlined, text: '밝은 곳에서 촬영하세요'),
         _TipRow(icon: Icons.straighten, text: '카드가 화면 안에 가득 차도록 찍으세요'),
@@ -1481,17 +2024,18 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
           Container(
             padding: const EdgeInsets.all(12),
             margin: const EdgeInsets.only(bottom: 16),
+            // [DU355] Colors.orange.* → warning 토큰(면 warningBg · 테두리 warningLight · 아이콘 warningDark)
             decoration: BoxDecoration(
-              color: Colors.orange.shade50,
+              color: AppColors.warningBg,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.orange.shade200),
+              border: Border.all(color: AppColors.warningLight),
             ),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Icon(Icons.warning_amber, color: Colors.orange.shade700, size: 18),
+              const Icon(Icons.warning_amber, color: AppColors.warningDark, size: 18),
               const SizedBox(width: 8),
-              const Expanded(child: Text(
-                '일부 정보를 인식하지 못했습니다. 해당 항목을 직접 입력해주세요.',
-                style: TextStyle(fontSize: 13),
+              Expanded(child: Text(
+                TextLayout.keepWords('일부 정보를 인식하지 못했습니다. 해당 항목을 직접 입력해주세요.'), // [DU1 구현47] '인식하/지' 끊김
+                style: const TextStyle(fontSize: 13),
               )),
             ]),
           ),
@@ -1501,9 +2045,10 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
         // 영문 이름 (외국인등록증 기재)
         _buildOcrField(
           controller: _legalNameCtrl,
-          label: '영문 이름 (외국인등록증 기재)',
-          hint: '예: NGUYEN VAN AN',
-          failed: _ocrResult?.legalNameFailed ?? true,
+          // [FULL13-REEVAL.3] 직접 입력 칸 — OCR 이름은 대조 근거로만 쓴다.
+          label: '영문 이름 (등록증 기재대로 직접 입력)',
+          hint: '예: NGUYEN AN', // [DU360] '예: NGUYEN VAN AN' 은 320 · 2.0 칸(248)에서 말줄임 — 짧은 예(Codex 후보)
+          failed: false,
           validator: (v) => (v == null || v.trim().isEmpty) ? '영문 이름을 입력해주세요' : null,
         ),
         // [Phase A.4] OCR 이름 정확도 불확실 시 확인 안내
@@ -1514,12 +2059,13 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.info_outline, size: 14, color: Colors.orange),
+                // [DU355] 주황 Colors.orange(흰 바탕 2.16) → warningDark. 글은 그대로(W · B 끊김 없음 — r3 에서 낱말 조판 철회)
+                const Icon(Icons.info_outline, size: 14, color: AppColors.warningDark),
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
                     '카드에 적힌 영문 이름과 동일한지 확인해주세요',
-                    style: const TextStyle(fontSize: 12, color: Colors.orange),
+                    style: const TextStyle(fontSize: 12, color: AppColors.warningDark),
                   ),
                 ),
               ],
@@ -1532,23 +2078,26 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
         _buildOcrField(
           controller: _koreanNameCtrl,
           label: '한글 이름',
-          hint: '한글 이름을 입력해주세요',
+          hint: '선택 입력', // [DU360] 레이블 '(선택)' · 아래 안내와 같은 뜻, B 말줄임 해소
           failed: false,
           isOptional: true,
         ),
         const SizedBox(height: 4),
+        // [DU350] grey400(1.88) → textTertiary, 낱말 단위
         Text(
-          '없으면 입력하지 않으셔도 됩니다',
-          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+          TextLayout.keepWords('없으면 입력하지 않으셔도 됩니다'),
+          semanticsLabel: '없으면 입력하지 않으셔도 됩니다',
+          style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary),
         ),
         const SizedBox(height: 14),
 
         // 외국인등록번호 — 13자리 입력, 표시는 마스킹 없음 (입력 중)
         _buildOcrField(
           controller: _rawForeignIdCtrl,
-          label: '외국인등록번호 (13자리 숫자)',
-          hint: '예: 0010205XXXXXXX',
-          failed: _ocrResult?.foreignIdFailed ?? true,
+          // [FULL13-REEVAL.2] 직접 입력 칸 — OCR 인식 여부와 무관하게 비어 있다.
+          label: '외국인등록번호 (13자리 숫자 직접 입력)',
+          hint: '숫자 13자리', // [DU360] 레이블 '(13자리 숫자 직접 입력)'과 같은 뜻. 예시 번호(279px)는 B 칸(248)에서 다시 잘려 고르지 않음
+          failed: false,
           keyboardType: TextInputType.number,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(13)],
           validator: (v) {
@@ -1590,8 +2139,10 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
     String? Function(String?)? validator,
   }) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Text(label, style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600, fontWeight: FontWeight.w600)),
+      // [DU1 구현47 S001] 320·2.0 에서 긴 레이블('영문 이름 (등록증 기재대로 직접 입력)')+배지 Row 가 오른쪽으로 넘쳤다 —
+      //   Wrap 으로 좁으면 배지·(선택)이 다음 줄로 내려가고 레이블은 단어 단위 줄바꿈(문구·배지 그대로).
+      Wrap(crossAxisAlignment: WrapCrossAlignment.center, runSpacing: 4, children: [
+        Text(TextLayout.keepWords(label), style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600, fontWeight: FontWeight.w600)),
         if (failed) ...[
           const SizedBox(width: 6),
           Container(
@@ -1605,7 +2156,7 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
         ],
         if (isOptional) ...[
           const SizedBox(width: 6),
-          Text('(선택)', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+          Text('(선택)', style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary)), // [DU350] grey400 → textTertiary
         ],
       ]),
       const SizedBox(height: 6),
@@ -1679,20 +2230,24 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
                 border: Border.all(color: AppColors.grey200),
                 borderRadius: BorderRadius.circular(12),
               ),
+              // [DU356] 미선택 글 grey400 → textTertiary, 아이콘 grey400 → grey600(읽기색 기준)
               child: Row(children: [
-                Icon(Icons.map_outlined, color: AppColors.grey400),
+                const Icon(Icons.map_outlined, color: AppColors.grey600),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text('지역을 선택해주세요',
+                  child: Text(TextLayout.keepWords('지역을 선택해주세요'),
+                      semanticsLabel: '지역을 선택해주세요',
                       style: ResponsiveHelper.bodyStyle(context,
-                          color: AppColors.grey400)),
+                          color: AppColors.textTertiary)),
                 ),
-                Icon(Icons.chevron_right, color: AppColors.grey400),
+                const Icon(Icons.chevron_right, color: AppColors.grey600),
               ]),
             ),
           ),
-        Text('가입 후 MY에서 언제든 변경할 수 있어요.',
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+        // [DU356] grey400 → textSecondary(내국인 가입 S004 와 같은 색), 낱말 줄바꿈
+        Text(TextLayout.keepWords('가입 후 MY에서 언제든 변경할 수 있어요.'),
+            semanticsLabel: '가입 후 MY에서 언제든 변경할 수 있어요.',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary)),
         const SizedBox(height: 24),
       ],
 
@@ -1705,13 +2260,15 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       else if (_legalTerms == null)
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Icon(Icons.cloud_off_outlined, size: 18, color: AppColors.grey500),
+            // [DU356] 실패 글 grey500 → textSecondary, 아이콘 grey500 → grey600
+            const Icon(Icons.cloud_off_outlined, size: 18, color: AppColors.grey600),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                  _termsError ?? '약관 정보를 불러올 수 없습니다.',
+                  TextLayout.keepWords(_termsError ?? '약관 정보를 불러올 수 없습니다.'),
+                  semanticsLabel: _termsError ?? '약관 정보를 불러올 수 없습니다.',
                   style: ResponsiveHelper.bodyStyle(context,
-                      color: AppColors.grey500)),
+                      color: AppColors.textSecondary)),
             ),
           ]),
           const SizedBox(height: 8),
@@ -1806,8 +2363,10 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
           }
         },
       ),
+      // [DU356] 항목 제목 낱말 줄바꿈('수|신' · '동|의'), 낭독은 원문
       title: Text(
-        '${item.isRequired ? '[필수] ' : '[선택] '}${item.title}',
+        TextLayout.keepWords('${item.isRequired ? '[필수] ' : '[선택] '}${item.title}'),
+        semanticsLabel: '${item.isRequired ? '[필수] ' : '[선택] '}${item.title}',
         style: ResponsiveHelper.bodyStyle(context),
       ),
       trailing: item.content.isNotEmpty
@@ -1816,7 +2375,7 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
               child: Text(
                 viewed ? '다시보기' : '보기 *',
                 style: TextStyle(
-                  color: viewed ? AppColors.grey400 : theme.primaryColor,
+                  color: viewed ? AppColors.textSecondary : theme.primaryColor, // [DU356] '다시보기' grey400 → textSecondary
                   fontWeight: viewed ? FontWeight.normal : FontWeight.bold,
                 ),
               ),
@@ -1857,8 +2416,10 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
 
   Widget _buildStepHeader(String title, String subtitle) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // [DU349] 단계 머리 제목 · 안내 낱말 단위(320 · 2.0 '스 / 캔' · '촬영하거 / 나'), 원문은 낭독용
       Text(
-        title,
+        TextLayout.keepWords(title),
+        semanticsLabel: title,
         style: ResponsiveHelper.bodyStyle(context).copyWith(
           fontSize: 20,
           fontWeight: FontWeight.bold,
@@ -1867,7 +2428,8 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       ),
       const SizedBox(height: 6),
       Text(
-        subtitle,
+        TextLayout.keepWords(subtitle),
+        semanticsLabel: subtitle,
         style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
       ),
     ]);
@@ -1889,6 +2451,8 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
 // 보조 위젯
 // ──────────────────────────────────────────────────────────────
 
+const TextStyle _kTipStyle = TextStyle(fontSize: 12, color: AppColors.textSecondary);
+
 class _TipRow extends StatelessWidget {
   final IconData icon;
   final String text;
@@ -1898,10 +2462,13 @@ class _TipRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(children: [
-        Icon(icon, size: 14, color: AppColors.grey500),
+      // [DU361] 여러 줄 팁(B)에서 아이콘이 글 덩어리 가운데에 놓였다 — 위 정렬 + 첫 줄 가운데(크기 · 색 그대로)
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        FirstLineIcon(icon, size: 14, color: AppColors.grey600, textStyle: _kTipStyle), // [DU349] grey500 → grey600
         const SizedBox(width: 6),
-        Text(text, style: const TextStyle(fontSize: 12, color: AppColors.grey600)),
+        // [DU1 구현47 S001] 320·2.0 에서 팁 글이 줄지 않아 오른쪽으로 125~173px 넘쳤다 — 남은 폭에서 단어 단위 줄바꿈(문구 그대로)
+        // [DU349] 글자 grey600(grey50 위 4.41) → textSecondary
+        Expanded(child: Text(TextLayout.keepWords(text), semanticsLabel: text, style: _kTipStyle)),
       ]),
     );
   }

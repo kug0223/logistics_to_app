@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 
 /// [RELEASE-CORRECTION-PRIVACY-INLINE-DISCLOSURE]
 ///
@@ -110,26 +111,31 @@ class PrivacyInlineNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // [DU283 PN1] info 6% 면·22% 선 r10 → infoBg r12 선 없음(DU276·DU278 안내 상자와 같다)
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
       decoration: BoxDecoration(
-        color: AppColors.info.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.info.withValues(alpha: 0.22)),
+        color: AppColors.infoBg,
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 16, color: AppColors.infoDark),
+          // [DU283 PN4] 배율 크기·infoDeep
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 16), color: AppColors.infoDeep),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // [DU1 구현90 S038] 작은 제목 infoDark 가 옅은 정보면(F2F9FE) 위 4.33:1(PNG) — 같은 정보색 계열의 infoDeep(8.12:1).
+                //   이 위젯 호출은 서류 관리 화면 2곳(신분증 안내·세무 입력 시트)뿐이며 두 곳 모두 같은 자체 면을 쓴다.
+                // [DU283 PN2] tiny → small, 낱말 단위(읽기 이름 원문)
                 Text(
-                  disclosure.title,
-                  style: ResponsiveHelper.tinyStyle(context,
-                          color: AppColors.infoDark)
+                  TextLayout.keepWords(disclosure.title),
+                  semanticsLabel: disclosure.title,
+                  style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.infoDeep)
                       .copyWith(fontWeight: FontWeight.w700),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -138,9 +144,12 @@ class PrivacyInlineNotice extends StatelessWidget {
                     padding: EdgeInsets.only(
                         bottom: ResponsiveHelper.spacing(context, 2)),
                     child: Text(
-                      '· $p',
-                      style: ResponsiveHelper.tinyStyle(context,
-                          color: AppColors.grey600),
+                      // [DU283 PN3] 낱말 단위(320·2.0 '처/리에만'·'등/록한'·'사업/장의'), tiny → small. 읽기 이름은 원문.
+                      TextLayout.keepWords('· $p'),
+                      semanticsLabel: '· $p',
+                      // [DU1 구현90 S038] 본문 grey600 4.34:1(PNG) → 읽기용 보조색 textSecondary(5.57:1). 문구·구조 그대로.
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.textSecondary),
                     ),
                   ),
               ],

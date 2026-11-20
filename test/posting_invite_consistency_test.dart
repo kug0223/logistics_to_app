@@ -662,8 +662,10 @@ void main() {
       //   예전에는 workDetailId 를 먼저 봤는데, 소비부는 work.id(composite)로
       //   찾았기 때문에 둘이 만나지 못했다. 위 _aggregationKey 재현식이
       //   보는 wdId 가 이제 소스의 1순위와 같은 필드다.
+      // [E2-INVITED-SEAT] 집계 본체는 `tallyWorkDetailSeats` 로 옮겼다 —
+      //   loadTOWorkDetails 가 그것을 부른다(규칙은 그대로).
       final body =
-          _codeOf(_bodyOf(_src(_fsServicePath), 'Future<Map<String, dynamic>> loadTOWorkDetails('));
+          _codeOf(_bodyOf(_src(_fsServicePath), 'static void tallyWorkDetailSeats('));
       final flat = _flat(body);
       expect(flat.contains('final canonical = app.wdId;'), isTrue,
           reason: '1순위가 app.wdId 가 아니다');

@@ -240,7 +240,10 @@ class NotificationProvider with ChangeNotifier {
   Future<void> markAsRead(String notificationId) async {
     if (_userId == null) return;
     try {
-      await _firestoreService.markNotificationAsRead(_userId!, notificationId);
+      // [.66] 서비스는 실패를 던지지 않고 false 로 돌려준다 — 결과를 보지 않으면 거절된
+      //   읽음도 로컬에서 읽음이 되어 배지·점이 서버와 어긋난다.
+      final ok = await _firestoreService.markNotificationAsRead(_userId!, notificationId);
+      if (!ok) return;
     } catch (e) {
       // Firestore 쓰기 실패 시 로컬 상태를 변경하지 않고 조용히 종료
       // (서버·로컬 불일치 방지)

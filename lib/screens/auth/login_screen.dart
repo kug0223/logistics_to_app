@@ -11,6 +11,7 @@ import '../../services/analytics_service.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 
 // Widgets
@@ -204,7 +205,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               style: ResponsiveHelper.titleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
                           const SizedBox(height: 6),
                           Text('가입 시 입력한 이름과 전화번호를 입력해주세요',
-                              style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey500)),
+                              style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.textSecondary)),
                           const SizedBox(height: 24),
                           _buildSheetTextField(
                             context: ctx,
@@ -247,7 +248,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           const SizedBox(height: 8),
                           Text('입력하신 정보를 다시 확인해주세요',
                               textAlign: TextAlign.center,
-                              style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey500)),
+                              style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.textSecondary)),
                           const SizedBox(height: 28),
                           OutlinedButton(
                             onPressed: () => setSheetState(() => foundAccounts = null),
@@ -351,6 +352,11 @@ class _LoginScreenState extends State<LoginScreen> {
     // sizeOf / paddingOf 는 키보드 상태와 무관 — 키보드 애니메이션 중 리빌드 없음
     final size = MediaQuery.sizeOf(context);
     final sysPadding = MediaQuery.paddingOf(context);
+    // [LOGIN-ONE-SCREEN.34] 좁은 화면·큰 글자에서도 로그인은 스크롤 없이 한 화면에 — 글자 대신 여백·장식을 줄인다.
+    //   기본 배치는 배율 1.0 기준 높이 약 760dp 가 필요하다. 사용자 배율을 곱해 화면 높이에 안 들어가면 압축 배치:
+    //   위 여백 12%→20, 로고 2.4→1.6배, 소개 문구 숨김, 카드·입력 사이 간격 축소. 읽는 글자(입력·버튼·안내)는 그대로.
+    //   화면 크기로 한 번 정한다 — 키보드가 올라와도(sizeOf 불변) 배치가 바뀌지 않는다.
+    final compact = !TextLayout.fits(context, size.height, 760);
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
@@ -407,10 +413,17 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: SingleChildScrollView(
                       physics: const ClampingScrollPhysics(),
                       padding: EdgeInsets.only(
-                        top: sysPadding.top + size.height * 0.12,
+                        top: sysPadding.top + (compact ? 20 : size.height * 0.12),
                         bottom: math.max(24.0, sysPadding.bottom + 16),
                       ),
-                      child: Column(
+                      // [LOGIN-ONE-SCREEN.34] 압축 배치는 남는 높이 가운데에 둔다(기기 392·2.0: 카드가 위에 붙고 아래 절반이 비었다).
+                      //   높이는 화면 크기(sizeOf)로만 정한다 — 키보드가 올라오면 스크롤될 뿐 배치는 그대로.
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(minHeight: compact
+                            ? math.max(0.0, size.height - sysPadding.top - 20 - math.max(24.0, sysPadding.bottom + 16))
+                            : 0),
+                        child: Align(alignment: compact ? Alignment.center : Alignment.topCenter, child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           // 로고 — 좌측 정렬, 아이콘 없음
@@ -423,15 +436,15 @@ class _LoginScreenState extends State<LoginScreen> {
                                 Text(
                                   'ALfit',
                                   style: TextStyle(
-                                    fontSize: ResponsiveHelper.titleStyle(ctx).fontSize! * 2.4,
+                                    fontSize: ResponsiveHelper.titleStyle(ctx).fontSize! * (compact ? 1.6 : 2.4),
                                     fontWeight: FontWeight.w800,
                                     color: Colors.white,
                                     letterSpacing: 2,
                                     height: 1,
                                   ),
                                 ),
-                                const SizedBox(height: 6),
-                                Text(
+                                if (!compact) const SizedBox(height: 6),
+                                if (!compact) Text(
                                   '나에게 딱 맞는 알바 매칭',
                                   style: ResponsiveHelper.bodyStyle(ctx).copyWith(
                                     color: Colors.white.withValues(alpha: 0.75),
@@ -442,12 +455,14 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
 
-                          SizedBox(height: size.height * 0.04),
+                          SizedBox(height: compact ? 16 : size.height * 0.04),
 
                           // 로그인 카드
                           Container(
                             margin: const EdgeInsets.symmetric(horizontal: 20),
-                            padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
+                            padding: compact
+                                ? const EdgeInsets.fromLTRB(20, 20, 20, 16)
+                                : const EdgeInsets.fromLTRB(24, 32, 24, 32),
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(24),
@@ -459,9 +474,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                               ],
                             ),
-                            child: _buildForm(ctx, isLoading),
+                            child: _buildForm(ctx, isLoading, compact: compact),
                           ),
                         ],
+                      )),
                       ),
                     ),
                   ),
@@ -474,7 +490,9 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _buildForm(BuildContext context, bool isLoading) {
+  Widget _buildForm(BuildContext context, bool isLoading, {bool compact = false}) {
+    // [LOGIN-ONE-SCREEN.34] 압축 배치에서는 간격만 줄인다.
+    double gap(double normal, double tight) => compact ? tight : normal;
     final theme = Theme.of(context);
 
     return Form(
@@ -491,7 +509,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
 
-          const SizedBox(height: 28),
+          SizedBox(height: gap(28, 14)),
 
           _buildTextField(
             context: context,
@@ -509,7 +527,7 @@ class _LoginScreenState extends State<LoginScreen> {
             },
           ),
 
-          const SizedBox(height: 16),
+          SizedBox(height: gap(16, 10)),
 
           _buildTextField(
             context: context,
@@ -525,7 +543,7 @@ class _LoginScreenState extends State<LoginScreen> {
             suffixIcon: IconButton(
               icon: Icon(
                 _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                color: AppColors.grey400,
+                color: AppColors.grey600, // [DU318] grey400 1.88 → grey600 4.61 — 누를 수 있는 아이콘
                 size: 20,
               ),
               onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
@@ -537,11 +555,25 @@ class _LoginScreenState extends State<LoginScreen> {
             },
           ),
 
-          const SizedBox(height: 14),
+          // [DU326 ④] 아래 줄 receiver 가 48 이 되며 생긴 안쪽 여백만큼 줄인다(보이는 간격 유지)
+          SizedBox(height: gap(6, 2)),
 
           // 아이디 저장 체크박스 + 아이디/비밀번호 찾기
-          Row(
+          // [UI-INTEGRATION.33] 한 Row + Spacer 라 392·2.0 에서 132px 넘쳤다(기기). 두 묶음을
+          //   양 끝에 두되, 안 들어가면 찾기 묶음이 다음 줄로 간다(글자는 줄이지 않는다).
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            runSpacing: 4,
             children: [
+             // [DU326 ①] 체크(20) + 글자(19)가 따로 작았다 — 한 receiver(최소 48×48)로 묶는다. 같은 행동이라 겹침이 아니다.
+             MergeSemantics(
+              child: InkWell(
+               onTap: () => setState(() => _saveId = !_saveId),
+               borderRadius: BorderRadius.circular(8),
+               child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
               SizedBox(
                 width: 20,
                 height: 20,
@@ -554,43 +586,44 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(width: 6),
-              GestureDetector(
-                onTap: () => setState(() => _saveId = !_saveId),
-                child: Text(
-                  '아이디 저장',
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                ),
+              Text(
+                '아이디 저장',
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
               ),
-              const Spacer(),
+              const SizedBox(width: 4),
+                ]),
+               ),
+              ),
+             ),
+             // [DU326 ③] Row → Wrap — 320x640 2.0 에서 두 버튼이 57px 넘쳤다. 좁으면 줄을 바꾼다.
+             // [DU326 b] 줄을 바꾸면 세로 구분선이 첫 줄 끝에 홀로 남았다(320x640 2.0) — 구분선 대신 간격 8 로 나눈다.
+             Wrap(alignment: WrapAlignment.end, crossAxisAlignment: WrapCrossAlignment.center, spacing: 8, children: [
               TextButton(
                 onPressed: _showFindUsernameDialog,
                 style: TextButton.styleFrom(
                   foregroundColor: AppColors.grey600,
-                  minimumSize: Size.zero,
+                  // [DU326 ②] receiver 최소 48×48(글자 · 모양 그대로)
+                  minimumSize: const Size(48, 48),
                   padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 child: Text('아이디 찾기', style: ResponsiveHelper.smallStyle(context)),
               ),
-              Container(
-                width: 1, height: 10,
-                color: AppColors.grey300,
-                margin: const EdgeInsets.symmetric(horizontal: 2),
-              ),
               TextButton(
                 onPressed: _showFindPasswordDialog,
                 style: TextButton.styleFrom(
                   foregroundColor: AppColors.grey600,
-                  minimumSize: Size.zero,
+                  minimumSize: const Size(48, 48), // [DU326 ②]
                   padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 child: Text('비밀번호 찾기', style: ResponsiveHelper.smallStyle(context)),
               ),
+             ]),
             ],
           ),
 
-          const SizedBox(height: 24),
+          SizedBox(height: gap(16, 8)), // [DU326 ④] 이전 gap(24, 14)
 
           // 로그인 버튼
           ElevatedButton(
@@ -598,7 +631,7 @@ class _LoginScreenState extends State<LoginScreen> {
             style: ElevatedButton.styleFrom(
               backgroundColor: theme.primaryColor,
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 16),
+              padding: EdgeInsets.symmetric(vertical: gap(16, 12)),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),
               ),
@@ -611,19 +644,21 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
 
-          const SizedBox(height: 20),
+          SizedBox(height: gap(20, 12)),
 
           const Divider(color: AppColors.grey200, height: 1),
 
-          const SizedBox(height: 14),
+          SizedBox(height: gap(4, 0)), // [DU326 ④] 이전 gap(14, 8) — 회원가입 receiver 48 의 안쪽 여백만큼
 
           // 회원가입 링크 — 카드 안
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          // [UI-INTEGRATION.33] 392·2.0 에서 4.2px 넘쳤다 — 안 들어가면 '회원가입' 이 다음 줄 가운데로.
+          Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text(
                 '계정이 없으신가요?',
-                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
               ),
               TextButton(
                 onPressed: () => Navigator.push(
@@ -631,7 +666,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   MaterialPageRoute(builder: (_) => const RegisterScreen()),
                 ),
                 style: TextButton.styleFrom(
-                  minimumSize: Size.zero,
+                  minimumSize: const Size(48, 48), // [DU326 ②] receiver 최소 48×48
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
@@ -675,7 +710,7 @@ class _LoginScreenState extends State<LoginScreen> {
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
+        hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.textTertiary), // [DU318] grey400 1.75 → textTertiary
         prefixIcon: Icon(
           icon,
           color: theme.primaryColor,
@@ -735,7 +770,7 @@ class _LoginScreenState extends State<LoginScreen> {
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
+        hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.textTertiary), // [DU318] grey400 1.75 → textTertiary
         prefixIcon: Icon(icon, color: Theme.of(context).primaryColor, size: 20),
         suffixIcon: suffixWidget != null
             ? Padding(
@@ -1050,7 +1085,7 @@ class _PasswordResetSheetState extends State<_PasswordResetSheet> {
                 const SizedBox(height: 8),
                 Text('새 비밀번호로 로그인해주세요',
                     textAlign: TextAlign.center,
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.grey500)),
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.textSecondary)),
                 const SizedBox(height: 28),
                 ElevatedButton(
                   onPressed: () => Navigator.pop(context),
@@ -1074,7 +1109,7 @@ class _PasswordResetSheetState extends State<_PasswordResetSheet> {
                     style: ResponsiveHelper.titleStyle(context).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
                 const SizedBox(height: 6),
                 Text('새로 사용할 비밀번호를 입력해주세요',
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.grey500)),
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.textSecondary)),
                 const SizedBox(height: 24),
                 _buildTextField(
                   controller: _newPasswordController,
@@ -1089,7 +1124,7 @@ class _PasswordResetSheetState extends State<_PasswordResetSheet> {
                     child: GestureDetector(
                       onTap: () => setState(() => _obscureNew = !_obscureNew),
                       child: Icon(_obscureNew ? Icons.visibility_off : Icons.visibility,
-                          color: AppColors.grey400, size: 20),
+                          color: AppColors.grey600, size: 20), // [DU318] grey400 → grey600
                     ),
                   ),
                   onSubmitted: (_) => _confirmPasswordFocus.requestFocus(),
@@ -1108,7 +1143,7 @@ class _PasswordResetSheetState extends State<_PasswordResetSheet> {
                     child: GestureDetector(
                       onTap: () => setState(() => _obscureConfirm = !_obscureConfirm),
                       child: Icon(_obscureConfirm ? Icons.visibility_off : Icons.visibility,
-                          color: AppColors.grey400, size: 20),
+                          color: AppColors.grey600, size: 20), // [DU318] grey400 → grey600
                     ),
                   ),
                   onSubmitted: (_) => _resetPassword(),
@@ -1138,7 +1173,7 @@ class _PasswordResetSheetState extends State<_PasswordResetSheet> {
                   _isForeign
                       ? '아이디 입력 후 등록된 연락처로 인증번호를 받습니다'
                       : '아이디 입력 후 본인인증을 진행해주세요.',
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.grey500),
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.textSecondary),
                 ),
                 const SizedBox(height: 16),
                 // [AUTH-FIX §2] 내국인/외국인 토글
@@ -1324,7 +1359,7 @@ class _PasswordResetSheetState extends State<_PasswordResetSheet> {
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
+        hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.textTertiary), // [DU318] grey400 1.75 → textTertiary
         prefixIcon: Icon(icon, color: Theme.of(context).primaryColor, size: 20),
         suffixIcon: suffixWidget != null
             ? Padding(padding: const EdgeInsets.only(right: 12), child: suffixWidget)

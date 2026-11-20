@@ -16,10 +16,10 @@
 const path = require('path');
 const fs = require('fs');
 
-const KEY = path.join(__dirname, '..', 'functions',
-  'alfit-89567-firebase-adminsdk-fbsvc-4174a2458f.json');
-if (!fs.existsSync(KEY)) {
-  console.error('서비스 계정 키를 찾지 못했습니다. 대조를 중단합니다.');
+// [KEY-ROTATE 10-23] 키 파일 경로는 실행 설정(GOOGLE_APPLICATION_CREDENTIALS)으로만 받는다.
+const KEY = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+if (!KEY || !fs.existsSync(KEY)) {
+  console.error('GOOGLE_APPLICATION_CREDENTIALS 에 서비스 계정 키 파일 경로가 없습니다. 대조를 중단합니다.');
   process.exit(2);
 }
 // 에뮬레이터 환경변수가 남아 있으면 실DEV 가 아니라 로컬을 읽게 된다 — 지운다.
@@ -29,6 +29,11 @@ delete process.env.FIREBASE_STORAGE_EMULATOR_HOST;
 
 const admin = require(path.join(__dirname, '..', 'functions', 'node_modules', 'firebase-admin'));
 const cred = JSON.parse(fs.readFileSync(KEY, 'utf8'));
+// 다른 프로젝트 키를 조용히 따라가지 않는다 — DEV 키가 아니면 연결 전에 멈춘다.
+if (cred.project_id !== 'alfit-89567') {
+  console.error('서비스 계정 키가 DEV(alfit-89567) 키가 아닙니다. 대조를 중단합니다.');
+  process.exit(2);
+}
 admin.initializeApp({
   credential: admin.credential.cert(cred),
   projectId: cred.project_id,

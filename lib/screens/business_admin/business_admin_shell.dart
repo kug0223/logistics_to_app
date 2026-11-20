@@ -1,6 +1,6 @@
 // lib/screens/business_admin/business_admin_shell.dart
 //
-// 관리자 루트 화면 — 5탭 BottomNavigationBar + IndexedStack (PHASE 4B)
+// 관리자 루트 화면 — 5탭 하단 탭(AppBottomTabBar, 표시부만) + IndexedStack (PHASE 4B)
 // UserRootScreen과 동일한 탭 독립 Navigator 패턴 적용.
 //
 // 탭 구조:
@@ -26,12 +26,14 @@
 //   탭 서브 Navigator와 독립 — 기존 FCM 경로 미변경.
 //
 // [SafeArea]
-//   BottomNavigationBar가 MediaQuery.padding.bottom을 내부적으로 처리.
+//   AppBottomTabBar가 아래 inset(MediaQuery.padding.bottom)을 한 번만 처리(SafeArea top:false).
 //   고정 pixel padding 없음.
 //
 // [Back stack]
 //   PopScope(canPop: false) — 현재 탭 서브 Navigator에서 먼저 pop.
 //   루트이면 SystemNavigator.pop() → system back 허용 (앱 종료/홈).
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -40,13 +42,14 @@ import 'package:provider/provider.dart';
 import '../../controllers/workforce_controller.dart';
 import '../../providers/user_provider.dart';
 import '../../services/fcm_service.dart';
-import '../../theme/app_colors.dart';
+import '../../widgets/common/app_bottom_tab_bar.dart';
 import '../../utils/admin_tab_switcher.dart';
 import 'business_admin_home_screen.dart';
 import 'jobs_root_screen.dart';
 import 'workforce_management/workforce_root_screen.dart';
 import 'payroll/payroll_overview_screen.dart';
 import '../common/settings_screen.dart';
+import '../../utils/tab_navigator_pop.dart';
 
 class BusinessAdminShell extends StatefulWidget {
   const BusinessAdminShell({super.key});
@@ -117,7 +120,8 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
     final up = context.read<UserProvider>();
     if (!_visibleTabIndices(up).contains(index)) return false; // 권한 없는 탭 차단
     if (_currentIndex == index) {
-      _navigatorKeys[index].currentState?.popUntil((r) => r.isFirst);
+      final nav = _navigatorKeys[index].currentState;
+      if (nav != null) unawaited(popTabToRoot(nav)); // [DU1 R8-TAB-RESELECT] 화면 PopScope 를 따른다
       return true;
     }
     // [R8-P1A] 여기서 처음 방문 처리한다 — 이 탭의 loader는 지금부터 돈다.
@@ -138,10 +142,10 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
 
   /// [NAV-POLICY-N1] Home Task deep-link — target tab을 root normalize 후 route push.
   /// 1. mounted / index bounds / 권한 확인 → fail closed
-  /// 2. target Navigator popUntil(isFirst) — stale stack 제거
-  /// 3. tab selected (bottom nav = target)
-  /// 4. post-frame push — IndexedStack 전환 이후 실행
-  /// [return] true = push scheduled; false = fail closed (no side effect)
+  /// 2. tab selected (bottom nav = target)
+  /// 3. target Navigator popTabToRoot — stale stack 제거(화면 PopScope 존중)
+  /// 4. post-frame push — 첫 화면에 도달했을 때만, IndexedStack 전환 이후 실행
+  /// [return] true = 전환·정규화 시작(남은 화면이 닫히기를 거절하면 push 는 취소); false = fail closed (no side effect)
   bool _switchAndPush(int index, Route<dynamic> route) {
     if (!mounted) return false;
     if (index < 0 || index >= _navigatorKeys.length) return false;
@@ -155,9 +159,6 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
     final targetNav = _navigatorKeys[index].currentState;
     if (!firstOpen && targetNav == null) return false;
 
-    // target tab stack root 정규화 — stale 월별/Dashboard 제거
-    targetNav?.popUntil((r) => r.isFirst);
-
     // bottom nav target tab으로 전환
     if (_currentIndex != index || firstOpen) {
       setState(() {
@@ -166,13 +167,21 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
       });
     }
 
-    // IndexedStack 전환 완료 이후 push
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final nav = _navigatorKeys[index].currentState;
-      if (nav == null) return;
-      nav.push(route);
-    });
+    // [DU1 R8-TAB-RESELECT] target tab stack root 정규화 — stale 월별/Dashboard 제거.
+    //   예전 popUntil 은 저장 안 한 변경·저장 중 화면도 확인 없이 걷어냈다.
+    //   이제 화면마다 maybePop 하고, 어떤 화면이 거절하면(확인 창·진행 중) **push 하지 않는다** —
+    //   그 위에 올리면 그 화면의 '나가기'(Navigator.pop)가 새 화면을 닫는다.
+    final normalized = targetNav == null ? Future.value(true) : popTabToRoot(targetNav);
+    unawaited(normalized.then((reachedRoot) {
+      if (!reachedRoot || !mounted) return;
+      // IndexedStack 전환 완료 이후 push
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final nav = _navigatorKeys[index].currentState;
+        if (nav == null) return;
+        nav.push(route);
+      });
+    }));
 
     return true;
   }
@@ -247,7 +256,6 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final up = context.watch<UserProvider>();
 
     // PD-02: 권한 기반 표시 탭 계산
@@ -270,7 +278,9 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
         // 현재 탭 내 라우트가 있으면 탭 안에서 pop, 루트이면 system back 허용
         final navKey = _navigatorKeys[_currentIndex];
         if (navKey.currentState?.canPop() == true) {
-          navKey.currentState!.pop();
+          // [DU1 R8] pop() 은 탭 안 화면의 PopScope(저장 안 한 변경 확인·결과 반환)를 건너뛴다.
+          //   maybePop() 은 그 화면의 규칙을 따른다 — AppBar 뒤로와 같은 경로.
+          navKey.currentState!.maybePop();
         } else {
           SystemNavigator.pop();
         }
@@ -289,20 +299,11 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
             _lazyTab(4, () => const SettingsScreen()),
           ],
         ),
-        bottomNavigationBar: BottomNavigationBar(
+        // [CP02] 표시부만 공용 위젯 — 보이는 목록·현재 보이는 위치·(보이는 위치) 콜백만 넘긴다.
+        //   visible → actual 대응(visibleIndices[i])·권한 숨김·회수 시 홈 복귀·방문·재탭 root 는 이 셸이 그대로 소유한다.
+        bottomNavigationBar: AppBottomTabBar(
           currentIndex: currentVisibleIdx,
           onTap: (i) => switchToTab(visibleIndices[i]),
-          type: BottomNavigationBarType.fixed,
-          selectedItemColor: theme.primaryColor,
-          unselectedItemColor: AppColors.grey500,
-          selectedLabelStyle: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.2,
-          ),
-          unselectedLabelStyle: const TextStyle(fontSize: 12),
-          elevation: 0,
-          backgroundColor: Colors.white,
           items: [for (final idx in visibleIndices) _navItemAt(idx)],
         ),
       ),

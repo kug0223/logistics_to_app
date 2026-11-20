@@ -631,8 +631,8 @@ void main() {
     test('F2-05 2022년 = 9160',  () => expect(WageCalculator.getMinimumWage(2022), 9160));
     test('F2-06 2021년 = 8720',  () => expect(WageCalculator.getMinimumWage(2021), 8720));
     test('F2-07 2020년 = 8590',  () => expect(WageCalculator.getMinimumWage(2020), 8590));
-    test('F2-08 미등록 연도(2019) → 최신 백업(10320) 반환', () {
-      expect(WageCalculator.getMinimumWage(2019), 10320);
+    test('F2-08 미등록 연도(2019) → 최신 백업(2027 = 10700, .73) 반환', () {
+      expect(WageCalculator.getMinimumWage(2019), 10700);
     });
 
     group('F2-09 2025년 근무일 → appliedMinimumWage=10030', () {

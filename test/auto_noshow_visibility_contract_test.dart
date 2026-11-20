@@ -76,13 +76,17 @@ void main() {
       );
     });
 
-    test('processAutoNoShow의 두 쓰기 모두 createdAt을 쓴다', () {
+    // [NOSHOW-ATOMICITY 2026-10-27] 단기·장기가 한 writer(srvAutoNoShowJudge)를 함께 쓴다 —
+    //   두 경로 모두 그 writer 를 부르는지와, 그 writer 의 새 문서가 createdAt 을 쓰는지를 본다.
+    test('processAutoNoShow의 두 경로가 같은 writer를 쓰고, 그 쓰기가 createdAt을 쓴다', () {
+      expect(noShow, contains('tasks.push(srvAutoNoShowJudge(appDoc.ref, day, "short", now, stats));'));
+      expect(noShow, contains('tasks.push(srvAutoNoShowJudge(appDoc.ref, day, "long_term", now, stats));'));
       final writes =
           'createdAt: admin.firestore.FieldValue.serverTimestamp(),'
               .allMatches(noShow)
               .length;
-      expect(writes, 2,
-          reason: '단기/장기 두 경로 모두 createdAt을 써야 한다 (현재 $writes곳)');
+      expect(writes, 1,
+          reason: '자동 노쇼 새 문서 writer 는 한 곳이고 createdAt 을 써야 한다 (현재 $writes곳)');
     });
 
     test('processAutoNoShow는 workType을 지원서에서 가져와 쓴다', () {
@@ -90,8 +94,8 @@ void main() {
         'workType: (d.selectedWorkType ?? "") as string,'
             .allMatches(noShow)
             .length,
-        2,
-        reason: '수동 NO_SHOW(callableBatchSetNoShow)와 같은 필드를 채워야 한다',
+        1,
+        reason: '수동 NO_SHOW(callableBatchSetNoShow)와 같은 필드를 채워야 한다(단일 writer)',
       );
     });
 
@@ -105,8 +109,8 @@ void main() {
         'isModified: false,',
         'modifyRequested: false,',
       ]) {
-        expect(field.allMatches(flat).length, 2,
-            reason: '$field 가 두 경로 모두에 있어야 한다');
+        expect(field.allMatches(flat).length, 1,
+            reason: '$field 가 단일 writer(생성·레거시 전환 공통 필드)에 있어야 한다');
       }
     });
   });

@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../models/core/user_model.dart';
 import '../models/core/user_region.dart';
+import '../utils/format_helper.dart';
 import '../utils/toast_helper.dart';
 import '../utils/encryption_helper.dart';
 import 'fcm_service.dart';
@@ -148,13 +149,10 @@ class AuthService {
             final restrictedDate = restrictedUntilTs.toDate().toLocal();
             if (restrictedDate.isAfter(DateTime.now())) {
               await _auth.signOut();
-              // 9999년이면 사실상 영구 제한
-              final isPermanent = restrictedDate.year >= 9999;
-              final message = isPermanent
-                  ? '노쇼 누적으로 서비스 이용이 영구 제한되었습니다.\n해제를 원하시면 고객센터에 문의해 주세요.'
-                  : '노쇼로 인해 ${restrictedDate.year}년 ${restrictedDate.month}월 ${restrictedDate.day}일까지 이용이 제한됩니다.\n'
-                    '(최근 90일 3회 이상 노쇼 시 1일 제한)\n고객센터: 문의하기 메뉴 이용';
-              throw Exception(message);
+              throw Exception(restrictionLoginMessage(
+                restrictedUntilTs.toDate(),
+                data['restrictionSource'] as String?,
+              ));
             }
           }
 
@@ -807,8 +805,11 @@ class AuthService {
     String? legalName,
     String? koreanName,
     String? visaType,
+    // [FULL13-REEVAL.3] 업로드 없이 기존 사진을 쓰는 복구(CASE C)의 문서 대조 근거.
+    Map<String, dynamic>? documentEvidence,
   }) async {
     final payload = <String, dynamic>{'rawForeignId': rawForeignId};
+    if (documentEvidence != null) payload['documentEvidence'] = documentEvidence;
     if (legalName != null && legalName.isNotEmpty) payload['legalName'] = legalName;
     // [R8-P3B.3B] koreanName은 여기서만 저장된다.
     //   이전에는 화면이 users 문서에 직접 update를 날렸는데,
@@ -855,8 +856,8 @@ class AuthService {
       debugPrint('⚠️ [finalize] RECOVERABLE — pending 유지 | code=${e.code}');
       return switch (e.code) {
         'invalid-argument'   => '입력 정보를 확인하고 다시 시도해주세요.',
-        'failed-precondition'=> '만 19세 이상만 가입할 수 있습니다.',
-        'permission-denied'  => '가입이 제한된 계정입니다. 고객센터에 문의해주세요.',
+        'failed-precondition'=> finalizePreconditionMessage(e.message),
+        'permission-denied'  => signupRestrictionMessage(e.message),
         'unauthenticated'    => '인증이 만료되었습니다. 앱을 재시작해주세요.',
         _                    => '정보를 확인하는 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.',
       };
@@ -865,6 +866,58 @@ class AuthService {
       debugPrint('❌ [finalize] non-CF 예외 | type=${e.runtimeType} | error=$e');
       return '인터넷 연결을 확인하고 다시 시도해주세요.';
     }
+  }
+
+  /// 로그인 차단 안내 — 제한 출처(`restrictionSource`)에 맞춰 말한다.
+  ///
+  ///   [E1-RESTRICT] 해제 시각은 **KST 날짜·시각**(기기 시간대 무관). 판정은 호출부의 절대 시각 비교다.
+  ///   [.57] 예전에는 출처와 무관하게 늘 '노쇼로 인해'라고 했다. 노쇼 제재를 리셋해도 남는
+  ///   관리자 수동 제한(manual)·영구 제한(permanent)까지 노쇼 탓으로 말했다. 출처가 없거나(원장 이전)
+  ///   auto 이면 예전 노쇼 문구 그대로, 그 밖(legacy·unverified)은 사유를 단정하지 않는다.
+  static String restrictionLoginMessage(DateTime restrictedDate, String? source) {
+    // 9999년이면 사실상 영구 제한. [.58] 서버 경계(KST 9999-01-01)도 본다 — GMT 기기에서는 영구 값이 9998년이다.
+    final isPermanent = restrictedDate.year >= 9999 || source == 'permanent' ||
+        restrictedDate.millisecondsSinceEpoch >= DateTime.utc(9998, 12, 31, 15).millisecondsSinceEpoch;
+    // [.58] 출처가 없으면(원장 이전 문서) 노쇼라고 단정하지 않는다 — 지원 거절 서버 문구 후보(APL)와 같은 원칙.
+    final isNoShow = source == 'auto';
+    if (isPermanent) {
+      // 자동(노쇼) 제한은 영구가 되지 않는다(원장: 사건+1일). 영구는 사유를 단정하지 않는다.
+      return '서비스 이용이 영구 제한되었습니다.\n해제를 원하시면 고객센터에 문의해 주세요.';
+    }
+    final kst = FormatHelper.formatKstDateTimeKorean(restrictedDate);
+    final reason = isNoShow ? '노쇼로 인해 ' : (source == 'manual' ? '관리자 조치로 ' : '');
+    return '$reason$kst(한국시간)까지 이용이 제한됩니다.\n'
+        '${isNoShow ? '(최근 90일 3회 이상 노쇼 시 1일 제한)\n' : ''}'
+        '고객센터: 문의하기 메뉴 이용';
+  }
+
+  /// [DOC-DEV-ROLLOUT.9] 외국인 가입 확정의 재가입 제한 안내.
+  ///
+  ///   서버(callableFinalizeForeignIdentity)는 구조화된 사유·종료 시각 없이 문장만 준다 —
+  ///   영구 제한("…영구 제한된 계정입니다.")과 탈퇴 후 기간 제한("탈퇴 후 1개월이 지난 후…").
+  ///   그 두 문장만 알아보고, 날짜·기간은 앱에서 만들지 않는다(종료 시각을 받지 않았다).
+  ///   서버가 영구라고 말하지 않으면 영구라고 하지 않는다. 그 밖은 사실만 말하는 일반 문구다.
+  ///   로그인 전 화면에서 갈 수 있는 문의 경로가 없어 문의 안내는 넣지 않는다.
+  static String signupRestrictionMessage(String? serverMessage) {
+    final m = serverMessage ?? '';
+    if (m.contains('영구 제한')) return '현재 이 계정은 재가입할 수 없어요.';
+    if (m.contains('탈퇴 후')) {
+      return '탈퇴 후 재가입 제한 기간이라 아직 가입할 수 없어요.\n제한 기간이 지나면 다시 가입할 수 있어요.';
+    }
+    return '가입이 제한된 계정이에요.';
+  }
+
+  /// [DOC-APP-CLOSEOUT.10] 외국인 가입 확정의 failed-precondition 안내.
+  ///
+  ///   같은 코드로 서로 다른 두 사유가 온다(배포 Finalize 00022 원문, details 없음):
+  ///   "만 19세 이상만 가입할 수 있습니다." / "탈퇴 처리 중인 계정입니다."(탈퇴 동결).
+  ///   예전에는 코드 하나를 모두 나이 제한으로 보여 줬다. 두 문장만 알아보고, 처리 완료 시각·
+  ///   재가입 시점은 추정하지 않는다. 그 밖은 나이·제한으로 단정하지 않는 중립 안내다.
+  static String finalizePreconditionMessage(String? serverMessage) {
+    final m = serverMessage ?? '';
+    if (m.contains('만 19세')) return '만 19세 이상만 가입할 수 있습니다.';
+    if (m.contains('탈퇴 처리 중')) return '탈퇴 처리 중에는 가입을 완료할 수 없어요.';
+    return '현재 계정 상태로 가입을 완료할 수 없어요.';
   }
 
   // [B.2/B.2.2] TERMINAL 케이스용 서버 cleanup — callableAbortForeignRegistration 호출.

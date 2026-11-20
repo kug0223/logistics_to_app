@@ -325,7 +325,8 @@ void main() {
 
     test('§23 badge source 불변', () {
       expect(rows.contains("'긴급 \${approval!.overdueCount}건'"), isTrue);
-      expect(rows.contains('가장 오래된:'), isTrue);
+      // [ADMIN-HOME.31] 표기만 '가장 오래된 날 YYYY.MM.DD' — 원천(unclosed.oldestDate)은 그대로.
+      expect(rows.contains(r"'가장 오래된 날 ${_dotDate(unclosed!.oldestDate!)}'"), isTrue);
     });
 
     test('§10 이체 대기 의미를 확대하지 않았다', () {

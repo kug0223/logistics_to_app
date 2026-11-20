@@ -5,6 +5,7 @@ import '../../utils/contract_article_parser.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../common/notification_screen.dart';
@@ -33,6 +34,13 @@ class ContractImportPasteScreen extends StatefulWidget {
 
 class _ContractImportPasteScreenState
     extends State<ContractImportPasteScreen> {
+  static const String _kGuide = '한글, Word, PDF에서 계약서 내용을 복사한 후 아래에 붙여넣어 주세요.\n'
+      '제N조 형식의 조항 구분이 있으면 자동으로 나눠집니다.';
+  static const String _kHint = '여기에 계약서 내용을 붙여넣어 주세요.\n\n'
+      '예)\n제1조 (근로계약 당사자)\n'
+      '...\n\n제4조 (보안)\n현장 내 사진 촬영을 금지한다.';
+  static const String _kPii = '특정 근로자의 개인정보가 포함되어 있다면 '
+      '템플릿 저장 전 삭제하거나 수정해 주세요.';
   final _ctrl = TextEditingController();
   bool _hasText = false;
 
@@ -194,7 +202,7 @@ class _ContractImportPasteScreenState
               child: Text(
                 '조항으로 나누기',
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: _hasText ? Colors.white : AppColors.grey400,
+                  color: _hasText ? Colors.white : AppColors.textSecondary, // [DU337] 비활성 글자 grey400(1.62) → textSecondary
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -205,17 +213,19 @@ class _ContractImportPasteScreenState
           padding: ResponsiveHelper.listPadding(context),
           children: [
             // ─── 안내 ────────────────────────────────────────────
+            // [DU337] 제목 · 안내 낱말 단위(원문은 낭독용), 안내 grey500(2.50) → textSecondary
             Text(
-              '계약서 내용 붙여넣기',
+              TextLayout.keepWords('계약서 내용 붙여넣기'),
+              semanticsLabel: '계약서 내용 붙여넣기',
               style: ResponsiveHelper.subtitleStyle(context)
                   .copyWith(fontWeight: FontWeight.bold),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 6)),
             Text(
-              '한글, Word, PDF에서 계약서 내용을 복사한 후 아래에 붙여넣어 주세요.\n'
-              '제N조 형식의 조항 구분이 있으면 자동으로 나눠집니다.',
+              TextLayout.phrases(_kGuide),
+              semanticsLabel: _kGuide,
               style: ResponsiveHelper.smallStyle(context,
-                  color: AppColors.grey500),
+                  color: AppColors.textSecondary),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
@@ -232,14 +242,19 @@ class _ContractImportPasteScreenState
                 controller: _ctrl,
                 maxLines: null,
                 keyboardType: TextInputType.multiline,
+                // [DU343] 계약서 본문 붙여넣기 칸 — 자동 완성 대상이 아니다. 의도적으로 autofill 을 끈다(기본 [] 는 켜짐).
+                //   DU337 의 hint 위젯(낱말 조판)은 hintText 를 비우므로, autofill 설정에 원문 힌트를 넘기는 경로도 함께 없앤다.
+                autofillHints: null,
                 style: ResponsiveHelper.smallStyle(context),
+                // [DU337] 예시 글 grey400(1.88) → textTertiary, 낱말 단위. hintText 가 그리던 것과 같은 Text 를
+                //   hint 위젯으로 준다(InputDecorator 가 hintText 를 Text 로 바꿔 그린다) — 낭독 이름은 원문.
                 decoration: InputDecoration(
-                  hintText:
-                      '여기에 계약서 내용을 붙여넣어 주세요.\n\n'
-                      '예)\n제1조 (근로계약 당사자)\n'
-                      '...\n\n제4조 (보안)\n현장 내 사진 촬영을 금지한다.',
-                  hintStyle: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.grey400),
+                  hint: Text(
+                    TextLayout.phrases(_kHint),
+                    semanticsLabel: _kHint,
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.textTertiary),
+                  ),
                   border: InputBorder.none,
                   isDense: true,
                   contentPadding: EdgeInsets.zero,
@@ -260,16 +275,17 @@ class _ContractImportPasteScreenState
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // [DU337] infoDark(infoBg 위 4.03) → infoDeep(공통 안내 본문, Standards 감사04), 낱말 단위
                   Icon(Icons.info_outline,
                       size: ResponsiveHelper.iconSize(context, 16),
-                      color: AppColors.info),
+                      color: AppColors.infoDeep),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
                     child: Text(
-                      '특정 근로자의 개인정보가 포함되어 있다면 '
-                      '템플릿 저장 전 삭제하거나 수정해 주세요.',
+                      TextLayout.keepWords(_kPii),
+                      semanticsLabel: _kPii,
                       style: ResponsiveHelper.tinyStyle(context,
-                          color: AppColors.infoDark),
+                          color: AppColors.infoDeep),
                     ),
                   ),
                 ],
@@ -321,20 +337,24 @@ class _ParseFailureSheet extends StatelessWidget {
               ),
             ),
 
+            // [DU337] 아이콘 grey400(1.88) → grey600, 제목 · 설명 낱말 단위, 설명 grey500(2.68) → textSecondary
             Icon(Icons.search_off_outlined,
-                size: 40, color: AppColors.grey400),
+                size: 40, color: AppColors.grey600),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Text(
-              '자동으로 조항을 나누지 못했습니다.',
+              TextLayout.keepWords('자동으로 조항을 나누지 못했습니다.'),
+              semanticsLabel: '자동으로 조항을 나누지 못했습니다.',
               style: ResponsiveHelper.subtitleStyle(context)
                   .copyWith(fontWeight: FontWeight.bold),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 6)),
             Text(
-              '"제N조" 형식의 조항 구분이 없거나,\n'
-              '계약서가 아닌 다른 텍스트인 경우 자동 나누기가 어렵습니다.',
+              TextLayout.phrases('"제N조" 형식의 조항 구분이 없거나,\n'
+                  '계약서가 아닌 다른 텍스트인 경우 자동 나누기가 어렵습니다.'),
+              semanticsLabel: '"제N조" 형식의 조항 구분이 없거나,\n'
+                  '계약서가 아닌 다른 텍스트인 경우 자동 나누기가 어렵습니다.',
               style: ResponsiveHelper.smallStyle(context,
-                  color: AppColors.grey500),
+                  color: AppColors.textSecondary),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
@@ -354,8 +374,11 @@ class _ParseFailureSheet extends StatelessWidget {
                       borderRadius: BorderRadius.circular(10)),
                   elevation: 0,
                 ),
+                // [DU337] 320 · 2.0 '조 / 항' — 낱말 단위 · 가운데
                 child: Text(
-                  '전체 내용을 하나의 조항으로 가져오기',
+                  TextLayout.keepWords('전체 내용을 하나의 조항으로 가져오기'),
+                  semanticsLabel: '전체 내용을 하나의 조항으로 가져오기',
+                  textAlign: TextAlign.center,
                   style: ResponsiveHelper.bodyStyle(context)
                       .copyWith(color: Colors.white),
                 ),
@@ -392,7 +415,7 @@ class _ParseFailureSheet extends StatelessWidget {
                 child: Text(
                   '돌아가서 수정하기',
                   style: ResponsiveHelper.bodyStyle(context,
-                      color: AppColors.grey500),
+                      color: AppColors.textSecondary), // [DU337] grey500(2.68) → textSecondary
                 ),
               ),
             ),

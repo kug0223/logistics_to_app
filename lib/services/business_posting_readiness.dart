@@ -105,6 +105,11 @@ class BusinessPostingReadiness {
   ///
   ///   `null` 은 **모름**이다(네트워크·권한·서버 실패). "날인 없음"(false)과
   ///   섞지 않는다 — 없으면 등록을 요청해야 하고, 모르면 확인해야 한다.
+  /// [CONTRACT-DISPATCH-B1] 계약 발송 직전에도 같은 서버 판정을 쓴다 — 앱은 owner 문서를
+  ///   읽을 수 없다(사업장 목록에 ownerId 없음). true=등록 · false=미등록 · null=확인 못 함.
+  static Future<bool?> employerSealReady(String businessId) =>
+      _employerSealFromServer(businessId);
+
   static Future<bool?> _employerSealFromServer(String businessId) async {
     try {
       final res = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
@@ -158,7 +163,14 @@ class BusinessPostingReadiness {
     final ownerId = biz.ownerId;
     if (ownerId.isEmpty) {
       // owner 를 모르면 "날인 없음" 이 아니라 **모른다** 다.
-      employerSealUnknown = true;
+      // [CONTRACT-DISPATCH-B1] 사업장 목록(callableGetMyBusiness)은 ownerId 를 지운다(SEC-20)
+      //   — 그래서 이 분기가 보통이다. 모름으로 끝내지 않고 서버에 있는지만 묻는다.
+      final viaServer = await _employerSealFromServer(biz.id);
+      if (viaServer == null) {
+        employerSealUnknown = true;
+      } else {
+        hasEmployerSeal = viaServer;
+      }
     } else {
       try {
         final ownerSnap = await FirebaseFirestore.instance

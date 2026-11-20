@@ -22,6 +22,8 @@ import 'package:ALfit/models/core/business_model.dart';
 import 'package:ALfit/utils/attendance_policy_disclosure.dart';
 import 'package:ALfit/widgets/dialogs/application_policy_acknowledge_sheet.dart';
 
+import 'support/visible_text.dart';
+
 final _workDate = DateTime(2026, 10, 15);
 
 /// 고지 snapshot 을 가진 확정 지원. snapshot 이 없으면 시트가 바로 닫힌다.
@@ -87,9 +89,10 @@ Future<void> _openSheet(
 }
 
 /// 화면에 실제로 그려진 모든 Text 를 한 문자열로 모은다.
+///   [DU295] 시트 글자가 낱말 묶음 문자(TextLayout.keepWords)를 품으므로 보이는 글자로 바꿔 모은다.
 String _visibleText(WidgetTester tester) => tester
     .widgetList<Text>(find.byType(Text))
-    .map((t) => t.data ?? t.textSpan?.toPlainText() ?? '')
+    .map((t) => visibleText(t.data ?? t.textSpan?.toPlainText() ?? ''))
     .join('\n');
 
 void main() {

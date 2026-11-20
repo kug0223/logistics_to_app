@@ -232,7 +232,16 @@ void main() {
       //   "일반 error mapper framework" 가 아니다. 그래서 파일 이름을
       //   허용 목록에 적고, **그 밖에 새로 생기면 여전히 걸리게** 둔다.
       expect(Directory('lib/utils').existsSync(), true);
-      const allowed = {'applicant_load_outcome.dart'};
+      // [E1-CANARY] `e1_debug_fault.dart` 는 mapper 가 아니라 디버그 빌드 전용
+      //   오류 **주입기**다(성공 뒤 1회 deadline-exceeded 를 던진다). 해석·변환을
+      //   하지 않는다 — 같은 이유로 이름을 적는다.
+      // [APPROVE-REJECT-REASON 10-23] `approve_review_error_message.dart` 도 같은 종류다 —
+      //   지원 검토 `승인` 하나의 거절 사유 문장(소비자 1곳: support_review_queue_screen).
+      //   다른 화면의 오류를 받지 않는다.
+      // [POSTING-AUTH-45] `posting_partial_revoke.dart` 도 같은 종류다 — details.code 가
+      //   PERMISSION_REVOKED_MIDWAY 인지 code 로만 가르는 판정 1개(소비자: 공고 카드 2곳·공고 삭제 서비스 1곳).
+      //   메시지를 변환하지 않는다.
+      const allowed = {'applicant_load_outcome.dart', 'e1_debug_fault.dart', 'approve_review_error_message.dart', 'posting_partial_revoke.dart'};
       final offenders = Directory('lib/utils')
           .listSync()
           .whereType<File>()

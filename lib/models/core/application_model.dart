@@ -3,8 +3,32 @@ import 'package:flutter/foundation.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/firestore_helper.dart';
 import '../ui/invite_capacity_state.dart';
+import '../ui/invite_accept_readiness.dart';
+// [INVITE-PREACCEPT] 동의 버전의 단일 소유자 — 여기서 문자열을 다시 적지 않는다.
+import '../../widgets/dialogs/apply/document_access_consent.dart'
+    show DocumentAccessConsent;
 import 'business_model.dart'
     show AttendanceRules, AttendancePolicyConfirmation, BusinessModel;
+
+/// [ISG2] 초대 수락 마감 = `min(저장된 만료, 근무 시작)` — **식은 여기 하나다.**
+///
+/// 서버(`callableInviteWorker`)는 이 계약으로 `inviteExpiresAt`을 좁혀 저장하고
+/// 수락 callable은 트랜잭션 안에서 다시 본다. 읽는 쪽도 같은 식을 써야,
+/// 그 계약 **이전에 만들어진** 기록(저장 만료가 근무 뒤)에서 화면이
+/// 근무가 끝난 다음 날까지 수락 가능한 것처럼 말하지 않는다.
+///
+/// 장기 초대는 시작의 의미가 달라(여러 날) 좁히지 않는다.
+/// 둘 다 모르면 null — 모름을 마감으로 바꾸지 않는다.
+DateTime? effectiveInviteDeadlineOf({
+  required DateTime? storedExpiry,
+  required DateTime? shiftStart,
+  required bool isLongTerm,
+}) {
+  if (isLongTerm) return storedExpiry;
+  if (storedExpiry == null) return shiftStart;
+  if (shiftStart == null) return storedExpiry;
+  return shiftStart.isBefore(storedExpiry) ? shiftStart : storedExpiry;
+}
 
 /// [R2.2.1 CORRECTION] 서버가 실어 준 capacity 상태를 읽는다.
 ///
@@ -307,6 +331,32 @@ class ApplicationModel {
   bool get canAcceptInvite =>
       workInstanceCapacityState == InviteCapacityState.available;
 
+  /// [INVITE-PREACCEPT] 지금 이 초대를 수락할 수 있는가 — 서버(사업장별
+  /// 신분증 확인)가 계산해 준 값. Firestore 필드가 아니다. 없으면 unknown.
+  final InviteAcceptReadiness inviteAcceptReadiness;
+
+  /// [INVITE-PREACCEPT] 서버가 **canonical slot 날짜·업무 시작시간**으로 계산한
+  /// 수락 마감(`min(저장 만료, 근무 시작)`). 계산하지 못했으면 null.
+  final DateTime? inviteAcceptDeadline;
+
+  /// [INVITE-CLOSURE-PROJECTION] 이 근무의 **공개 지원 접수**가 (자동으로) 끝났는가.
+  ///
+  /// 초대의 효력과 별개다 — 공개 접수가 끝나도 이미 받은 초대는 수락 기한까지
+  /// 유효하다(서버 수락 tx 와 같은 판정). 서버가 주지 않으면 false.
+  final bool publicIntakeClosed;
+
+  /// [INVITE-CLOSURE-PROJECTION] 초대 효력이 끝난 이유
+  /// (`POSTING_DELETED` | `RECRUIT_ENDED`). [workInstanceCapacityState] 가
+  /// closed 일 때만 서버가 싣는다.
+  final String? inviteEndedReason;
+
+  /// 이 지원서에 **채용 검토 목적 열람**을 담은 동의(V3 또는 초대 v1)가
+  /// 기록되어 있는가(지원서 단위). 집합은 동의 문구의 단일 소유자에서 온다.
+  bool get hasReviewPurposeConsent =>
+      documentAccessConsentGiven &&
+      DocumentAccessConsent.reviewPurposeVersions
+          .contains(documentAccessConsentVersion);
+
   // [ID-CONSENT] 신분증 열람 사전동의 — CF 서버 타임스탬프로 기록 (legacy, 하위 호환 유지)
   final bool idCardConsentGiven;       // 지원 시 동의 여부 (항상 true, 미동의 시 지원 불가)
   final DateTime? idCardConsentAt;     // 동의 시각 (serverTimestamp)
@@ -425,6 +475,10 @@ class ApplicationModel {
     this.compensationOption,
     this.reassignedToApplicationId,
     this.workInstanceCapacityState = InviteCapacityState.unknown,
+    this.inviteAcceptReadiness = InviteAcceptReadiness.unknown,
+    this.inviteAcceptDeadline,
+    this.publicIntakeClosed = false,
+    this.inviteEndedReason,
     // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
     this.idCardConsentGiven = false,
     this.idCardConsentAt,
@@ -587,6 +641,16 @@ class ApplicationModel {
       //   그것이 UNKNOWN을 AVAILABLE로 흘려보낸 원래 결함이었다.
       workInstanceCapacityState:
           _parseCapacityState(data['workInstanceCapacityState']),
+      // [INVITE-PREACCEPT] 조회 시점에 서버가 계산한 값. 없으면 unknown.
+      inviteAcceptReadiness:
+          parseInviteAcceptReadiness(data['inviteAcceptReadiness']),
+      inviteAcceptDeadline: data['inviteAcceptDeadlineMs'] is num
+          ? DateTime.fromMillisecondsSinceEpoch(
+              (data['inviteAcceptDeadlineMs'] as num).toInt(), isUtc: true)
+          : null,
+      // [INVITE-CLOSURE-PROJECTION] 조회 시점에 서버가 계산한 값.
+      publicIntakeClosed: data['publicIntakeClosed'] == true,
+      inviteEndedReason: data['inviteEndedReason'] as String?,
       // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
       idCardConsentGiven: data['idCardConsentGiven'] as bool? ?? false,
       idCardConsentAt: parseTimestampNullable(data['idCardConsentAt']),
@@ -808,6 +872,9 @@ class ApplicationModel {
       case 'SLOT_WORK_DETAIL_EXPIRED':  return '해당 업무 모집이 마감되었어요';
       case 'TO_EXPIRED':                return '모집 기간이 종료되어 자동 취소되었어요';
       case 'TO_DELETED':                return '공고가 삭제되어 자동 취소되었어요';
+      // [INVITE-TERMINAL] 사업장 쪽 종료로 철회된 초대(callable 철회와 같은 CANCELED).
+      case 'RECRUIT_CLOSED':            return '사업장이 모집을 마감해 초대가 취소됐어요';
+      case 'BUSINESS_DEACTIVATED':      return '사업장 운영이 중단되어 취소됐어요';
       default:                          return '취소된 지원이에요';
     }
   }
@@ -940,6 +1007,10 @@ class ApplicationModel {
     String? compensationOption,
     String? reassignedToApplicationId,
     InviteCapacityState? workInstanceCapacityState,
+    InviteAcceptReadiness? inviteAcceptReadiness,
+    DateTime? inviteAcceptDeadline,
+    bool? publicIntakeClosed,
+    String? inviteEndedReason,
     // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
     bool? idCardConsentGiven,
     DateTime? idCardConsentAt,
@@ -1052,6 +1123,11 @@ class ApplicationModel {
           reassignedToApplicationId ?? this.reassignedToApplicationId,
       workInstanceCapacityState:
           workInstanceCapacityState ?? this.workInstanceCapacityState,
+      inviteAcceptReadiness:
+          inviteAcceptReadiness ?? this.inviteAcceptReadiness,
+      inviteAcceptDeadline: inviteAcceptDeadline ?? this.inviteAcceptDeadline,
+      publicIntakeClosed: publicIntakeClosed ?? this.publicIntakeClosed,
+      inviteEndedReason: inviteEndedReason ?? this.inviteEndedReason,
       // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
       idCardConsentGiven: idCardConsentGiven ?? this.idCardConsentGiven,
       idCardConsentAt: idCardConsentAt ?? this.idCardConsentAt,
@@ -1088,7 +1164,73 @@ class ApplicationModel {
     }
     return false;
   }
-  
+
+  /// [ISG2] 이 초대가 **장기**인가 — 서버 `srvIsLongTermInvite`와 같은 식.
+  ///
+  /// [isLongTermApplication]은 `slotId`를 보지 않는다. 그래서 `slotId`가
+  /// 있는 단기 초대에 `workDays`가 실려 있으면 장기로 읽힌다. 수락 마감
+  /// 판정은 서버와 **같은 분류**를 써야 하므로 여기서 따로 센다.
+  /// slot은 하루치 좌석이다 — slotId가 있으면 언제나 단기다.
+  bool get isLongTermInvite {
+    if (slotId != null && slotId!.isNotEmpty) return false;
+    if (workDays != null && workDays!.isNotEmpty) return true;
+    if (applicationType == AppType.longTerm) return true;
+    return workEndDate != null;
+  }
+
+  /// [ISG2] 이 근무의 시작 **절대 시각**. KST 벽시계 → instant 변환은
+  /// [FormatHelper.kstWallClockInstant] 한 곳을 지난다.
+  DateTime? get shiftStartInstant =>
+      FormatHelper.kstWallClockInstant(FormatHelper.toKstDate(workDate), startTime);
+
+  /// [DEVICE-MISMATCH-FIX] **단기** 근무의 종료 절대 시각.
+  ///
+  /// 자정을 넘기는 근무(23:00~01:00)는 종료가 다음 날이다. 장기 근무는
+  /// 하루의 끝이 근무일마다 달라 이 값 하나로 말할 수 없으므로 null.
+  /// 시각을 못 읽어도 null — 모르는 종료로 화면을 닫지 않는다.
+  DateTime? get shiftEndInstant {
+    if (isLongTermApplication) return null;
+    final day = FormatHelper.toKstDate(workDate);
+    final start = FormatHelper.kstWallClockInstant(day, startTime);
+    final end = FormatHelper.kstWallClockInstant(day, endTime);
+    if (start == null || end == null) return null;
+    return end.isAfter(start) ? end : end.add(const Duration(days: 1));
+  }
+
+  /// [DEVICE-MISMATCH-FIX] [now] 기준으로 이 단기 근무의 예정 시간이 끝났는가.
+  /// 종료를 모르면 false — 끝났다고 단정하지 않는다.
+  bool hasShiftEndedAt(DateTime now) {
+    final end = shiftEndInstant;
+    return end != null && !now.isBefore(end);
+  }
+
+  /// [ISG2] 이 초대를 실제로 수락할 수 있는 **마지막 시각**.
+  ///
+  /// 서버 계약은 `min(초대 + 24시간, 근무 시작)`이다. 저장된
+  /// [inviteExpiresAt]만 읽으면 그 계약 이전에 만들어진 기록에서 화면이
+  /// **근무가 끝난 다음 날까지 수락 가능한 것처럼** 보인다(DEV 1건 실측:
+  /// 10-15 20:00 근무 / 저장 만료 10-16 10:09). 데이터를 고치지 않고도
+  /// 읽는 쪽이 같은 계약을 적용하면 표시가 맞는다.
+  ///
+  /// 장기 초대는 시작의 의미가 달라(여러 날) 좁히지 않는다.
+  /// 둘 다 모르면 null — 모름을 마감으로 바꾸지 않는다.
+  ///
+  /// [INVITE-PREACCEPT] 서버가 canonical slot 으로 계산한 마감
+  /// ([inviteAcceptDeadline])이 있으면 **그것이 기준**이다 — 수락 guard·동의
+  /// writer·관리자 열람 창과 같은 값이다. 그래도 지원서 snapshot 계산보다
+  /// 늦게 잡히지 않게 둘 중 이른 쪽을 쓴다(화면이 더 오래 열어 두지 않는다).
+  DateTime? get effectiveInviteDeadline {
+    final local = effectiveInviteDeadlineOf(
+      storedExpiry: inviteExpiresAt,
+      shiftStart: shiftStartInstant,
+      isLongTerm: isLongTermInvite,
+    );
+    final server = inviteAcceptDeadline;
+    if (server == null) return local;
+    if (local == null) return server;
+    return server.isBefore(local) ? server : local;
+  }
+
   /// 근무 기간 표시 (예: "11/1~11/30")
   ///
   /// effectiveStart 결정 방식은 isWorkingOnDate·isScheduledOnDate와 동일하게 맞춤.
@@ -1376,6 +1518,30 @@ class ApplicationModel {
   // true = 이 Application은 역사적으로 CONFIRMED이었지만 모집 정원을 소모하지 않음.
   // status는 여전히 CONFIRMED (NO_SHOW 이력 보존용) — UI에서 반납 여부를 별도 표시.
   bool get isStaffingReleased => staffingReleasedAt != null;
+
+  /// [REISSUE-RECOVERY] 이 지원서에 **지금 계약서를 보내는 것이 행동인가**.
+  ///
+  ///   서버 `srvNeedsContractIssue` 의 제외 조건과 **같은 한 벌**이다.
+  ///   관리자 화면(미발송 탭·홈 할 일)은 그 서버 판정을 쓰는데, 지원명단
+  ///   다이얼로그들은 "계약 상태가 비었는가"만 보고 `계약서 작성` 을 내보냈다.
+  ///   그래서 같은 사실을 두 화면이 다르게 말했다 —
+  ///   좌석을 반납한 노쇼 건(`대체 충원 진행 중` 배지가 붙은 바로 그 행)에도
+  ///   버튼이 떴고, 누르면 그 근무일 계약서가 실제로 만들어졌다.
+  ///
+  ///   제외 조건
+  ///     · 좌석을 쥐지 않은 상태(확정 계열이 아니다)
+  ///     · 좌석을 반납했다(`staffingReleasedAt`) — 대체 인력이 그 자리를 받는다
+  ///     · 해지·퇴사가 승인돼 고용관계가 끝났다
+  ///
+  ///   계약서 **존재 여부**는 여기서 묻지 않는다. 그건 원장이 답한다.
+  bool get isContractIssuable {
+    if (!AppStatus.confirmedStatuses.contains(status)) return false;
+    if (isStaffingReleased) return false;
+    const ended = {'APPROVED', 'AUTO_APPROVED'};
+    if (ended.contains(terminationStatus)) return false;
+    if (ended.contains(resignStatus)) return false;
+    return true;
+  }
 }
 
 /// 지원서 Firestore 상태 상수 (대문자 — applications 컬렉션 convention)
@@ -1401,6 +1567,20 @@ abstract class AppStatus {
   /// 활성 상태 그룹 (CONTRACT_PENDING도 활성으로 취급)
   /// INVITED는 수락 전이므로 미포함 — 충돌 체크 대상에서 제외
   static const List<String> activeStates   = [pending, contractPending, confirmed];
+
+  /// [E2-INVITED-SEAT] 좌석 집계의 `대기` — 서버 `PENDING_STATUSES` 와 같은 한 벌.
+  ///
+  ///   `callableInviteWorker` 는 INVITED 를 업무·슬롯·공고 pendingCount 에 1로
+  ///   예약하고, 접힌 카드는 그 카운터를 읽는다. 지원서를 다시 세는 reader 가
+  ///   [activeStates] 를 쓰면 INVITED 가 빠져 같은 카드가 펼치는 순간
+  ///   `대기 1` → `대기 0` 이 됐다. 충돌 판정용 [activeStates] 는 바꾸지 않는다.
+  static const List<String> seatPendingStatuses = [pending, invited];
+
+  /// [E2-INVITED-SEAT] 좌석을 세는 상태 전체 — 대기([seatPendingStatuses]) + 확정 계열.
+  static const List<String> seatCountedStatuses = [
+    ...seatPendingStatuses,
+    ...confirmedStatuses,
+  ];
   /// 확정 완료 상태 그룹 (Firestore whereIn 쿼리 및 in-memory 체크에 사용)
   static const List<String> confirmedStatuses = [confirmed, contractPending];
   /// 비활성 상태 그룹

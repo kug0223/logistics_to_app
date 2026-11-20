@@ -208,7 +208,9 @@ void main() {
       expect(handler, contains('_applicants = [];'));
       expect(handler, contains('_allApplications = [];'));
       expect(handler, contains('_idCardStatusMap = {};'));
-      expect(handler, contains('_contractStatusMap = {};'));
+      // [REISSUE-RECOVERY] 계약 상태는 이제 `ContractStatusBatch` 다 —
+      //   비우는 의미는 같다(조회 결과도 unresolved 도 없는 상태).
+      expect(handler, contains('_contractStatusMap = const ContractStatusBatch();'));
       expect(handler, contains('_selectedIds.clear();'));
       expect(handler, contains('_isBatchMode = false;'));
       expect(handler, contains('_isIdCardSelectMode = false;'));

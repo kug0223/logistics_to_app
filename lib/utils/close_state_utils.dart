@@ -38,6 +38,10 @@ class CloseStateUtils {
     // 0. TO 레벨 수동마감 — CF 슬롯 갱신 전(최대 30분)에도 즉시 마감 반영
     if (masterTO.isManualClosed) return true;
 
+    // 0-1. [SA-DEACT.50] 사업장 정리(비활성 트리거)로 닫힌 공고 — 트리거는 공고 status 만 CLOSED 로 바꾸고 슬롯은
+    //   열린 채 둔다. 다른 이유의 CLOSED 는 기존 설계대로 슬롯·업무로 판단한다(재공개는 이 이유를 지운다).
+    if (masterTO.status == TOStatus.closed && masterTO.closedReasonCode == 'BUSINESS_DEACTIVATED') return true;
+
     // 1. 날짜 경과
     if (FormatHelper.toKstDate(slot.date).isBefore(today)) return true;
 

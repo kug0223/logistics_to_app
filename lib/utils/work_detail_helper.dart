@@ -119,6 +119,45 @@ class WorkDetailHelper {
     return raw is Map<String, dynamic> ? raw : null;
   }
 
+  /// [INVITE-WD-1] 계약서를 만들 이 지원의 업무 정의(공고 workDetails 중 하나).
+  ///
+  ///   초대·다른 업무 제안 지원서는 composite `workDetailId` 가 없거나 wdId 값을 담는다.
+  ///   예전 세 입구는 그때 '업무명 첫 일치 → 첫 원소' 로 넘어가, 같은 업무명의 다른 시간대
+  ///   정의(휴게·지급 조건·번들 키)를 계약에 넣었다. 순서: 명시 composite → 지원서의
+  ///   업무명+시간 → wdId → 업무명이 **하나뿐일 때만**. 못 찾으면 null — 첫 원소로 대신하지 않는다.
+  static WorkDetailData? contractWorkDetailFor(
+    ApplicationModel app,
+    List<WorkDetailData> workDetails,
+  ) {
+    final wid = app.workDetailId;
+    if (wid != null && wid.isNotEmpty) {
+      for (final w in workDetails) {
+        if (w.id == wid) return w;
+      }
+    }
+    if (app.startTime.isNotEmpty && app.endTime.isNotEmpty) {
+      final start = _normalizeTime(app.startTime);
+      final end = _normalizeTime(app.endTime);
+      for (final w in workDetails) {
+        if (w.workType == app.selectedWorkType &&
+            _normalizeTime(w.startTime) == start &&
+            _normalizeTime(w.endTime) == end) {
+          return w;
+        }
+      }
+    }
+    final ids = <String>{
+      if (app.wdId != null && app.wdId!.isNotEmpty) app.wdId!,
+      if (wid != null && wid.isNotEmpty) wid,
+    };
+    for (final w in workDetails) {
+      if (w.wdId != null && ids.contains(w.wdId)) return w;
+    }
+    final sameName =
+        workDetails.where((w) => w.workType == app.selectedWorkType).toList();
+    return sameName.length == 1 ? sameName.first : null;
+  }
+
   static String?  shiftType(Map<String, dynamic>? d)             => d?['shiftType'] as String?;
   static bool     nightIncluded(Map<String, dynamic>? d)          => d?['nightIncluded'] as bool? ?? false;
   static bool     nightAllowanceApplied(Map<String, dynamic>? d)  => d?['nightAllowanceApplied'] as bool? ?? true;

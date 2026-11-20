@@ -8,6 +8,7 @@ import '../utils/dialog_helper.dart';
 import '../utils/toast_helper.dart';
 import '../utils/responsive_helper.dart';
 import '../utils/image_helper.dart';
+import '../utils/text_layout.dart';
 
 /// 공통 사업장 선택 헬퍼
 ///
@@ -15,9 +16,15 @@ import '../utils/image_helper.dart';
 /// 1개 → 즉시 반환
 /// 2개+ → 바텀시트 피커 후 반환
 class BusinessPickerHelper {
+  ///
+  /// [includeClosed] [BUSINESS-ARCHIVE] 운영을 종료한 사업장도 고를 수 있게 한다.
+  ///   계약·급여·정산·통계·리뷰처럼 **지나간 기록**을 보는 화면은 true 다 —
+  ///   운영 종료 뒤에도 이미 일한 건의 급여·계약은 처리해야 한다.
+  ///   업무·템플릿처럼 앞으로의 운영을 설정하는 화면은 false(기본).
   static Future<BusinessModel?> pick(
     BuildContext context, {
     bool approvedOnly = true,
+    bool includeClosed = false,
     String dialogTitle = '사업장 선택',
   }) async {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
@@ -54,7 +61,9 @@ class BusinessPickerHelper {
     }
 
     if (approvedOnly) {
-      businesses = businesses.where((b) => b.isApproved).toList();
+      businesses = businesses
+          .where((b) => b.isApproved || (includeClosed && b.isDeactivated))
+          .toList();
     }
 
     if (businesses.isEmpty) {
@@ -105,6 +114,20 @@ class _BusinessPickerSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // [DU297 BP2] 큰 글자 배치 전환 기준 — DU264·295 와 같다(1.3배 이상).
+    final stacked = MediaQuery.textScalerOf(context).scale(10) >= 13;
+    // [DU297 BP1] 사업장 이름은 낱말 단위(identity), 읽기 이름 원문.
+    Widget nameText(BusinessModel biz) => Text(
+          TextLayout.identity(biz.name),
+          semanticsLabel: biz.name,
+          style: ResponsiveHelper.bodyStyle(context)
+              .copyWith(fontWeight: FontWeight.w600),
+        );
+    final closedTag = Text(
+      '운영 종료',
+      style: ResponsiveHelper.captionStyle(context)
+          .copyWith(color: AppColors.grey600),
+    );
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -134,7 +157,7 @@ class _BusinessPickerSheet extends StatelessWidget {
               IconButton(
                 icon: const Icon(Icons.close),
                 onPressed: () => Navigator.pop(context),
-                visualDensity: VisualDensity.compact,
+                // [DU297 BP4] compact(40×40) 제거 → 누름 48
                 color: AppColors.grey600,
               ),
             ],
@@ -184,15 +207,25 @@ class _BusinessPickerSheet extends StatelessWidget {
                                     ),
                             ),
                             const SizedBox(width: 16),
+                            // [DU297 BP2] 큰 글자에서는 '운영 종료' 를 이름 아래로
+                            //   (옆에 두면 B320 2.0 이름 칸이 95px 로 줄어 '한빛 분 | 류센터').
                             Expanded(
-                              child: Text(
-                                biz.name,
-                                style: ResponsiveHelper.bodyStyle(context)
-                                    .copyWith(fontWeight: FontWeight.w600),
-                              ),
+                              child: stacked && biz.isDeactivated
+                                  ? Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [nameText(biz), closedTag],
+                                    )
+                                  : nameText(biz),
                             ),
+                            if (!stacked && biz.isDeactivated)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 8),
+                                child: closedTag,
+                              ),
+                            // [DU297 BP3] 화살표 grey300(1.32) → textTertiary
                             const Icon(Icons.chevron_right,
-                                color: AppColors.grey300, size: 20),
+                                color: AppColors.textTertiary, size: 20),
                           ],
                         ),
                       ),

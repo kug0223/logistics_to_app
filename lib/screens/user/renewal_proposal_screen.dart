@@ -10,11 +10,13 @@
 import 'package:flutter/material.dart';
 
 import '../../models/core/renewal_proposal_model.dart';
+import 'renewal_proposal_reads.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_page_scaffold.dart';
@@ -24,7 +26,10 @@ class RenewalProposalScreen extends StatefulWidget {
   /// 알림 deep link 로 들어온 경우의 제안 id. 없으면 목록 전체를 본다.
   final String? focusProposalId;
 
-  const RenewalProposalScreen({super.key, this.focusProposalId});
+  /// [DU262] 시험용 읽기 주입 자리. production 은 null(FirestoreService 로 읽는다).
+  final RenewalProposalReads? reads;
+
+  const RenewalProposalScreen({super.key, this.focusProposalId, this.reads});
 
   @override
   State<RenewalProposalScreen> createState() => _RenewalProposalScreenState();
@@ -56,7 +61,10 @@ class _RenewalProposalScreenState extends State<RenewalProposalScreen> {
       _hasError = false;
     });
     try {
-      final all = await _svc.getMyRenewalProposals();
+      // [DU262] 시험은 reads 로 목록을 준다. production 은 그대로 _svc.getMyRenewalProposals().
+      final all = await (widget.reads != null
+          ? widget.reads!.myRenewalProposals()
+          : _svc.getMyRenewalProposals());
       final now = DateTime.now();
       // 서버도 같은 판정을 하지만, 화면이 먼저 걸러 준다 — 누를 수 없는
       //   버튼을 보여주고 눌렀을 때 거절하는 것보다 낫다.
@@ -95,9 +103,10 @@ class _RenewalProposalScreenState extends State<RenewalProposalScreen> {
           '${_md(p.effectiveStart)}부터 ${_md(p.effectiveEnd)}까지 연장합니다.\n\n'
           '수락하면 새 계약 절차가 시작되고, 계약 시작일부터 근무 일정이 적용됩니다.',
       confirmText: '수락',
-      confirmColor: AppColors.success,
+      // [DU262] 초록 위 흰 글자(2.78) → 대표색(5.58). 아이콘은 읽히는 진한 초록.
+      confirmColor: AppColors.brand,
       icon: Icons.check_circle_outline,
-      iconColor: AppColors.success,
+      iconColor: AppColors.successDark,
     );
     if (ok != true || !mounted) return;
     setState(() => _busy = true);
@@ -124,9 +133,10 @@ class _RenewalProposalScreenState extends State<RenewalProposalScreen> {
       message: '이번 계약 연장 제안을 거절합니다.\n'
           '현재 계약은 기존 종료일까지 유지됩니다.',
       confirmText: '거절',
-      confirmColor: AppColors.error,
+      // [DU262] 확인 순간의 위험색은 유지하되 읽히게(error 흰 글자 3.68 → errorDark).
+      confirmColor: AppColors.errorDark,
       icon: Icons.cancel_outlined,
-      iconColor: AppColors.error,
+      iconColor: AppColors.errorDark,
     );
     if (ok != true || !mounted) return;
     setState(() => _busy = true);
@@ -206,26 +216,44 @@ class _RenewalProposalScreenState extends State<RenewalProposalScreen> {
 
   Widget _buildCard(BuildContext context, RenewalProposalModel p) {
     final days = (p.workDays ?? const <String>[]).join(' · ');
+    // [DU262] 글자 1.3배 이상이면 버튼은 수락 위·거절 아래 전체 폭(DU256 정보 줄과 같은 기준).
+    final stacked = MediaQuery.textScalerOf(context).scale(10) >= 13;
+    final decline = OutlinedButton(
+      onPressed: _busy ? null : () => _decline(p),
+      // [DU262] 빨강 → 중립 테두리(본문색 글자, 테마 border 선). 거절은 해지가 아니다
+      //   (현재 계약은 종료일까지 유지) — 위험색은 확인 대화에만 둔다(DU245).
+      style: OutlinedButton.styleFrom(foregroundColor: AppColors.textPrimary),
+      child: const Text('거절'),
+    );
+    // [DU262] 초록 위 흰 글자(2.78) → 테마 대표색 채움(5.58·48)
+    final accept = ElevatedButton(
+      onPressed: _busy ? null : () => _accept(p),
+      child: const Text('연장 수락'),
+    );
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+      // [DU262] 반경 14·grey300 → 앱 카드 16·grey200
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.borderLight),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // [DU262] 사업장명 — 16 bold 본문색(이전 15 w700 grey700), 이름 단위 줄바꿈
           Text(
-            p.businessName,
-            style: ResponsiveHelper.bodyStyle(context)
-                .copyWith(fontWeight: FontWeight.w700),
+            TextLayout.identity(p.businessName),
+            semanticsLabel: p.businessName,
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
           Text(
-            '계약 연장을 제안했습니다.',
+            TextLayout.keepWords('계약 연장을 제안했습니다.'), // [DU262 r2] B320 '제안했습니/다.' 끊김
+            semanticsLabel: '계약 연장을 제안했습니다.',
             style: ResponsiveHelper.smallStyle(context,
-                color: AppColors.grey600),
+                color: AppColors.textSecondary), // [DU262] grey600
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           _row(context, '기간',
@@ -239,55 +267,49 @@ class _RenewalProposalScreenState extends State<RenewalProposalScreen> {
             _row(context, '임금',
                 FormatHelper.formatWageWithType(p.wage!, p.wageType ?? 'hourly')),
           SizedBox(height: ResponsiveHelper.spacing(context, 14)),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _busy ? null : () => _decline(p),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.error,
-                    side: const BorderSide(color: AppColors.error),
-                  ),
-                  child: const Text('거절'),
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: _busy ? null : () => _accept(p),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.success,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: const Text('연장 수락'),
-                ),
-              ),
-            ],
-          ),
+          if (stacked) ...[
+            SizedBox(width: double.infinity, child: accept),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            SizedBox(width: double.infinity, child: decline),
+          ] else
+            Row(
+              children: [
+                Expanded(child: decline),
+                SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+                Expanded(child: accept),
+              ],
+            ),
         ],
       ),
     );
   }
 
+  /// [DU262] 라벨 grey500(2.68) → textSecondary, 값 본문색.
+  ///   글자 1.3배 이상이면 라벨 위·값 아래(64 폭 라벨 열에서 '근무/요일'·'근무/시간' 이 끊겼다).
   Widget _row(BuildContext context, String label, String value) {
+    final labelText = Text(label,
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary));
+    final valueText = Text(value,
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.textPrimary)
+            .copyWith(fontWeight: FontWeight.w600));
+    final stacked = MediaQuery.textScalerOf(context).scale(10) >= 13;
     return Padding(
       padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 6)),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: ResponsiveHelper.spacing(context, 64),
-            child: Text(label,
-                style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.grey500)),
-          ),
-          Expanded(
-            child: Text(value,
-                style: ResponsiveHelper.smallStyle(context)
-                    .copyWith(fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
+      child: stacked
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [labelText, const SizedBox(height: 2), valueText],
+            )
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: ResponsiveHelper.spacing(context, 64),
+                  child: labelText,
+                ),
+                Expanded(child: valueText),
+              ],
+            ),
     );
   }
 }

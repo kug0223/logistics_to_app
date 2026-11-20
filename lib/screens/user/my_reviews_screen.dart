@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 import '../../models/core/monthly_review_model.dart';
 import '../../providers/user_provider.dart';
 import '../../services/monthly_review_service.dart';
+import '../../theme/app_colors.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
@@ -202,22 +204,22 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
 
   Widget _buildSummaryHeader(BuildContext context) {
     final avgRating = _avgRating;
-    final theme = Theme.of(context);
 
+    // [DU252] 대표색 띠 + 반투명 카드 → 흰 요약 카드(S010·S082·S070 과 같은 흰 면·반경 16·grey200).
+    //   이 화면만 파란 덩어리가 남아 있었다 — 다른 하위 화면처럼 흰 헤더 아래 흰 카드로 둔다.
     return Container(
-      color: theme.primaryColor,
-      padding: EdgeInsets.fromLTRB(
-        ResponsiveHelper.spacing(context, 24),
-        0,
-        ResponsiveHelper.spacing(context, 24),
-        ResponsiveHelper.spacing(context, 28),
+      margin: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 16),
+        ResponsiveHelper.spacing(context, 16),
+        ResponsiveHelper.spacing(context, 16),
+        ResponsiveHelper.spacing(context, 12),
       ),
-      child: Container(
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(16),
-        ),
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.grey200),
+      ),
         // [R7-P2-4 P24-R] 세 칸이 flex 없이 한 줄 고정이라 320dp·배율 2.0 에서
         //   172px 넘쳤다 — 평가 수·평균·별점은 이 화면의 요약 수치라 지우지
         //   않는다. 각 칸에 flex 를 주고 값은 한 줄로 줄인다.
@@ -239,34 +241,35 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
                 avgRating == 0
                     ? '-'
                     : '★' * avgRating.round() + '☆' * (5 - avgRating.round()),
+                valueColor: AppColors.warningDark, // [DU252] 별은 진한 호박색(흰 위 ≥4.5)
+                valueFontSize: 15, // [DU252 v2] 별 다섯 개가 보통 폭 한 칸에 한 줄로(이전 19.5 — 두 줄로 갈라졌다)
               ),
             ),
           ],
         ),
-      ),
     );
   }
 
-  Widget _buildStat(BuildContext context, String label, String value) {
+  // [DU252] 흰 카드 위 수치는 본문색, 라벨은 보조색. 큰 글자에서 말줄임으로 값이 사라지지 않게 줄을 바꾼다
+  //   (이전 maxLines 1 + 말줄임 — B320 에서 별점이 '★…' 로 잘렸다).
+  Widget _buildStat(BuildContext context, String label, String value,
+      {Color valueColor = AppColors.textPrimary, double? valueFontSize}) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
             style: ResponsiveHelper.subtitleStyle(context).copyWith(
-              color: Colors.white,
+              color: valueColor,
               fontWeight: FontWeight.bold,
-              fontSize: ResponsiveHelper.subtitleStyle(context).fontSize! * 1.15,
+              fontSize: valueFontSize ?? ResponsiveHelper.subtitleStyle(context).fontSize! * 1.15,
             )),
         SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-        Text(label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+        Text(TextLayout.keepWords(label),
+            semanticsLabel: label,
             textAlign: TextAlign.center,
             style: ResponsiveHelper.tinyStyle(context,
-                color: Colors.white.withValues(alpha: 0.85))),
+                color: AppColors.textSecondary)),
       ],
     );
   }
@@ -274,7 +277,7 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
   Widget _buildDivider() => Container(
         height: 32,
         width: 1,
-        color: Colors.white.withValues(alpha: 0.3),
+        color: AppColors.grey200, // [DU252]
       );
 }
 

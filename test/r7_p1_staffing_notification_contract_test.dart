@@ -168,7 +168,10 @@ void main() {
           reason: '전부 0으로 seed 된 map 을 수치로 쓰지 않는다');
 
       // 조회 자체는 카드와 같은 경로여야 한다 — 새 정원 경로를 만들지 않는다.
-      expect(s.contains('_firestoreService.loadTOWorkDetails('), true);
+      // [E2-INVITED-SEAT] 이 창의 읽기는 WorkApplicantsReads 경계를 지난다(테스트 seam).
+      //   계약은 그대로다 — 창이 목적·인자를 넘기고, 경계가 같은 서비스로 전달한다.
+      expect(s.contains('loader: () => _reads.capacity('), true);
+      expect(_codeOf(_src('lib/screens/business_admin/dialogs/work_applicants_reads.dart')).contains('svc.loadTOWorkDetails(to,'), true);
     });
 
     test('P1-3-h FULL/CLOSED에서는 ⋮ 메뉴의 초대도 내린다', () {
@@ -226,7 +229,12 @@ void main() {
     test('P1-4-c 리뷰 화면 근무일 집계가 canonical 판정을 쓴다', () {
       final s = _codeOf(
           _src('lib/screens/business_admin/admin_review_list_screen.dart'));
-      expect(s.contains('AttendanceModel.isActualFinalizedWork('), true);
+      // [REVIEW-ABSENCE-METRIC] 근무일·정시·지각을 한 번에 세는 공용 함수로 옮겼다 —
+      //   그 함수가 같은 canonical 판정을 쓴다.
+      final viaSummary = s.contains('AttendanceModel.reviewAttendanceSummary(') &&
+          _codeOf(_src('lib/models/core/attendance_model.dart')).contains(
+              'if (!isActualFinalizedWork(status, m[\'wageStatus\'] as String?)) continue;');
+      expect(s.contains('AttendanceModel.isActualFinalizedWork(') || viaSummary, true);
       // wageStatus만 보던 옛 식이 남아 있지 않다.
       expect(s.contains("status == 'confirmed' || status == 'transferred'"),
           false);

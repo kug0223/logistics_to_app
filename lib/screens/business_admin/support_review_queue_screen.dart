@@ -14,6 +14,7 @@
 
 import 'dart:async';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -24,6 +25,8 @@ import '../../models/core/user_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/support_review_queue_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/person_label.dart';
+import '../../utils/approve_review_error_message.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/loading_state_mixin.dart';
@@ -35,6 +38,7 @@ import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../../widgets/dialogs/worker_detail_dialog.dart';
+import 'contract_dispatch_flow.dart';
 import '../common/notification_screen.dart';
 
 // ─── 우선순위 분류 ────────────────────────────────────────────────────────────
@@ -411,20 +415,21 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
     final displayName = userName ?? '이 지원자';
     final confirmed = await DialogHelper.showCustom<bool>(
       context,
-      title: '승인 확인',
+      // [UI-APPLICANTS-AND-INVITATIONS.2] 인력 현황의 '확정' 과 같은 행동(좌석 확보 → 계약 대기)이라 같은 말로.
+      title: '확정 확인',
       content: Text(
-        '$displayName${_getJobContext(app)} 지원을 승인하시겠습니까?\n계약서 발송 대기 상태로 전환됩니다.',
+        '$displayName${_getJobContext(app)} 지원을 확정하시겠습니까?\n계약서 발송 대기 상태로 전환됩니다.',
         style: ResponsiveHelper.bodyStyle(context),
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context, false),
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(false),
           child: const Text('취소'),
         ),
         ElevatedButton(
           style: ElevatedButton.styleFrom(backgroundColor: AppColors.brand),
-          onPressed: () => Navigator.pop(context, true),
-          child: const Text('승인', style: TextStyle(color: Colors.white)),
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(true),
+          child: const Text('확정', style: TextStyle(color: Colors.white)),
         ),
       ],
     );
@@ -444,11 +449,38 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
         _hasChanges = true;
         _isActing = false;
       });
-      ToastHelper.showSuccess('승인 완료 — 계약서 발송 대기 상태로 전환되었습니다.');
+      ToastHelper.showSuccess('확정 완료 — 계약서 발송 대기 상태로 전환되었습니다.');
+      // [CONTRACT-DISPATCH-B3] 승인은 좌석을 잡는다(CONTRACT_PENDING). 다른 확정 입구와 같이
+      //   바로 기존 계약서 작성 흐름으로 잇는다 — 계약 권한이 있을 때만(권한 자동 부여 없음).
+      //   권한이 없으면 승인만 하고, 계약 권한자가 미발송 목록에서 보낸다.
+      final worker = _users?[app.uid];
+      final canContract = context.read<UserProvider>().checkForBusiness(
+              app.businessId, (p) => p.canManageContract) ==
+          PermissionCheck.allowed;
+      if (worker != null && canContract) {
+        final sent = await ContractDispatchFlow.start(context,
+            application: app, worker: worker);
+        if (!mounted) return;
+        if (!sent) {
+          ToastHelper.showInfo('계약서는 아직 발송되지 않았어요. 미발송 계약에서 이어서 보낼 수 있어요.');
+        }
+      } else if (!canContract) {
+        // [CONTRACT-DISPATCH-B3-HANDOFF] 승인 권한만 있는 담당자 — 권한을 넓히지 않고 인계처를 말한다.
+        ToastHelper.showInfo("확정 완료 — 계약서 발송 대기예요. 계약 권한이 있는 관리자가 홈 '계약 미발송'에서 보낼 수 있어요.");
+      }
     } catch (e) {
+      // [APPROVE-REJECT-REASON] 서버가 거절한 이유와 다음 행동을 말한다. 행은 그대로 둔다(승인되지 않았다).
+      //   응답을 못 들었으면 커밋됐을 수 있다 — 성공을 추정하지 않고 목록을 다시 읽는다.
+      debugPrint('[SupportReviewQueue] 승인 실패: ${e is FirebaseFunctionsException ? e.code : e.runtimeType}');
       if (!mounted) return;
-      setState(() => _isActing = false);
-      ToastHelper.showError('승인 중 오류가 발생했습니다. 다시 시도해주세요.');
+      final err = ApproveReviewError.of(e,
+          canSetUp: !context.read<UserProvider>().isSubAdmin);
+      setState(() {
+        _isActing = false;
+        if (err.reload) _hasChanges = true;
+      });
+      ToastHelper.showError(err.message);
+      if (err.reload) await _load();
     }
   }
 
@@ -825,6 +857,18 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
+                        // [UI-SCREEN-CONSISTENCY.1] 동명이인 두 명이 이름만으로 똑같이 보였다(LOCAL 관찰: 김민수 ×2).
+                        //   인력 현황과 같은 번호(PersonLabel)를 이름 옆 보조 문구로 둔다. 번호가 없으면 비운다.
+                        if (PersonLabel.secondary(user?.personNo).isNotEmpty) ...[
+                          const SizedBox(width: 4),
+                          Text(
+                            PersonLabel.secondary(user?.personNo),
+                            style: ResponsiveHelper.bodyStyle(
+                              context,
+                              color: AppColors.textTertiary,
+                            ).copyWith(fontSize: 12),
+                          ),
+                        ],
                         if (isLong) ...[
                           const SizedBox(width: 6),
                           _TypeBadge('장기', AppColors.infoMedium),
@@ -1127,7 +1171,7 @@ class _ActionButtons extends StatelessWidget {
             elevation: 0,
             textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
           ),
-          child: const Text('승인'),
+          child: const Text('확정'),
         ),
       ],
     );

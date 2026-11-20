@@ -305,9 +305,12 @@ extension AttendanceFirestore on FirestoreService {
   Future<Map<String, bool>> loadHasWorkedMap({
     required String businessId,
     required DateTime date,
+    // [ADMIN-APPLICANTS-POSTCONFIRM] 같은 날 같은 조회가 이미 출발했으면 그것을 쓴다(요청 1회).
+    Future<List<AttendanceModel>>? attendances,
   }) async {
     try {
-      final atts = await getAttendanceByDate(businessId: businessId, date: date);
+      final atts = await (attendances ??
+          getAttendanceByDate(businessId: businessId, date: date));
       return {
         for (final att in atts)
           if ((att.checkIn != null &&
@@ -341,15 +344,35 @@ extension AttendanceFirestore on FirestoreService {
       endDate: dateEnd,
     );
   }
+
+  /// [NOSHOW-CONTRACT-GUARD] KST 영업일 [first, last] 의 근태 — 계약 발행 판정 재료.
+  ///   실패도, 상한 도달(결과가 잘렸을 수 있음)도 **던진다** — 모름은 "근태 없음"이 아니다.
+  Future<List<AttendanceModel>> getAttendanceForKstDays({
+    required String businessId,
+    required DateTime first,
+    required DateTime last,
+  }) {
+    final (start, _) = FormatHelper.kstDayRange(first);
+    final (_, end) = FormatHelper.kstDayRange(last);
+    return _callableGetAdminAttendances(
+      businessId: businessId,
+      startDate: start,
+      endDate: end,
+      throwOnLimit: true,
+    );
+  }
   /// [R5.1 NO_SHOW 대체충원] 특정 날짜 NO_SHOW 상태인 출근 기록의 applicationId 집합 반환.
   /// DayApplicantsDialog에서 "대체 인력 충원" 버튼 표시 판단에 사용.
   /// 실패 시 빈 Set 반환 — false-positive 방지보다 버튼 미표시가 낫다.
   Future<Set<String>> getNoShowApplicationIdsByDate({
     required String businessId,
     required DateTime date,
+    // [ADMIN-APPLICANTS-POSTCONFIRM] loadHasWorkedMap 과 같은 조회를 공유할 때.
+    Future<List<AttendanceModel>>? attendances,
   }) async {
     try {
-      final records = await getAttendanceByDate(businessId: businessId, date: date);
+      final records = await (attendances ??
+          getAttendanceByDate(businessId: businessId, date: date));
       return records
           .where((a) => a.status == 'NO_SHOW' && a.applicationId.isNotEmpty)
           .map((a) => a.applicationId)
@@ -376,6 +399,31 @@ extension AttendanceFirestore on FirestoreService {
         DateTime.now().difference(ts) < FirestoreService._myAttendanceCacheTTL) {
       return cached;
     }
+    // [MY-ATT-INFLIGHT] 같은 사용자·연·월 조회가 이미 날아가 있으면 그 응답을 함께 받는다.
+    final inFlight = _myAttendanceInFlight[cacheKey];
+    if (inFlight != null) return inFlight;
+    final generation = _myAttendanceGeneration[userId] ?? 0;
+    final request = _fetchMyMonthlyAttendances(
+        cacheKey: cacheKey, userId: userId, year: year, month: month,
+        cached: cached, generation: generation);
+    _myAttendanceInFlight[cacheKey] = request;
+    void release() {
+      if (identical(_myAttendanceInFlight[cacheKey], request)) {
+        _myAttendanceInFlight.remove(cacheKey);
+      }
+    }
+    unawaited(request.then<void>((_) => release(), onError: (Object _) => release()));
+    return request;
+  }
+
+  Future<List<AttendanceModel>> _fetchMyMonthlyAttendances({
+    required String cacheKey,
+    required String userId,
+    required int year,
+    required int month,
+    required List<AttendanceModel>? cached,
+    required int generation,
+  }) async {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('getMyMonthlyAttendances',
@@ -391,8 +439,11 @@ extension AttendanceFirestore on FirestoreService {
           })
           .whereType<AttendanceModel>()
           .toList();
-      _myAttendanceCache[cacheKey] = list;
-      _myAttendanceCacheTimestamps[cacheKey] = DateTime.now();
+      // 출발한 뒤 무효화됐다면(출퇴근 등) 이 응답은 변경 전 값일 수 있다 — 캐시에 남기지 않는다.
+      if ((_myAttendanceGeneration[userId] ?? 0) == generation) {
+        _myAttendanceCache[cacheKey] = list;
+        _myAttendanceCacheTimestamps[cacheKey] = DateTime.now();
+      }
       return list;
     } catch (e) {
       // [PREDEVICE-INCOME-ERROR-NOT-ZERO] 실패를 빈 목록으로 바꾸지 않는다.
@@ -416,6 +467,45 @@ extension AttendanceFirestore on FirestoreService {
     required DateTime startDate,
     required DateTime endDate,
     String? userId,
+    bool throwOnLimit = false,
+  }) async {
+    final r = await _callableGetAdminAttendancesWithLimit(
+      businessId: businessId,
+      startDate: startDate,
+      endDate: endDate,
+      userId: userId,
+    );
+    if (r.limitReached && throwOnLimit) {
+      throw StateError('callableGetAdminAttendances limit reached — 결과가 잘렸을 수 있다');
+    }
+    return r.rows;
+  }
+
+  /// [STATUS-DIALOG-READS.27] 그날(KST) 근태를 **한 번** 읽고, 상한 도달 여부를 함께 준다.
+  ///
+  ///   인력 현황은 같은 날 근태를 두 번 읽었다 — 근무 이력·노쇼용(`getAttendanceByDate`,
+  ///   상한 도달은 로그만)과 계약 발행 판정용(`getAttendanceForKstDays`, 상한 도달은 던짐).
+  ///   창(`kstDayRange`)이 같고 다른 것은 상한 도달의 취급뿐이라, 응답 하나에서 두 판정을
+  ///   각자 내면 된다. 판정 규칙은 그대로다.
+  Future<({List<AttendanceModel> rows, bool limitReached})>
+      getAttendanceByDateWithLimit({
+    required String businessId,
+    required DateTime date,
+  }) {
+    final (dateStart, dateEnd) = FormatHelper.kstDayRange(date);
+    return _callableGetAdminAttendancesWithLimit(
+      businessId: businessId,
+      startDate: dateStart,
+      endDate: dateEnd,
+    );
+  }
+
+  Future<({List<AttendanceModel> rows, bool limitReached})>
+      _callableGetAdminAttendancesWithLimit({
+    required String businessId,
+    required DateTime startDate,
+    required DateTime endDate,
+    String? userId,
   }) async {
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callableGetAdminAttendances',
@@ -432,7 +522,7 @@ extension AttendanceFirestore on FirestoreService {
     if (limitReached) {
       debugPrint('⚠️ callableGetAdminAttendances: limit(10000) 도달 — 데이터 누락 가능 (bizId=$businessId)');
     }
-    return items
+    final rows = items
         .whereType<Map>()
         .map((e) {
           final m = Map<String, dynamic>.from(e);
@@ -441,6 +531,7 @@ extension AttendanceFirestore on FirestoreService {
         })
         .whereType<AttendanceModel>()
         .toList();
+    return (rows: rows, limitReached: limitReached);
   }
 
   // ═══════════════════════════════════════════════════════════

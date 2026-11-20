@@ -24,6 +24,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다
 
 import 'package:ALfit/theme/app_colors.dart';
 import 'package:ALfit/utils/id_card_helper.dart';
@@ -421,7 +422,7 @@ void main() {
         rows: [_endedRow()],
       ));
       await tester.pump();
-      expect(find.text('계약 종료'), findsOneWidget);
+      expect(findVisibleText('계약 종료'), findsOneWidget);
       expect(find.text('계약서 작성'), findsNothing,
           reason: '끝난 관계에 새 계약을 요구하지 않는다 (DEVICE.1E)');
       expect(find.byType(OutlinedButton), findsNothing);

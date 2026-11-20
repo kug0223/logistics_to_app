@@ -163,7 +163,10 @@ void main() {
 
   group('RT-5 — P1A 구조가 유지된다', () {
     test('RT-50 users/readiness 병렬이 그대로다', () {
-      expect(f, contains('await Future.wait([ _loadWorkerNames(uncached), _loadPayrollReadiness(uids), ])'));
+      // [PAYROLL-ALL-UNTRANSFERRED] 두 조회는 여전히 같은 Future.wait 안에서 함께 출발한다.
+      //   '전체 미이체' 모드에서만 월 경로가 지급 준비를 쓰지 않는다(그 모드의 지급 준비는
+      //   _loadAllOutstanding 하나가 쓴다). 실제 동작은 payroll_all_outstanding_critical_path_test PAO-M1·PAO-1.
+      expect(f, contains('await Future.wait([ _loadWorkerNames(uncached), if (!widget.showAllOutstanding) _loadPayrollReadiness(uids), ])'));
     });
 
     test('RT-51 급여 실패는 여전히 화면 상태로 남는다', () {

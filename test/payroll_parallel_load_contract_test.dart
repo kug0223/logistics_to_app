@@ -43,7 +43,10 @@ void main() {
       final bank = _sliceOf(code, 'Future<void> _loadBankInfo(Set<String> uids)',
           'Future<void> _loadWorkerNames(');
       final bf = _flat(bank);
-      expect(bf, contains('await Future.wait([ _loadWorkerNames(uncached), _loadPayrollReadiness(uids), ])'));
+      // [PAYROLL-ALL-UNTRANSFERRED] 두 조회는 여전히 같은 Future.wait 안에서 함께 출발한다.
+      //   '전체 미이체' 모드에서만 월 경로가 지급 준비를 쓰지 않는다(그 모드의 지급 준비는
+      //   _loadAllOutstanding 하나가 쓴다). 실제 동작은 payroll_all_outstanding_critical_path_test PAO-M1·PAO-1.
+      expect(bf, contains('await Future.wait([ _loadWorkerNames(uncached), if (!widget.showAllOutstanding) _loadPayrollReadiness(uids), ])'));
     });
 
     test('PL-12 직렬 호출이 남아 있지 않다', () {
@@ -56,10 +59,11 @@ void main() {
 
   group('PL-2 — 의존성이 없다는 것이 코드로 보인다', () {
     test('PL-20 지급 준비 조회는 uids 와 businessId 만 쓴다', () {
-      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids,',
+      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids)' /* [PAYROLL-V3-RECOVERY] guard 인자 제거 */,
           'bool _needsSnapshotRefresh(');
       final rf = _flat(rd);
-      expect(rf, contains('workerUids: uids.toList()'));
+      // [PAYROLL-V3-RECOVERY 갱신] 월 경로도 200명 분할 조회(_fetchReadinessAll)를 쓴다 — 같은 계약을 그 함수에서 본다. 예전: workerUids: uids.toList()
+      expect(rf, contains('workerUids: c'));
       expect(rf, contains('businessId: widget.businessId'));
       // 이름 조회 결과(_userBankCache)를 읽지 않는다
       expect(rf, isNot(contains('_userBankCache')));
@@ -81,11 +85,12 @@ void main() {
     });
 
     test('PL-31 지급 준비 실패도 밖으로 나가지 않는다', () {
-      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids,',
+      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids)' /* [PAYROLL-V3-RECOVERY] guard 인자 제거 */,
           'bool _needsSnapshotRefresh(');
       final rf = _flat(rd);
       expect(rf, contains('} catch (e) {'));
-      expect(rf, contains('batch = PayrollReadinessBatch.failed'));
+      // [PAYROLL-V3-RECOVERY 갱신] 월 경로도 200명 분할 조회(_fetchReadinessAll)를 쓴다 — 같은 계약을 그 함수에서 본다. 예전: batch = PayrollReadinessBatch.failed
+      expect(rf, contains('return PayrollReadinessBatch.failed'));
     });
 
     test('PL-32 서비스 자체도 실패를 삼켜 failed 배치를 돌려준다', () {
@@ -93,9 +98,11 @@ void main() {
     });
 
     test('PL-33 모르는 것을 "확인 필요"로 바꾸지 않는다', () {
-      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids,',
+      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids)' /* [PAYROLL-V3-RECOVERY] guard 인자 제거 */,
           'bool _needsSnapshotRefresh(');
-      expect(_flat(rd), contains('_readinessUnknown = batch.loadFailed ? uids.toSet() : batch.failedUids.toSet()'));
+      // [PAYROLL-V3-RECOVERY 갱신] 월 경로도 200명 분할 조회(_fetchReadinessAll)를 쓴다 — 같은 계약을 그 함수에서 본다. 예전: _readinessUnknown = batch.loadFailed ? uids.toSet() : batch.failedUids.toSet()
+      expect(_flat(rd), contains('_readinessUnknown = r.unknown;'));
+      expect(_flat(rd), contains('if (b.loadFailed) { unknown.addAll(chunks[i]); continue; }'));
     });
   });
 
@@ -111,7 +118,12 @@ void main() {
     test('PL-42 캐시 가드(기존 동작)를 바꾸지 않았다', () {
       final bank = _sliceOf(code, 'Future<void> _loadBankInfo(Set<String> uids)',
           'Future<void> _loadWorkerNames(');
-      expect(_flat(bank), contains('if (uncached.isEmpty) return'));
+      // [PAYROLL-V3-RECOVERY 갱신] 예전: bank 에 'if (uncached.isEmpty) return'. 그 가드가 지급 준비까지
+      //   건너뛰었다 — 이름 캐시 가드는 _loadWorkerNames 로만 남는다.
+      expect(_flat(bank), isNot(contains('if (uncached.isEmpty) return')));
+      expect(_flat(_sliceOf(code, 'Future<void> _loadWorkerNames(',
+              'Set<String> get _visibleWorkerUids')),
+          contains('if (uncached.isEmpty) return'));
     });
   });
 
@@ -123,7 +135,7 @@ void main() {
     });
 
     test('PL-51 mounted 가드가 유지된다', () {
-      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids,',
+      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids)' /* [PAYROLL-V3-RECOVERY] guard 인자 제거 */,
           'bool _needsSnapshotRefresh(');
       expect(_flat(rd), contains('if (!mounted) return'));
     });

@@ -546,10 +546,12 @@ void main() {
     test('TO soft delete 계약이 그대로다', () {
       final body = _flat(_codeOf(_callableBody(fn, 'callableDeleteTO')));
       expect(
-        body.contains('await db.collection("tos").doc(toId).update({ '
+        // [POSTING-AUTH-44] 같은 soft delete 쓰기가 권한 판정과 같은 트랜잭션 안으로 옮겨졌다(필드 동일).
+        body.contains('txDelTo.update(db.collection("tos").doc(toId), { '
             'isDeleted: true, deletedAt: '
             'admin.firestore.FieldValue.serverTimestamp(), '
-            'isPublished: false,'),
+            'isPublished: false,') &&
+            body.contains('await srvAssertPostingAuthorityInTx(txDelTo, callerUid, businessId);'),
         isTrue,
         reason: 'soft delete 구현이 바뀌었다',
       );
@@ -792,11 +794,12 @@ void main() {
 
     test('invite 정책 무변경 (DRAFT/SCHEDULED gap은 별도 backlog)', () {
       final inv = _codeOf(_callableBody(fn, 'callableInviteWorker'));
+      // [INVITE-TERMINAL 2026-10-16] 공고 종료 판정을 수락·동의·검토와 같은 함수로
+      //   바꿨다(자동 접수 마감만 통과, 그 밖의 CLOSED·POSTING_EXPIRED·DELETED 는 계속 차단).
       expect(
-        inv.contains('const closedStatuses = ["CLOSED", "POSTING_EXPIRED", '
-            '"DELETED"];'),
+        inv.contains('if (srvInviteRecruitClosureBlock(toData, undefined, undefined) != null) {'),
         isTrue,
-        reason: 'invite guard를 이번 Phase에서 건드렸다',
+        reason: 'invite 종료 판정이 공통 함수가 아니다',
       );
       expect(inv.contains('isPublished'), isFalse,
           reason: 'DRAFT/SCHEDULED invite 정책을 수정했다',

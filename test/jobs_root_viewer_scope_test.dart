@@ -154,7 +154,12 @@ void main() {
       //   지켜야 하는 것은 **분기 구조**이지 인자 철자가 아니다.
       expect(s.contains('_JobsSetupRequiredView('), isTrue);
       expect(s.contains('readiness: r'), isTrue);
-      expect(s.contains('WorkforceListView(targetToId: _targetToId)'), isTrue);
+      // [DU249 — DU231 S023 추종] 준비 완료 분기는 여전히 딥링크 대상 id 를 가진 목록을 연다. DU231 이 요약 카드
+      //   인자(summaryHeader)를 더해 한 줄 호출 문자열이 없어졌다 — 호출과 대상 id 인자가 붙어 있는지로 본다.
+      final wl = s.indexOf('WorkforceListView(');
+      expect(wl, isNot(-1));
+      final tid = s.indexOf('targetToId: _targetToId', wl);
+      expect(tid != -1 && tid - wl < 120, isTrue, reason: '목록 호출에 대상 id 인자가 없다');
     });
 
     test('JOBS-VIEWER-04b + 는 허용 + 준비 완료일 때만 남는다', () {

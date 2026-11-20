@@ -32,6 +32,7 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 
 import 'package:ALfit/models/core/application_model.dart';
+import 'package:ALfit/services/contract_service.dart';
 import 'package:ALfit/models/core/attendance_model.dart';
 import 'package:ALfit/models/core/business_member_model.dart';
 import 'package:ALfit/models/core/business_model.dart';
@@ -217,7 +218,7 @@ class _DayReads {
         slotWorkDetails: (toId, slotId) async => <WorkDetailData>[],
         to: (toId) async => null,
         contractStatusBatch: (ids, {required businessId}) async =>
-            <String, String?>{},
+            const ContractStatusBatch(),
       );
 }
 
@@ -286,7 +287,8 @@ class _AttReads {
         usersBatch: ({required uids, required businessId}) async =>
             {for (final u in uids) u: _user(u, '근로자 $u')},
         contractStatus: ({required appIds, required businessId}) async =>
-            {for (final id in appIds) id: 'signed'},
+            ContractStatusBatch(
+                statuses: {for (final id in appIds) id: 'signed'}),
         dayStaffing: ({required businessId, required dayStartMs}) async {
           calls.add('staffing');
           if (failStaffing) throw StateError('staffing read failed');

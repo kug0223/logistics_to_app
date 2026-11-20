@@ -165,9 +165,12 @@ void main() {
       }
     });
 
-    test('AFT-TX-02 읽는 문서 둘, 쓰는 것은 삭제 하나다', () {
-      expect(_count(txBody(), 'tx.get('), 2);
-      expect(_count(txBody(), 'tx.delete('), 1);
+    test('AFT-TX-02 읽는 문서 셋, 쓰는 것은 삭제뿐이다', () {
+      // [DOC-PRODUCT-DELETE.8 갱신] 예전 단언: tx.get 2 · tx.delete 1.
+      //   자신이 만든 fingerprint sentinel 을 users 문서와 같은 거래에서 읽고 지운다 —
+      //   거래 밖에서 먼저 지우면 그 사이 가입이 끝난 계정의 중복 차단이 사라졌다(full13o O1).
+      expect(_count(txBody(), 'tx.get('), 3);
+      expect(_count(txBody(), 'tx.delete('), 2);
       expect(txBody(), isNot(contains('tx.set(')));
       expect(txBody(), isNot(contains('tx.update(')));
     });
@@ -188,11 +191,15 @@ void main() {
           lessThan(_at(abortFn, 'admin.auth().deleteUser(uid)')));
     });
 
-    test('AFT-ORDER-03 fingerprint·Storage 정리 순서를 바꾸지 않았다 (§10·§12)', () {
-      expect(_at(abortFn, 'foreignIdFingerprints'),
-          lessThan(_at(abortFn, 'getFiles({prefix:')));
+    test('AFT-ORDER-03 Storage 정리 → users 거래(fingerprint 포함) 순서 (§10·§12)', () {
+      // [DOC-PRODUCT-DELETE.8 갱신] 예전 단언: fingerprint 삭제 < getFiles < users 거래.
+      //   fingerprint 는 이제 users 거래 안에서 지운다(위 AFT-TX-02). Storage 가 먼저인 hard gate 는 그대로다.
       expect(_at(abortFn, 'getFiles({prefix:'),
           lessThan(_at(abortFn, 'const tombRefForAbort = db')));
+      expect(_at(abortFn, 'const tombRefForAbort = db'),
+          lessThan(_at(abortFn, 'foreignIdFingerprints')));
+      expect(_at(abortFn, 'foreignIdFingerprints'),
+          lessThan(_at(abortFn, 'tx.delete(userRef);')));
     });
   });
 
@@ -235,8 +242,10 @@ void main() {
       // 상태 의미·fingerprint 유일성·동의 기록 경로가 그대로다.
       expect(code, contains('export const callableFinalizeForeignIdentity'));
       expect(code, contains('export const callableRecordTermsConsent'));
+      // [DOC-PRODUCT-DELETE.8 갱신] 예전 단언: const fpDocId = `${ownFingerprint}_${role}`;
+      //   같은 문서 id(지문_역할)를 거래 안의 fresh users 문서에서 만든다. 소유 확인(uid 일치)은 그대로다.
       expect(_flat(abortFn), contains(
-          r'const fpDocId = `${ownFingerprint}_${role}`;'));
+          r'db.collection("foreignIdFingerprints").doc(`${fp}_${fpRole}`);'));
       expect(_flat(abortFn), contains(
           r'if (fpSnap.exists && (fpSnap.data()?.uid as string | undefined) === uid) {'));
     });

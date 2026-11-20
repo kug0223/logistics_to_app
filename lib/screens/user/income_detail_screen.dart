@@ -12,6 +12,7 @@ import '../../utils/calendar_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/worker_wage_status.dart';
 import '../../widgets/common/viewport_fill_surface.dart';
 import '../../widgets/section_header.dart';
 import 'wage_detail_screen.dart';
@@ -279,12 +280,15 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                           color: AppColors.textPrimary),
                       onPressed: () => setInner(() => pickerYear--),
                     ),
-                    SizedBox(
-                      width: 120,
-                      child: Text(
-                        '$pickerYear년',
-                        textAlign: TextAlign.center,
-                        style: AppTextStyles.sectionTitle(),
+                    // [DU292 MP3] 고정 폭 120 → 최소 폭 120 — 큰 글자에서 '2026/년' 으로 쪼개졌다
+                    Flexible(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(minWidth: 120),
+                        child: Text(
+                          '$pickerYear년',
+                          textAlign: TextAlign.center,
+                          style: AppTextStyles.sectionTitle(),
+                        ),
                       ),
                     ),
                     IconButton(
@@ -303,13 +307,31 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                 const SizedBox(height: 12),
 
                 // 월 그리드 (4×3) — 터치 즉시 적용, 확인 버튼 없음
-                GridView.count(
-                  crossAxisCount: 4,
+                // [DU292 MP1] 칸 높이 = 글 한 줄 높이 + 16 과 48 중 큰 값, '12월' 이 칸 폭에 안 들어가면 3열.
+                //   전에는 비율 1.7 고정이라 360 에서 43.5(터치 미달), 큰 글자에서 글이 칸보다 높아 잘리고 '10/월' 로 쪼개졌다.
+                LayoutBuilder(builder: (lctx, cons) {
+                  final monthStyle = DefaultTextStyle.of(lctx).style.merge(
+                      const TextStyle(fontSize: 16, fontWeight: FontWeight.w700));
+                  final tp = TextPainter(
+                    text: TextSpan(text: '12월', style: monthStyle),
+                    textDirection: Directionality.of(lctx),
+                    textScaler: MediaQuery.textScalerOf(lctx),
+                    locale: Localizations.maybeLocaleOf(lctx),
+                  )..layout();
+                  final textW = tp.width;
+                  final textH = tp.height;
+                  tp.dispose();
+                  final cols = (cons.maxWidth - 8 * 3) / 4 >= textW + 16 ? 4 : 3;
+                  final extent = textH + 16 > 48 ? textH + 16 : 48.0;
+                  return GridView(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  childAspectRatio: 1.7,
-                  mainAxisSpacing: 8,
-                  crossAxisSpacing: 8,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: cols,
+                    mainAxisExtent: extent,
+                    mainAxisSpacing: 8,
+                    crossAxisSpacing: 8,
+                  ),
                   children: List.generate(12, (i) {
                     final m = i + 1;
                     final selectable = isSelectable(pickerYear, m);
@@ -329,9 +351,10 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                         duration: const Duration(milliseconds: 150),
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
+                          // [DU292 MP2] 고를 수 없는 달은 면 없이(투명) — 글은 읽히게 두고 면으로 구분한다
                           color: isSelected
                               ? AppColors.brand
-                              : AppColors.background,
+                              : (selectable ? AppColors.background : Colors.transparent),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
@@ -341,8 +364,9 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                             fontWeight: isSelected
                                 ? FontWeight.w700
                                 : FontWeight.w500,
+                            // [DU292 MP2] grey400(1.75) → textTertiary(흰 위 5.25, DU272·276 선례)
                             color: !selectable
-                                ? AppColors.textDisabled
+                                ? AppColors.textTertiary
                                 : isSelected
                                     ? Colors.white
                                     : AppColors.textPrimary,
@@ -351,7 +375,8 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                       ),
                     );
                   }),
-                ),
+                  );
+                }),
                 const SizedBox(height: 16),
               ],
             ),
@@ -394,7 +419,8 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   int get _wageScheduled {
     return _monthApps
         .where((a) => AppStatus.confirmedStatuses.contains(a.status))
-        .where((a) => CalendarHelper.isScheduledIncome(a, _attendances))
+        .where((a) => CalendarHelper.isScheduledIncome(a, _attendances,
+            now: DateTime.now()))
         .fold(0, (sum, a) => sum + _dailyWageOf(a));
   }
 
@@ -859,7 +885,9 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   Widget _buildWorkRecord(double s, _IncomeRow row, bool showDivider) {
     const dowLabels = ['', '월', '화', '수', '목', '금', '토', '일'];
     final app = row.app;
-    final d = row.date;
+    // [SIM-WORKER-WAGE-VIEW] 근무일은 KST 자정 instant — KST 달력일로 읽는다.
+    //   기기 성분을 쓰면 GMT 기기에서 10/17 근무가 10/16 으로 보였다.
+    final d = FormatHelper.toKstDate(row.date);
     final dateStr =
         '${d.month}/${d.day.toString().padLeft(2, '0')}(${dowLabels[d.weekday]})';
 
@@ -874,30 +902,37 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
     final String statusLabel;
     final Color statusColor;
 
-    if (att != null &&
-        att.wageStatus == AttendanceModel.wageTransferred &&
-        att.finalWage != null) {
-      displayWage = att.finalWage!;
-      statusLabel = '이체 처리 완료';
-      statusColor = AppColors.successDark; // 결제 완료 → 초록 유지
-    } else if (att != null &&
-        att.wageStatus == AttendanceModel.wageConfirmed &&
-        att.finalWage != null) {
-      displayWage = att.finalWage!;
-      statusLabel = '지급 예정';
-      statusColor = AppColors.brand;
-    } else if (att != null &&
-        att.wageStatus == AttendanceModel.wageCalculated &&
-        att.finalWage != null) {
-      displayWage = att.finalWage!;
-      statusLabel = '급여 계산 완료';
-      statusColor = AppColors.success; // 처리 진행 중 → 연한 초록 유지
+    // [SIM-WORKER-WAGE-VIEW] 지급 상태는 급여 상세와 **같은 판정**을 쓴다.
+    //   목록만 계좌 재확인을 보지 않아 같은 건을 '지급 예정'이라고 했고,
+    //   노쇼 0원 근무도 '지급 예정'이었다(DEV 실측). 노쇼·결근은 금액이 아니라
+    //   근태 상태로 가른다 — 정상 근무 0원은 그대로 급여 단계를 따른다.
+    final wageInfo = att == null ? null : WorkerWageStatus.of(att);
+    final isNoShowOrAbsent = att != null &&
+        (att.status == AttendanceModel.statusNoShow ||
+            att.status == AttendanceModel.statusAbsent);
+
+    if (wageInfo != null && (att!.finalWage != null || isNoShowOrAbsent)) {
+      displayWage = att.finalWage ?? 0;
+      statusLabel = wageInfo.label;
+      statusColor = wageInfo.color;
     } else if (att?.checkInAt != null) {
       // [.6-P2] 지원서가 없으면 예정 일당을 계산할 근거가 없다.
       //   없는 금액을 지어내지 않고 모른다고 말한다.
       displayWage = app == null ? 0 : _dailyWageOf(app);
-      statusLabel = app == null ? '근무 완료 · 금액 확인 필요' : '근무 완료';
+      // [DEVICE-MISMATCH-FIX] 일했고 급여는 아직 확정 전이다 — 위 요약의
+      //   `정산 중 N건`과 같은 이름으로 부른다(예전 `근무 완료`는 요약의
+      //   `근무 완료`(확정 급여)와 같은 말이라 서로 다른 뜻이 섞였다).
+      statusLabel = app == null ? '정산 중 · 금액 확인 필요' : '정산 중';
       statusColor = AppColors.textSecondary; // 급여 미처리 → 중립 회색
+    } else if (app != null &&
+        AppStatus.confirmedStatuses.contains(app.status) &&
+        app.hasShiftEndedAt(DateTime.now())) {
+      // [DEVICE-MISMATCH-FIX] 출근 기록 없이 예정 시간이 끝났다 — 위 요약의
+      //   `근무 예정`에서 빠진 근무를 이 행만 `근무 예정 12,000원`으로 말하면
+      //   두 숫자가 어긋난다(DEV 실측 Zdn7). 벌 예정 금액을 말하지 않는다.
+      displayWage = 0;
+      statusLabel = '출근 기록 없음';
+      statusColor = AppColors.warningDark;
     } else if (app != null &&
         AppStatus.confirmedStatuses.contains(app.status)) {
       displayWage = _dailyWageOf(app);

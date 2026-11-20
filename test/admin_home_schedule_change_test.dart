@@ -393,7 +393,10 @@ void main() {
     });
 
     test('퇴사 요청의 soonCount 배지가 유지된다', () {
-      final block = _rowBlock(rows, '퇴사 요청');
+      // [D3-RETRO-EXCLUDE] 배지는 add( 앞에서 조립한다(수동 검토 수와 합친다) — 퇴사 요청 블록 전체를 본다.
+      final at = rows.indexOf('final resign = cs?.actions.resignRequest;');
+      expect(at, isNot(-1));
+      final block = rows.substring(at, rows.indexOf('if (_verified(up, (p) => p.', at));
       expect(block.contains("'내일 자동 승인 \$soon건'"), isTrue);
     });
   });

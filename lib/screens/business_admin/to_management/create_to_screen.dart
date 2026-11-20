@@ -24,6 +24,7 @@ import '../../../providers/user_provider.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/text_layout.dart';
 import '../../../utils/admin_tab_switcher.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/posting_readiness_reason.dart';
@@ -624,6 +625,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       _workDetails.clear();
       for (final work in to.workDetails) {
         _workDetails.add(WorkDetailInput(
+          // 새 공고에 옮긴다 — 서버가 이 id 가 지금 활성인 같은 이름의 업무인지 다시 본다.
+          workTypeId: work.workTypeId,
           workType: work.workType,
           workTypeIcon: work.workTypeIcon,
           workTypeColor: work.workTypeColor,
@@ -681,7 +684,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                         size: ResponsiveHelper.iconSize(context, 22)),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
-                      child: Text('기존 공고 불러오기',
+                      // [DU488] 큰 글자에서 '불러 / 오기'처럼 음절 사이에서 끊겼다 — 낱말 사이에서만 줄을 바꾼다. 읽기 도구에는 원문.
+                      child: Text(TextLayout.keepWords('기존 공고 불러오기'),
+                          semanticsLabel: '기존 공고 불러오기',
                           style: ResponsiveHelper.subtitleStyle(context)
                               .copyWith(fontWeight: FontWeight.bold)),
                     ),
@@ -723,23 +728,27 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               // 목록
               Expanded(
                 child: filteredTOs.isEmpty
+                    // [DU488] 큰 글자(320 × 2.0)에서 빈 목록이 남은 높이보다 커서 아래로 29px 넘쳤다 — 맞으면 가운데, 모자라면 스크롤.
                     ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.inbox_outlined,
-                                size: ResponsiveHelper.iconSize(context, 48),
-                                color: AppColors.grey400),
-                            SizedBox(
-                                height: ResponsiveHelper.spacing(context, 12)),
-                            Text(
-                              searchQuery.isEmpty
-                                  ? '등록된 공고가 없습니다'
-                                  : '검색 결과가 없습니다',
-                              style: ResponsiveHelper.bodyStyle(context,
-                                  color: AppColors.grey600),
-                            ),
-                          ],
+                        child: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.inbox_outlined,
+                                  size: ResponsiveHelper.iconSize(context, 48),
+                                  color: AppColors.grey400),
+                              SizedBox(
+                                  height: ResponsiveHelper.spacing(context, 12)),
+                              Text(
+                                searchQuery.isEmpty
+                                    ? '등록된 공고가 없습니다'
+                                    : '검색 결과가 없습니다',
+                                style: ResponsiveHelper.bodyStyle(context,
+                                    color: AppColors.grey600),
+                              ),
+                            ],
+                          ),
                         ),
                       )
                     : ListView.separated(
@@ -763,10 +772,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                         color: AppColors.grey600),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
+                      // [DU487] grey600(grey100 위 4.23) → textSecondary(중립 칩 짝 textSecondary/grey100 과 같다 · 기준 4.5 이상).
                       child: Text(
                         '공고 제목·관리용 카드명·공통 안내·근무유형·요일·업무 설정을 불러옵니다. 날짜와 공개 설정은 포함되지 않습니다.',
                         style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.grey600),
+                            color: AppColors.textSecondary),
                       ),
                     ),
                   ],
@@ -945,6 +955,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     if (result != null && mounted) {
       setState(() {
         _workDetails[index] = WorkDetailInput(
+          // [D7] 수정은 업무 정체성을 바꾸지 않는다 — 고른 업무유형 id 를 그대로 둔다.
+          workTypeId: detail.workTypeId,
           workType: result['workType'] ?? detail.workType,
           workTypeIcon: result['workTypeIcon'] ?? detail.workTypeIcon,
           workTypeColor: result['workTypeColor'] ?? detail.workTypeColor,
@@ -1405,6 +1417,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           //   문구 소유를 클라이언트가 갖고, 해당 준비 단계를 알 수 있게 한다.
           ToastHelper.showError(notReady.message);
         } else if (e is FirebaseFunctionsException &&
+            e.code == 'permission-denied') {
+          // [POSTING-QUOTA-42] 권한 거절은 등록 실패 일반 문구와 다른 사실이다.
+          ToastHelper.showError('공고 관리 권한이 없습니다.\n공고 관리 권한이 있는 관리자에게 문의하세요.');
+        } else if (e is FirebaseFunctionsException &&
             e.code == 'failed-precondition') {
           // 우리가 아는 코드가 아니다 — 준비 단계를 단정하지 않는다.
           ToastHelper.showError('공고 등록 조건을 확인해 주세요');
@@ -1562,20 +1578,27 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           ),
         ),
         // G: CTA → bottomNavigationBar (SafeArea(top: false) 필수)
-        bottomNavigationBar: SafeArea(
-          top: false,
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              ResponsiveHelper.spacing(context, 16),
-              ResponsiveHelper.spacing(context, 8),
-              ResponsiveHelper.spacing(context, 16),
-              ResponsiveHelper.spacing(context, 16),
+        // [DU1 구현54 C1 S030] Scaffold 는 키보드가 올라와도 bottomNavigationBar 를 올리지 않는다 — 공통 안내 입력 중
+        //   '공고 등록' 이 키보드(300) 뒤에 가려졌다(320·2.0 / 360·1.0 실측). 키보드 높이만큼 위로 올려 입력 중에도 닿게 한다.
+        //   Scaffold 본문은 (하단 바 높이) 기준으로 줄어들어 이중 여백이 생기지 않는다.
+        bottomNavigationBar: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+          // [DU1 구현57 F56-1] 실패 토스트가 이 하단 행동 위로 뜨게 영역을 등록한다(재시도 버튼 라벨 동시 노출)
+          child: ToastAvoidArea(child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                ResponsiveHelper.spacing(context, 16),
+                ResponsiveHelper.spacing(context, 8),
+                ResponsiveHelper.spacing(context, 16),
+                ResponsiveHelper.spacing(context, 16),
+              ),
+              child: TOActionButton.create(
+                onPressed: _isCreating ? null : _createTO,
+                isLoading: _isCreating,
+              ),
             ),
-            child: TOActionButton.create(
-              onPressed: _isCreating ? null : _createTO,
-              isLoading: _isCreating,
-            ),
-          ),
+          )),
         ),
       ),
     );     // PopScope
@@ -1803,7 +1826,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               hintText: '예: 분류작업, 피킹업무',
               hintStyle: ResponsiveHelper.smallStyle(
                 context,
-                color: AppColors.grey400,
+                color: AppColors.textTertiary, // [DU319] grey400 1.88 → textTertiary
               ),
               prefixIcon: Icon(
                 Icons.title,
@@ -1847,9 +1870,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          // [DU319] 360·1.0 에서 '공 / 고 제목' 으로 끊겼다 — 낱말 단위 · grey500(2.68) → textTertiary(5.25)
           Text(
-            '관리자 화면에서 표시할 카드 제목입니다. 비워두면 공고 제목이 사용됩니다.',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+            TextLayout.keepWords('관리자 화면에서 표시할 카드 제목입니다. 비워두면 공고 제목이 사용됩니다.'),
+            semanticsLabel: '관리자 화면에서 표시할 카드 제목입니다. 비워두면 공고 제목이 사용됩니다.',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.textTertiary),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 10)),
           TextFormField(
@@ -1857,7 +1882,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             style: ResponsiveHelper.bodyStyle(context),
             decoration: InputDecoration(
               hintText: '예: 5월 분류작업 묶음',
-              hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
+              hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.textTertiary), // [DU319] grey400 → textTertiary
               prefixIcon: Icon(
                 Icons.label_outline,
                 color: theme.primaryColor,

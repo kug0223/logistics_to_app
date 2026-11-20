@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../models/core/contract_template_model.dart';
 import '../../services/contract_template_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/dialog_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/common/first_line_icon.dart';
+import '../../widgets/common/keep_words_text.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../common/notification_screen.dart';
 
@@ -19,6 +23,8 @@ class ContractTemplateEditScreen extends StatefulWidget {
   final List<ContractArticle>? initialArticles;
   /// Import flow: 편집 화면 진입 시 미리 채울 템플릿 이름.
   final String? initialTemplateName;
+  /// [DU373 seam] 템플릿 서비스 주입 지점(시험 · 표시 검증용). null 이면 ContractTemplateService() — 기존과 같다.
+  final ContractTemplateService? templateService;
 
   const ContractTemplateEditScreen({
     super.key,
@@ -27,6 +33,7 @@ class ContractTemplateEditScreen extends StatefulWidget {
     this.initialTemplateType,
     this.initialArticles,
     this.initialTemplateName,
+    this.templateService,
   });
 
   @override
@@ -36,7 +43,7 @@ class ContractTemplateEditScreen extends StatefulWidget {
 
 class _ContractTemplateEditScreenState
     extends State<ContractTemplateEditScreen> {
-  final _service = ContractTemplateService();
+  late final ContractTemplateService _service = widget.templateService ?? ContractTemplateService();
   late final TextEditingController _nameCtrl;
   late List<_ArticleEntry> _entries;
   late String _templateType;
@@ -98,6 +105,7 @@ class _ContractTemplateEditScreenState
   }
 
   void _addArticle() {
+    if (_saving) return; // [DU380] 저장 중 조항 추가 막음
     final entry = _ArticleEntry(
       titleCtrl: TextEditingController(),
       contentCtrl: TextEditingController(),
@@ -121,6 +129,7 @@ class _ContractTemplateEditScreenState
   }
 
   void _removeArticle(int index) {
+    if (_saving) return; // [DU380] 저장 중 조항 삭제 막음
     setState(() {
       _entries[index].titleCtrl.dispose();
       _entries[index].contentCtrl.dispose();
@@ -144,6 +153,9 @@ class _ContractTemplateEditScreenState
         .where((a) => a.title.isNotEmpty || a.content.isNotEmpty)
         .toList();
 
+    // [DU380] 이 편집 route 를 미리 잡아 둔다 — 성공 때 위에 다른 route 가 있어도 그것을 pop 하지 않는다
+    final nav = Navigator.of(context);
+    final route = ModalRoute.of(context);
     setState(() => _saving = true);
     try {
       if (_isNew) {
@@ -165,7 +177,14 @@ class _ContractTemplateEditScreenState
       }
       if (mounted) {
         ToastHelper.showSuccess(_isNew ? '템플릿이 저장되었습니다' : '템플릿이 수정되었습니다');
-        Navigator.pop(context, true);
+        // [DU380] 이 편집 route 만 true 로 한 번 닫는다(맨 위면 pop · 아니면 그 route 만 제거하며 같은 결과 전달)
+        if (route != null && route.isActive) {
+          if (route.isCurrent) {
+            nav.pop(true);
+          } else {
+            nav.removeRoute(route, true);
+          }
+        }
       }
     } catch (e) {
       if (mounted) ToastHelper.showError('저장에 실패했습니다');
@@ -178,31 +197,27 @@ class _ContractTemplateEditScreenState
 
   Future<bool> _confirmDiscard(BuildContext ctx) async {
     if (!_hasChanges) return true;
-    final result = await showDialog<bool>(
-      context: ctx,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('편집 취소'),
-        content: const Text('저장하지 않은 변경사항이 있습니다.\n나가시겠습니까?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('계속 편집')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text('나가기', style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
-          ),
-        ],
-      ),
+    // [DU377] 기본 AlertDialog → 공용 확인창 셸(DU284–287) — 문구 그대로.
+    //   '나가기' = 저장하지 않은 편집을 버리는 실제 손실 실행 → errorDark(DU287). 반환 의미 그대로.
+    return DialogHelper.showConfirm(
+      ctx,
+      title: '편집 취소',
+      message: '저장하지 않은 변경사항이 있습니다.\n나가시겠습니까?',
+      confirmText: '나가기',
+      cancelText: '계속 편집',
+      confirmColor: AppColors.errorDark,
+      icon: Icons.exit_to_app_outlined,
     );
-    return result ?? false;
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return PopScope(
-      canPop: !_hasChanges,
+      // [DU380] 저장 중에는 변경 여부와 상관없이 나가지 않는다(버림 창도 열지 않음)
+      canPop: !_hasChanges && !_saving,
       onPopInvokedWithResult: (didPop, _) async {
-        if (didPop) return;
+        if (didPop || _saving) return;
         final nav = Navigator.of(context);
         final discard = await _confirmDiscard(context);
         if (!context.mounted) return;
@@ -214,17 +229,19 @@ class _ContractTemplateEditScreenState
           IconButton(
             icon: const Icon(Icons.home_outlined),
             color: AppColors.textSecondary,
-            onPressed: () => NavigationHelper.goHome(context),
+            onPressed: _saving ? null : () => NavigationHelper.goHome(context), // [DU380] 저장 중 이탈 막음
             tooltip: '홈',
           ),
           NotificationBadge(
             child: IconButton(
               icon: const Icon(Icons.notifications_outlined),
               color: AppColors.textSecondary,
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const NotificationScreen()),
-              ),
+              onPressed: _saving // [DU380] 저장 중 이탈 막음
+                  ? null
+                  : () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const NotificationScreen()),
+                      ),
               tooltip: '알림',
             ),
           ),
@@ -242,7 +259,10 @@ class _ContractTemplateEditScreenState
                         fontWeight: FontWeight.bold)),
           ),
         ],
-      body: ListView(
+      // [DU384] 저장 중 짧은 상태 표시 — 본문 맨 위 얇은 진행 막대(겹침 · 레이아웃 이동 0 · 본문 흐림 0)
+      body: Stack(
+        children: [
+      ListView(
         controller: _scrollCtrl,
         padding: ResponsiveHelper.listPadding(context),
         children: [
@@ -256,11 +276,14 @@ class _ContractTemplateEditScreenState
           _Card(
             child: TextField(
               controller: _nameCtrl,
+              readOnly: _saving, // [DU380] 저장 중 편집 막음(읽기 · 선택은 그대로)
               style: ResponsiveHelper.bodyStyle(context),
               decoration: InputDecoration(
                 hintText: '예) 냉장분류 계약서, 일반 단기 계약서',
+                // [DU375] grey400 1.88 → textTertiary · B 말줄임 → 두 줄까지
                 hintStyle: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.grey400),
+                    color: AppColors.textTertiary),
+                hintMaxLines: 2,
                 border: InputBorder.none,
               ),
             ),
@@ -275,15 +298,17 @@ class _ContractTemplateEditScreenState
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.autorenew,
+                // [DU375] 안내 grey500 2.50 → textSecondary · 낱말 조판 · 아이콘 첫 줄 가운데
+                FirstLineIcon(Icons.autorenew,
                     size: ResponsiveHelper.iconSize(context, 14),
-                    color: AppColors.grey400),
+                    color: AppColors.textTertiary,
+                    textStyle: ResponsiveHelper.tinyStyle(context)),
                 SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                 Expanded(
-                  child: Text(
+                  child: KeepWordsText(
                     '저장한 템플릿은 이후 계약서를 만들 때 다시 불러와 사용할 수 있어요.',
                     style: ResponsiveHelper.tinyStyle(context,
-                        color: AppColors.grey500),
+                        color: AppColors.textSecondary),
                   ),
                 ),
               ],
@@ -319,15 +344,19 @@ class _ContractTemplateEditScreenState
           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
 
           // 편집 가능 조항
-          Row(
+          // [DU374] B(320 · 2.0)에서 고정 폭 안내가 제목 칸을 좁혔다 — 들어가면 한 줄 양 끝, 아니면 안내가 아래 줄.
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: ResponsiveHelper.spacing(context, 8),
+            runSpacing: ResponsiveHelper.spacing(context, 2),
             children: [
-              Expanded(
-                child: _SectionHeader(label: '편집 가능 조항'),
-              ),
+              _SectionHeader(label: '편집 가능 조항'),
               Text(
                 '드래그로 순서 변경',
+                // [DU375] grey400 1.75 → textTertiary
                 style: ResponsiveHelper.tinyStyle(context,
-                    color: AppColors.grey400),
+                    color: AppColors.textTertiary),
               ),
             ],
           ),
@@ -335,21 +364,27 @@ class _ContractTemplateEditScreenState
           //   구체 법률 항목(주휴·보험·연차·퇴직·해고 등)을 나열하면 사실상
           //   법률 체크리스트가 되므로, 추가·수정이 가능하다는 사실만 알린다.
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-          Text(
+          // [DU375] grey500 2.50 → textSecondary · 낱말 조판(B '있다|면')
+          KeepWordsText(
             '사업장에 필요한 내용이 있다면 조항을 추가하거나 수정할 수 있어요.',
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
           ReorderableListView.builder(
+            // [DU384] 저장 중에는 기본 끌기 시작 경로(모바일 길게 누르기 · 데스크톱 기본 핸들)도 끈다
+            buildDefaultDragHandles: !_saving,
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             itemCount: _entries.length,
             onReorder: (oldIndex, newIndex) {
+              if (_saving) return; // [DU380] 저장 중 재정렬 막음
+              if (newIndex > oldIndex) newIndex--;
+              if (newIndex == oldIndex) return; // 제자리 놓기는 변경이 아니다
               setState(() {
-                if (newIndex > oldIndex) newIndex--;
                 final item = _entries.removeAt(oldIndex);
                 _entries.insert(newIndex, item);
+                _hasChanges = true; // [DU380] 순서만 바꿔도 변경 — 뒤로 때 버림 확인 · 저장 순서 반영
               });
             },
             itemBuilder: (ctx, i) {
@@ -358,6 +393,7 @@ class _ContractTemplateEditScreenState
                 key: ValueKey(entry),
                 index: i,
                 entry: entry,
+                locked: _saving,
                 onDelete: () => _removeArticle(i),
               );
             },
@@ -367,7 +403,7 @@ class _ContractTemplateEditScreenState
 
           // 조항 추가 버튼
           OutlinedButton.icon(
-            onPressed: _addArticle,
+            onPressed: _saving ? null : _addArticle, // [DU380] 저장 중 막음
             icon: const Icon(Icons.add),
             label: const Text('조항 추가'),
             style: OutlinedButton.styleFrom(
@@ -387,6 +423,15 @@ class _ContractTemplateEditScreenState
             height: ResponsiveHelper.spacing(context, 32) +
                 MediaQuery.paddingOf(context).bottom,
           ),
+        ],
+      ),
+          if (_saving)
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: LinearProgressIndicator(minHeight: 3),
+            ),
         ],
       ),
     ),
@@ -410,12 +455,15 @@ class _ArticleCard extends StatelessWidget {
   final int index;
   final _ArticleEntry entry;
   final VoidCallback onDelete;
+  /// [DU380] 저장 중 — 제목 · 내용 읽기 전용, 끌기 · 삭제 막음
+  final bool locked;
 
   const _ArticleCard({
     super.key,
     required this.index,
     required this.entry,
     required this.onDelete,
+    this.locked = false,
   });
 
   @override
@@ -432,10 +480,14 @@ class _ArticleCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 카드 헤더 (번호 + 드래그 핸들 + 삭제)
+          // [DU376] 한 줄에 [번호 · 제목 칸 · 끌기 · 삭제]를 두면 B(320 · 2.0)에서 제목 칸이 잘리고
+          //   끌기 18 · 삭제 16 터치였다 — 위 줄 [번호 · 끌기 48 · 삭제 48] / 아래 제목 칸(낱말 줄바꿈).
           Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 12),
-              vertical: ResponsiveHelper.spacing(context, 6),
+            padding: EdgeInsets.fromLTRB(
+              ResponsiveHelper.spacing(context, 12),
+              0,
+              ResponsiveHelper.spacing(context, 4),
+              0,
             ),
             child: Row(
               children: [
@@ -461,40 +513,66 @@ class _ArticleCard extends StatelessWidget {
                         .copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Expanded(
-                  child: TextField(
-                    controller: entry.titleCtrl,
-                    style: ResponsiveHelper.smallStyle(context)
-                        .copyWith(fontWeight: FontWeight.w600),
-                    decoration: InputDecoration(
-                      hintText: '조항 제목 (예: 제4조 (연장·야간근로 수당))',
-                      hintStyle: ResponsiveHelper.tinyStyle(context,
-                          color: AppColors.grey400),
-                      border: InputBorder.none,
-                      isDense: true,
-                      contentPadding: EdgeInsets.zero,
+                const Spacer(),
+                ReorderableDragStartListener(
+                  index: index,
+                  enabled: !locked,
+                  child: SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: Center(
+                      child: Icon(Icons.drag_handle,
+                          color: locked ? AppColors.grey300 : AppColors.textTertiary, // [DU384] 저장 중 비활성 모양
+                          size: ResponsiveHelper.iconSize(context, 20)),
                     ),
                   ),
                 ),
-                ReorderableDragStartListener(
-                  index: index,
-                  child: Icon(Icons.drag_handle,
-                      color: AppColors.grey400,
-                      size: ResponsiveHelper.iconSize(context, 20)),
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                 Semantics(
                   button: true,
-                  label: '문단 삭제',
+                  label: '조항 삭제', // [DU380] 화면 용어와 같게(소급 16 채택)
                   child: GestureDetector(
-                    onTap: onDelete,
-                    child: Icon(Icons.close,
-                        color: AppColors.grey400,
-                        size: ResponsiveHelper.iconSize(context, 18)),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: locked ? null : onDelete,
+                    child: SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: Center(
+                        child: Icon(Icons.close,
+                            color: locked ? AppColors.grey300 : AppColors.textTertiary, // [DU384] 저장 중 비활성 모양
+                            size: ResponsiveHelper.iconSize(context, 18)),
+                      ),
+                    ),
                   ),
                 ),
               ],
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              ResponsiveHelper.spacing(context, 12),
+              0,
+              ResponsiveHelper.spacing(context, 12),
+              ResponsiveHelper.spacing(context, 8),
+            ),
+            child: TextField(
+              controller: entry.titleCtrl,
+              readOnly: locked,
+              // [DU375] 입력 글 grey600 → textPrimary · 예시 글 grey400 1.88 → textTertiary
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.textPrimary)
+                  .copyWith(fontWeight: FontWeight.w600),
+              // [DU376] 긴 제목은 칸 안에서 줄을 바꿔 다 보인다. 줄바꿈 문자는 넣지 않는다(한 줄 칸과 같은 데이터).
+              maxLines: null,
+              keyboardType: TextInputType.text,
+              textInputAction: TextInputAction.done,
+              inputFormatters: [FilteringTextInputFormatter.singleLineFormatter],
+              decoration: InputDecoration(
+                hintText: '조항 제목 (예: 제4조 (연장·야간근로 수당))',
+                hintStyle: ResponsiveHelper.tinyStyle(context,
+                    color: AppColors.textTertiary),
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+              ),
             ),
           ),
           const Divider(height: 1, color: AppColors.grey100),
@@ -504,11 +582,12 @@ class _ArticleCard extends StatelessWidget {
                 ResponsiveHelper.spacing(context, 12)),
             child: TextField(
               controller: entry.contentCtrl,
-              style: ResponsiveHelper.smallStyle(context),
+              readOnly: locked,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.textPrimary),
               decoration: InputDecoration(
                 hintText: '조항 내용을 자유롭게 작성하세요',
                 hintStyle: ResponsiveHelper.tinyStyle(context,
-                    color: AppColors.grey400),
+                    color: AppColors.textTertiary),
                 border: InputBorder.none,
                 isDense: true,
                 contentPadding: EdgeInsets.zero,
@@ -531,29 +610,31 @@ class _TypeBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // [DU375] 글자 · 아이콘 = S018 목록(DU344)과 같은 진한 짝(연한 면 위 2.0~2.7 → 4.5 이상).
+    //   테두리는 기존 중간 톤 그대로(면 구분용). 이모지(글꼴마다 다르게 그려짐) → 목록과 같은 문서 아이콘.
     Color color;
+    Color edge;
     Color bg;
-    String icon;
     switch (templateType) {
       case ContractTemplateType.daily:
-        color = AppColors.info;
+        color = AppColors.infoDeep;
+        edge  = AppColors.info;
         bg    = AppColors.infoBg;
-        icon  = '📋';
         break;
       case ContractTemplateType.period:
-        color = AppColors.success;
+        color = AppColors.successDark;
+        edge  = AppColors.success;
         bg    = AppColors.successBg;
-        icon  = '📄';
         break;
       case ContractTemplateType.outsource:
-        color = AppColors.warning;
+        color = AppColors.warningDark;
+        edge  = AppColors.warning;
         bg    = AppColors.warningBg;
-        icon  = '📃';
         break;
       default:
-        color = AppColors.grey600;
+        color = AppColors.textSecondary;
+        edge  = AppColors.grey600;
         bg    = AppColors.grey100;
-        icon  = '📋';
     }
 
     return Container(
@@ -564,27 +645,33 @@ class _TypeBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
+        border: Border.all(color: edge.withValues(alpha: 0.3)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(icon, style: TextStyle(fontSize: ResponsiveHelper.iconSize(context, 16))),
+          FirstLineIcon(Icons.description_outlined,
+              size: ResponsiveHelper.iconSize(context, 16),
+              color: color,
+              textStyle: ResponsiveHelper.smallStyle(context).copyWith(fontWeight: FontWeight.w700)),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                ContractTemplateType.label(templateType),
-                style: ResponsiveHelper.smallStyle(context)
-                    .copyWith(color: color, fontWeight: FontWeight.w700),
-              ),
-              Text(
-                ContractTemplateType.description(templateType),
-                style: ResponsiveHelper.tinyStyle(context,
-                    color: color.withValues(alpha: 0.8)),
-              ),
-            ],
+          // [DU374] B 에서 설명이 배지 밖으로 넘쳤다(139/166px — DU380 주석 수치 정정) — 남는 폭 안에서 낱말 사이 줄바꿈.
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                KeepWordsText(
+                  ContractTemplateType.label(templateType),
+                  style: ResponsiveHelper.smallStyle(context)
+                      .copyWith(color: color, fontWeight: FontWeight.w700),
+                ),
+                KeepWordsText(
+                  ContractTemplateType.description(templateType),
+                  style: ResponsiveHelper.tinyStyle(context, color: color),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -602,8 +689,9 @@ class _SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       label,
+      // [DU375] grey600 4.30(화면 바탕) → textSecondary
       style: ResponsiveHelper.smallStyle(context,
-              color: AppColors.grey600)
+              color: AppColors.textSecondary)
           .copyWith(fontWeight: FontWeight.w600),
     );
   }
@@ -635,23 +723,32 @@ class _FixedRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // [DU374] 한 줄 [자물쇠 · 제목 · 설명]이 B(320 · 2.0)에서 폭을 넘었다(19px — DU380 주석 수치 정정) —
+    //   모든 폭에서 [자물쇠 | 제목 / 그 아래 설명]으로 쌓는다. 낱말 사이에서만 줄바꿈, 문구 · 색 그대로.
+    // [DU375] 제목 grey600 4.23 → textSecondary · 설명 grey400 1.72 → textTertiary(회색 상자 위)
+    final titleStyle = ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary)
+        .copyWith(fontWeight: FontWeight.w500);
     return Padding(
       padding: EdgeInsets.only(
           bottom: ResponsiveHelper.spacing(context, 6)),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.lock_outline,
+          FirstLineIcon(Icons.lock_outline,
               size: ResponsiveHelper.iconSize(context, 14),
-              color: AppColors.grey400),
+              color: AppColors.textTertiary,
+              textStyle: titleStyle),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Text(title,
-              style: ResponsiveHelper.smallStyle(context)
-                  .copyWith(fontWeight: FontWeight.w500)),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Expanded(
-            child: Text(description,
-                style: ResponsiveHelper.tinyStyle(context,
-                    color: AppColors.grey400)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                KeepWordsText(title, style: titleStyle),
+                KeepWordsText(description,
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: AppColors.textTertiary)),
+              ],
+            ),
           ),
         ],
       ),

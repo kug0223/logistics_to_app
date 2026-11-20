@@ -245,10 +245,11 @@ void main() {
       expect(sizes['smallStyle']! > sizes['tinyStyle']!, true);
     });
 
-    test('TYPO-41 fontFamily를 적용하지 않았다', () {
+    test('TYPO-41 [DU1] 번들 NotoSansKR 을 테마에 적용했다', () {
       // NotoSansKR 적용은 secondary issue — 이번 범위가 아니다.
       final theme = _source('lib/theme/role_theme.dart');
-      expect(theme.contains('fontFamily'), false);
+      // [DU1] 공통 기준 v1 — 번들 NotoSansKR 을 앱 테마에 적용했다(이전 회차 범위 밖이던 항목, 이번 승인 범위).
+      expect(theme.contains("fontFamily: 'NotoSansKR'"), true);
     });
 
     test('TYPO-42 FittedBox/AutoSizeText 우회를 추가하지 않았다', () {
@@ -258,10 +259,11 @@ void main() {
       //   막으려던 "글자를 줄여 문제를 덮는 우회" 가 아니라 그 반대다).
       //   총수만 재면 정당한 수정도 걸리고 어디서 늘었는지도 모른다.
       //   자리별로 세면 **새 파일에 생기는 우회**는 그대로 걸린다.
+      // [DEVICE-MISMATCH-FIX] AppTabLabel 은 FittedBox·말줄임을 모두 걷어냈다
+      //   (배지는 고유 폭, 라벨은 나머지 전부 + 자연 줄바꿈) — 목록에서 뺀다.
+      // [UI-INTEGRATION.33] 지급 현황 이체현황 두 카드의 금액 FittedBox 2개를 걷어냈다
+      //   (12억대 금액을 줄이지 않고 쉼표 뒤 줄바꿈) — 목록에서 뺀다.
       const allowed = <String, int>{
-        'lib/widgets/common/app_tab_label.dart': 3,
-        'lib/screens/business_admin/payroll/'
-            'payroll_payment_dashboard_screen.dart': 2,
         'lib/widgets/common/badge_display_widget.dart': 1,
         'lib/widgets/dialogs/worker_detail_dialog.dart': 1,
       };

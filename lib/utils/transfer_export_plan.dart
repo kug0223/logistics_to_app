@@ -147,8 +147,10 @@ class PayrollReadinessReason {
         missingBankAccount => '급여계좌를 등록해주세요.',
         missingBankbook => '통장사본을 등록해주세요.',
         bankMismatch => '등록한 계좌와 통장사본이 다릅니다. 다시 등록해주세요.',
-        bankOcrUncertain => '통장사본을 다시 등록해주세요.',
-        bankUnassessed => '통장사본을 다시 등록해주세요.',
+        // [.82 F3] 이 두 사유는 서버가 WORKER_OR_REVIEW 로 분류한다(index.ts srvPayActorOf) —
+        //   관리자 확인만으로 끝날 수 있다. 근로자에게 재등록을 단정하지 않는다(관리자 쪽 문구는 labelOf).
+        bankOcrUncertain => '사업장의 통장사본 확인이 필요해요. 사업장이 요청하면 다시 등록해주세요.',
+        bankUnassessed => '사업장의 통장사본 확인이 필요해요. 사업장이 요청하면 다시 등록해주세요.',
         staleAutoMatch => '변경한 계좌의 통장사본을 등록해주세요.',
         staleManualReview => '변경한 계좌의 통장사본을 등록해주세요.',
         _ => '서류 관리에서 급여정보를 확인해주세요.',

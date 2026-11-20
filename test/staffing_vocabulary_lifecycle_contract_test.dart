@@ -18,6 +18,7 @@
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ALfit/models/core/application_model.dart';
+import 'package:ALfit/utils/text_layout.dart';
 
 String _read(String p) => File(p).readAsStringSync();
 
@@ -75,18 +76,20 @@ void main() {
   group('VOC-N 운영 집계는 충원', () {
     test('VOC-N1 공고 요약', () {
       final line = _slice(card, 'Widget _buildStaffingLine(', 'Widget _build',);
-      expect(line, contains("text: '충원 \$safeConfirmed'"));
+      // [UI-BALANCE.38] 낱말 단위 줄바꿈(keepWords)으로 감쌌다 — 어휘는 그대로.
+      expect(line, contains("text: TextLayout.keepWords('충원 \$safeConfirmed')"));
       expect(line, contains("' / 필요 \$required'"));
-      expect(line, contains("text: '부족 \$shortage'"));
+      expect(line, contains("text: TextLayout.keepWords('부족 \$shortage')"));
       expect(line, isNot(contains("text: '확정 ")),
           reason: '운영 집계를 사람 상태와 같은 말로 부르지 않는다');
     });
 
     test('VOC-N2 업무 상세도 같은 말', () {
-      expect(detail, contains("Text('충원 \$_confirmedCount'"));
-      expect(detail, contains("Text('대기 \$_pendingCount'"));
-      expect(detail, contains("Text('미충원 \$missing'"));
-      expect(detail, isNot(contains("Text('확정 \$_confirmedCount'")));
+      // [E2-NARROW] 점+숫자 묶음이 줄을 바꿀 수 있게 group(...) 으로 감쌌다 — 어휘는 그대로.
+      expect(detail, contains("group(confirmedColor, '충원 \$_confirmedCount')"));
+      expect(detail, contains("group(pendingColor, '대기 \$_pendingCount')"));
+      expect(detail, contains("group(missingColor, '미충원 \$missing')"));
+      expect(detail, isNot(contains("'확정 \$_confirmedCount'")));
     });
 
     test('VOC-N3 FLEX·CONTRACT 가 같은 component 를 쓴다', () {
@@ -111,7 +114,7 @@ void main() {
       final line = _slice(card, 'Widget _buildStaffingLine(', 'Widget _build');
       expect(line, isNot(contains('확정')));
       // 업무 행도 마찬가지.
-      final row = _slice(detail, "Text('충원", "Text('미충원");
+      final row = _slice(detail, "group(confirmedColor, '충원", "group(missingColor, '미충원");
       expect(row, isNot(contains('확정')));
     });
   });
@@ -210,7 +213,16 @@ void main() {
     test('VOC-Z2 부족 CTA·초대 진입이 그대로다 (§24)', () {
       expect(card, contains('_buildStaffingLine('));
       expect(day, contains('인력 초대 (\$shortage명 부족)'));
-      expect(work, contains("label: Text('인력 초대 (\$shortage명 부족)')"));
+      // [DU530] 소스 형태(`label: Text(…)`)가 아니라 계약을 본다(감사129 §6) — 부족 CTA 자리에서
+      //   보이는 글 = 원문에 줄바꿈 규칙만 얹은 것 · 읽는 이름 = 원문 · CTA 조건과 초대 진입 그대로.
+      //   실제 그려진 글 · 읽는 이름의 실행 대조는 du1_o003_b_states_530_test.dart(att inv)가 한다.
+      final cta = _slice(work, 'Widget _buildStaffingActionRow(', 'Widget _buildLongTermShortageRoute(');
+      expect(cta, contains("TextLayout.keepWords('인력 초대 (\$shortage명 부족)')"));
+      expect(cta, contains("semanticsLabel: '인력 초대 (\$shortage명 부족)'"));
+      expect(TextLayout.plain(TextLayout.keepWords('인력 초대 (3명 부족)')), '인력 초대 (3명 부족)');
+      expect(cta, contains('if (capacity != InviteCapacityState.available) {'));
+      expect(cta, contains('if (shortage <= 0) return const SizedBox.shrink();'));
+      expect(cta, contains('onPressed: () => _openInviteMethod(work, toId, slotId, shortage),'));
     });
 
     test('VOC-Z3 FixedWorker 날짜가 KST 달력이다', () {

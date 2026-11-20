@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../../utils/responsive_helper.dart';
+import '../../../../utils/text_layout.dart';
 import '../../../../utils/format_helper.dart';
 import 'to_section_container.dart';
 import '../../../../theme/app_colors.dart';
@@ -208,8 +209,10 @@ class TOPublishSection extends StatelessWidget {
                     ),
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                  // [DU319] 360·1.0 에서 '나중에 직 / 접 공개' 로 끊겼다 — 낱말 단위(구분점 뒤에서만 줄바꿈)
                   Text(
-                    subtitle,
+                    TextLayout.phrases(subtitle),
+                    semanticsLabel: subtitle,
                     style: ResponsiveHelper.smallStyle(
                       context,
                       color: AppColors.grey600,

@@ -31,6 +31,7 @@ import '../../../theme/app_colors.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/text_layout.dart';
 import '../../../utils/admin_tab_switcher.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../widgets/calendar/app_calendar.dart';
@@ -50,6 +51,81 @@ enum _AttStatus {
   checkedOut,   // 퇴근
   noShow,       // 노쇼
   absent,       // 결근 (관리자 확정 absent)
+  /// [ADMIN-ATT-IDENTITY] 근태가 있지만 **어느 근무의 것인지 특정할 수 없다**
+  ///   (applicationId 없는 옛 근태 + 같은 날 같은 사람의 근무가 둘 이상).
+  ///   임의로 한 행에 붙이지 않고, 이 행에서 근태 수정도 열지 않는다.
+  unresolved,
+}
+
+/// [ADMIN-ATT-IDENTITY] 그 날 근태를 **그 지원서**에 붙인 결과.
+typedef WorkforceAttendanceLink = ({
+  Map<String, AttendanceModel> byApplicationId,
+  Set<String> unresolvedApplicationIds,
+});
+
+/// [ADMIN-ATT-IDENTITY] 근태 ↔ 근무 연결 — 근무 탭의 행·집계·버튼이 모두 쓴다.
+///
+///   예전에는 uid 로 묶었다. 같은 날 같은 근로자의 근무가 둘이면 한 사람의
+///   근태가 두 행 모두에 붙었다(DEV 10-20: RUBE 13:00~14:00 근태 1건이 근태
+///   없는 Zdn7 10:00~11:00 행에도 `13:00 출근 · 14:00 퇴근 · 퇴근 완료`로 보였고
+///   집계는 `출근 2 · 미출근 0`).
+///
+///   규칙(지원서 식별자가 기준이다 — 근태 문서 id 도 `{applicationId}_{KST일}`):
+///   1. `applicationId` 가 있으면 그 지원서에만 붙는다. 이 목록에 없는
+///      지원서의 근태(다른 날·다른 근무)는 어디에도 붙지 않는다.
+///   2. `applicationId` 가 없는 옛 근태는 같은 사업장·같은 근로자의 그 날
+///      근무가 **정확히 하나**일 때만 그 근무에 붙는다. 둘 이상이면 모호하다 —
+///      어느 행에도 붙이지 않고 후보 근무를 `unresolved` 로 표시한다.
+///   3. 한 지원서에 근태가 여럿이면 출근 시각이 가장 늦은 것을 쓴다(기존 규칙).
+///   4. 자기 근태가 명시적으로 연결된 근무는 모호 표시에서 뺀다.
+@visibleForTesting
+WorkforceAttendanceLink linkWorkforceAttendances(
+  List<ApplicationModel> apps,
+  List<AttendanceModel> atts,
+) {
+  final appIds = {for (final a in apps) a.id};
+  final byApp = <String, AttendanceModel>{};
+  final unresolved = <String>{};
+
+  void put(String appId, AttendanceModel att) {
+    final cur = byApp[appId];
+    if (cur == null) {
+      byApp[appId] = att;
+      return;
+    }
+    final curCI = cur.checkInAt?.millisecondsSinceEpoch ?? 0;
+    final newCI = att.checkInAt?.millisecondsSinceEpoch ?? 0;
+    if (newCI > curCI) byApp[appId] = att;
+  }
+
+  final legacy = <AttendanceModel>[];
+  for (final att in atts) {
+    if (att.applicationId.isNotEmpty) {
+      if (appIds.contains(att.applicationId)) put(att.applicationId, att);
+      continue;
+    }
+    legacy.add(att);
+  }
+  final explicit = byApp.keys.toSet();
+  for (final att in legacy) {
+    final candidates = apps
+        .where((a) => a.uid == att.userId && a.businessId == att.businessId)
+        .toList();
+    if (candidates.length == 1) {
+      if (!explicit.contains(candidates.single.id)) {
+        put(candidates.single.id, att);
+      }
+    } else if (candidates.length > 1) {
+      for (final c in candidates) {
+        if (!explicit.contains(c.id)) unresolved.add(c.id);
+      }
+    }
+  }
+  // 모호한 근무에는 근태를 붙이지 않는다(옛 단일 후보 연결이 겹쳤어도).
+  for (final id in unresolved) {
+    byApp.remove(id);
+  }
+  return (byApplicationId: byApp, unresolvedApplicationIds: unresolved);
 }
 
 /// 근로자 1명 행 데이터
@@ -57,7 +133,14 @@ class _WorkerEntry {
   final ApplicationModel application;
   final AttendanceModel? attendance;
 
-  _WorkerEntry({required this.application, this.attendance});
+  /// [ADMIN-ATT-IDENTITY] 근태가 이 근무의 것인지 특정할 수 없다.
+  final bool attendanceUnresolved;
+
+  _WorkerEntry({
+    required this.application,
+    this.attendance,
+    this.attendanceUnresolved = false,
+  });
 
   String get name => application.applicantName ?? application.uid;
   String get uid => application.uid;
@@ -65,6 +148,7 @@ class _WorkerEntry {
 
   /// 출근 상태 계산 — AttendanceModel 실제 필드 기반
   _AttStatus get attStatus {
+    if (attendanceUnresolved) return _AttStatus.unresolved;
     final att = attendance;
     if (att == null) return _AttStatus.notCheckedIn;
     if (att.status == AttendanceModel.statusNoShow) return _AttStatus.noShow;
@@ -78,6 +162,7 @@ class _WorkerEntry {
   /// 정렬 우선순위 — 미출근이 최상단
   int get sortPriority {
     switch (attStatus) {
+      case _AttStatus.unresolved:   return 0;
       case _AttStatus.notCheckedIn: return 0;
       case _AttStatus.late:         return 1;
       case _AttStatus.noShow:       return 2;
@@ -172,7 +257,10 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
   // ── 데이터 상태 ────────────────────────────────────────────────
   List<ApplicationModel> _applications = [];
-  List<AttendanceModel> _attendances = [];
+  /// [ADMIN-ATT-IDENTITY] 근태 ↔ 지원서 연결 — 행과 집계가 같은 결과를 쓴다.
+  static const WorkforceAttendanceLink _noLink =
+      (byApplicationId: <String, AttendanceModel>{}, unresolvedApplicationIds: <String>{});
+  WorkforceAttendanceLink _attLink = _noLink;
   bool _isLoadingData = false;
   String? _loadError;
 
@@ -296,9 +384,14 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
   // ── 날짜 유틸 ──────────────────────────────────────────────────
 
+  /// [ADM-TZ] 이 화면의 '오늘'은 **KST 날짜**다.
+  ///
+  ///   기기 날짜를 쓰면 KST 자정 근처에서 `_isToday`/`_isFuture` 가 하루
+  ///   어긋나, 시각 비교를 바로잡아도 분기 자체가 틀린 날을 가리킨다.
+  ///   `_selectedDay` 와 같은 **civil 축**으로 돌려준다(달력 셀과 비교된다).
   static DateTime _today() {
-    final n = DateTime.now();
-    return DateTime(n.year, n.month, n.day);
+    final k = FormatHelper.toKstDate(DateTime.now());
+    return DateTime(k.year, k.month, k.day);
   }
 
   bool get _isToday => DateUtils.isSameDay(_selectedDay, _today());
@@ -359,13 +452,18 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
   bool _isBeforeStart(ApplicationModel app) {
     if (_isFuture) return true;      // [WF.1A] 미래 날짜: 전체 "출근 전/예정"
     if (!_isToday) return false;     // 과거 날짜: 미출근으로 집계
-    final parts = app.startTime.split(':');
-    if (parts.length < 2) return false;
-    final h = int.tryParse(parts[0]);
-    final m = int.tryParse(parts[1]);
-    if (h == null || m == null) return false;
-    final now = DateTime.now();
-    return now.isBefore(DateTime(now.year, now.month, now.day, h, m));
+    // [ADM-TZ] 근무 시작은 **KST 벽시계**다. 예전에는 기기 local 날짜·시각
+    //   (`DateTime(now.year, now.month, now.day, h, m)`)에 결합해, KST 가
+    //   아닌 기기에서 기기 offset 만큼 어긋났다(GMT 기기에서 9시간).
+    //   서버(`srvShiftStartMsFrom`)는 **그 날 KST 자정 + 벽시계**로 본다 —
+    //   같은 자를 쓴다. `_selectedDay` 는 달력 civil 값이라 성분으로 키를
+    //   만든다(`kstDayKeyOfCivil`).
+    //
+    //   시각을 못 읽으면 기존 동작대로 false — 시작 전이라고 단정하지 않는다.
+    final start = FormatHelper.kstWallClockInstant(
+        FormatHelper.kstDayKeyOfCivil(_selectedDay), app.startTime);
+    if (start == null) return false;
+    return DateTime.now().isBefore(start);
   }
 
   // ── 데이터 로드 ────────────────────────────────────────────────
@@ -473,7 +571,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
         //   화면이 이것을 "오늘 확정자 0명"으로 그린다.
         setState(() {
           _applications = [];
-          _attendances = [];
+          _attLink = _noLink;
           _sortedGroups = [];
           _isLoadingData = false;
           _loadError = null;
@@ -517,24 +615,16 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
           .expand((l) => l)
           .toList();
 
-      // Attendance를 uid 기준으로 Map화 (uid당 당일 최신 1건 — workDate 동일)
-      final attMap = <String, AttendanceModel>{};
-      for (final att in atts) {
-        final existing = attMap[att.userId];
-        if (existing == null) {
-          attMap[att.userId] = att;
-        } else {
-          // 동일 근로자에 복수 근태 존재하면 가장 최근 체크인 우선
-          final existingCI = existing.checkInAt?.millisecondsSinceEpoch ?? 0;
-          final newCI = att.checkInAt?.millisecondsSinceEpoch ?? 0;
-          if (newCI > existingCI) attMap[att.userId] = att;
-        }
-      }
+      // [ADMIN-ATT-IDENTITY] 근태는 uid 가 아니라 **지원서**에 붙인다 —
+      //   행·집계·버튼이 모두 이 한 결과를 쓴다(linkWorkforceAttendances).
+      final link = linkWorkforceAttendances(apps, atts);
 
       // WorkerEntry 생성
       final entries = apps.map((app) => _WorkerEntry(
             application: app,
-            attendance: attMap[app.uid],
+            attendance: link.byApplicationId[app.id],
+            attendanceUnresolved:
+                link.unresolvedApplicationIds.contains(app.id),
           ));
 
       // 업무 그룹 빌드 [5B.1B] canonical identity
@@ -594,7 +684,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
       if (!mounted || requestId != _loadDayDataRequestId) return;
       setState(() {
         _applications = apps;
-        _attendances = atts;
+        _attLink = link;
         _sortedGroups = groups;
         _userMap = resolvedUsers;
         _isLoadingData = false;
@@ -721,15 +811,24 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
   int get _totalScheduled => _applications.length;
 
+  // [ADMIN-ATT-IDENTITY] 집계도 행과 **같은 연결**(지원서 기준)을 쓴다.
+  //   예전에는 행은 uid 최신 체크인, 집계는 uid 첫 근태로 따로 묶었다.
+  //   근태를 특정할 수 없는 근무(unresolved)는 출근·미출근 어느 쪽에도 세지
+  //   않는다 — 모르는 것을 미출근으로 말하지 않는다.
+  bool _isUnresolved(ApplicationModel app) =>
+      _attLink.unresolvedApplicationIds.contains(app.id);
+
   int get _checkedInCount => _applications.where((app) {
-        final att = _attMapByUid[app.uid];
+        if (_isUnresolved(app)) return false;
+        final att = _attLink.byApplicationId[app.id];
         if (att == null) return false;
         return att.checkInAt != null &&
             att.status != AttendanceModel.statusNoShow;
       }).length;
 
   int get _notCheckedInCount => _applications.where((app) {
-        final att = _attMapByUid[app.uid];
+        if (_isUnresolved(app)) return false;
+        final att = _attLink.byApplicationId[app.id];
         // 이미 출근한 경우 제외
         if (att?.checkInAt != null) return false;
         // 노쇼 제외
@@ -739,17 +838,12 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
         return true;
       }).length;
 
-  int get _noShowCount => _attendances
-      .where((a) => a.status == AttendanceModel.statusNoShow)
-      .length;
-
-  Map<String, AttendanceModel> get _attMapByUid {
-    final m = <String, AttendanceModel>{};
-    for (final a in _attendances) {
-      m.putIfAbsent(a.userId, () => a);
-    }
-    return m;
-  }
+  // 그 날 명단의 근무 중 노쇼로 마감된 것 — 명단에 없는 근태는 세지 않는다.
+  int get _noShowCount => _applications.where((app) {
+        if (_isUnresolved(app)) return false;
+        return _attLink.byApplicationId[app.id]?.status ==
+            AttendanceModel.statusNoShow;
+      }).length;
 
   // ── 필터 적용 ──────────────────────────────────────────────────
 
@@ -833,12 +927,15 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
         const SliverToBoxAdapter(
           child: Divider(height: 1, color: AppColors.grey100),
         ),
+        // [DU1 구현63 · 감사63 §5] hasScrollBody:false — 남은 높이가 내용보다 작으면(320@2.0) 남은 높이에
+        //   고정돼 로딩 115px·오류 130px 가 넘쳤다. 내용 높이까지 늘어나 스크롤로 도달한다(남는 공간이면 그대로 채움).
         if (_isLoadingData)
           const SliverFillRemaining(
+            hasScrollBody: false,
             child: Center(child: LoadingWidget(message: '근무 인력을 불러오는 중...')),
           )
         else if (_loadError != null)
-          SliverFillRemaining(child: _buildErrorState())
+          SliverFillRemaining(hasScrollBody: false, child: _buildErrorState())
         else
           _buildSliverWorkerList(),
         if (bottom > 0)
@@ -872,17 +969,21 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
                   }),
                 ),
               ),
-              // 月 버튼
-              GestureDetector(
-                onTap: _openMonthCalendar,
-                child: Container(
-                  width: 36,
-                  height: 52,
-                  alignment: Alignment.center,
-                  child: Icon(
-                    Icons.calendar_month_outlined,
-                    size: 20,
-                    color: AppColors.grey500,
+              // 月 버튼 — [DU293 WM1] 누름 폭 36 → 48, 아이콘 grey500(2.68) → 보조색, 의미 이름
+              Semantics(
+                button: true,
+                label: '월 달력 열기',
+                child: GestureDetector(
+                  onTap: _openMonthCalendar,
+                  child: Container(
+                    width: 48,
+                    height: 52,
+                    alignment: Alignment.center,
+                    child: Icon(
+                      Icons.calendar_month_outlined,
+                      size: 20,
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                 ),
               ),
@@ -895,16 +996,23 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
           //   marker만 모른다는 사실을 한 줄로 알리고 다시 시도할 길을 둔다.
           if (_markerFailed)
             GestureDetector(
+              // [DU1 구현66 · 감사66 §5] 재시도 터치 최소 높이 48 — 360@1.0 에서 줄 전체가 352×23 였다.
+              //   opaque 로 48 안의 빈 곳도 탭을 받는다. 글자·간격은 그대로(배율로 줄이지 않는 고정 하한).
+              behavior: HitTestBehavior.opaque,
               onTap: () => _loadMarkerRange(_selectedDay, force: true),
-              child: Padding(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
                 child: Row(children: [
                   Icon(Icons.cloud_off_rounded,
                       size: 13, color: AppColors.grey500),
                   const SizedBox(width: 6),
                   Expanded(
+                    // [DU236 J3] 큰 글자에서 '표시하지 못했 / 어요' 처럼 음절로 끊겼다 — 낱말 사이에서만 줄을 바꾼다.
                     child: Text(
-                      '근무가 있는 날짜를 표시하지 못했어요',
+                      TextLayout.keepWords('근무가 있는 날짜를 표시하지 못했어요'),
+                      semanticsLabel: '근무가 있는 날짜를 표시하지 못했어요',
                       style: ResponsiveHelper.tinyStyle(context,
                           color: AppColors.grey500),
                     ),
@@ -916,6 +1024,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
                         .copyWith(fontWeight: FontWeight.w700),
                   ),
                 ]),
+              ),
               ),
             ),
           const Divider(height: 1, color: AppColors.grey100),
@@ -939,7 +1048,9 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
         curve: Curves.easeOut,
-        height: 52,
+        // [SCALE-BALANCE.34] 고정 52 → 최소 52. 글자 2.0 에서 요일+날짜가 29px 넘쳐 숫자가 잘렸다(기기).
+        constraints: const BoxConstraints(minHeight: 52),
+        padding: const EdgeInsets.symmetric(vertical: 4),
         decoration: BoxDecoration(
           color: isSelected
               ? Theme.of(context).primaryColor
@@ -1064,23 +1175,16 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
       }
     }
 
-    return Container(
-      color: Colors.white,
-      padding: EdgeInsets.fromLTRB(
-        ResponsiveHelper.spacing(context, 16),
-        ResponsiveHelper.spacing(context, 10),
-        ResponsiveHelper.spacing(context, 12),
-        ResponsiveHelper.spacing(context, 10),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Wrap(
+    final padL = ResponsiveHelper.spacing(context, 16);
+    final padR = ResponsiveHelper.spacing(context, 12);
+    final date = Wrap(
               crossAxisAlignment: WrapCrossAlignment.center,
               spacing: 6,
               children: [
+                // [SCALE-BALANCE.34] 2.0 에서 '30|일' 로 끊겼다 — 구분점 뒤·낱말 사이에서만 줄바꿈.
                 Text(
-                  dateLabel,
+                  TextLayout.phrases(dateLabel),
+                  semanticsLabel: dateLabel,
                   style: TextStyle(
                     fontSize: ResponsiveHelper.getFontSize(context, 14),
                     fontWeight: _isToday ? FontWeight.w700 : FontWeight.w500,
@@ -1096,9 +1200,8 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
                     ),
                   ),
               ],
-            ),
-          ),
-          const SizedBox(width: 8),
+            );
+    final actions = <Widget>[
           // 일괄 근태 처리 — 미래 날짜: 숨김
           if (!_isFuture)
             _buildBatchButton(theme),
@@ -1122,26 +1225,68 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
               tooltip: '고정 근로자',
               onTap: _openFixedWorkerManagement,
             ),
-        ],
+    ];
+    // [DU236 K1·K3] 날짜와 행동을 한 줄에 두면 큰 글자에서 날짜가 행동에 밀려
+    //   '오늘 · / 11월 / 9일 / 월요일' 4줄로 갇혔다(230 B320). 한 줄에 다 들어가지 않으면
+    //   날짜를 첫 줄 전체 폭에, 행동을 둘째 줄 오른쪽에 둔다. 글자 크기·행동·순서·조건은 그대로다.
+    //   320 = 배율 1.0 에서 날짜(약 150)·일괄 근태·두 아이콘(각 48)·간격을 한 줄에 두는 폭.
+    final oneRow = TextLayout.fits(
+        context, MediaQuery.sizeOf(context).width - padL - padR, 320);
+
+    return Container(
+      color: Colors.white,
+      padding: EdgeInsets.fromLTRB(
+        padL,
+        ResponsiveHelper.spacing(context, 10),
+        padR,
+        ResponsiveHelper.spacing(context, 10),
       ),
+      child: oneRow
+          ? Row(
+              children: [
+                Expanded(child: date),
+                const SizedBox(width: 8),
+                ...actions,
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                date,
+                SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: actions,
+                ),
+              ],
+            ),
     );
   }
 
   Widget _buildBatchButton(ThemeData theme) {
+    // [DU236 K2] 누르는 자리 48×48 이상 — 높이가 29 였다(230 W360). 대표색 바탕·글자 크기는 그대로,
+    //   그 둘레의 빈 곳도 같은 동작을 받는다(opaque).
     return GestureDetector(
       onTap: _openAttendanceDialog,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: theme.primaryColor,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Text(
-          '일괄 근태',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: Colors.white,
+      behavior: HitTestBehavior.opaque,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        child: Center(
+          widthFactor: 1,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: theme.primaryColor,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '일괄 근태',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
           ),
         ),
       ),
@@ -1153,14 +1298,20 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
     required String tooltip,
     required VoidCallback onTap,
   }) {
+    // [DU236 K2] 누르는 자리 48×48 이상 — 32×32 였다(230). 아이콘 그림 크기·색은 그대로다.
     return Tooltip(
       message: tooltip,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.all(6),
-          child: Icon(icon, size: 20, color: AppColors.grey500),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(6),
+              child: Icon(icon, size: 20, color: AppColors.grey500),
+            ),
+          ),
         ),
       ),
     );
@@ -1242,6 +1393,11 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
   Widget _buildSummaryChip(_SummaryChipData data) {
     final isSelected = _activeFilter == data.filter;
+    // [UI-SCREEN-CONSISTENCY.1] 0 에는 상태가 없다 — `0 미출근` 주황·`0 노쇼` 빨강이 문제처럼 보였다.
+    //   1 이상일 때만 의미색, 0 은 중립 숫자. 선택된 칸은 지금처럼 그 칸의 색으로 표시한다.
+    final countColor = (!_isLoadingData && data.count == 0 && !isSelected)
+        ? AppColors.grey500
+        : data.color;
     return GestureDetector(
       onTap: () => setState(() => _activeFilter = data.filter),
       child: AnimatedContainer(
@@ -1259,11 +1415,13 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '${_isLoadingData ? '-' : data.count}',
+              // [DU1 구현63 · 감사63 §5] 조회 실패도 '-' — 실패했는데 확정/출근/미출근/노쇼 0 으로
+              //   말했다(같은 화면 아래는 '데이터를 불러오지 못했습니다'). 모름을 0 으로 확정하지 않는다.
+              '${_isLoadingData || _loadError != null ? '-' : data.count}',
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w700,
-                color: data.color,
+                color: countColor,
               ),
             ),
             const SizedBox(height: 2),
@@ -1289,6 +1447,8 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
     if (groups.isEmpty) {
       return SliverFillRemaining(
+        // [DU1 구현63] 로딩/오류와 같은 이유 — 320@2.0 스크롤 위치에 따라 52px 넘침(after r2 관측).
+        hasScrollBody: false,
         // [5B.2A] filter-aware empty state — all/filter 기준으로 다른 메시지
         child: _buildEmptyState(filter: _activeFilter),
       );
@@ -1386,6 +1546,8 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
             ],
           ),
           // TO 제목 secondary
+          // [DU236 J1] grey400 는 회색 머리 바탕에서 1.80:1 이었고, 1줄 말줄임이 공고를 가렸다
+          //   (B320 '송파 물류센터 평일 야간'까지만). 3순위 읽기색으로, 전문을 줄바꿈으로 보인다. 크기는 그대로다.
           if (group.toTitle.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 2),
@@ -1393,10 +1555,8 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
                 group.toTitle,
                 style: TextStyle(
                   fontSize: 12,
-                  color: AppColors.grey400,
+                  color: AppColors.textTertiary,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
             ),
         ],
@@ -1413,7 +1573,10 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
     return Material(
       color: Colors.white,
       child: InkWell(
-        onTap: () => _openAttendanceDialogForWorker(worker),
+        // [ADMIN-ATT-IDENTITY] 근태 미확인 행은 행 탭으로도 수정 창을 열지 않는다.
+        onTap: worker.attStatus == _AttStatus.unresolved
+            ? null
+            : () => _openAttendanceDialogForWorker(worker),
         child: Padding(
           padding: EdgeInsets.symmetric(
             horizontal: ResponsiveHelper.spacing(context, 16),
@@ -1485,7 +1648,8 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
     if (isBeforeStart) {
       pillText = '출근 전';
-      pillColor = AppColors.grey400;
+      // [DU236 J1] grey400 글자가 grey50 위 1.80:1 이었다 — 3순위 읽기색. 바탕·크기·의미는 그대로다.
+      pillColor = AppColors.textTertiary;
       pillBg = AppColors.grey50;
     } else {
       pillText = _statusPillText(worker.attStatus);
@@ -1520,8 +1684,14 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
     Color fg = AppColors.grey500;
     bool isOutline = false;
 
+    // [ADMIN-ATT-IDENTITY] 근태가 이 근무의 것인지 특정할 수 없으면 근태 처리·
+    //   수정 입구를 열지 않는다 — 잘못된 근무의 근태를 고치게 되기 때문이다.
+    if (status == _AttStatus.unresolved) return const SizedBox.shrink();
+
     if (_isToday) {
       switch (status) {
+        case _AttStatus.unresolved:
+          return const SizedBox.shrink();
         case _AttStatus.notCheckedIn:
           label = '근태 처리';
           bg = Theme.of(context).primaryColor;
@@ -1536,9 +1706,11 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
           isOutline = true;
           fg = AppColors.grey600;
         case _AttStatus.noShow:
+          // [UI-3] 보기 입구다 — 상태(노쇼)는 옆 배지가 빨강으로 이미 말한다.
+          //   입구까지 빨강이면 파괴적 행동처럼 읽힌다.
           label = '상세';
           isOutline = true;
-          fg = AppColors.errorDark;
+          fg = AppColors.grey600;
         case _AttStatus.absent:
           return const SizedBox.shrink();
       }
@@ -1575,6 +1747,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
   String _statusPillText(_AttStatus s) {
     switch (s) {
+      case _AttStatus.unresolved:   return '근태 미확인';
       case _AttStatus.notCheckedIn: return '미출근';
       case _AttStatus.present:      return '근무 중';
       case _AttStatus.late:         return '지각';
@@ -1586,6 +1759,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
   Color _statusPillColor(_AttStatus s) {
     switch (s) {
+      case _AttStatus.unresolved:   return AppColors.warningDark;
       case _AttStatus.notCheckedIn: return AppColors.grey500;
       case _AttStatus.present:      return AppColors.successDark;
       case _AttStatus.late:         return AppColors.warningDark;
@@ -1597,6 +1771,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
   Color _statusPillBg(_AttStatus s) {
     switch (s) {
+      case _AttStatus.unresolved:   return AppColors.warningBg;
       case _AttStatus.notCheckedIn: return AppColors.grey100;
       case _AttStatus.present:      return AppColors.successBg;
       case _AttStatus.late:         return AppColors.warningBg;
@@ -1619,6 +1794,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
       icon: Icons.storefront_outlined,
       title: '아직 근무를 관리할 사업장이 없어요',
       subtitle: '사업장을 등록하면 확정 인력과 출퇴근을 여기서 관리해요.',
+      subtitleColor: AppColors.textSecondary, // [DU236 J2] 기본 grey400 1.88:1 → 읽기색(호출부 opt-in)
       action: TextButton(
         onPressed: () =>
             AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.homeTab),
@@ -1665,7 +1841,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
               message,
               style: TextStyle(
                 fontSize: ResponsiveHelper.getFontSize(context, 14),
-                color: AppColors.grey500,
+                color: AppColors.textSecondary, // [DU236 J2] grey500 2.68:1 → 읽기색
               ),
               textAlign: TextAlign.center,
             ),
@@ -1684,10 +1860,13 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
           children: [
             Icon(Icons.error_outline, size: 40, color: AppColors.grey400),
             const SizedBox(height: 10),
+            // [DU236 J2·J3] grey500 2.68:1 → 읽기색. 큰 글자에서 '불러오지 못 / 했습니다' 로 음절이 끊겼다 —
+            //   낱말 사이에서만 줄을 바꾼다(화면 읽기는 원문). 문구·크기·재시도는 그대로다.
             Text(
-              _loadError ?? '오류가 발생했습니다.',
+              TextLayout.keepWords(_loadError ?? '오류가 발생했습니다.'),
+              semanticsLabel: _loadError ?? '오류가 발생했습니다.',
               style:
-                  TextStyle(fontSize: 13, color: AppColors.grey500),
+                  TextStyle(fontSize: 13, color: AppColors.textSecondary),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 14),
@@ -1934,7 +2113,8 @@ class _MonthCalendarSheetState extends State<_MonthCalendarSheet> {
               IconButton(
                 onPressed: () => Navigator.of(context).pop(),
                 icon: const Icon(Icons.close, size: 20),
-                color: AppColors.grey500,
+                // [DU293 WM2] 닫기 아이콘 grey500(2.68) → 보조색
+                color: AppColors.textSecondary,
               ),
             ],
           ),

@@ -162,9 +162,27 @@ void main() {
           'data: {status: "CANCELED", canceledAt: now, cancelReason: "USER_DELETED"}')));
     });
 
-    test('PCC-OWN-04 선언 1 + 호출 3', () {
+    test('PCC-OWN-04 선언 1 + 호출 5(만료 스케줄러 · 삭제 2 · 거절·수락의 기한 경과 만료)', () {
       expect(_count(code, 'function srvTerminateWaitingApplicationInTx('), 1);
-      expect(_count(code, 'srvTerminateWaitingApplicationInTx'), 4);
+      expect(_count(code, 'srvTerminateWaitingApplicationInTx'), 6);
+      // [E1-EXPIRED-ACCEPT-RACE] 수락의 기한 경과 만료도 같은 주인(헬퍼)을 트랜잭션 안에서 쓴다.
+      //   헬퍼는 fresh read 가 INVITED 가 아니면 skip 하고 카운터 guard 를 둔다 — 스케줄러가 먼저
+      //   만료했으면 대기를 다시 내리지 않는다. 트랜잭션 밖 batch −1 은 남지 않는다.
+      final ai = code.indexOf('export const callableAcceptTOInvitation');
+      expect(ai, greaterThan(0));
+      final accept = code.substring(ai, code.indexOf('\nexport const ', ai + 10));
+      expect(_flat(accept), contains('await db.runTransaction((tx) => '
+          'srvTerminateWaitingApplicationInTx(tx, appRef, { '
+          'expectStatus: "INVITED", status: "EXPIRED", action: "AUTO_EXPIRE",'));
+      expect(accept, isNot(contains('totalPending: admin.firestore.FieldValue.increment(-1)')),
+          reason: '수락 경로가 대기 카운터를 직접 내리면 헬퍼와 이중 차감이 된다');
+      final helper = _helper(raw, 'srvTerminateWaitingApplicationInTx');
+      expect(_flat(helper), contains('fresh.data()!.status !== terminal.expectStatus'));
+      expect(helper, contains('UNDERFLOW GUARD'));
+      final di = raw.indexOf('export const callableDeclineTOInvitation');
+      expect(di, greaterThan(0));
+      final decline = raw.substring(di, raw.indexOf('\nexport const ', di + 10));
+      expect(_flat(decline), contains('expectStatus: "INVITED", status: "EXPIRED", action: "AUTO_EXPIRE",'));
       expect(_count(cleanup, 'srvTerminateWaitingApplicationInTx'), 2);
       final expiry = _helper(raw, 'processExpiredTOInvitations');
       expect(_count(expiry, 'srvTerminateWaitingApplicationInTx'), 1);

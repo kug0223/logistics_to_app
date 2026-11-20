@@ -16,12 +16,16 @@ import '../../services/help_faq_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 
 class HelpFaqManagementScreen extends StatefulWidget {
-  const HelpFaqManagementScreen({super.key});
+  const HelpFaqManagementScreen({super.key, this.load});
+
+  /// [DU504] 시험용 읽기 경계 — null 이면 Firestore `help_faqs`(HelpFaqService.getAllItems, 기존 동작). 배지 설정 `.61` 과 같은 모양.
+  final Future<List<HelpFaqModel>> Function(String role)? load;
 
   @override
   State<HelpFaqManagementScreen> createState() =>
@@ -62,9 +66,10 @@ class _HelpFaqManagementScreenState extends State<HelpFaqManagementScreen>
   Future<void> _load() async {
     setState(() { _isLoading = true; _hasError = false; });
     try {
+      final get = widget.load ?? _service.getAllItems;
       final results = await Future.wait([
-        _service.getAllItems('user'),
-        _service.getAllItems('admin'),
+        get('user'),
+        get('admin'),
       ]);
       if (!mounted) return;
       setState(() {
@@ -118,7 +123,9 @@ class _HelpFaqManagementScreenState extends State<HelpFaqManagementScreen>
       ToastHelper.showSuccess('항목이 추가되었습니다');
       await _load();
     } catch (e) {
-      if (mounted) ToastHelper.showError('추가에 실패했습니다');
+      // [.65] 응답을 못 받았을 수 있다 — 실제로 추가됐는지 목록을 다시 읽어 보여 준다.
+      if (mounted) ToastHelper.showError('추가하지 못했습니다. 현재 상태를 다시 불러왔습니다');
+      if (mounted) await _load();
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -134,12 +141,21 @@ class _HelpFaqManagementScreenState extends State<HelpFaqManagementScreen>
     if (result == null || !mounted) return;
     setState(() => _isSaving = true);
     try {
-      await _service.updateItem(result);
+      // [.65] 열었을 때 내용과 지금이 같을 때만 내용 필드를 쓴다(다른 관리자의 변경을 덮지 않는다).
+      await _service.updateContent(result, expected: item);
       if (!mounted) return;
       ToastHelper.showSuccess('저장되었습니다');
       await _load();
+    } on HelpFaqChangedException {
+      if (mounted) ToastHelper.showError('다른 관리자가 먼저 이 항목을 바꿨습니다. 최신 내용을 다시 불러왔습니다');
+      if (mounted) await _load();
+    } on HelpFaqGoneException {
+      if (mounted) ToastHelper.showError('이미 삭제된 항목입니다. 목록을 다시 불러왔습니다');
+      if (mounted) await _load();
     } catch (e) {
-      if (mounted) ToastHelper.showError('저장에 실패했습니다');
+      // 응답을 못 받았을 수도 있다 — 실제 저장 상태를 다시 읽어 보여 준다.
+      if (mounted) ToastHelper.showError('저장하지 못했습니다. 현재 상태를 다시 불러왔습니다');
+      if (mounted) await _load();
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -161,7 +177,8 @@ class _HelpFaqManagementScreenState extends State<HelpFaqManagementScreen>
       ToastHelper.showSuccess('삭제되었습니다');
       await _load();
     } catch (e) {
-      if (mounted) ToastHelper.showError('삭제에 실패했습니다');
+      if (mounted) ToastHelper.showError('삭제하지 못했습니다. 현재 상태를 다시 불러왔습니다');
+      if (mounted) await _load();
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -172,11 +189,14 @@ class _HelpFaqManagementScreenState extends State<HelpFaqManagementScreen>
     if (_isSaving) return;
     setState(() => _isSaving = true);
     try {
-      await _service.updateItem(item.copyWith(isActive: !item.isActive));
+      // [.65] 활성 여부 하나만 쓴다 — 이전에는 화면이 들고 있던 항목 전체를 다시 써서
+      //   다른 관리자가 그 사이 고친 답변을 되돌렸다.
+      await _service.setActive(item.id, !item.isActive);
       if (!mounted) return;
       await _load();
     } catch (e) {
-      if (mounted) ToastHelper.showError('변경에 실패했습니다');
+      if (mounted) ToastHelper.showError('변경하지 못했습니다. 현재 상태를 다시 불러왔습니다');
+      if (mounted) await _load();
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -226,6 +246,9 @@ class _HelpFaqManagementScreenState extends State<HelpFaqManagementScreen>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // [DU497] 큰 글자 · 좁은 폭(B 320@2.0)에서 고정 두 탭 이름이 잘렸다 — 한 줄에 안 들어가면 가로 스크롤(DU495 · DU430 과 같은 판정).
+    //   perTab 110 = '관리자 FAQ' 글자 + 좌우 여백.
+    final tabsFit = TextLayout.tabsFit(context, MediaQuery.sizeOf(context).width, 2, perTab: 110);
     return AppPageScaffold(
       title: '도움말 FAQ 관리',
       actions: [
@@ -250,8 +273,10 @@ class _HelpFaqManagementScreenState extends State<HelpFaqManagementScreen>
       ],
       bottom: TabBar(
         controller: _tabController,
+        isScrollable: !tabsFit,
+        tabAlignment: tabsFit ? null : TabAlignment.start,
         labelColor: theme.primaryColor,
-        unselectedLabelColor: AppColors.grey500,
+        unselectedLabelColor: AppColors.textSecondary, // [DU497] grey500(2.68) → 보조 글자색(DU495 와 같다)
         indicatorColor: theme.primaryColor,
         tabs: const [
           Tab(text: '지원자 FAQ'),
@@ -281,7 +306,6 @@ class _HelpFaqManagementScreenState extends State<HelpFaqManagementScreen>
               controller: _tabController,
               children: [
                 _FaqList(
-                  role: 'user',
                   items: _userItems,
                   theme: theme,
                   onAdd: () => _addItem('user'),
@@ -291,7 +315,6 @@ class _HelpFaqManagementScreenState extends State<HelpFaqManagementScreen>
                   onReorder: (o, n) => _reorder('user', o, n),
                 ),
                 _FaqList(
-                  role: 'admin',
                   items: _adminItems,
                   theme: theme,
                   onAdd: () => _addItem('admin'),
@@ -310,7 +333,6 @@ class _HelpFaqManagementScreenState extends State<HelpFaqManagementScreen>
 // FAQ 목록 위젯
 // ──────────────────────────────────────────────
 class _FaqList extends StatelessWidget {
-  final String role;
   final List<HelpFaqModel> items;
   final ThemeData theme;
   final VoidCallback onAdd;
@@ -320,7 +342,6 @@ class _FaqList extends StatelessWidget {
   final Future<void> Function(int, int) onReorder;
 
   const _FaqList({
-    required this.role,
     required this.items,
     required this.theme,
     required this.onAdd,
@@ -333,38 +354,41 @@ class _FaqList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final sp = ResponsiveHelper.spacing(context, 1);
-    return Stack(
-      children: [
-        ReorderableListView.builder(
-          padding:
-              EdgeInsets.fromLTRB(sp * 16, sp * 8, sp * 16, sp * 80),
-          itemCount: items.length,
-          onReorder: onReorder,
-          itemBuilder: (context, i) {
-            final item = items[i];
-            return _FaqRowItem(
-              key: ValueKey(item.id.isEmpty ? '${item.role}_$i' : item.id),
-              item: item,
-              theme: theme,
-              onEdit: () => onEdit(item),
-              onDelete: () => onDelete(item),
-              onToggle: () => onToggle(item),
-            );
-          },
-        ),
-        Positioned(
-          bottom: sp * 16,
-          right: sp * 16,
-          child: FloatingActionButton.extended(
-            heroTag: 'fab_$role',
+    // [DU504 · 감사48 (가)] 떠 있는 '항목 추가' 버튼(FAB)을 두지 않는다 — 목록 머리 오른쪽 글자 행동(S024 '+ 멤버 초대' · DU503 '+ 배지 추가'와 같다).
+    //   header 는 순서 바꾸기 대상이 아니다. 아래 여백은 FAB 자리(80)가 필요 없어 16 이다.
+    return ReorderableListView.builder(
+      padding: EdgeInsets.fromLTRB(sp * 16, sp * 8, sp * 16, sp * 16),
+      header: Align(
+        alignment: Alignment.centerRight,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: sp * 4),
+          child: TextButton.icon(
             onPressed: onAdd,
-            icon: const Icon(Icons.add),
-            label: const Text('항목 추가'),
-            backgroundColor: theme.primaryColor,
-            foregroundColor: Colors.white,
+            icon: Icon(Icons.add, size: ResponsiveHelper.iconSize(context, 16)),
+            label: Text('항목 추가',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: theme.primaryColor, fontWeight: FontWeight.w600)),
+            style: TextButton.styleFrom(
+              foregroundColor: theme.primaryColor,
+              minimumSize: const Size(48, 48),
+              padding: EdgeInsets.symmetric(horizontal: sp * 10, vertical: sp * 4),
+            ),
           ),
         ),
-      ],
+      ),
+      itemCount: items.length,
+      onReorder: onReorder,
+      itemBuilder: (context, i) {
+        final item = items[i];
+        return _FaqRowItem(
+          key: ValueKey(item.id.isEmpty ? '${item.role}_$i' : item.id),
+          item: item,
+          theme: theme,
+          onEdit: () => onEdit(item),
+          onDelete: () => onDelete(item),
+          onToggle: () => onToggle(item),
+        );
+      },
     );
   }
 }
@@ -389,6 +413,12 @@ class _FaqRowItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final sp = ResponsiveHelper.spacing(context, 1);
     final isHeader = item.isHeader;
+    // [.65] 큰 글자(1.3 이상)에서는 버튼 4개가 제목 칸을 4글자 폭으로 줄여 낱말도 끊겼다 —
+    //   버튼을 제목 아래 줄(오른쪽)로 내린다.
+    // [DU510 · 후속117 S055 행] 기본 배율에서도 조작 4개가 오른쪽에 붙어 질문 칸이 좁았다 — 모든 배율에서 질문 · 답 미리보기를
+    //   행 전체 폭에 두고 조작은 아래 줄 오른쪽에 둔다(순서 · 콜백 · 툴팁 그대로).
+    final sub = _subtitle(context);
+    final actions = _actions();
     return Container(
       margin: EdgeInsets.only(bottom: sp * 6),
       decoration: BoxDecoration(
@@ -412,32 +442,49 @@ class _FaqRowItem extends StatelessWidget {
                 item.isActive
                     ? Icons.help_outline_rounded
                     : Icons.visibility_off_outlined,
-                color: item.isActive ? AppColors.grey600 : AppColors.grey400,
+                // [DU510] 비활성 grey400(흰 면 2.6:1) → 보조 글자색 — 꺼짐은 눈 감은 아이콘 · 회색 면이 말한다.
+                color: AppColors.textSecondary,
                 size: sp * 18,
               ),
+        // [.65] 버튼 4개 옆 좁은 칸에서 '지/원하나요?'처럼 음절이 끊겼다 — 낱말 단위로 줄바꿈.
         title: Text(
-          isHeader ? item.category : item.question,
+          TextLayout.keepWords(isHeader ? item.category : item.question),
           style: ResponsiveHelper.bodyStyle(context).copyWith(
             fontWeight: isHeader ? FontWeight.w700 : FontWeight.w500,
-            color: item.isActive ? null : AppColors.grey400,
+            // [DU510] 비활성 질문도 읽히게(grey400 2.6:1 → textSecondary) — 상태 구분은 아이콘 · 면 · 토글.
+            color: item.isActive ? null : AppColors.textSecondary,
           ),
         ),
-        subtitle: isHeader
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (sub != null) sub,
+            Align(alignment: Alignment.centerRight, child: actions),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget? _subtitle(BuildContext context) {
+    return item.isHeader
+        ? Text(
+            '카테고리 헤더',
+            style: ResponsiveHelper.smallStyle(context, color: theme.primaryColor),
+          )
+        : item.answer.isNotEmpty
             ? Text(
-                '카테고리 헤더',
-                style: ResponsiveHelper.smallStyle(context,
-                    color: theme.primaryColor),
+                item.answer,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                // [DU510] 답 미리보기 grey500(2.8:1) → textSecondary. 한 줄 요약 말줄임은 목록 요약이라 둔다(전문은 수정 시트).
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
               )
-            : item.answer.isNotEmpty
-                ? Text(
-                    item.answer,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.grey500),
-                  )
-                : null,
-        trailing: Row(
+            : null;
+  }
+
+  Widget _actions() {
+    return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
@@ -445,7 +492,8 @@ class _FaqRowItem extends StatelessWidget {
                 item.isActive
                     ? Icons.toggle_on_rounded
                     : Icons.toggle_off_rounded,
-                color: item.isActive ? theme.primaryColor : AppColors.grey400,
+                // [DU510] 꺼짐 grey400 → textSecondary(켜짐 = 주 색 · 모양으로 구분).
+                color: item.isActive ? theme.primaryColor : AppColors.textSecondary,
                 size: 28,
               ),
               onPressed: onToggle,
@@ -458,16 +506,15 @@ class _FaqRowItem extends StatelessWidget {
               tooltip: '수정',
             ),
             IconButton(
+              // [DU510 · DU245] 삭제 **진입**은 중립 보조색 — 위험색은 최종 확인 창(confirmColor errorDark)에만.
               icon: Icon(Icons.delete_outline,
-                  size: 18, color: AppColors.errorDark),
+                  size: 18, color: AppColors.textSecondary),
               onPressed: onDelete,
               tooltip: '삭제',
             ),
             Icon(Icons.drag_handle, color: AppColors.grey400, size: 20),
           ],
-        ),
-      ),
-    );
+        );
   }
 }
 
@@ -592,7 +639,9 @@ class _EditSheetState extends State<_EditSheet> {
             ),
           ),
           const Divider(height: 1),
-          SingleChildScrollView(
+          // [.65] 392·2.0 에서 아래로 264px 넘쳐 저장 버튼에 닿지 못했다 — 남은 높이 안에서 스크롤한다.
+          Flexible(
+            child: SingleChildScrollView(
             padding: EdgeInsets.all(sp * 20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -723,6 +772,7 @@ class _EditSheetState extends State<_EditSheet> {
                 ),
               ],
             ),
+          ),
           ),
         ],
       ),

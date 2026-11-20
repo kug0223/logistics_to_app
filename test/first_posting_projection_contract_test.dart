@@ -170,12 +170,15 @@ void main() {
 
     test('CP8-W06 슬롯 커밋이 dates 를 같은 커밋에 싣는다', () {
       final src = _cfSource();
+      // [ARCHIVE-WRITER-FENCE] 슬롯 커밋은 batch 가 아니라 사업장을 읽는 청크 트랜잭션이다 —
+      //   TO 업데이트는 마지막 청크의 tx.update 에 실린다(같은 커밋이라는 계약은 그대로).
       final commit = RegExp(
-        r'batch\.update\(toRef, \{([\s\S]{0,400}?)\}\);',
-      ).firstMatch(src);
+        r'tx\.update\(toRef, \{([\s\S]{0,400}?)\}\);',
+      ).firstMatch(src.substring(src.indexOf('const FLEX_TX_CHUNK = 400;')));
       expect(commit, isNotNull, reason: '슬롯 커밋의 TO 업데이트를 찾지 못했다');
       final body = commit!.group(1)!;
-      expect(body.contains('totalSlots: admin.firestore.FieldValue.increment'),
+      // [ARCHIVE-FLEX-PARTIAL] increment → 마지막 청크가 슬롯을 다시 센 **절대값**(재시도·동시 추가에도 실제 수).
+      expect(body.contains('totalSlots: (allSlots?.size ?? 0) + fresh.length,'),
           isTrue);
       expect(body.contains('dates: admin.firestore.FieldValue.arrayUnion'),
           isTrue,

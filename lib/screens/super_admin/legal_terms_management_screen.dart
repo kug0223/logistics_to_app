@@ -9,6 +9,8 @@
 // - 활성/비활성 토글
 // - 버전 관리
 
+import 'dart:async';
+
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -16,7 +18,9 @@ import '../../models/core/legal_terms_model.dart';
 import '../../providers/user_provider.dart';
 import '../../services/legal_terms_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
@@ -58,6 +62,9 @@ class _LegalTermsManagementScreenState
       final terms = await _service.getTermsForEditing();
       if (mounted) setState(() { _terms = terms; });
     } catch (e) {
+      // [.54] 읽기 실패를 기본값으로 바꾸지 않는다(서비스가 throw) — 이전 목록도 지운다.
+      //   낡은 목록을 그대로 두면 그 위에서 다시 발행할 수 있다.
+      if (mounted) setState(() => _terms = null);
       if (mounted) ToastHelper.showError('약관을 불러오는데 실패했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -74,22 +81,50 @@ class _LegalTermsManagementScreenState
     );
     if (result == null || !mounted) return;
 
+    // [.55] 누르기 전에 무엇이 언제 적용되는지 말한다. 앱은 서버가 시행일 예약을 처리하는 판인지 미리 알 수 없다 —
+    //   그래서 예약을 보장하지 않고, 처리 못 하는 서버면 즉시 적용될 수 있다고 적는다(결과는 발행 직후 안내).
+    final when = _kstDateLabel(result.effectiveAt);
+    final up = result.item.upcoming;
+    final ok = await DialogHelper.showConfirm(
+      context,
+      title: '약관 발행',
+      message: TextLayout.keepWords('「${result.item.title}」 v${result.item.version} 을 발행합니다.\n'
+          '선택한 시행일: $when 0시(한국 시간)\n'
+          '지금 시행 중: v${item.version}'
+          '${up != null ? '\n시행 예정 v${up.version} 은 이 발행으로 대체됩니다' : ''}\n'
+          '서버가 시행일 예약을 처리하지 못하면 발행 즉시 적용될 수 있습니다. 결과는 발행 직후 알려 드립니다.'),
+      confirmText: '발행',
+    );
+    if (!ok || !mounted) return;
+
     final uid = context.read<UserProvider>().currentUser?.uid ?? '';
     setState(() => _isLoading = true);
     try {
-      await _service.updateItem(result.item,
+      final scheduled = await _service.updateItem(result.item,
           updatedBy: uid,
           changeType: result.changeType,
           effectiveAt: result.effectiveAt);
       if (!mounted) return;
-      ToastHelper.showSuccess('발행했습니다. 시행일부터 적용됩니다');
+      // [.54] 시행일을 처리하지 않는 이전 판 서버는 지금 바로 시행한다 — 그때는 그렇게 말한다.
+      ToastHelper.showSuccess(TextLayout.keepWords(scheduled
+          ? '발행했습니다. $when 0시(한국 시간)부터 적용됩니다'
+          : '발행했습니다. 서버가 시행일을 받지 않아 지금부터 적용됩니다'));
       await _loadTerms();
     } on FirebaseFunctionsException catch (e) {
       // [R7-PAYROLL-POLICY.5A] 왜 거절됐는지 그대로 보여 준다.
       //   고지기간 숫자를 클라이언트가 들고 있지 않으므로, 가장 이른
       //   시행일은 **서버가 알려 준 값**을 쓴다. 두 곳에 기간을 적어 두면
       //   앱 버전에 따라 다른 기간을 주장하게 된다.
-      if (mounted) ToastHelper.showError(_publishFailureMessage(e));
+      if (!mounted) return;
+      // [.55] 응답을 못 받은 실패는 저장 여부를 모른다 — 실패로 단정하지 않고 다시 보내지도 않는다. 목록으로 확인한다.
+      if (_uncertainCodes.contains(e.code)) {
+        ToastHelper.showError(TextLayout.keepWords('발행 결과를 확인하지 못했습니다. 목록을 다시 불러와 확인해 주세요'));
+        unawaited(_loadTerms());
+        return;
+      }
+      ToastHelper.showError(TextLayout.keepWords(_publishFailureMessage(e)));
+      // 다른 관리자가 예정 판을 바꿨다 — 저장 전 거절이다. 지금 목록을 다시 보여 준다.
+      if (LegalTermsService.isUpcomingStale(e)) unawaited(_loadTerms());
     } catch (e) {
       if (mounted) ToastHelper.showError('발행에 실패했습니다');
     } finally {
@@ -98,6 +133,15 @@ class _LegalTermsManagementScreenState
   }
 
   String _publishFailureMessage(FirebaseFunctionsException e) {
+    if (LegalTermsService.isVersionReused(e)) {
+      return '이미 발행된 버전의 본문은 바꿀 수 없습니다\n버전을 바꿔 발행해 주세요';
+    }
+    if (LegalTermsService.isVersionMeaningChanged(e)) {
+      return '이미 발행된 버전의 제목·필수 여부는 바꿀 수 없습니다\n버전을 바꿔 발행해 주세요';
+    }
+    if (LegalTermsService.isUpcomingStale(e)) {
+      return '다른 관리자가 시행 예정 약관을 바꿨습니다\n목록을 다시 불러왔습니다. 확인한 뒤 다시 발행해 주세요';
+    }
     final details = e.details;
     final reason = details is Map ? details['reason'] : null;
     final earliest = details is Map ? details['earliestEffectiveAtMs'] : null;
@@ -159,9 +203,17 @@ class _LegalTermsManagementScreenState
           ? const LoadingWidget()
           : _terms == null
               ? Center(
-                  child: Text('약관을 불러오지 못했습니다.',
-                      style: ResponsiveHelper.bodyStyle(context,
-                          color: AppColors.grey500)))
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Text('약관을 불러오지 못했습니다.',
+                        style: ResponsiveHelper.bodyStyle(context,
+                            color: AppColors.grey500)),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    OutlinedButton.icon(
+                      onPressed: _loadTerms,
+                      icon: const Icon(Icons.refresh, size: 18),
+                      label: const Text('다시 시도'),
+                    ),
+                  ]))
               : ListView(
                   padding: ResponsiveHelper.listPadding(context),
                   children: [
@@ -181,8 +233,10 @@ class _LegalTermsManagementScreenState
                             size: 16, color: AppColors.infoDark),
                         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                         Expanded(
+                          // [.54] 큰 글자에서 '화면에|서' 로 끊겼다 — 낱말 단위(표시만).
+                          // [.80] 발행 서버(00002-sok)는 새 버전을 시행일에 적용한다 — '즉시 반영' 은 틀린 안내가 됐다.
                           child: Text(
-                            '약관 수정 시 앱 업데이트 없이 즉시 반영됩니다.\n비활성화하면 회원가입 화면에서 숨겨집니다.',
+                            TextLayout.keepWords('새 버전은 정한 시행일(한국 시간 0시)부터 적용되고, 그 전까지는 지금 약관이 유지됩니다.\n비활성화하면 회원가입 화면에서 숨겨집니다.'),
                             style: ResponsiveHelper.tinyStyle(context,
                                 color: AppColors.infoDeep),
                           ),
@@ -261,19 +315,21 @@ class _LegalTermsManagementScreenState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [
-                  // Flexible 필수: 긴 약관 제목 + 필수/선택 배지 조합 시 overflow 방지
-                  Flexible(
-                    child: Text(
-                      item.title,
-                      style: ResponsiveHelper.bodyStyle(context).copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: isActive ? null : AppColors.grey400,
-                      ),
-                      overflow: TextOverflow.ellipsis,
+                // [.54] 큰 글자에서 제목이 '[합성] 서비…' 로 말줄임됐다 — 제목은 낱말 단위로
+                //   줄을 바꾸고, 배지는 자리가 없으면 다음 줄로 간다(Wrap).
+                Wrap(
+                  spacing: ResponsiveHelper.spacing(context, 6),
+                  runSpacing: 2,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                  Text(
+                    TextLayout.keepWords(item.title),
+                    semanticsLabel: item.title,
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: isActive ? null : AppColors.grey400,
                     ),
                   ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                   Container(
                     padding: EdgeInsets.symmetric(
                         horizontal: ResponsiveHelper.spacing(context, 6),
@@ -299,6 +355,14 @@ class _LegalTermsManagementScreenState
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.grey400),
                 ),
+                // [.54] 시행 예정 판이 있으면 목록에서 보인다 — 안 보이면 다른 SA 가
+                //   그 위에 새 판을 내 예정 판을 모르게 바꾼다.
+                if (item.upcoming != null)
+                  Text(
+                    TextLayout.keepWords(_upcomingLabel(item.upcoming!)),
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: AppColors.infoDark, fontWeight: FontWeight.w600),
+                  ),
               ],
             ),
           ),
@@ -347,6 +411,23 @@ class _LegalTermsManagementScreenState
 
   String _formatDate(DateTime dt) =>
       '${dt.year}.${dt.month.toString().padLeft(2, '0')}.${dt.day.toString().padLeft(2, '0')}';
+}
+
+/// [.55] 응답을 받지 못해 저장 여부를 모르는 오류 코드.
+const _uncertainCodes = {'deadline-exceeded', 'unavailable', 'internal', 'unknown', 'cancelled'};
+
+/// [.55] KST 날짜 — 시행일은 KST 자정 instant 다(`kstMidnightOfDate`). 기기 시간대로 바꾸지 않는다.
+String _kstDateLabel(DateTime instant) {
+  final k = instant.toUtc().add(const Duration(hours: 9));
+  return '${k.year}년 ${k.month}월 ${k.day}일';
+}
+
+/// [.54] 시행 예정 판 한 줄 — 목록과 편집 화면이 같은 문장을 쓴다.
+String _upcomingLabel(UpcomingLegalRevision up) {
+  // 시행일은 KST 자정이다 — 기기 시간대로 바꾸면 GMT 기기에서 하루 앞 날짜로 보인다(기기 확인).
+  final at = up.effectiveAt?.toUtc().add(const Duration(hours: 9));
+  final when = at == null ? '' : ' · ${at.year}.${at.month}.${at.day} 시행';
+  return '시행 예정 v${up.version}$when';
 }
 
 // ── 약관 편집 화면 ─────────────────────────────────────────────────
@@ -470,7 +551,7 @@ class _TermsEditScreenState extends State<_TermsEditScreen> {
           SizedBox(height: ResponsiveHelper.spacing(context, 6)),
           // 고지기간 숫자는 **서버가** 갖는다. 여기 적어 두면 앱 버전에 따라
           // 다른 기간을 주장하게 되므로, 모자라면 서버가 알려 준다.
-          Text('사전고지 기간은 서버가 약관 제3조 ②에 따라 검사합니다',
+          Text(TextLayout.keepWords('사전고지 기간은 서버가 약관 제3조 ②에 따라 검사합니다'),
               style: ResponsiveHelper.tinyStyle(context,
                   color: AppColors.grey500)),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -503,6 +584,15 @@ class _TermsEditScreenState extends State<_TermsEditScreen> {
               }
               if (_contentCtrl.text.trim().isEmpty) {
                 ToastHelper.showError('내용을 입력하세요');
+                return;
+              }
+              // [.54] 같은 버전·같은 본문에 제목만 바꾸면 서버는 공개 목록의 제목만 바꾸고
+              //   발행본 제목은 그대로 둔다 — 이 목록에는 새 제목, 사용자 동의 화면에는 옛 제목이 보인다.
+              final it = widget.item;
+              if (_versionCtrl.text.trim() == it.version &&
+                  _contentCtrl.text.trim() == it.content.trim() &&
+                  _titleCtrl.text.trim() != it.title) {
+                ToastHelper.showError(TextLayout.keepWords('제목을 바꾸려면 버전도 바꿔 새 판으로 발행해 주세요'));
                 return;
               }
               // [R7-PAYROLL-POLICY.5A] 발행은 시행이다 — 언제부터인지
@@ -599,6 +689,26 @@ class _TermsEditScreenState extends State<_TermsEditScreen> {
           ]),
 
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+          // [.54] 시행 예정 판이 이미 있다 — 새로 발행하면 그 판을 대체한다(서버 계약).
+          //   이 편집 화면의 본문은 지금 시행 중인 판이다.
+          if (widget.item.upcoming != null) ...[
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+              decoration: BoxDecoration(
+                color: AppColors.infoBg,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.infoLight),
+              ),
+              child: Text(
+                TextLayout.keepWords('${_upcomingLabel(widget.item.upcoming!)}이 있습니다. '
+                    '아래 본문은 지금 시행 중인 판이며, 새로 발행하면 예정 판을 대체합니다.'),
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDeep),
+              ),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          ],
 
           // [R7-PAYROLL-POLICY.5A] 발행 ≠ 시행
           _buildPublicationControls(),

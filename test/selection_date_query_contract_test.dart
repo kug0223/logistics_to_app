@@ -305,9 +305,13 @@ void main() {
       final q = _codeOf(_src(_queueSvcPath));
       expect(q.contains('purpose: FirestoreService.purposeApplicantReview'),
           isTrue);
-      // 상세 화면은 getBusinessWorkHistory 경로 — 여기는 그대로다.
+      // 상세 화면은 getBusinessWorkHistory 경로 — 검토 단계는 applicantReview 그대로다.
+      // [HISTORY-CLOSEOUT.30] 확정자는 purpose 없이(null) 불러 서버가 invalid-argument 로 거절했다 →
+      //   허용 목록의 workerOperation 을 보낸다(worker_business_history_purpose_test BH-*).
       final d = _codeOf(_src(_detailPath));
-      expect(d.contains("widget.isConfirmed ? null : 'applicantReview'"), isTrue);
+      expect(d.contains(': FirestoreService.purposeApplicantReview'), isTrue);
+      expect(d.contains('? FirestoreService.purposeWorkerOperation'), isTrue);
+      expect(d.contains("widget.isConfirmed ? null"), isFalse, reason: '목적 누락 회귀');
     });
   });
 

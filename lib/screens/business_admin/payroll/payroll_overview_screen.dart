@@ -2,11 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 import 'package:provider/provider.dart';
 
-import '../../../models/core/attendance_model.dart';
 import '../../../models/core/payroll_summary_model.dart';
 import 'payroll_overview_reads.dart';
+import 'payroll_month_ledger.dart';
 import '../../../providers/user_provider.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/dialog_helper.dart';
@@ -24,6 +25,8 @@ import '../../../widgets/common/skeleton_widget.dart';
 import '../../../widgets/common/app_search_bar.dart';
 import '../../../widgets/common/app_empty_state.dart';
 import '../../../utils/business_picker_helper.dart';
+import '../../../utils/text_layout.dart';
+import '../../../widgets/common/amount_text.dart';
 
 class PayrollOverviewScreen extends StatefulWidget {
   /// [R7-P1-5 PAY-4] 원시 외부 읽기 경계. production 은 null → `PayrollOverviewReads.of`.
@@ -43,6 +46,8 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   final DateTime _now = DateTime.now();
   int _selectedYear = DateTime.now().year;
   String? _businessId;
+  /// [DU238 D5] 고른 사업장 이름 — 같은 선택(picked)에서 id 와 함께 저장한다. 새 조회는 없다.
+  String? _businessName;
   bool _isLoading = true;
   /// Tab 루트에서 **사업장 선택을 취소**했을 때. 고를 사업장은 있다.
   bool _noData = false;
@@ -57,8 +62,9 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   // [CROSS-DOMAIN-R5.1F.5] 권한을 확인하지 못한 상태 — 거부와 다른 말이다.
   bool _accessUnverified = false;
   String? _loadError;
-  List<PayrollSummaryModel> _summaries = [];
-  int _todayPaymentCount = 0; // null(조회실패) 시 이전 값 유지
+  int _todayPaymentCount = 0;
+  /// [PAYROLL-BANNER-COMPLETENESS] 송금 대상을 끝까지 세지 못했다(실패·상한) — 0건이 아니다.
+  bool _todayPaymentUnknown = false;
 
   // [ACCESS-DENIED-REGRESSION-01] permission hydration race 복구용 listener
   // initState에서 등록, dispose에서 해제
@@ -84,6 +90,8 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   // gate는 _init() 내부에 그대로 유지 — unauthorized hidden tab은 계속 차단됨
   void _onPermissionChanged() {
     if (!mounted) return;
+    // [DU238 R1] 갱신 전 상태를 기억한다 — 아래에서 _accessUnverified 를 지우기 때문이다.
+    final wasUnverified = _accessUnverified;
     // [CROSS-DOMAIN-R5.1F.5] 네 상태로 본다 — 확인 실패를 권한 없음으로
     //   바꾸지 않는다. 확인된 허용에서만 화면을 연다.
     final check = _userProvider.checkCurrentBusiness((p) => p.canManageWage);
@@ -108,7 +116,9 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       return;
     }
 
-    if (!_accessDenied) return;
+    // [DU238 R1] 진입 때 확인 실패·모름이었고 아직 사업장을 고르지 않았다면, 첫 확인된 허용에서 조회를 시작한다.
+    //   거부→허용은 예전대로다. 같은 허용이 다시 와도 wasUnverified 가 false 라 다시 시작하지 않는다.
+    if (!_accessDenied && !(wasUnverified && _businessId == null)) return;
 
     setState(() {
       _accessDenied = false;
@@ -168,6 +178,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         return;
       }
       _businessId = picked.id;
+      _businessName = picked.name;
       await Future.wait([
         _loadYear(_selectedYear),
         _loadTodayCount(),
@@ -177,49 +188,125 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     }
   }
 
-  /// [R7-P1-5 PAY-1] 출근 집계 CF 가 실패했는가.
+  /// [PAYROLL-ANNUAL-READ.48] 월별 미확정·미이체의 확인 상태. 키는 1~12월.
   ///
-  ///   월별 `미확정`·`미이체` 건수는 `callableGetAdminAttendances` 에서만 온다.
-  ///   그 호출이 실패하면 예전에는 12개월 전부 0 이 되어, 금액은 그대로인데
-  ///   미이체 줄이 사라졌다 — **다 이체된 달처럼** 보였다. 0 과 모름을 구분한다.
-  bool _attCountsUnknown = false;
+  ///   예전에는 출근 원장을 1~12월 한 번에 읽고, 실패하거나 서버 상한(10,000건)에 걸리면
+  ///   `_attCountsUnknown` 하나로 **12개월 전부**를 '확인 못함'으로 만들었다. 이제 달마다
+  ///   따로 읽고([loadMonthLedgers]) 달마다 따로 말한다 — 9월이 실패해도 10월은 보인다.
+  ///   미래 달은 읽지 않는다(어차피 그리지 않는다).
+  Map<int, MonthLedgerState> _ledger = const {};
+
+  /// 집계 문서(금액·인원 owner). 달 → 문서.
+  Map<int, PayrollSummaryModel> _summaryDocs = const {};
+  bool _summariesLoaded = false;
+
+  /// 서버 월 집계 배포 여부(이 화면에서 한 번 확인하면 다시 묻지 않는다).
+  final MonthLedgerCountsCapability _countsCapability = MonthLedgerCountsCapability();
+
+  /// 조회 세대 — 사업장·연도 전환, 새로고침, 다시 확인마다 올린다. 늦게 끝난 이전 응답은 버린다.
+  int _loadGen = 0;
+
+  /// 지금 화면의 숫자가 어느 사업장·연도 것인가 — 같은 범위를 다시 읽을 때만 이전 숫자를 '이전 조회'로 쓴다.
+  String? _ledgerScope;
+
+  List<int> _monthsToRead(int year) {
+    final now = _now;
+    if (year > now.year) return const [];
+    final last = year == now.year ? now.month : 12;
+    return [for (var m = 1; m <= last; m++) m];
+  }
+
+  /// 12개월 카드 — 집계 문서 + 그 달 원장 상태로 만든다.
+  List<PayrollSummaryModel> get _summaries {
+    final bizId = _businessId;
+    if (!_summariesLoaded || bizId == null) return const [];
+    return List.generate(12, (i) => _composeMonth(bizId, _selectedYear, i + 1));
+  }
+
+  PayrollSummaryModel _composeMonth(String bizId, int year, int month) {
+    final mm = month.toString().padLeft(2, '0');
+    final st = _ledger[month];
+    // known 은 이번 조회의 사실, stale 은 이전 조회의 숫자(표시만). loading·unknown 은 숫자 없음.
+    final c = (st?.status == MonthLedgerStatus.known || st?.status == MonthLedgerStatus.stale) ? st!.counts : null;
+    final complete = st?.isComplete ?? false;
+    final pCount = c?.pending ?? 0;
+    final ntCount = c?.notTransferred ?? 0;
+    final tCount = c?.transferred ?? 0;
+    final existing = _summaryDocs[month];
+    if (existing != null) {
+      return PayrollSummaryModel(
+        id: existing.id,
+        businessId: existing.businessId,
+        yearMonth: existing.yearMonth,
+        year: existing.year,
+        month: existing.month,
+        totalPayout: existing.totalPayout,
+        // [R7-P1-5 후속] `이체 완료` = 확정 - 미이체. 이번 조회로 끝까지 센 달만 원장 숫자로 맞춘다.
+        confirmedCount: complete ? (ntCount + tCount) : existing.confirmedCount,
+        workerCount: existing.workerCount,
+        pendingCount: pCount,
+        notTransferredCount: ntCount,
+        workers: existing.workers,
+        updatedAt: existing.updatedAt,
+      );
+    }
+    if (pCount == 0 && ntCount == 0 && tCount == 0) {
+      return PayrollSummaryModel.empty(businessId: bizId, year: year, month: month);
+    }
+    return PayrollSummaryModel(
+      id: '${bizId}_$year-$mm',
+      businessId: bizId,
+      yearMonth: '$year-$mm',
+      year: year,
+      month: month,
+      totalPayout: c?.payout ?? 0,
+      confirmedCount: ntCount + tCount,
+      workerCount: c?.workerCount ?? 0,
+      pendingCount: pCount,
+      notTransferredCount: ntCount,
+      workers: {},
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  /// 원장을 이번 조회로 끝까지 세지 못한 달(읽는 중 제외) — 다시 확인 대상.
+  List<int> get _unresolvedMonths => [
+        for (final e in _ledger.entries)
+          if (e.value.status == MonthLedgerStatus.unknown || e.value.status == MonthLedgerStatus.stale) e.key,
+      ]..sort();
+
+  bool get _anyMonthLoading => _ledger.values.any((s) => s.status == MonthLedgerStatus.loading);
 
   Future<void> _loadYear(int year) async {
     final bizId = _businessId;
     if (bizId == null) return;
     if (!mounted) return;
-    setState(() { _isLoading = true; _loadError = null; });
+    final gen = ++_loadGen;
+    final scope = '$bizId|$year';
+    // 같은 사업장·연도를 다시 읽을 때만 이전 숫자를 들고 간다 — 다른 범위의 숫자는 버린다.
+    final previous = <int, MonthLedgerCounts>{
+      if (_ledgerScope == scope)
+        for (final e in _ledger.entries)
+          if (e.value.counts != null && e.value.status != MonthLedgerStatus.loading) e.key: e.value.counts!,
+    };
+    final months = _monthsToRead(year);
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+      _ledgerScope = scope;
+      _ledger = {for (final m in months) m: MonthLedgerState.loading(previous[m])};
+      if (!_summaryDocs.values.every((d) => d.businessId == bizId && d.year == year)) {
+        _summaryDocs = const {};
+        _summariesLoaded = false;
+      }
+    });
+
+    // 원장은 집계 문서와 **나란히** 읽는다. 달마다 끝나는 대로 카드에 반영된다.
+    final ledgerDone = _readMonths(gen, bizId, year, months, previous);
 
     try {
-      // [PERF] 두 CF 병렬 호출 — 순차 최대 90초 → 병렬로 절반 단축
-      ({List<Map<String, dynamic>> items, bool limitReached})? attResult;
-      final results = await Future.wait<Object?>([
-        _reads.payrollSummaries(businessId: bizId, year: year),
-        () async {
-          try {
-            attResult = await _reads.adminAttendances(
-              businessId: bizId,
-              yearMonthGte: '$year-01',
-              yearMonthLte: '$year-12',
-            );
-          } catch (e) {
-            debugPrint('⚠️ 출근 집계 CF 실패: $e');
-            if (mounted) ToastHelper.showWarning('출근 집계를 불러오지 못했습니다. 새로고침 해주세요.');
-          }
-          return null;
-        }(),
-      ]);
-      final psItemsRaw = results[0] as List<Map<String, dynamic>>;
-      // [R7-P1-5 PAY-1] 출근 집계 실패 → 건수는 **모름**이다(0 이 아니다).
-      // [R7-P1-5 후속] 상한에 걸린 응답도 모름이다 — 실제보다 작은 합계를
-      //   사실처럼 보여주지 않는다(통계 서비스와 같은 fail-closed).
-      final attUnknown = attResult == null || attResult!.limitReached;
-      if (attResult?.limitReached == true) {
-        debugPrint('⚠️ 출근 집계 상한 도달 — 월별 건수를 모름으로 둔다');
-      }
-
-      // 1. payroll_summaries 파싱
-      // [RULE-FIX-CF 2026-07-13] 직접 Firestore → CF 이전, year 서버 필터링으로 전환
+      final psItemsRaw = await _reads.payrollSummaries(businessId: bizId, year: year);
+      if (!mounted || gen != _loadGen) return;
       final summaryMap = <int, PayrollSummaryModel>{};
       for (final e in psItemsRaw) {
         final raw = Map<String, dynamic>.from(e);
@@ -227,92 +314,74 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         final m = PayrollSummaryModel.tryFromMap(raw, id);
         if (m != null) summaryMap[m.month] = m;
       }
-
-      // 2. 미확정·미이체 — **원장 하나**에서 센다(공유 reading).
-      final ledger = _LedgerMonthCounts.of(
-          attResult?.items ?? const <Map<String, dynamic>>[]);
-      final pendingByMonth      = ledger.pending;
-      final confirmedByMonth    = ledger.notTransferred;
-      final transferredByMonth  = ledger.transferred;
-      final totalPayoutByMonth  = ledger.payout;
-      final workersByMonth      = ledger.workers;
-      final pendingResults        = pendingByMonth;
-      final notTransferredResults = confirmedByMonth;
-
-      // 3. 12개 PayrollSummaryModel 구성
-      final summaries = List.generate(12, (i) {
-        final month = i + 1;
-        final mm    = month.toString().padLeft(2, '0');
-        final pCount  = pendingResults[i];
-        final ntCount = notTransferredResults[i];
-        final tCount  = transferredByMonth[i]; // 이체완료 건수
-        final existing = summaryMap[month];
-
-        if (existing != null) {
-          return PayrollSummaryModel(
-            id: existing.id,
-            businessId: existing.businessId,
-            yearMonth: existing.yearMonth,
-            year: existing.year,
-            month: existing.month,
-            totalPayout: existing.totalPayout,
-            // [R7-P1-5 후속] `이체 완료` 는 `확정 - 미이체` 로 파생된다.
-            //   두 항이 다른 owner 면 그 뺄셈은 한쪽의 지연을 다른 쪽에 섞는다.
-            //   원장을 쓸 수 있으면 **같은 원장의 확정 건수**를 넣어 파생이
-            //   정확히 이체완료 건수가 되게 한다(문서 없는 달의 식과 동일).
-            confirmedCount:
-                attUnknown ? existing.confirmedCount : (ntCount + tCount),
-            workerCount: existing.workerCount,
-            pendingCount: pCount,
-            notTransferredCount: ntCount,
-            workers: existing.workers,
-            updatedAt: existing.updatedAt,
-          );
-        }
-
-        // payroll_summaries 문서 없음 — transferred 포함해서 빈 달 여부 판단
-        if (pCount == 0 && ntCount == 0 && tCount == 0) {
-          return PayrollSummaryModel.empty(businessId: bizId, year: year, month: month);
-        }
-
-        // attendance에서 직접 집계 (confirmed + transferred 합산)
-        return PayrollSummaryModel(
-          id: '${bizId}_$year-$mm',
-          businessId: bizId,
-          yearMonth: '$year-$mm',
-          year: year,
-          month: month,
-          totalPayout: totalPayoutByMonth[i],
-          confirmedCount: ntCount + tCount, // 확정+이체완료 합계
-          workerCount: workersByMonth[i].length,
-          pendingCount: pCount,
-          notTransferredCount: ntCount,
-          workers: {},
-          updatedAt: DateTime.now(),
-        );
+      setState(() {
+        _summaryDocs = summaryMap;
+        _summariesLoaded = true;
+        _isLoading = false;
       });
-
-      if (mounted) {
-        setState(() {
-          _summaries = summaries;
-          _attCountsUnknown = attUnknown;
-          _isLoading = false;
-        });
-      }
     } catch (e) {
-      if (mounted) setState(() { _loadError = e.toString(); _isLoading = false; });
+      if (mounted && gen == _loadGen) setState(() { _loadError = e.toString(); _isLoading = false; });
     }
+    await ledgerDone;
   }
+
+  Future<void> _readMonths(int gen, String bizId, int year, List<int> months,
+      Map<int, MonthLedgerCounts> previous) {
+    return loadMonthLedgers(
+      months: months,
+      yearMonthOf: (m) => '$year-${m.toString().padLeft(2, '0')}',
+      read: (ym) => _reads.adminAttendances(businessId: bizId, yearMonthGte: ym, yearMonthLte: ym),
+      countsRead: _reads.monthLedgerCounts == null
+          ? null
+          : (ym) => _reads.monthLedgerCounts!(businessId: bizId, yearMonth: ym),
+      previousOf: (m) => previous[m],
+      capability: _countsCapability,
+      isCurrent: () => mounted && gen == _loadGen && _businessId == bizId && _selectedYear == year,
+      onMonth: (m, st) => setState(() => _ledger = {..._ledger, m: st}),
+    );
+  }
+
+  /// 확인하지 못한 달만 다시 읽는다 — 이미 끝까지 센 달은 다시 읽지 않는다.
+  Future<void> _retryUnresolvedMonths() async {
+    final bizId = _businessId;
+    if (bizId == null || _anyMonthLoading) return;
+    final months = _unresolvedMonths;
+    if (months.isEmpty) return;
+    final year = _selectedYear;
+    final gen = ++_loadGen;
+    final previous = <int, MonthLedgerCounts>{
+      for (final m in months)
+        if (_ledger[m]?.counts != null) m: _ledger[m]!.counts!,
+    };
+    setState(() => _ledger = {
+          ..._ledger,
+          for (final m in months) m: MonthLedgerState.loading(previous[m]),
+        });
+    await _readMonths(gen, bizId, year, months, previous);
+  }
+
+  /// [PAYROLL-V3-CONNECTED] 배너 조회 세대 — 진입 조회와 목록에서 돌아온 뒤 재조회가 겹치면
+  ///   늦게 끝난 옛 응답이 새 숫자를 덮지 않는다.
+  int _todayCountGen = 0;
 
   Future<void> _loadTodayCount() async {
     final bizId = _businessId;
     if (bizId == null) return;
+    final gen = ++_todayCountGen;
+    int? count;
     try {
-      final count = await _reads.todayPaymentCount(bizId);
-      if (mounted && count != null) setState(() => _todayPaymentCount = count);
+      count = await _reads.todayPaymentCount(bizId);
     } catch (e) {
       debugPrint('⚠️ 오늘 급여 건수 조회 실패: $e');
+      count = null;
     }
+    if (!mounted || _businessId != bizId || gen != _todayCountGen) return;
+    // [PAYROLL-BANNER-COMPLETENESS] 예전에는 실패하면 이전 값(처음엔 0)을 그대로 둬
+    //   배너가 사라졌다 — "오늘 보낼 것 없음"처럼 보였다. 모르면 모른다고 보인다.
+    setState(() {
+      _todayPaymentUnknown = count == null;
+      if (count != null) _todayPaymentCount = count;
+    });
   }
 
   void _onYearChanged(int delta) {
@@ -350,12 +419,16 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       actions: [
         IconButton(
           icon: const Icon(Icons.refresh_rounded),
+          // [PAYROLL-ANNUAL-READ.48] 화면 읽기 이름이 없던 버튼.
+          tooltip: '새로고침',
           onPressed: () => _loadYear(_selectedYear),
           color: AppColors.textSecondary,
         ),
       ],
       body: Column(
         children: [
+          // [DU238 D5] 어느 사업장의 급여인지 — 확인된 허용에서 고른 사업장이 있을 때만 연도 띠 바로 위에 보인다.
+          if (_showBusinessName) _buildBusinessLine(),
           _buildYearSelector(theme),
           if (_isLoading)
             const Expanded(child: PayrollGridSkeleton())
@@ -366,6 +439,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                 icon: Icons.sync_problem_outlined,
                 title: '권한 정보를 확인하지 못했습니다',
                 subtitle: '잠시 후 다시 시도해주세요.',
+                subtitleColor: AppColors.textSecondary, // [DU238 D4]
                 action: TextButton(
                   onPressed: () =>
                       unawaited(_userProvider.refreshSubAdminAccessState()),
@@ -380,6 +454,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                 icon: Icons.lock_outline,
                 title: '접근 권한이 없습니다',
                 subtitle: '급여 관리 권한이 있는 관리자에게 문의하세요.',
+                subtitleColor: AppColors.textSecondary, // [DU238 D4]
               ),
             )
           else if (_noBusiness)
@@ -390,6 +465,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                 icon: Icons.storefront_outlined,
                 title: '아직 급여를 관리할 사업장이 없어요',
                 subtitle: '사업장을 등록하면 근무·급여 관리를 시작할 수 있어요.',
+                subtitleColor: AppColors.textSecondary, // [DU238 D4]
                 action: TextButton(
                   // [P4.2B-CTA-01] '준비 계속하기'는 어디로 가는지 말하지
                   //   않았다. 목적지는 홈이고, 사업장이 0개인 홈은 곧 준비
@@ -429,7 +505,12 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
               ),
             )
           else ...[
-            if (_todayPaymentCount > 0 && _businessId != null)
+            if (_todayPaymentUnknown && _businessId != null)
+              _TodayPaymentBanner(
+                count: null,
+                onTap: _loadTodayCount, // 다시 시도
+              )
+            else if (_todayPaymentCount > 0 && _businessId != null)
               _TodayPaymentBanner(
                 count: _todayPaymentCount,
                 onTap: () async {
@@ -437,10 +518,15 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                   await Navigator.push(
                     context,
                     MaterialPageRoute(
+                      // [PAYROLL-BANNER-DUE-SCOPE] 배너가 센 집합을 그대로 연다.
+                      //   예전에는 인자 없이 열어 `지급 예정일 == 오늘` 날짜 화면이
+                      //   떴고, 기한 지난 건이 빠져 `2건` → `0명` 이 됐다.
                       builder: (_) => PayrollPaymentDashboardScreen(
                         businessId: _businessId!,
                         year: now.year,
                         month: now.month,
+                        showAllOutstanding: true,
+                        outstandingDueByToday: true,
                       ),
                     ),
                   );
@@ -448,8 +534,77 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                   _loadTodayCount();
                 },
               ),
+            if (_unresolvedMonths.isNotEmpty && !_anyMonthLoading) _buildUnresolvedBanner(),
             Expanded(child: _buildMonthGrid(theme)),
           ],
+        ],
+      ),
+    );
+  }
+
+  /// [PAYROLL-ANNUAL-READ.48] 확인하지 못한 달이 있다 — 몇 달인지와, 그 달만 다시 읽는 버튼.
+  ///   연간 합계를 따로 그리지 않는다(그런 숫자를 이 화면은 보여 주지 않는다).
+  Widget _buildUnresolvedBanner() {
+    final months = _unresolvedMonths;
+    final anyLimit = months.any((m) => _ledger[m]?.failure == MonthLedgerFailure.limit);
+    final label = months.map((m) => _monthLabels[m - 1]).join('·');
+    final text = anyLimit
+        ? '$label 미이체를 확인하지 못했어요. 건수가 많은 달이 있어요.'
+        : '$label 미이체를 확인하지 못했어요.';
+    return Padding(
+      padding: EdgeInsets.fromLTRB(ResponsiveHelper.spacing(context, 16),
+          ResponsiveHelper.spacing(context, 8), ResponsiveHelper.spacing(context, 8), 0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(Icons.info_outline, size: ResponsiveHelper.iconSize(context, 16), color: AppColors.grey500),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Expanded(
+            child: Text(
+              TextLayout.keepWords(text),
+              semanticsLabel: text,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+            ),
+          ),
+          TextButton(
+            onPressed: _retryUnresolvedMonths,
+            style: TextButton.styleFrom(minimumSize: const Size(48, 44)),
+            child: Text(TextLayout.keepWords('다시 확인'), semanticsLabel: '다시 확인'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// [DU238 D5] 이름은 확인된 허용에서 고른 사업장이 있을 때만 보인다 — 권한 안내·사업장 없음·선택 안 함에는
+  ///   이전 이름을 붙이지 않는다.
+  bool get _showBusinessName =>
+      _businessId != null &&
+      _businessName != null &&
+      !_accessDenied &&
+      !_accessUnverified &&
+      !_noBusiness &&
+      !_noData;
+
+  /// [DU238 D5] 사업장 이름 한 줄 영역 — 길면 낱말 단위로 줄을 늘린다(말줄임 없음).
+  Widget _buildBusinessLine() {
+    final name = _businessName!;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(ResponsiveHelper.spacing(context, 16), ResponsiveHelper.spacing(context, 8),
+          ResponsiveHelper.spacing(context, 16), ResponsiveHelper.spacing(context, 8)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.storefront_outlined,
+              size: ResponsiveHelper.iconSize(context, 16), color: AppColors.textSecondary),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Expanded(
+            child: Text(
+              TextLayout.keepWords(name),
+              semanticsLabel: name,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+            ),
+          ),
         ],
       ),
     );
@@ -490,46 +645,49 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     );
   }
 
+  /// [DEVICE-MISMATCH-FIX] 월 카드 높이를 **계산해 고정하지 않는다.**
+  ///
+  ///   예전에는 그리드 비율을 `104 + 배율 보정` 으로 못박았다(R7-P1-5 PAY-4).
+  ///   보정식은 줄 높이를 font size 의 1.25 배로 **추정**했는데, 기기 한글
+  ///   폰트의 실제 줄 높이가 그보다 커서 Pixel 5 기본 배율에서도
+  ///   `BOTTOM OVERFLOWED BY 1.00 PIXELS` 로 `미이체 2` 줄이 잘렸다.
+  ///   추정을 고치는 대신 **내용이 높이를 정하게** 한다 — 두 칸씩 한 줄,
+  ///   한 줄의 두 카드는 같은 높이(IntrinsicHeight), 최소 높이만 둔다.
   Widget _buildMonthGrid(ThemeData theme) {
     final now = _now; // [PERF-7] 캐시된 필드 사용
-    final gridPadding = ResponsiveHelper.spacing(context, 16);
     final columnSpacing = ResponsiveHelper.spacing(context, 12);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final itemWidth = (constraints.maxWidth - gridPadding * 2 - columnSpacing) / 2;
-        // [R7-P1-5 PAY-4] 높이를 100dp 로 못박고 있었다. 기기 폭과 무관하게
-        //   일정한 것은 맞지만 **OS 글자 배율은 반영되지 않는다** — 카드 안의
-        //   네 줄(월·금액·인원/건수·미이체)이 배율을 그대로 받으므로 1.3 배만
-        //   돼도 아래가 잘렸고, 기본 배율에서도 1px 이 모자랐다.
-        //   글자를 줄이거나 배율을 무효화해서 덮지 않는다 — 줄 높이만큼 늘린다.
-        //   네 줄의 base font 합(13+13+12+12=50)이 배율을 받는 부분이다.
-        const baseTextPx = 50.0;
-        final scaledText = MediaQuery.textScalerOf(context).scale(baseTextPx);
-        // 글자는 font size 보다 줄 높이(≈1.25배)만큼 자리를 차지한다.
-        final itemHeight = 104.0 + (scaledText - baseTextPx) * 1.25;
-        final ratio = itemWidth / itemHeight;
-        return GridView.builder(
-          padding: ResponsiveHelper.listPadding(context),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            crossAxisSpacing: columnSpacing,
-            mainAxisSpacing: ResponsiveHelper.spacing(context, 12),
-            childAspectRatio: ratio,
+    final rowSpacing = ResponsiveHelper.spacing(context, 12);
+    Widget cell(int i) {
+      final summary = _summaries[i];
+      final isFuture = _selectedYear > now.year ||
+          (_selectedYear == now.year && (i + 1) > now.month);
+      return _buildMonthCard(theme, summary, isFuture);
+    }
+
+    return ListView.builder(
+      padding: ResponsiveHelper.listPadding(context),
+      itemCount: 6,
+      itemBuilder: (context, row) => Padding(
+        padding: EdgeInsets.only(bottom: row == 5 ? 0 : rowSpacing),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: cell(row * 2)),
+              SizedBox(width: columnSpacing),
+              Expanded(child: cell(row * 2 + 1)),
+            ],
           ),
-          itemCount: 12,
-          itemBuilder: (context, i) {
-            final summary = _summaries[i];
-            final isFuture = _selectedYear > now.year ||
-                (_selectedYear == now.year && (i + 1) > now.month);
-            return _buildMonthCard(theme, summary, isFuture);
-          },
-        );
-      },
+        ),
+      ),
     );
   }
 
   Widget _buildMonthCard(ThemeData theme, PayrollSummaryModel summary, bool isFuture) {
     final isEmpty = summary.isEmpty || isFuture;
+    // [PAYROLL-ANNUAL-READ.48] 이 달 하나의 원장 상태 — 다른 달의 실패·상한이 섞이지 않는다.
+    final ledgerState = _ledger[summary.month];
+    final ledgerStatus = ledgerState?.status ?? MonthLedgerStatus.unknown;
     return GestureDetector(
       onTap: isEmpty
           ? null
@@ -542,7 +700,12 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                     reads: _reads,
                     // [R7-P1-5 PAY-1] 건수를 모르는 상태를 그대로 넘긴다 —
                     //   상세 화면이 `이체 완료`를 계산해 말하지 않도록.
-                    countsUnknown: _attCountsUnknown,
+                    // 이번 조회로 끝까지 센 달만 '모름 아님'이다(이전 조회·확인 중 포함 모름).
+                    countsUnknown: !(ledgerState?.isComplete ?? false),
+                    // [DU1 SubAdmin §5] 집계 문서가 실제로 있는 달인가(급여 권한 CF 결과).
+                    //   없는 달은 하위 workers 를 읽지 않는다 — rule 이 부모를 get 해 판정하므로
+                    //   권한이 있어도 PERMISSION_DENIED 가 되어 '불러오지 못함'으로 보였다.
+                    summaryDocExists: _summaryDocs[summary.month] != null,
                   ),
                 ),
               );
@@ -551,6 +714,8 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
               _loadYear(_selectedYear);
             },
       child: Container(
+        // 최소 높이만 둔다 — 내용이 더 길면(큰 글자 배율 등) 카드가 늘어난다.
+        constraints: const BoxConstraints(minHeight: 104),
         decoration: BoxDecoration(
           color: isEmpty ? AppColors.grey100 : AppColors.surface,
           borderRadius: BorderRadius.circular(12),
@@ -578,7 +743,10 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                   _monthLabels[summary.month - 1],
                   style: ResponsiveHelper.smallStyle(context).copyWith(
                     fontWeight: FontWeight.bold,
-                    color: isEmpty ? AppColors.grey400 : theme.primaryColor,
+                    // [DU238 D1] 미래 달만 비활성 grey400 — 지난·이번 빈 달 라벨은 읽기색.
+                    color: isFuture
+                        ? AppColors.grey400
+                        : (isEmpty ? AppColors.textTertiary : theme.primaryColor),
                   ),
                 ),
                 if (!isEmpty) ...[
@@ -597,54 +765,75 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                 Text(
                   // [R7-P1-5 후속] 집계 문서도 없고 원장도 못 읽은 달은
                   //   **빈 달이 아니라 모르는 달**이다. 근무가 없었다고 말하지 않는다.
-                  _attCountsUnknown ? '확인 못함' : '데이터 없음',
+                  switch (ledgerStatus) {
+                    MonthLedgerStatus.known => '데이터 없음',
+                    MonthLedgerStatus.loading => '확인 중',
+                    _ => '확인 못함',
+                  },
                   style: ResponsiveHelper.tinyStyle(context).copyWith(
-                    color: AppColors.grey400,
+                    // [DU238 D1] 데이터 없음·확인 중·확인 못함은 읽어야 하는 상태다(grey100 위 5.43).
+                    color: AppColors.textSecondary,
                   ),
                 )
             else ...[
-              Text(
+              // [UI-INTEGRATION.33] 대량 사업장(12억대·1,234명·12,345건) — 금액을 말줄임하지 않는다.
+              //   카드 높이는 내용이 정하므로(위 _buildMonthGrid) 쉼표 뒤에서 줄을 바꾼다.
+              AmountText(
                 summary.formattedTotalPayout,
                 style: ResponsiveHelper.smallStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
                   color: AppColors.successDark,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 2)),
               Text(
-                '${summary.workerCount}명 · ${summary.confirmedCount}건',
+                TextLayout.phrases('${FormatHelper.formatNumber(summary.workerCount)}명'
+                    ' · ${FormatHelper.formatNumber(summary.confirmedCount)}건'),
+                semanticsLabel: '${FormatHelper.formatNumber(summary.workerCount)}명'
+                    ' · ${FormatHelper.formatNumber(summary.confirmedCount)}건',
                 style: ResponsiveHelper.tinyStyle(context).copyWith(
-                  color: AppColors.grey500,
+                  color: AppColors.textSecondary, // [DU238 D2]
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
               // [R7-P1-5 PAY-1] 모름을 0 으로 말하지 않는다. 출근 집계가 실패하면
               //   미이체 줄을 지우지 않고 **확인하지 못했다**고 말한다 —
               //   줄이 없는 것과 0 건인 것은 관리자에게 같은 뜻이기 때문이다.
-              if (_attCountsUnknown) ...[
+              if (ledgerStatus == MonthLedgerStatus.loading ||
+                  ledgerStatus == MonthLedgerStatus.unknown) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                 Text(
-                  '미이체 확인 못함',
+                  TextLayout.keepWords(ledgerStatus == MonthLedgerStatus.loading
+                      ? '미이체 확인 중'
+                      : '미이체 확인 못함'),
+                  semanticsLabel: ledgerStatus == MonthLedgerStatus.loading
+                      ? '미이체 확인 중'
+                      : '미이체 확인 못함',
                   style: ResponsiveHelper.tinyStyle(context).copyWith(
-                    color: AppColors.grey500,
+                    color: AppColors.textSecondary, // [DU238 D2]
                     fontWeight: FontWeight.w600,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                ),
+              ] else if (ledgerStatus == MonthLedgerStatus.stale) ...[
+                // [PAYROLL-ANNUAL-READ.48] 이번 새로고침은 실패했다 — 숫자는 이전 조회 것이라고 말한다.
+                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                Text(
+                  TextLayout.phrases(
+                      '미이체 ${FormatHelper.formatNumber(summary.notTransferredCount)} · 이전 조회'),
+                  semanticsLabel:
+                      '미이체 ${FormatHelper.formatNumber(summary.notTransferredCount)} · 이전 조회',
+                  style: ResponsiveHelper.tinyStyle(context).copyWith(
+                    color: AppColors.textSecondary, // [DU238 D2]
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ] else if (summary.notTransferredCount > 0) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                 Text(
-                  '미이체 ${summary.notTransferredCount}',
+                  '미이체 ${FormatHelper.formatNumber(summary.notTransferredCount)}',
                   style: ResponsiveHelper.tinyStyle(context).copyWith(
-                    color: AppColors.error,
+                    color: AppColors.errorDark, // [DU238 D3] 빨강 계열 유지, 흰 카드 위 6.57
                     fontWeight: FontWeight.w600,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ],
@@ -666,64 +855,8 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
 // 월별 근무자 목록 화면
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// [R7-P1-5 후속] 미이체·미확정의 **canonical 계산 하나**.
-///
-///   같은 `미이체` 를 개요는 출근 집계에서, 월 상세는 새로고침 때 집계 문서에서
-///   읽고 있었다. 두 경로는 모집단·기간·단위가 같은 계약인데(둘 다 KST 월의
-///   attendance 문서 수, confirmed 만, 노쇼·결근 0원 제외) 트리거 지연·누락으로
-///   값이 갈릴 수 있었다 — 이체 취소 직후 복귀하면 낡은 값이 확정 사실로 보였다.
-///   그래서 **원장(attendance)** 을 owner 로 정하고 두 화면이 이 계산을 공유한다.
-///   집계 문서는 금액·인원의 owner 로 남는다(트랜잭션 delta + 복구 CF).
-///
-///   서버 `srvPayrollContribution` 과 같은 식이다 — 한쪽만 바꾸지 않는다.
-class _LedgerMonthCounts {
-  final List<int> pending;        // wagePending + wageCalculated (미확정)
-  final List<int> notTransferred; // wageConfirmed (미이체)
-  final List<int> transferred;    // wageTransferred (이체완료)
-  final List<int> payout;         // 지급 대상 finalWage 합
-  final List<Set<String>> workers;
-
-  _LedgerMonthCounts._(
-      this.pending, this.notTransferred, this.transferred, this.payout, this.workers);
-
-  factory _LedgerMonthCounts.of(Iterable<Map<String, dynamic>> items) {
-    final counts = _LedgerMonthCounts._(
-      List.filled(12, 0),
-      List.filled(12, 0),
-      List.filled(12, 0),
-      List.filled(12, 0),
-      List.generate(12, (_) => <String>{}),
-    );
-    for (final data in items) {
-      final ym = data['yearMonth'] as String?;
-      final ws = data['wageStatus'] as String?;
-      if (ym == null) continue;
-      final parts = ym.split('-');
-      if (parts.length != 2) continue;
-      final month = int.tryParse(parts[1]);
-      if (month == null || month < 1 || month > 12) continue;
-      final idx = month - 1;
-      if (ws == 'pending' || ws == 'calculated') {
-        counts.pending[idx]++;
-      } else if (ws == 'confirmed' || ws == 'transferred') {
-        // [.6-P1] 노쇼·결근 0원은 근무일도 미이체 건수도 만들지 않는다.
-        if (AttendanceModel.isNonPayableZeroOf(
-            data['status'] as String?, data['finalWage'] as num?)) {
-          continue;
-        }
-        if (ws == 'confirmed') {
-          counts.notTransferred[idx]++;
-        } else {
-          counts.transferred[idx]++;
-        }
-        counts.payout[idx] += (data['finalWage'] as num?)?.toInt() ?? 0;
-        final uid = data['userId'] as String?;
-        if (uid != null) counts.workers[idx].add(uid);
-      }
-    }
-    return counts;
-  }
-}
+// [PAYROLL-ANNUAL-READ.48] 미이체·미확정의 canonical 계산은 `MonthLedgerCounts`(payroll_month_ledger.dart)
+//   하나다 — 개요(달마다)와 월 상세(새로고침)가 같이 쓴다. 서버 `srvPayrollContribution` 과 같은 식이다.
 
 enum _SortOrder { amountDesc, amountAsc, nameAsc, workDaysDesc }
 
@@ -737,11 +870,16 @@ class PayrollMonthScreen extends StatefulWidget {
   /// [R7-P1-5 PAY-4] 원시 외부 읽기 경계(개요에서 그대로 내려받는다).
   final PayrollOverviewReads? reads;
 
+  /// [DU1 SubAdmin §5] 집계 문서(`payroll_summaries/{id}`)가 실제로 있는가.
+  ///   false 면 근무자 하위 목록을 읽지 않고 원장 건수로 빈 화면을 말한다.
+  final bool summaryDocExists;
+
   const PayrollMonthScreen({
     super.key,
     required this.summary,
     this.countsUnknown = false,
     this.reads,
+    this.summaryDocExists = true,
   });
 
   @override
@@ -762,10 +900,19 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   ///   (+ 복원 버튼)로, 없으면 `확정된 급여가 없습니다`로 보였다. 둘 다 사실이
   ///   아닐 수 있고, 앞의 경우는 조회 실패에 **서버 재집계**를 권한다.
   bool _workersLoadFailed = false;
+
+  /// [DU1 SubAdmin §5] 빈 목록의 이유 — 부모 없음 / 권한 거부 / 권한 확인 불가.
+  ///   읽기 실패(`_workersLoadFailed`)와 섞지 않는다.
+  bool _parentMissing = false;
+  bool _accessDenied = false;
+  bool _accessUnknown = false;
   bool _isRepairing = false;
 
   // 이체 취소 후 notTransferredCount가 변경될 수 있으므로 mutable로 유지
   late PayrollSummaryModel _liveSummary;
+
+  /// [PAYROLL-DETAIL.32] 같은 이름이 둘 이상일 때만 채운다(uid → 'P-301'). 실패하면 비어 있고 이름만 보인다.
+  Map<String, String> _personLabels = const {};
 
   /// [R7-P1-5 PAY-1] 건수를 모르는 상태. 집계 문서를 실제로 받으면 해제된다.
   late bool _countsUnknown = widget.countsUnknown;
@@ -860,12 +1007,24 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
         debugPrint('⚠️ 미이체 원장 재조회 실패: $e');
       }
       if (!mounted) return;
-      final ledgerUnknown =
-          ledgerResult == null || ledgerResult.limitReached;
-      final monthIdx = _liveSummary.month - 1;
-      final ledger = ledgerUnknown
+      MonthLedgerCounts? counts = ledgerResult == null || ledgerResult.limitReached
           ? null
-          : _LedgerMonthCounts.of(ledgerResult.items);
+          : MonthLedgerCounts.fromItems(ledgerResult.items, _liveSummary.month);
+      // [PAYROLL-ANNUAL-READ.48] 한 달이 원장 상한을 넘었으면 서버 월 집계로 센다(있을 때만).
+      if (ledgerResult != null && ledgerResult.limitReached && _reads.monthLedgerCounts != null) {
+        try {
+          counts = MonthLedgerCounts.tryFromServer(await _reads.monthLedgerCounts!(
+              businessId: _liveSummary.businessId, yearMonth: ym));
+        } catch (e) {
+          debugPrint('⚠️ 월 집계 재조회 실패: $e');
+        }
+        if (!mounted) return;
+      }
+      final ledger = counts;
+      // 끝까지 세지 못했으면 들고 있던 숫자를 **사실로 다시 확인하지 않는다**.
+      if (ledger == null && (ledgerResult == null || ledgerResult.limitReached)) {
+        setState(() => _countsUnknown = true);
+      }
 
       // 없는 것은 정상이다 — 아직 집계가 만들어지지 않은 달이다.
       //   화면이 들고 있는 금액·인원을 빈 값으로 덮지 않는다.
@@ -887,13 +1046,13 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
           // 파생(`확정 - 미이체`)이 한 owner 안에서 끝나게 둘 다 원장에서.
           confirmedCount: ledger == null
               ? base.confirmedCount
-              : ledger.notTransferred[monthIdx] + ledger.transferred[monthIdx],
+              : ledger.notTransferred + ledger.transferred,
           workerCount: base.workerCount,
           pendingCount:
-              ledger == null ? base.pendingCount : ledger.pending[monthIdx],
+              ledger == null ? base.pendingCount : ledger.pending,
           notTransferredCount: ledger == null
               ? base.notTransferredCount
-              : ledger.notTransferred[monthIdx],
+              : ledger.notTransferred,
           workers: base.workers,
           updatedAt: base.updatedAt,
         );
@@ -914,6 +1073,19 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   }
 
   Future<void> _loadWorkers() async {
+    // [DU1 SubAdmin §5] 집계 문서가 없는 달 — 읽으면 권한이 있어도 거부된다. 읽지 않는다.
+    if (!widget.summaryDocExists) {
+      setState(() {
+        _workers = [];
+        _workersLoading = false;
+        _workersLoadFailed = false;
+        _parentMissing = true;
+        _accessDenied = false;
+        _accessUnknown = false;
+        _cachedFiltered = null;
+      });
+      return;
+    }
     try {
       final rows = await _reads.workerSummaries(widget.summary.id);
       final loaded = rows
@@ -925,17 +1097,112 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
         _workers = loaded;
         _workersLoading = false;
         _workersLoadFailed = false;
+        _parentMissing = false;
+        _accessDenied = false;
+        _accessUnknown = false;
         _cachedFiltered = null;
       });
+      unawaited(_loadPersonLabelsForDuplicates(loaded));
+    } on FirebaseException catch (e) {
+      debugPrint('⚠️ workers 서브컬렉션 로드 실패(${e.code}): ${e.message}');
+      if (e.code == 'permission-denied') {
+        // rule 거부는 '권한 없음'과 '그 사이 부모 삭제'를 가르지 못한다 → 급여 권한 CF 로 다시 본다.
+        await _resolveWorkersDenied();
+        return;
+      }
+      _markWorkersReadFailed();
     } catch (e) {
-      // payroll_summaries 문서 미존재 시 workers 서브컬렉션 접근이 PERMISSION_DENIED 됨
-      // → 에러 토스트 대신 조용히 실패 후 UI에서 "집계 데이터 복원" 버튼으로 처리
-      debugPrint('⚠️ workers 서브컬렉션 로드 실패 (payroll_summaries 미존재 가능): $e');
+      // timeout 등 — 읽기 실패다(없음·권한 없음으로 바꾸지 않는다).
+      debugPrint('⚠️ workers 서브컬렉션 로드 실패: $e');
+      _markWorkersReadFailed();
+    }
+  }
+
+  void _markWorkersReadFailed() {
+    if (!mounted) return;
+    setState(() {
+      _workersLoading = false;
+      _workersLoadFailed = true;
+      _parentMissing = false;
+      _accessDenied = false;
+      _accessUnknown = false;
+    });
+  }
+
+  /// [DU1 SubAdmin §5] 하위 목록 거부 뒤 서버(급여 권한 검증)로 사실을 가른다.
+  ///   CF 거부 → 권한 없음 · CF 에 그 달 없음 → 부모 없음 · CF 에 있음 → 판정 불일치(권한 확인 불가).
+  Future<void> _resolveWorkersDenied() async {
+    bool denied = false, missing = false, unknown = false, failed = false;
+    try {
+      final items = await _reads.payrollSummaries(
+        businessId: widget.summary.businessId,
+        year: widget.summary.year,
+      );
+      final has = items.any((m) => m['id']?.toString() == widget.summary.id);
+      missing = !has;
+      unknown = has;
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        denied = true;
+      } else {
+        failed = true;
+      }
+    } catch (_) {
+      failed = true;
+    }
+    if (!mounted) return;
+    setState(() {
+      _workers = [];
+      _cachedFiltered = null;
+      _workersLoading = false;
+      _workersLoadFailed = failed;
+      _parentMissing = missing;
+      _accessDenied = denied;
+      _accessUnknown = unknown;
+    });
+  }
+
+  /// [DU1 SubAdmin §5] 부모 없는 달의 빈 화면 문장 — 원장 건수를 owner 로 쓴다.
+  ///   확정분이 있으면 기존 '집계 데이터 없음 + 복원' 분기로 보낸다(여기서 null).
+  ({IconData icon, String title, String? subtitle})? _parentMissingCopy() {
+    if (!_parentMissing || _searchQuery.isNotEmpty) return null;
+    // [DU1 MONTH-COUNT-UNKNOWN] 모름이 먼저다 — 원장 재조회가 실패/상한이면 들고 있는 확정 건수는
+    //   이전 값이라 현재 사실이 아니다. 그 숫자로 '집계 누락·복원'을 권하지 않는다.
+    if (_countsUnknown) {
+      return (icon: Icons.help_outline, title: '이 달 급여 건수를 확인하지 못했어요', subtitle: null);
+    }
+    if (_liveSummary.confirmedCount > 0) return null; // 원장이 센 확정분 — 기존 집계 누락·복원 분기
+    final pending = _liveSummary.pendingCount;
+    if (pending > 0) {
+      return (
+        icon: Icons.hourglass_empty_rounded,
+        title: '확정 전 급여 ${FormatHelper.formatNumber(pending)}건이 있어요',
+        subtitle: '급여가 확정되면 이 목록에 나와요',
+      );
+    }
+    return null; // 원장을 끝까지 셌고 0 — 기존 '확정된 급여가 없습니다'
+  }
+
+  /// [PAYROLL-DETAIL.32] 동명이인 구분 — 같은 이름을 가진 사람들의 인력번호만 읽는다.
+  ///   실패는 조용히 넘긴다(목록·금액은 그대로, 번호만 없다).
+  Future<void> _loadPersonLabelsForDuplicates(List<PayrollWorkerSummary> workers) async {
+    final read = _reads.personLabels;
+    if (read == null) return;
+    final byName = <String, List<String>>{};
+    for (final w in workers) {
+      byName.putIfAbsent(w.name, () => []).add(w.workerId);
+    }
+    final uids = [
+      for (final e in byName.entries)
+        if (e.key.isNotEmpty && e.value.length > 1) ...e.value,
+    ];
+    if (uids.isEmpty) return;
+    try {
+      final labels = await read(businessId: widget.summary.businessId, uids: uids);
       if (!mounted) return;
-      setState(() {
-        _workersLoading = false;
-        _workersLoadFailed = true;
-      });
+      setState(() => _personLabels = labels);
+    } catch (e) {
+      debugPrint('⚠️ 동명이인 인력번호 조회 실패(번호 없이 표시): $e');
     }
   }
 
@@ -969,6 +1236,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final filtered = _filteredWorkers;
+    final parentMissingCopy = _parentMissingCopy();
 
     // [DESIGN-PATCH-1] GradientScaffold → AppPageScaffold — 관리자 Shell 정규화
     // home / notification — refresh 없음 (현 상태 유지)
@@ -1026,13 +1294,19 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                 : filtered.isEmpty
                     // [R7-P1-5 PAY-1] 조회 실패를 먼저 가른다. 실패에 서버 재집계
                     //   (복원)를 권하면 원인을 틀리게 말하는 것이다.
-                    ? _workersLoadFailed
+                    // [DU1 SubAdmin §5] 읽기 실패·권한 확인 불가는 다시 시도, 권한 거부는 안내만,
+                    //   부모 없는 달은 원장 건수로 말한다(확정분이 있으면 아래 복원 분기).
+                    ? (_workersLoadFailed || _accessUnknown)
                         ? Column(
                             children: [
                               Expanded(
                                 child: AppEmptyState(
-                                  icon: Icons.cloud_off_outlined,
-                                  title: '근무자 목록을 불러오지 못했습니다',
+                                  icon: _accessUnknown
+                                      ? Icons.help_outline
+                                      : Icons.cloud_off_outlined,
+                                  title: _accessUnknown
+                                      ? '권한을 확인하지 못했어요'
+                                      : '근무자 목록을 불러오지 못했습니다',
                                 ),
                               ),
                               SafeArea(
@@ -1051,6 +1325,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                                         setState(() {
                                           _workersLoading = true;
                                           _workersLoadFailed = false;
+                                          _accessUnknown = false;
                                         });
                                         unawaited(_loadWorkers());
                                       },
@@ -1062,7 +1337,19 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                               ),
                             ],
                           )
-                    : (_searchQuery.isEmpty && widget.summary.confirmedCount > 0
+                    : _accessDenied
+                        ? const AppEmptyState(
+                            icon: Icons.lock_outline,
+                            title: '급여 정보를 볼 권한이 없습니다',
+                          )
+                    : parentMissingCopy != null
+                        ? AppEmptyState(
+                            icon: parentMissingCopy.icon,
+                            title: parentMissingCopy.title,
+                            subtitle: parentMissingCopy.subtitle,
+                          )
+                    // [DU1 MONTH-COUNT-UNKNOWN] 확정 건수 owner 는 원장 갱신을 받는 _liveSummary 다.
+                    : (_searchQuery.isEmpty && _liveSummary.confirmedCount > 0
                         // payroll_summaries 문서 누락 — 집계 복원 버튼 노출
                         ? Column(
                             children: [
@@ -1231,6 +1518,43 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
     final countsUnknown    = _countsUnknown;
     final hasPending       = !countsUnknown && pendingCount > 0;
 
+    final payButton = OutlinedButton.icon(
+      onPressed: () async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            // [.81 MONTH-PENDING-SCOPE] 이 달의 `미이체 N건`을 그대로 연다 — 오늘 날짜 보기로 열면
+            //   지난 지급 예정일 건이 빠져 `미이체 2` 아래 `0명`이 됐다(DEV 재현).
+            builder: (_) => PayrollPaymentDashboardScreen(
+              businessId: widget.summary.businessId,
+              year: widget.summary.year,
+              month: widget.summary.month,
+              pendingWholeMonth: true,
+            ),
+          ),
+        );
+        if (mounted) await _refreshSummary();
+      },
+      icon: Icon(Icons.receipt_long_outlined,
+          size: ResponsiveHelper.iconSize(context, 13),
+          color: theme.primaryColor),
+      label: Text('지급 현황',
+          style: ResponsiveHelper.tinyStyle(context,
+              color: theme.primaryColor,
+              fontWeight: FontWeight.w600)),
+      style: OutlinedButton.styleFrom(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 10),
+          vertical: ResponsiveHelper.spacing(context, 5),
+        ),
+        side: BorderSide(color: theme.primaryColor.withValues(alpha: 0.4)),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20)),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+    );
+
     return Container(
       color: theme.primaryColor.withValues(alpha: 0.06),
       padding: EdgeInsets.fromLTRB(
@@ -1246,68 +1570,26 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
           // [R7-P1-5 PAY-4] 왼쪽 묶음에 flex 가 없어서 실제 금액(7자리)과 버튼이
           //   함께 서면 가로로 넘쳤다(390dp 에서 18px). 금액은 줄이지 않고
           //   남는 공간을 차지하게 하되, 모자라면 **라벨부터** 줄인다.
+          // [AMOUNT-LAYOUT.34] 채택 — 라벨·버튼 줄과 금액 줄을 나눈다(기기 비교: 392·2.0 에서 '1,322,099,' / '341원' 대신 한 줄). 금액은 전체 폭을 받고, 한 줄에
+          //   안 들어가면 기본 크기만 19→16 범위에서 낮춘 뒤(사용자 배율 유지), 그래도 길면 쉼표 뒤 줄바꿈.
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
+              Icon(Icons.payments_outlined, size: 16, color: AppColors.successDark),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Expanded(
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.payments_outlined,
-                      size: 16, color: AppColors.successDark),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                  Flexible(
-                    child: Text(
-                      _liveSummary.formattedTotalPayout,
-                      style: ResponsiveHelper.titleStyle(context,
-                          color: AppColors.successDark),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                  Flexible(
-                    child: Text('총 지급액',
-                        style: ResponsiveHelper.tinyStyle(context,
-                            color: AppColors.grey700),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis),
-                  ),
-                ]),
+                child: Text(TextLayout.keepWords('총 지급액'),
+                    semanticsLabel: '총 지급액',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700)),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => PayrollPaymentDashboardScreen(
-                        businessId: widget.summary.businessId,
-                        year: widget.summary.year,
-                        month: widget.summary.month,
-                      ),
-                    ),
-                  );
-                  if (mounted) await _refreshSummary();
-                },
-                icon: Icon(Icons.receipt_long_outlined,
-                    size: ResponsiveHelper.iconSize(context, 13),
-                    color: theme.primaryColor),
-                label: Text('지급 현황',
-                    style: ResponsiveHelper.tinyStyle(context,
-                        color: theme.primaryColor,
-                        fontWeight: FontWeight.w600)),
-                style: OutlinedButton.styleFrom(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 10),
-                    vertical: ResponsiveHelper.spacing(context, 5),
-                  ),
-                  side: BorderSide(color: theme.primaryColor.withValues(alpha: 0.4)),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20)),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
+              payButton,
             ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          AmountText.total(
+            _liveSummary.formattedTotalPayout,
+            style: ResponsiveHelper.titleStyle(context, color: AppColors.successDark),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           const Divider(height: 1, color: AppColors.grey200),
@@ -1334,7 +1616,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.grey500)),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text(countsUnknown ? '확인 못함' : '$transferredCount건',
+              Text(countsUnknown ? '확인 못함' : '${FormatHelper.formatNumber(transferredCount)}건',
                   style: ResponsiveHelper.smallStyle(context,
                       color: countsUnknown
                           ? AppColors.grey500
@@ -1354,7 +1636,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.grey500)),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text(countsUnknown ? '확인 못함' : '$pendingCount건',
+              Text(countsUnknown ? '확인 못함' : '${FormatHelper.formatNumber(pendingCount)}건',
                   style: ResponsiveHelper.smallStyle(context,
                       color: countsUnknown
                           ? AppColors.grey500
@@ -1364,14 +1646,14 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
             Row(mainAxisSize: MainAxisSize.min, children: [
               Icon(Icons.people_outline, size: 12, color: AppColors.grey400),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text('${widget.summary.workerCount}명',
+              Text('${FormatHelper.formatNumber(widget.summary.workerCount)}명',
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.grey500,
                       fontWeight: FontWeight.w600)),
               SizedBox(width: ResponsiveHelper.spacing(context, 10)),
               Icon(Icons.receipt_outlined, size: 12, color: AppColors.grey400),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text('${_liveSummary.confirmedCount}건',
+              Text('${FormatHelper.formatNumber(_liveSummary.confirmedCount)}건',
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.grey500,
                       fontWeight: FontWeight.w600)),
@@ -1423,50 +1705,72 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                 ResponsiveHelper.spacing(context, 14),
                 ResponsiveHelper.spacing(context, 13),
               ),
-              child: Row(
+              // [UI-INTEGRATION.33] 이름·건수 | 금액 한 줄이 들어가면 예전 배치 그대로(금액은 자기 폭),
+              //   안 들어가면(큰 글자·억 단위) 금액을 이름 아래로 내린다 — 금액 칸이 이름 칸을 반으로
+              //   자르지도('합성 / 대량0334'), 금액이 말줄임되지도 않는다. 판단은 행에서 한 번.
+              child: Builder(builder: (context) {
+                final amountStyle = ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.successDark,
+                );
+                // [AMOUNT-LAYOUT.34] 목록 행은 .33 배치 유지(기기 비교: 1.0 에서 금액을 늘 아래로 내리면 행이 길어져 훑기 어렵다).
+                //   한 줄에 들어가면 오른쪽, 아니면 이름 아래 — 공통 AmountText.list(기본 15→13 범위).
+                final Widget amountText = AmountText.list(FormatHelper.formatWage(worker.totalPayout),
+                        style: amountStyle);
+                final chevron = Icon(Icons.chevron_right,
+                    size: ResponsiveHelper.iconSize(context, 16),
+                    color: AppColors.grey300);
+                final oneLine = TextLayout.fits(context, MediaQuery.sizeOf(context).width - 72, 280);
+                return Row(
                     children: [
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              worker.name.isNotEmpty ? worker.name : '(이름 없음)',
-                              style: ResponsiveHelper.bodyStyle(context)
-                                  .copyWith(fontWeight: FontWeight.w600),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                            // [PAYROLL-DETAIL.32] 같은 이름이면 인력번호를 붙인다 — 누구의 상세로 가는지 가른다.
+                            //   이름은 말줄임하지 않고 낱말 단위로 줄을 바꾼다.
+                            Builder(builder: (context) {
+                              final name = worker.name.isNotEmpty ? worker.name : '(이름 없음)';
+                              final label = _personLabels[worker.workerId];
+                              final shown = label == null ? name : '$name · $label';
+                              return Text(
+                                TextLayout.phrases(shown),
+                                semanticsLabel: shown,
+                                style: ResponsiveHelper.bodyStyle(context)
+                                    .copyWith(fontWeight: FontWeight.w600),
+                              );
+                            }),
                             SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                             Text(
                               // [R7-P1-5 PAY-1] projection 의 workDays 는 확정·이체된
                               //   attendance 1건당 +1 이다(서버 srvPayrollContribution).
                               //   같은 날 두 근무를 확정받으면 2 가 되므로 날짜 수가 아니다.
-                              '확정 근무 ${worker.workDays}건',
+                              '확정 근무 ${FormatHelper.formatNumber(worker.workDays)}건',
                               style: ResponsiveHelper.tinyStyle(context,
                                   color: AppColors.grey500),
                             ),
+                            if (!oneLine) ...[
+                              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                              amountText,
+                            ],
                           ],
                         ),
                       ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            FormatHelper.formatWage(worker.totalPayout),
-                            style: ResponsiveHelper.bodyStyle(context).copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.successDark,
-                            ),
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                          Icon(Icons.chevron_right,
-                              size: ResponsiveHelper.iconSize(context, 16),
-                              color: AppColors.grey300),
-                        ],
-                      ),
+                      if (oneLine)
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            amountText,
+                            SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                            chevron,
+                          ],
+                        )
+                      else
+                        chevron,
                     ],
-                  ),
+                  );
+              }),
             ),
             Positioned(
               top: 0, left: 0, bottom: 0,
@@ -1486,8 +1790,11 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
 // ── 오늘 처리할 송금 배너 ────────────────────────────────────────────
 
 class _TodayPaymentBanner extends StatelessWidget {
-  final int count;
+  /// null = 끝까지 세지 못했다 — 숫자 대신 조회 미완료와 다시 시도를 보인다.
+  final int? count;
   final VoidCallback onTap;
+
+  static const String unknownText = '송금 대상을 끝까지 확인하지 못했어요 · 눌러서 다시 시도';
 
   const _TodayPaymentBanner({required this.count, required this.onTap});
 
@@ -1504,7 +1811,9 @@ class _TodayPaymentBanner extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
         ),
+        // [SCALE-BALANCE.34] 큰 글자에서 설명이 2~3줄이면 아이콘이 세로 가운데에 떠 제목과 어긋났다 — 첫 줄에 맞춘다.
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
               padding: const EdgeInsets.all(8),
@@ -1524,14 +1833,21 @@ class _TodayPaymentBanner extends StatelessWidget {
                     '오늘 처리할 송금',
                     style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark, fontWeight: FontWeight.w700),
                   ),
+                  // [UI-BALANCE.38] 큰 글자에서 '이하|인' 으로 끊겼다 — 낱말 단위(표시만).
                   Text(
-                    '지급 예정일이 오늘 이하인 확정 급여 $count건',
+                    TextLayout.keepWords(count == null
+                        ? unknownText
+                        : '지급 예정일이 오늘 이하인 확정 급여 $count건'),
+                    semanticsLabel: count == null
+                        ? unknownText
+                        : '지급 예정일이 오늘 이하인 확정 급여 $count건',
                     style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark),
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, color: AppColors.warningDark),
+            Icon(count == null ? Icons.refresh : Icons.chevron_right,
+                color: AppColors.warningDark),
           ],
         ),
       ),

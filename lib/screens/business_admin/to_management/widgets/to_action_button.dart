@@ -50,9 +50,12 @@ class TOActionButton extends StatelessWidget {
     final theme = Theme.of(context);
     final bgColor = backgroundColor ?? theme.primaryColor;
 
+    // [DU1 구현54] 높이가 화면 폭 비례(spacing 56)라 320 폭 47.6 · 360 폭 50.4 — 주 버튼 기준 52 미달.
+    //   최소 52 를 보장한다(넓은 화면은 기존 값 그대로).
+    final h = ResponsiveHelper.spacing(context, 56);
     return Container(
       width: double.infinity,
-      height: ResponsiveHelper.spacing(context, 56),
+      height: h < 52 ? 52 : h,
       decoration: BoxDecoration(
         color: bgColor,
         borderRadius: BorderRadius.circular(16),

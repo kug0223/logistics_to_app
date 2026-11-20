@@ -68,7 +68,11 @@ String _bodyOf(String source, String signature) {
 
 void main() {
   final svc = _src(_svcPath);
-  final monthDetail = _codeOf(_bodyOf(svc, 'Future<MonthDetailData> getMonthDetail('));
+  // [STATS-TO-ATTENDANCE.27] 집계는 `buildMonthDetail` 로 옮겨졌다(조회와 분리 — 시험이 같은 코드를 지나게).
+  //   조회 본문과 집계 본문을 함께 본다. 검사 내용은 그대로다.
+  final monthDetail = _codeOf(_bodyOf(svc, 'Future<MonthDetailData> getMonthDetail(') +
+      '\n' +
+      _bodyOf(svc, 'static MonthDetailData buildMonthDetail('));
   final flat = _flat(monthDetail);
 
   group('MDS-1x 중복 제거는 진짜 중복만 거른다', () {

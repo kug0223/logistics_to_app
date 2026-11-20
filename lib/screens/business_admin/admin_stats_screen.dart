@@ -1,4 +1,6 @@
 ﻿import 'package:fl_chart/fl_chart.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -8,6 +10,10 @@ import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import 'admin_month_detail_screen.dart';
+import 'admin_stats_access.dart';
+import 'stats_attendance_list_screen.dart';
+import '../../utils/text_layout.dart';
+import '../../models/core/attendance_model.dart';
 import '../../screens/common/notification_screen.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/toast_helper.dart';
@@ -28,9 +34,11 @@ class AdminStatsScreen extends StatefulWidget {
   ///   끝나지 않는 Firestore future 위에서 타이머로 남았기 때문이다(아래 참조).
   final AdminStatsService? service;
 
+  /// [STATS-TO-ATTENDANCE.27] 시험 주입점 — 내역 목록이 근태 화면 대신 부른다. production 은 null.
+  final Future<bool?> Function(AttendanceModel r)? debugOpenAttendance;
 
   const AdminStatsScreen(
-      {super.key, required this.businessIds, this.service});
+      {super.key, required this.businessIds, this.service, this.debugOpenAttendance});
 
   @override
   State<AdminStatsScreen> createState() => _AdminStatsScreenState();
@@ -53,6 +61,8 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
   AnnualStatsData? _data;
   List<BusinessOption> _businesses = [];
   bool _hasError = false;
+  /// [ADMIN-STATS-CLOSEOUT] 마지막 불러오기 시점의 조회 대상 급여 권한. allowed 가 아니면 숫자를 그리지 않는다.
+  PermissionCheck _access = PermissionCheck.allowed;
 
   @override
   void initState() {
@@ -80,8 +90,14 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
     }
   }
 
-  Future<void> _loadStats() async {
+  /// [STATS-TO-ATTENDANCE.27] 정정 뒤 다시 읽기에 실패했다 — 아래 숫자는 정정 전 기준이다.
+  bool _staleAfterChange = false;
+
+  /// [quiet] 내역·월 상세에서 정정하고 돌아온 갱신 — 화면을 로딩으로 바꾸지 않는다(스크롤 유지).
+  ///   근태를 못 읽은 응답이면 이전 숫자를 '확인 불가'·0 으로 덮지 않고 정정 전 기준이라고 말한다.
+  Future<void> _loadStats({bool quiet = false}) async {
     if (!mounted) return;
+    final keepOld = quiet && _data != null;
     // [RACE-FIX] request generation counter — latest request wins.
     // 이전 if (_isFetching) return; 제거: 새 요청을 drop하지 않고 항상 시작.
     // stale response가 현재 state를 덮어쓰는 것은 requestId 불일치로 방지.
@@ -89,7 +105,14 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
     final requestId = ++_statsRequestId;
     final requestedFilterId = _filterBusinessId; // request 시점 스냅샷
     final requestedYear = _selectedYear;         // request 시점 스냅샷
-    setState(() { _isLoading = true; _isFetching = true; });
+    // [ADMIN-STATS-CLOSEOUT] 조회 대상 사업장마다 급여 권한 — 없거나 모르면 부르지 않고 이전 숫자도 지운다.
+    final access = AdminStatsAccess.check(context.read<UserProvider>(),
+        requestedFilterId != null ? [requestedFilterId] : widget.businessIds);
+    if (access != PermissionCheck.allowed) {
+      setState(() { _access = access; _data = null; _hasError = false; _isLoading = false; _isFetching = false; });
+      return;
+    }
+    setState(() { _access = PermissionCheck.allowed; if (!keepOld) _isLoading = true; _isFetching = true; });
     try {
       final data = await _service.getAnnualStats(
         businessIds: widget.businessIds,
@@ -98,12 +121,16 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
       );
       // stale response guard: 최신 request만 state 반영
       if (!mounted || requestId != _statsRequestId) return;
-      setState(() { _data = data; _hasError = false; _isLoading = false; _isFetching = false; _buildNow = DateTime.now(); });
+      if (keepOld && data.attendanceStatsState != AttendanceStatsState.available) {
+        setState(() { _staleAfterChange = true; _isLoading = false; _isFetching = false; });
+        return;
+      }
+      setState(() { _data = data; _hasError = false; _isLoading = false; _isFetching = false; _buildNow = DateTime.now(); _staleAfterChange = false; });
     } catch (e) {
       debugPrint('❌ 연간 통계 로드 실패: $e');
       // stale error도 무시: 최신 request의 결과만 반영
       if (!mounted || requestId != _statsRequestId) return;
-      setState(() { _hasError = true; _isLoading = false; _isFetching = false; _buildNow = DateTime.now(); });
+      setState(() { if (keepOld) { _staleAfterChange = true; } else { _hasError = true; } _isLoading = false; _isFetching = false; _buildNow = DateTime.now(); });
     }
   }
 
@@ -200,21 +227,89 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
     );
   }
 
-  void _openMonthDetail(int month) {
+  Future<void> _openMonthDetail(int month) async {
     if (!mounted || widget.businessIds.isEmpty) return;
-    Navigator.push(
+    var corrected = false;
+    await Navigator.push<void>(
       context,
       MaterialPageRoute(
         builder: (_) => AdminMonthDetailScreen(
+          onCorrected: () => corrected = true,
           businessIds: widget.businessIds,
           filterBusinessId: _filterBusinessId,
           year: _selectedYear,
           month: month,
           businesses: _businesses,
+          service: widget.service,
+          debugOpenAttendance: widget.debugOpenAttendance,
         ),
       ),
     );
+    if (mounted && corrected) await _loadStats(quiet: true);
   }
+
+  // ─── [STATS-TO-ATTENDANCE.27] 숫자 → 그 근무들 ──────────────────────
+
+  String get _scopeName => _filterBusinessId == null || _businesses.isEmpty
+      ? (_businesses.length == 1 ? _businesses.first.name : '전체 사업장')
+      : _businesses
+          .firstWhere((b) => b.id == _filterBusinessId,
+              orElse: () => _businesses.first)
+          .name;
+
+  Future<void> _openList({
+    required String title,
+    required String scope,
+    required int? month,
+    required bool Function(AttendanceModel r) matches,
+    bool resultOnly = false,
+  }) async {
+    // 연 · 사업장을 지금 선택 그대로 고정한다 — 목록이 열린 사이 선택이 바뀌어도 섞이지 않는다.
+    final filter = _filterBusinessId;
+    final year = _selectedYear;
+    var corrected = false;
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => StatsAttendanceListScreen(
+          onCorrected: () => corrected = true,
+          title: title,
+          scopeLabel: scope,
+          load: () => _service.getAttendanceSnapshot(
+            businessIds: widget.businessIds,
+            filterBusinessId: filter,
+            year: year,
+            month: month,
+          ),
+          matches: matches,
+          resultOnly: resultOnly,
+          debugOpenAttendance: widget.debugOpenAttendance,
+        ),
+      ),
+    );
+    if (mounted && corrected) await _loadStats(quiet: true);
+  }
+
+  void _openUnconfirmed() => _openList(
+        title: '근태 확인 필요 내역',
+        scope: '$_selectedYear년 전체 · $_scopeName',
+        month: null,
+        matches: (r) =>
+            AdminStatsService.bucketOf(r) == StatsAttendanceBucket.unconfirmed,
+      );
+
+  void _openException(WorkerException e, int month) => _openList(
+        title: '지각·결근 내역',
+        scope: '$_selectedYear년 $month월 · $_scopeName · ${e.userName}',
+        month: month,
+        // 이 칸의 집계식 그대로 — 지각, 결근(노쇼 포함).
+        matches: (r) {
+          if (r.userId != e.userId) return false;
+          final b = AdminStatsService.bucketOf(r);
+          return b == StatsAttendanceBucket.late || b == StatsAttendanceBucket.absent;
+        },
+        resultOnly: true,
+      );
 
   // ─── 빌드 ─────────────────────────────────────────────────
 
@@ -368,6 +463,13 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
   // ─── 메인 콘텐츠 ─────────────────────────────────────────────
 
   Widget _buildContent() {
+    if (_access != PermissionCheck.allowed) {
+      return AppEmptyState(
+        icon: Icons.lock_outline,
+        title: AdminStatsAccess.title(_access),
+        subtitle: AdminStatsAccess.subtitle(_access),
+      );
+    }
     final data = _data;
     if (data == null) return _buildEmpty();
 
@@ -382,6 +484,28 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
     return ListView(
       padding: ResponsiveHelper.listPadding(context),
       children: [
+        if (_staleAfterChange) ...[
+          Container(
+            padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 12),
+                vertical: ResponsiveHelper.spacing(context, 8)),
+            decoration: BoxDecoration(
+              color: AppColors.warningDark.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(children: [
+              Expanded(
+                child: Text('최신 집계를 불러오지 못했어요. 아래 숫자는 정정 전 기준이에요.',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)),
+              ),
+              TextButton(
+                onPressed: _isFetching ? null : () => _loadStats(quiet: true),
+                child: const Text('다시 조회'),
+              ),
+            ]),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+        ],
         // A: 출근 데이터 조회 실패 배너
         if (attUnavailable) ...[
           Container(
@@ -452,7 +576,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
             child: Text(
               '막대를 탭하면 해당 월 상세 보기',
               style: ResponsiveHelper.tinyStyle(context,
-                  color: AppColors.grey400),
+                  color: AppColors.textTertiary), // [DU329] 보조 안내
             ),
           ),
         SizedBox(height: ResponsiveHelper.spacing(context, 14)),
@@ -481,6 +605,10 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
     final hasPrevCount = data.prevYearTotalWorkCount > 0;
     final hasPrevAtt = data.prevYearAttendanceRate > 0;
     final hasPrevNoShow = data.prevYearNoShowRate > 0;
+    // [UNKNOWN-ATTENDANCE] status 를 확인할 수 없는 근태가 있으면 비율을 숫자로 말하지 않는다 —
+    //   분자에 넣지도, 분모에서 조용히 빼지도 않고 건수와 함께 '확인 필요'로 둔다. 어느 해든 있으면 전년 대비도 없다.
+    final unconfirmed = data.unconfirmedAttendanceCount;
+    final rateComparable = unconfirmed == 0 && data.prevUnconfirmedAttendanceCount == 0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -507,36 +635,43 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
               // [R7-P1-7 후속 P17-S] 세 조각이 flex 없이 서 있어서 큰 글자·좁은 폭
               //   에서 가로로 넘쳤다(320dp·배율 1.3 에서 53px). 금액 머리말이라
               //   글자를 줄이지 않고, 모자라면 **기간 라벨부터** 줄인다.
-              Row(children: [
-                Flexible(
-                  child: Text('총 인건비',
+              // [STATS-TO-ATTENDANCE.27] 라벨을 '…' 로 자르지 않는다 — 모자라면 기간 묶음이 다음 줄로 간다.
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: ResponsiveHelper.spacing(context, 8),
+                runSpacing: ResponsiveHelper.spacing(context, 2),
+                children: [
+                  Text('총 인건비',
                       style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.grey500),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
-                ),
-                const Spacer(),
-                Flexible(
-                  child: Text(
-                    '$_selectedYear년 전체',
-                    style: ResponsiveHelper.tinyStyle(context,
-                        color: AppColors.grey400),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                if (attOk && prevAttOk && hasPrevWage && data.wageDeltaPct != 0) ...[
-                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                  _DeltaBadge(delta: data.wageDeltaPct),
+                          color: AppColors.textSecondary)), // [DU329] 지표 제목
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: ResponsiveHelper.spacing(context, 6),
+                    runSpacing: ResponsiveHelper.spacing(context, 2),
+                    children: [
+                    Text(
+                      '$_selectedYear년 전체',
+                      style: ResponsiveHelper.tinyStyle(context,
+                          color: AppColors.textTertiary), // [DU329] 집계 범위
+                    ),
+                    if (attOk && prevAttOk && hasPrevWage && data.wageDeltaPct != 0)
+                      _DeltaBadge(delta: data.wageDeltaPct),
+                  ]),
                 ],
-              ]),
+              ),
               SizedBox(height: ResponsiveHelper.spacing(context, 6)),
               Text(
-                attOk ? _fmtWage(data.totalWage) : '확인 불가',
+                // [ADMIN-STATS-CLOSEOUT] 확정 근무가 있는데 합이 0원이면 '0원'(노쇼 확정 등) — '-' 는 확정 근무 0건일 때만.
+                attOk
+                    ? (data.totalWage == 0 && data.totalWorkCount > 0
+                        ? '0원'
+                        : _fmtWage(data.totalWage))
+                    : '확인 불가',
                 style: TextStyle(
                   fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.6,
                   fontWeight: FontWeight.w800,
-                  color: attOk ? theme.primaryColor : AppColors.grey400,
+                  color: attOk ? theme.primaryColor : AppColors.textTertiary, // [DU329] '확인 불가' 큰 값
                   letterSpacing: -0.5,
                 ),
               ),
@@ -555,47 +690,64 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                 color: Colors.black.withValues(alpha: 0.05),
                 blurRadius: 10, offset: const Offset(0, 2))],
           ),
-          child: IntrinsicHeight(
-            child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          // [STATS-TO-ATTENDANCE.27-T1] 네 칸 한 줄은 좁은 폭·큰 글자에서 칸마다 라벨이 세 줄로 갈렸다 —
+          //   글자를 줄이지 않고, 칸이 좁으면 2×2 로 바꾼다(글자 배율을 곱해 판정, 큰 글자는 더 일찍).
+          child: LayoutBuilder(builder: (context, c) {
+            final cells = <Widget>[
                 Expanded(child: _StatCell(
-                  label: '근무 건수',
+                  // [ADMIN-STATS-CLOSEOUT] 값은 급여 확정·이체 근무(MED-STAT) — 월 막대의 '전체 근태'와 단위가 다르다.
+                  label: '급여 확정 근무',
                   value: attOk ? '${data.totalWorkCount}건' : '확인 불가',
-                  valueColor: attOk ? AppColors.grey900 : AppColors.grey400,
+                  valueColor: attOk ? AppColors.grey900 : AppColors.textTertiary, // [DU329] '확인 불가' 값
                   delta: (attOk && prevAttOk && hasPrevCount)
                       ? data.workCountDeltaPct
                       : null,
                 )),
-                _VLine(),
                 Expanded(child: _StatCell(
+                  key: const ValueKey('annual-unconfirmed-att'),
+                  onTap: attOk && unconfirmed > 0 ? _openUnconfirmed : null,
                   label: '출근율',
                   value: attOk
-                      ? (data.attendanceRate == 0
+                      // [ADMIN-STATS-CLOSEOUT] 분모가 있으면 0% 도 값이다 — '-' 는 근태가 0건일 때만.
+                      ? (data.attendanceRecordCount == 0
                           ? '-'
-                          : '${data.attendanceRate.toStringAsFixed(1)}%')
+                          : unconfirmed > 0
+                              ? '확인 필요'
+                              : '${data.attendanceRate.toStringAsFixed(1)}%')
                       : '확인 불가',
-                  valueColor: attOk ? AppColors.success : AppColors.grey400,
-                  delta: (attOk && prevAttOk && hasPrevAtt)
+                  valueColor: attOk
+                      ? (unconfirmed > 0 ? AppColors.purple : AppColors.success)
+                      : AppColors.textTertiary, // [DU329] 출근율 '확인 불가' 값
+                  subValue: attOk && unconfirmed > 0 ? '미확인 $unconfirmed건 ›' : null,
+                  subValueColor: AppColors.purple,
+                  delta: (attOk && prevAttOk && hasPrevAtt && rateComparable)
                       ? data.attendanceRate - data.prevYearAttendanceRate
                       : null,
                 )),
-                _VLine(),
                 Expanded(child: _StatCell(
+                  key: const ValueKey('annual-unconfirmed-noshow'),
+                  onTap: attOk && unconfirmed > 0 ? _openUnconfirmed : null,
                   label: '노쇼율',
                   value: attOk
-                      ? (data.noShowRate == 0
+                      ? (data.attendanceRecordCount == 0
                           ? '-'
-                          : '${data.noShowRate.toStringAsFixed(1)}%')
+                          : unconfirmed > 0
+                              ? '확인 필요'
+                              : '${data.noShowRate.toStringAsFixed(1)}%')
                       : '확인 불가',
                   valueColor: attOk
-                      ? (data.noShowRate > 0
-                          ? AppColors.error
-                          : AppColors.grey400)
-                      : AppColors.grey400,
-                  delta: (attOk && prevAttOk && hasPrevNoShow)
+                      ? (unconfirmed > 0
+                          ? AppColors.purple
+                          : data.noShowRate > 0
+                              ? AppColors.error
+                              : AppColors.textTertiary) // [DU329] 노쇼율 0 값
+                      : AppColors.textTertiary, // [DU329] 노쇼율 '확인 불가' 값
+                  subValue: attOk && unconfirmed > 0 ? '미확인 $unconfirmed건 ›' : null,
+                  subValueColor: AppColors.purple,
+                  delta: (attOk && prevAttOk && hasPrevNoShow && rateComparable)
                       ? -(data.noShowRate - data.prevYearNoShowRate)
                       : null,
                 )),
-                _VLine(),
                 Expanded(child: _StatCell(
                   label: '재고용률',
                   // [SECURITY-ADMIN-REVIEW-STATS-AGGREGATE 2026-09-05]
@@ -611,8 +763,19 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                   subValue: data.reviewStatsState == ReviewStatsState.available && data.avgRating > 0
                       ? '★ ${data.avgRating.toStringAsFixed(1)}' : null,
                 )),
-            ]),
-          ),
+            ];
+            Widget row(List<Widget> cs) => IntrinsicHeight(
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    for (var i = 0; i < cs.length; i++) ...[if (i > 0) _VLine(), cs[i]],
+                  ]),
+                );
+            if (TextLayout.fits(context, c.maxWidth, _StatCell.minCellWidth * 4)) return row(cells);
+            return Column(children: [
+              row(cells.sublist(0, 2)),
+              const Divider(height: 1, color: AppColors.grey100),
+              row(cells.sublist(2)),
+            ]);
+          }),
         ),
       ],
     );
@@ -623,35 +786,44 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
   Widget _buildExceptionSection(AnnualStatsData data) {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
+      // [STATS-TO-ATTENDANCE.27] '주의 직원' 은 근태 사건을 사람 평가처럼 읽히게 했다 — 같은 집계
+      //   (지각 2회 이상 또는 결근·노쇼 1회 이상)를 사실 중심 제목으로 두고, 경고 색을 뺀다.
       decoration: BoxDecoration(
-        color: AppColors.error.withValues(alpha: 0.06),
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.error.withValues(alpha: 0.2)),
+        border: Border.all(color: AppColors.grey200),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.warning_amber_rounded,
-                  color: AppColors.error,
+              Icon(Icons.event_note_outlined,
+                  color: AppColors.grey600,
                   size: ResponsiveHelper.iconSize(context, 16)),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                '${data.exceptionMonth}월 주의 직원',
-                style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: AppColors.error, fontWeight: FontWeight.bold),
+              Flexible(
+                child: Text(
+                  '${data.exceptionMonth}월 지각·결근 내역',
+                  style: ResponsiveHelper.smallStyle(context).copyWith(
+                      color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+                ),
               ),
             ],
           ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+          Text('지각 2회 이상 또는 결근·노쇼가 있는 근로자',
+              style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary)), // [DU329] 설명
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           ...data.exceptions
               .where((e) =>
                   e.userName.isNotEmpty && e.userName != '알 수 없음')
               .take(3)
-              .map((e) => Padding(
-                padding: EdgeInsets.only(
-                    bottom: ResponsiveHelper.spacing(context, 4)),
+              .map((e) => InkWell(
+                key: ValueKey('exception-row-${e.userId}'),
+                onTap: () => _openException(e, data.exceptionMonth),
+                child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 40),
                 child: Row(
                   children: [
                     Expanded(
@@ -670,7 +842,11 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                           label: '결근 ${e.absentCount}회',
                           color: AppColors.error),
                     ],
+                    Icon(Icons.chevron_right,
+                        size: ResponsiveHelper.iconSize(context, 16),
+                        color: AppColors.grey600), // [DU329] 이동 표시
                   ],
+                ),
                 ),
               )),
         ],
@@ -706,24 +882,26 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
         children: [
           // [R7-P1-7 후속 P17-S] 제목과 범례가 flex 없이 한 줄에 있어 배율 2.0 에서
           //   가로로 넘쳤다 — 범례를 지우지 않고 제목부터 줄인다.
-          Row(
+          // [STATS-TO-ATTENDANCE.27] 제목이 범례와 한 줄을 나눠 '월별 …' 로 잘렸다 — 제목은 자르지 않고,
+          //   모자라면 범례가 다음 줄로 간다.
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: ResponsiveHelper.spacing(context, 8),
+            runSpacing: ResponsiveHelper.spacing(context, 4),
             children: [
-              Flexible(
-                child: Text(
-                  '월별 인건비',
-                  style: ResponsiveHelper.bodyStyle(context)
-                      .copyWith(fontWeight: FontWeight.bold),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+              Text(
+                '월별 인건비',
+                style: ResponsiveHelper.bodyStyle(context)
+                    .copyWith(fontWeight: FontWeight.bold),
               ),
-              const Spacer(),
               // 범례
-              _LegendDot(color: theme.primaryColor, label: '이달'),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              _LegendDot(
-                  color: theme.primaryColor.withValues(alpha: 0.3),
-                  label: '기타'),
+              Wrap(spacing: ResponsiveHelper.spacing(context, 8), children: [
+                _LegendDot(color: theme.primaryColor, label: '이달'),
+                _LegendDot(
+                    color: theme.primaryColor.withValues(alpha: 0.3),
+                    label: '기타'),
+              ]),
             ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
@@ -735,13 +913,13 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                   ? Center(
                       child: Text('조회 실패',
                           style: ResponsiveHelper.smallStyle(context,
-                              color: AppColors.grey400)),
+                              color: AppColors.textSecondary)), // [DU329] 조회 실패 안내
                     )
                   : maxWage == 0
                   ? Center(
                       child: Text('데이터 없음',
                           style: ResponsiveHelper.smallStyle(context,
-                              color: AppColors.grey400)),
+                              color: AppColors.textTertiary)), // [DU329] 데이터 없음
                     )
                   : RepaintBoundary(
                       child: BarChart(
@@ -764,7 +942,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                               final t = trends[gi];
                               if (t.totalWage == 0) return null;
                               return BarTooltipItem(
-                                '${t.month}월\n${_fmtWage(t.totalWage)}\n${t.workCount}건',
+                                '${t.month}월\n${_fmtWage(t.totalWage)}\n전체 근태 ${t.workCount}건',
                                 ResponsiveHelper.tinyStyle(context)
                                     .copyWith(color: Colors.white),
                               );
@@ -797,7 +975,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                                         .copyWith(
                                       color: isCurrent
                                           ? theme.primaryColor
-                                          : AppColors.grey400,
+                                          : AppColors.textTertiary, // [DU329] 월 축 글자
                                       fontWeight: isCurrent
                                           ? FontWeight.bold
                                           : FontWeight.normal,
@@ -842,8 +1020,11 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                   ),
             ),
           ),
-          // 근무 건수 서브 행
+          // 근무 건수 서브 행 — [ADMIN-STATS-CLOSEOUT] 그 달 **전체 근태** 건수다(급여 확정만이 아니다).
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          Text('전체 근태 (건)',
+              style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary)), // [DU329] 하위 행 제목
+          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: trends.map((t) {
@@ -854,7 +1035,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                 style: ResponsiveHelper.tinyStyle(context).copyWith(
                   color: isCurrent
                       ? theme.primaryColor
-                      : AppColors.grey400,
+                      : AppColors.textTertiary, // [DU329] 월 축 수치
                   fontWeight: isCurrent
                       ? FontWeight.bold
                       : FontWeight.normal,
@@ -903,6 +1084,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                     Expanded(
                       child: Text(e.key,
                           style: ResponsiveHelper.smallStyle(context),
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis),
                     ),
                     Text(_fmtWage(e.value),
@@ -969,7 +1151,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
             const Spacer(),
             Text('평균 $avgScore점 · $total명',
                 style: ResponsiveHelper.tinyStyle(context,
-                    color: AppColors.grey500)),
+                    color: AppColors.textSecondary)), // [DU329] 평균 요약
           ]),
           SizedBox(height: ResponsiveHelper.spacing(context, 14)),
           ...grades.map((g) {
@@ -988,7 +1170,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                     ),
                     Text(g.$4,
                         style: ResponsiveHelper.tinyStyle(context,
-                            color: AppColors.grey400)),
+                            color: AppColors.textTertiary)), // [DU329] 점수 범위
                     const Spacer(),
                     Text('${g.$2}명 (${(ratio * 100).round()}%)',
                         style: ResponsiveHelper.smallStyle(context,
@@ -1014,10 +1196,17 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
 
   Widget _buildEmpty() {
     if (_hasError) {
+      // [DU333] 실패 본문에 보이는 '다시 시도'(소급 5 채택 — S079 · S006 과 같은 outlined). 당겨서 새로고침 · AppBar 새로고침은 그대로.
       return AppEmptyState(
         icon: Icons.cloud_off_outlined,
         title: '통계를 불러오지 못했습니다',
         subtitle: '네트워크 상태를 확인 후 당겨서 새로고침하세요',
+        subtitleColor: AppColors.textSecondary,
+        action: OutlinedButton.icon(
+          onPressed: () => unawaited(_loadStats()),
+          icon: const Icon(Icons.refresh),
+          label: const Text('다시 시도'),
+        ),
       );
     }
     return AppEmptyState(
@@ -1064,23 +1253,34 @@ class _ArrowBtn extends StatelessWidget {
 
 // ── 보조 통계 셀 (라벨 위, 숫자 아래) ──────────────────────────
 class _StatCell extends StatelessWidget {
+  /// [STATS-TO-ATTENDANCE.27-T1] 라벨('급여 확정'·'재고용률')이 낱말 안에서 갈리지 않을 칸 폭(글자 배율 1.0, 논리 px).
+  static const double minCellWidth = 76;
+
+  /// [STATS-TO-ATTENDANCE.27] '미확인 N건' 이 있을 때 그 근무 내역을 연다.
+  final VoidCallback? onTap;
   final String label;
   final String value;
   final Color valueColor;
   final double? delta;
   final String? subValue;
+  final Color subValueColor;
 
   const _StatCell({
+    super.key,
+    this.onTap,
     required this.label,
     required this.value,
     required this.valueColor,
     this.delta,
     this.subValue,
+    this.subValueColor = AppColors.amber,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 10),
         vertical: ResponsiveHelper.spacing(context, 14),
@@ -1089,22 +1289,29 @@ class _StatCell extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // 라벨 먼저 (작게, 회색)
-          Text(label,
+          // [STATS-TO-ATTENDANCE.27] 한글은 글자 단위로 줄이 바뀌어 '급여 확정 근' / '무' 로 갈렸다 —
+          //   낱말 사이에서만 바뀌게 붙임 문자를 넣는다(글자를 줄이거나 자르지 않는다).
+          Text(TextLayout.keepWords(label),
+              semanticsLabel: label,
+              textAlign: TextAlign.center,
               style: ResponsiveHelper.tinyStyle(context,
-                  color: AppColors.grey400)),
+                  color: AppColors.textTertiary)), // [DU329] 지표 라벨
           SizedBox(height: ResponsiveHelper.spacing(context, 5)),
           // 숫자가 주인공 (크게, 컬러)
+          // [STATS-TO-ATTENDANCE.27-T1] '확…' 로 잘려 값을 읽을 수 없었다 — 자르지도 줄이지도 않는다.
+          //   칸이 좁으면 위에서 2×2 로 넓힌다.
           Text(value,
+              textAlign: TextAlign.center,
               style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.w800, color: valueColor),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis),
+                  fontWeight: FontWeight.w800, color: valueColor)),
           // 별점 등 부가정보
           if (subValue != null) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+            // [UNKNOWN-ATTENDANCE] '근태 확인 필요 N건' 은 좁은 칸에서 줄바꿈된다 — 건수를 자르지 않는다.
             Text(subValue!,
+                textAlign: TextAlign.center,
                 style: ResponsiveHelper.tinyStyle(context,
-                    color: AppColors.amber,
+                    color: subValueColor,
                     fontWeight: FontWeight.w600)),
           ],
           // delta (있을 때만)
@@ -1114,8 +1321,10 @@ class _StatCell extends StatelessWidget {
           ],
         ],
       ),
+      ),
     );
   }
+
 }
 
 // ── 구분선 ───────────────────────────────────────────────────────
@@ -1206,7 +1415,7 @@ class _LegendDot extends StatelessWidget {
         SizedBox(width: ResponsiveHelper.spacing(context, 3)),
         Text(label,
             style: ResponsiveHelper.tinyStyle(context,
-                color: AppColors.grey500)),
+                color: AppColors.textSecondary)), // [DU329] 범례
       ],
     );
   }

@@ -474,7 +474,7 @@ void main() {
       for (final body in [sign, pdf]) {
         expect(body.contains('snapshot.attendancePolicy case final policy?'),
             isTrue, reason: '없는 값을 기본값으로 채워 계약 내용으로 만들지 않는다');
-        expect(body.contains('attendancePolicyLines(policy)'), isTrue);
+        expect(body.contains('attendanceRuleGuide(policy'), isTrue); // [.29-A1]
       }
       for (final label in ['지각 유예', '지각 처리', '조퇴 처리', '연장 인정']) {
         expect(

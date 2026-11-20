@@ -38,6 +38,20 @@ enum TOGroupRefreshOutcome {
   notInList,
 }
 
+/// [SUBADMIN-SCOPE.40] 공고 권한을 확인하지 못해 물을 사업장이 하나도 없다.
+///
+/// 거부도, 0건도 아니다. 목록 화면은 이것을 `loadError`로 받아
+/// "권한을 확인하지 못함 + 다시 시도"로 보인다. 다시 시도는 권한을 먼저 다시 읽는다.
+class PostingScopeUnresolved implements Exception {
+  const PostingScopeUnresolved(this.businessIds);
+
+  /// 확인하지 못한 사업장.
+  final List<String> businessIds;
+
+  @override
+  String toString() => 'PostingScopeUnresolved(${businessIds.length})';
+}
+
 /// 리스트·캘린더 뷰가 공유하는 단일 데이터 소스
 ///
 /// 두 뷰는 이 컨트롤러의 [items]를 읽기만 한다.
@@ -192,6 +206,25 @@ class WorkforceController extends ChangeNotifier {
   bool _scopeEmpty = false;
   bool get scopeEmpty => _scopeEmpty;
 
+  /// [SUBADMIN-SCOPE.40] 배정은 있는데 공고를 볼 권한이 확인된 사업장이 0개다.
+  ///
+  ///   `scopeEmpty`(사업장 자체가 없음 → 준비 안내)와 다르다. 이때는 조회하지
+  ///   않고, 화면은 "공고 없음"이 아니라 권한 안내를 보인다.
+  bool _scopeDenied = false;
+  bool get scopeDenied => _scopeDenied;
+
+  /// [SUBADMIN-SCOPE.40] 공고 권한을 **확인하지 못해** 요청에서 뺀 사업장.
+  ///
+  ///   거부가 아니다. 다른 사업장 목록이 보이더라도 화면은 이 사업장이
+  ///   빠졌다는 사실과 다시 시도를 함께 보여야 한다.
+  List<String> _unresolvedScopeIds = const [];
+  List<String> get unresolvedScopeIds => _unresolvedScopeIds;
+
+  /// [SUBADMIN-SCOPE.40] 마지막으로 서버에 요청한 사업장. null = 전체(SUPER_ADMIN)
+  ///   또는 아직 요청 전. 사업장 범위 표기가 실제 목록 범위를 말하게 한다.
+  List<String>? _requestedScope;
+  List<String>? get requestedScope => _requestedScope;
+
   List<String> _knownBusinessNames = [];
 
   /// 마지막 성공 로드에서 확보한 사업장 이름 목록.
@@ -285,6 +318,13 @@ class WorkforceController extends ChangeNotifier {
   void unregisterShowFilterCallback() => _showFilterCallback = null;
   void requestShowFilter() => _showFilterCallback?.call();
 
+  // ── [POSTING-QUOTA-45] 한도 요약의 '진행 중 공고 보기' — WorkforceListView 가 탭을 맞춘다 ──
+  VoidCallback? _showActiveTabCallback;
+
+  void registerShowActiveTabCallback(VoidCallback cb) => _showActiveTabCallback = cb;
+  void unregisterShowActiveTabCallback() => _showActiveTabCallback = null;
+  void requestShowActiveTab() => _showActiveTabCallback?.call();
+
   // ── 외부 reload 콜백 — FCM/lifecycle reload 시 WorkforceListView 확장 상태 초기화 ──
   VoidCallback? _onExternalReloadCallback;
 
@@ -308,10 +348,39 @@ class WorkforceController extends ChangeNotifier {
   static const _scopeShrinkCandidates = {'permission-denied', 'not-found'};
 
   /// Posting 목록 READ scope — 02G canonical.
-  List<String>? _scopeOf(UserModel user) {
-    if (user.isSuperAdmin) return null; // 서버가 전체를 조회한다
-    if (user.isSubAdmin) return user.subAdminBusinessIds;
-    return user.managedBusinessIds;
+  ///
+  /// [SUBADMIN-SCOPE.40] SUB_ADMIN은 배정 전체가 아니라 **공고 권한이 확인된**
+  ///   배정 사업장이다. 서버(`srvAssertToAuthority`)는 요청한 사업장마다
+  ///   canManageTo를 보고 하나라도 어긋나면 전부 거절한다 — 배정 전체를 보내면
+  ///   A=허용·B=불허인 순간 A 공고까지 못 본다. 서버 규칙은 그대로 두고,
+  ///   서버가 허용할 사업장만 묻는다. 확인하지 못한 사업장은 [unresolved]로
+  ///   따로 돌려준다(거부로 읽어 조용히 빼지 않는다).
+  ({List<String>? ids, List<String> unresolved}) _scopeOf(
+      UserModel user, UserProvider up) {
+    // 서버가 전체를 조회한다
+    if (user.isSuperAdmin) return (ids: null, unresolved: const <String>[]);
+    if (user.isSubAdmin) {
+      final s = up.subAdminBusinessesFor((p) => p.canManageTo);
+      return (ids: s.allowed, unresolved: s.unresolved);
+    }
+    return (ids: user.managedBusinessIds, unresolved: const <String>[]);
+  }
+
+  /// [SUBADMIN-SCOPE.40] 범위가 0곳일 때 그 이유를 기록한다.
+  ///   SUB_ADMIN 배정이 있는데 0곳 = 권한 거부, 그 밖 = 아직 사업장이 없음.
+  void _markEmptyScope(UserModel user) {
+    final denied = user.isSubAdmin && user.subAdminBusinessIds.isNotEmpty;
+    _scopeDenied = denied;
+    _scopeEmpty = !denied;
+  }
+
+  /// 범위 밖이 된 사업장의 결과를 지운다 — 권한을 잃은 데이터는 network stale이 아니다.
+  void _pruneOutsideScope(Set<String> visible) {
+    final outside = _items
+        .map((g) => g.businessId)
+        .where((id) => !visible.contains(id))
+        .toSet();
+    _pruneRevokedItems(outside);
   }
 
   /// [POSTING-V2-03N.1] 권한 회수로 stale해진 scope에서 빠져나온다.
@@ -332,6 +401,7 @@ class WorkforceController extends ChangeNotifier {
     required List<String>? requestedScope,
   }) async {
     try {
+      _requestedScope = requestedScope;
       return await _service.getTOGroupItemsLight(
         activeOnly: false,
         closedOnly: false,
@@ -344,10 +414,14 @@ class WorkforceController extends ChangeNotifier {
 
       // canonical scope를 다시 읽는다. 실패하면 회수를 **확인하지 못한** 것이므로
       //   기존 데이터를 임의로 지우지 않고 원래 실패로 끝낸다.
+      // [SUBADMIN-SCOPE.40] SUB_ADMIN은 이 refresh가 사업장별 권한도 다시 읽는다 —
+      //   배정은 그대로인데 canManageTo만 회수된 경우도 여기서 범위가 줄어든다.
       await userProvider.refreshAdminScopeState();
       final refreshed = userProvider.currentUser;
       if (refreshed == null) rethrow;
-      final newScope = _scopeOf(refreshed);
+      final next = _scopeOf(refreshed, userProvider);
+      _unresolvedScopeIds = next.unresolved;
+      final newScope = next.ids;
       if (newScope == null) rethrow; // SUPER_ADMIN으로 바뀌는 경우는 없다
 
       final revoked =
@@ -364,9 +438,16 @@ class WorkforceController extends ChangeNotifier {
 
       if (newScope.isEmpty) {
         // 남은 scope가 없다 — 같은 실패를 다시 만들지 않는다.
+        // [SUBADMIN-SCOPE.40] 모르는 사업장이 남았으면 0건이 아니라 미확인이다.
+        if (next.unresolved.isNotEmpty) {
+          throw PostingScopeUnresolved(next.unresolved);
+        }
+        _markEmptyScope(refreshed);
+        _requestedScope = newScope;
         return [];
       }
       // 새 scope로 **정확히 한 번** 재시도한다. 여기서 또 실패하면 그대로 던진다.
+      _requestedScope = newScope;
       return _service.getTOGroupItemsLight(
         activeOnly: false,
         closedOnly: false,
@@ -481,23 +562,59 @@ class WorkforceController extends ChangeNotifier {
       }
 
       // businessIds를 먼저 동기적으로 결정 (await 불필요)
-      final List<String>? businessIds = _scopeOf(user);
+      final scope = _scopeOf(user, userProvider);
+      final List<String>? businessIds = scope.ids;
+      _unresolvedScopeIds = scope.unresolved;
+      // [SUBADMIN-SCOPE.40] 확인된 거부가 된 사업장의 이전 결과는 조회가 실패해도
+      //   남기지 않는다. 미확인 사업장은 지우지 않는다 — 모르는 것이지 잃은 것이 아니다.
+      if (businessIds != null) {
+        _pruneOutsideScope({...businessIds, ...scope.unresolved});
+      }
 
       if (businessIds != null && businessIds.isEmpty) {
+        // [SUBADMIN-SCOPE.40] 물을 사업장이 없다 — 모르는 사업장이 있으면
+        //   "0건"으로 확정하지 않고 실패(다시 시도)로 남긴다.
+        if (scope.unresolved.isNotEmpty) {
+          throw PostingScopeUnresolved(scope.unresolved);
+        }
         _items = [];
+        _requestedScope = businessIds;
         // [P4.2-SETUP-03] 볼 수 있는 사업장이 **하나도 없다.**
         //   이미 `_scopeOf` 가 내린 판정을 그대로 들고 갈 뿐이다 —
         //   새 파생 상태를 만들어 canonical 을 복제하지 않는다.
         //   화면은 이걸로 "공고 0개" 와 "아직 공고를 만들 수 없음" 을 가른다.
-        _scopeEmpty = true;
+        // [SUBADMIN-SCOPE.40] 배정은 있는데 권한이 0곳이면 "권한 없음"이다.
+        _markEmptyScope(user);
         // early return 하지 않고 finally + 후처리(_preload 등)가 실행되도록 통과
       } else {
         _scopeEmpty = false;
+        _scopeDenied = false;
       // [POSTING-V2-02A.1] 한도 조회 제거 — 탭 표시 외에 소비자가 없었다
       _items = await _loadWithScopeRecovery(
         userProvider: userProvider,
         requestedScope: businessIds,
       );
+      // [SUBADMIN-SCOPE.40] 읽는 동안 권한이 바뀌었을 수 있다(구독 snapshot).
+      //   회수된 사업장 결과는 커밋하지 않고, 새로 허용된 사업장이 있으면
+      //   한 번 더 읽는다 — 늦게 온 응답이 지금 권한을 덮지 않는다.
+      final asked = _requestedScope;
+      final nowUser = userProvider.currentUser;
+      if (asked != null && nowUser != null) {
+        final after = _scopeOf(nowUser, userProvider);
+        final allowedNow = after.ids;
+        if (allowedNow != null) {
+          final allowedSet = allowedNow.toSet();
+          _items = _items
+              .where((g) => allowedSet.contains(g.businessId))
+              .toList();
+          _unresolvedScopeIds = after.unresolved;
+          final askedSet = asked.toSet();
+          if (allowedSet.length != askedSet.length ||
+              !allowedSet.containsAll(askedSet)) {
+            _pendingLoad = true;
+          }
+        }
+      }
       // [POSTING-V2-01B] items가 새 인스턴스로 교체되므로 이전 detail 실패도 무효.
       // 남겨두면 복구된 공고가 계속 error로 보인다.
       _groupDetailErrorIds.clear();
@@ -539,10 +656,12 @@ class WorkforceController extends ChangeNotifier {
       if (flexGroups.isNotEmpty) {
         await Future.wait(flexGroups.map((group) async {
           try {
-            final loaded = await _service.loadFlexSlots(
-              group.id,
-              masterTO: group.masterTO,
-            );
+            // [SIM-ADJ-3] 테스트가 주입한 슬롯 읽기(loadSlots)가 있으면 그것을 쓴다 —
+            //   refreshGroup 과 같은 주입점이다. 운영(주입 없음)은 그대로 아래 한 줄이다.
+            final override = _loadSlotsOverride;
+            final loaded = override != null
+                ? await override(group.id, masterTO: group.masterTO)
+                : await _service.loadFlexSlots(group.id, masterTO: group.masterTO);
             group.setGroupTOs(loaded.groupTOs);
             // setGroupTOs 뒤에 둔다 — 최종 _slotDates는 raw snapshot 기준이어야
             // 모델 파싱에 실패한 슬롯의 날짜도 살아남는다.
@@ -936,7 +1055,14 @@ class WorkforceController extends ChangeNotifier {
     //   카드의 자체 재시도 경로는 `resetWorkDetailLoad()` 를 먼저 불러
     //   이 문제를 피하고 있었다. 같은 일을 이쪽에서도 한다.
     if (!slot.needsWorkDetailLoad && !slot.workDetailStatsFailed) return;
-    if (slot.workDetailStatsFailed) slot.resetWorkDetailLoad();
+    if (slot.workDetailStatsFailed) {
+      slot.resetWorkDetailLoad();
+      // [DU1 구현61 · 감사61 F60-1] 실패한 조회가 남긴 seed 0 은 **집계가 아니다.**
+      //   실패 flag 만 지우면 다시 읽는 동안 `hasLoadedStats` 가 그 seed 를 성공 집계로
+      //   승격해 resolveStats 가 counter(예: 충원 1) 대신 0 을 말했다. 다시 읽는 동안은
+      //   모름이므로 seed 를 버려 counter 폴백으로 둔다. 성공 응답이 오면 setWorkDetails 가 채운다.
+      slot.workDetailStats = null;
+    }
     try {
       final result = await (_loadWorkDetailStatsOverride?.call(
             slot.to,

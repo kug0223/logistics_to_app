@@ -149,8 +149,9 @@ void main() {
           .contains('해당 날짜는 마감되었습니다'), true);
       expect(_flat(_codeOf(_callableOf(raw, 'callableInviteWorker')))
           .contains('마감된 슬롯에는 초대를 보낼 수 없습니다'), true);
+      // [INVITE-LIFECYCLE] 수락은 동의·검토와 같은 마감 판정 함수를 쓴다.
       expect(_flat(_codeOf(_callableOf(raw, 'callableAcceptTOInvitation')))
-          .contains('모집이 종료된 근무는 수락할 수 없습니다'), true);
+          .contains('srvInviteRecruitClosureBlock('), true);
     });
   });
 

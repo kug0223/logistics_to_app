@@ -390,8 +390,10 @@ void main() {
       expect(writeIdx, greaterThan(readIdx), reason: 'read-before-write');
       // 날짜 생성이 같은 문서를 쓴다 — 그래서 충돌·재시도가 성립한다
       final fns = _src(_fnsPath);
+      // [ARCHIVE-FLEX-PARTIAL] 날짜 추가의 마지막 청크도 같은 공고 문서에 totalSlots 를 쓴다(절대값 —
+      //   트랜잭션 안에서 슬롯을 다시 센다). 같은 문서를 쓰므로 충돌·재시도가 그대로 성립한다.
       expect(
-          fns.contains('totalSlots: admin.firestore.FieldValue.increment(totalNewSlots),'),
+          fns.contains('totalSlots: (allSlots?.size ?? 0) + fresh.length,'),
           true);
     });
 
@@ -491,7 +493,9 @@ void main() {
     //   그대로 띄우고 onChanged를 부르지 않는다. 성공 토스트는 없다.
     test('07-f 관계 거부를 성공 분기에서 다루지 않는다 (§10)', () {
       expect(cardBlock.contains('postingDeleteBlockedReason'), false);
-      expect(cardBlock.contains('showWarning'), false);
+      // [POSTING-AUTH-45] 경고는 부분 반영 거절 안내 하나뿐이다(관계 거부 문구가 아니다).
+      expect('showWarning'.allMatches(cardBlock).length, 1);
+      expect(cardBlock.contains('ToastHelper.showWarning(postingPartialRevokeMessage);'), true);
       final catchIdx = cardBlock.indexOf('} catch (e) {');
       expect(catchIdx, greaterThan(-1));
       expect(cardBlock.substring(catchIdx).contains('_cfErrorMessage(e'), true,

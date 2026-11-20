@@ -1,0 +1,302 @@
+{
+ "invApp": {
+  "toId": "to_wd",
+  "businessId": "biz_gp",
+  "businessName": "[합성] GP 사업장",
+  "toTitle": "[합성] 같은 업무명 두 시간대",
+  "uid": "gpw_inv",
+  "applicantName": "합성 gpw_inv",
+  "type": "short",
+  "startTime": "14:20",
+  "endTime": "14:50",
+  "workDate": {
+   "__ts": 1792940400000
+  },
+  "slotId": "s_wd",
+  "selectedWorkType": "분류",
+  "wage": 10320,
+  "wageType": "hourly",
+  "baseHourlyWageMode": "AUTO",
+  "breakMinutes": 0,
+  "nightAllowanceApplied": true,
+  "nightIncluded": false,
+  "payScheduleType": "same_day",
+  "wdId": "ec0aCz09IYWJjFRfwIiU",
+  "invitedBy": "gp_admin",
+  "invitedAt": {
+   "__ts": 1792991227472
+  },
+  "inviteExpiresAt": {
+   "__ts": 1792992000000
+  },
+  "appliedAt": {
+   "__ts": 1792991227472
+  },
+  "activationGeneration": 0,
+  "attendancePolicyAcknowledgement": {
+   "earlyWindow": 30,
+   "earlyArrivalUnit": 30,
+   "lateGrace": 5,
+   "lateUnit": 30,
+   "lateWindow": 30,
+   "overtimeUnit": 30,
+   "earlyLeaveUnit": 30,
+   "acknowledgedBy": "gp_admin",
+   "actorRole": "business_admin",
+   "acknowledgedAt": {
+    "__ts": 1792991227542
+   }
+  },
+  "attendancePolicySnapshot": {
+   "earlyWindow": 30,
+   "earlyArrivalUnit": 30,
+   "lateGrace": 5,
+   "lateUnit": 30,
+   "lateWindow": 30,
+   "overtimeUnit": 30,
+   "earlyLeaveUnit": 30,
+   "policySource": "legacy",
+   "capturedAt": {
+    "__ts": 1792991227542
+   }
+  },
+  "documentReviewedIdVersion": null,
+  "documentReviewBankbookVersion": 1,
+  "documentReviewBankAccountVersion": 1,
+  "documentAccessConsentVersion": "2026-10-15-invite-v1",
+  "matchingAutoEvaluatedIdVersion": 1,
+  "matchingReadinessState": "READY_AUTO",
+  "documentReviewBasis": "AUTO",
+  "documentReviewIdVersion": 1,
+  "documentReviewedBy": null,
+  "matchingAutoEvidenceSource": null,
+  "documentAccessConsentAt": {
+   "__ts": 1792991230001
+  },
+  "idCardConsentGiven": true,
+  "matchingAutoMatchStatus": "MATCHED",
+  "documentReviewedAt": null,
+  "documentAccessConsentGiven": true,
+  "confirmedAt": {
+   "__ts": 1792991230001
+  },
+  "documentReviewBusinessId": "biz_gp",
+  "idCardConsentAt": {
+   "__ts": 1792991230001
+  },
+  "status": "CONFIRMED",
+  "statusHistory": [
+   {
+    "status": "INVITED",
+    "at": {
+     "__ts": 1792991227472
+    },
+    "by": "gp_admin",
+    "action": "INVITE_SENT"
+   },
+   {
+    "status": "CONFIRMED",
+    "at": {
+     "__ts": 1792991230001
+    },
+    "by": "gpw_inv",
+    "action": "INVITE_ACCEPTED"
+   }
+  ]
+ },
+ "dirApp": {
+  "uid": "gpw_dir",
+  "businessId": "biz_gp",
+  "businessName": "[합성] GP 사업장",
+  "toId": "to_wd",
+  "toTitle": "[합성] 같은 업무명 두 시간대",
+  "selectedWorkType": "분류",
+  "wage": 10320,
+  "wageType": "hourly",
+  "baseHourlyWageMode": "AUTO",
+  "breakMinutes": 0,
+  "nightAllowanceApplied": true,
+  "nightIncluded": false,
+  "payScheduleType": "same_day",
+  "startTime": "14:20",
+  "endTime": "14:50",
+  "type": "short",
+  "workDate": {
+   "__ts": 1792940400000
+  },
+  "idCardConsentGiven": true,
+  "idCardConsentVersion": "2026-08-v1",
+  "documentAccessConsentGiven": true,
+  "documentAccessConsentVersion": "2026-09-18-v3",
+  "slotId": "s_wd",
+  "workDetailId": "분류_14:20_14:50",
+  "wdId": "ec0aCz09IYWJjFRfwIiU",
+  "activationGeneration": 0,
+  "attendancePolicySnapshot": {
+   "earlyWindow": 30,
+   "earlyArrivalUnit": 30,
+   "lateGrace": 5,
+   "lateUnit": 30,
+   "lateWindow": 30,
+   "overtimeUnit": 30,
+   "earlyLeaveUnit": 30,
+   "policySource": "legacy",
+   "capturedAt": {
+    "__ts": 1792991224503
+   }
+  },
+  "documentAccessConsentAt": {
+   "__ts": 1792991224503
+  },
+  "appliedAt": {
+   "__ts": 1792991224503
+  },
+  "idCardConsentAt": {
+   "__ts": 1792991224503
+  },
+  "confirmedBy": "gp_admin",
+  "status": "CONTRACT_PENDING",
+  "confirmedAt": {
+   "__ts": 1792991233342
+  },
+  "matchingAutoEvaluatedIdVersion": 1,
+  "matchingReadinessState": "READY_AUTO",
+  "documentReviewBasis": "AUTO",
+  "documentReviewIdVersion": 1,
+  "documentReviewedIdVersion": null,
+  "documentReviewedBy": null,
+  "matchingAutoEvidenceSource": null,
+  "documentReviewBankbookVersion": 1,
+  "documentReviewBankAccountVersion": 1,
+  "matchingAutoMatchStatus": "MATCHED",
+  "documentReviewedAt": null,
+  "documentReviewBusinessId": "biz_gp",
+  "statusHistory": [
+   {
+    "status": "PENDING",
+    "at": {
+     "__ts": 1792991224473
+    },
+    "by": null,
+    "action": "APPLY"
+   },
+   {
+    "status": "CONTRACT_PENDING",
+    "at": {
+     "__ts": 1792991233371
+    },
+    "by": "gp_admin",
+    "action": "CONFIRM"
+   }
+  ]
+ },
+ "to": {
+  "businessId": "biz_gp",
+  "businessName": "[합성] GP 사업장",
+  "title": "[합성] 같은 업무명 두 시간대",
+  "type": "SHORT",
+  "status": "OPEN",
+  "isPublished": true,
+  "isDeleted": false,
+  "dates": [
+   {
+    "__ts": 1792940400000
+   }
+  ],
+  "rangeStart": {
+   "__ts": 1792940400000
+  },
+  "rangeEnd": {
+   "__ts": 1792940400000
+  },
+  "totalRequired": 2,
+  "creatorUID": "gp_admin",
+  "createdAt": {
+   "__ts": 1792991220953
+  },
+  "workDetails": [
+   {
+    "workType": "분류",
+    "requiredCount": 1,
+    "wageType": "hourly",
+    "wage": 10320,
+    "breakMinutes": 10,
+    "payScheduleType": "next_day",
+    "startTime": "12:10",
+    "endTime": "13:10",
+    "wdId": "9HHXPHObxTEcUumQBMsV"
+   },
+   {
+    "workType": "분류",
+    "requiredCount": 1,
+    "wageType": "hourly",
+    "wage": 10320,
+    "breakMinutes": 0,
+    "payScheduleType": "same_day",
+    "startTime": "14:20",
+    "endTime": "14:50",
+    "wdId": "S4Cr1UgOUHuAkTTc2P0Y"
+   }
+  ],
+  "totalPending": 0,
+  "totalConfirmed": 2
+ },
+ "slot": {
+  "date": {
+   "__ts": 1792940400000
+  },
+  "workDetails": [
+   {
+    "workType": "분류",
+    "requiredCount": 1,
+    "wageType": "hourly",
+    "wage": 10320,
+    "breakMinutes": 10,
+    "payScheduleType": "next_day",
+    "startTime": "12:10",
+    "endTime": "13:10",
+    "wdId": "njme3Ck1zU5w1LHMJt1T"
+   },
+   {
+    "workType": "분류",
+    "requiredCount": 1,
+    "wageType": "hourly",
+    "wage": 10320,
+    "breakMinutes": 0,
+    "payScheduleType": "same_day",
+    "startTime": "14:20",
+    "endTime": "14:50",
+    "wdId": "ec0aCz09IYWJjFRfwIiU"
+   }
+  ],
+  "confirmedCount": 2,
+  "pendingCount": 0,
+  "workDetailCounts": {
+   "njme3Ck1zU5w1LHMJt1T": {
+    "confirmedCount": 0,
+    "pendingCount": 0
+   },
+   "ec0aCz09IYWJjFRfwIiU": {
+    "confirmedCount": 2,
+    "pendingCount": 0
+   }
+  },
+  "status": "full"
+ },
+ "A": {
+  "startTime": "12:10",
+  "endTime": "13:10"
+ },
+ "B": {
+  "startTime": "14:20",
+  "endTime": "14:50"
+ },
+ "slotWd": {
+  "A": "njme3Ck1zU5w1LHMJt1T",
+  "B": "ec0aCz09IYWJjFRfwIiU"
+ },
+ "masterWd": {
+  "A": "9HHXPHObxTEcUumQBMsV",
+  "B": "S4Cr1UgOUHuAkTTc2P0Y"
+ }
+}

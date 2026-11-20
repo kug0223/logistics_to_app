@@ -142,35 +142,45 @@ void _runToIsClosedTests() {
 
     // ── A2. isFull ──────────────────────────────────────────
     group('A2. isFull → isClosed', () {
+      // [INVITE-CAPACITY] 합계 경계는 **장기(contract)** 공고의 사건이다 — 공고 자체가
+      //   모집 단위다. 슬롯 공고는 서버가 슬롯 status 로 정한 FULL 을 따른다(A2-F*).
+      test('A2-F1 slot 공고 합계 5/5 이어도 status ACTIVE 면 isFull=false(열린 날짜가 남아 있다)', () {
+        expect(_to(totalRequired: 5, totalConfirmed: 5).isFull, isFalse);
+        expect(_to(totalRequired: 5, totalConfirmed: 5).isClosed, isFalse);
+      });
+      test('A2-F2 slot 공고 status FULL(열린 날짜 모두 참) → isFull=true · isClosed=true', () {
+        expect(_to(status: TOStatus.full).isFull, isTrue);
+        expect(_to(status: TOStatus.full).isClosed, isTrue);
+      });
       test('A2-01 req=0, confirmed=0 → isFull=false', () {
-        expect(_to(totalRequired: 0, totalConfirmed: 0).isFull, isFalse);
+        expect(_to(type: 'contract', totalRequired: 0, totalConfirmed: 0).isFull, isFalse);
       });
       test('A2-02 req=5, confirmed=5 → isFull=true', () {
-        expect(_to(totalRequired: 5, totalConfirmed: 5).isFull, isTrue);
+        expect(_to(type: 'contract', totalRequired: 5, totalConfirmed: 5).isFull, isTrue);
       });
       test('A2-03 req=5, confirmed=5 → isClosed=true', () {
-        expect(_to(totalRequired: 5, totalConfirmed: 5).isClosed, isTrue);
+        expect(_to(type: 'contract', totalRequired: 5, totalConfirmed: 5).isClosed, isTrue);
       });
       test('A2-04 req=5, confirmed=4 → isFull=false', () {
-        expect(_to(totalRequired: 5, totalConfirmed: 4).isFull, isFalse);
+        expect(_to(type: 'contract', totalRequired: 5, totalConfirmed: 4).isFull, isFalse);
       });
       test('A2-05 req=5, confirmed=4 → isClosed=false', () {
-        expect(_to(totalRequired: 5, totalConfirmed: 4).isClosed, isFalse);
+        expect(_to(type: 'contract', totalRequired: 5, totalConfirmed: 4).isClosed, isFalse);
       });
       test('A2-06 req=5, confirmed=6 → isFull=true (초과도 full)', () {
-        expect(_to(totalRequired: 5, totalConfirmed: 6).isFull, isTrue);
+        expect(_to(type: 'contract', totalRequired: 5, totalConfirmed: 6).isFull, isTrue);
       });
       test('A2-07 req=1, confirmed=1 → isFull=true (1인 충족)', () {
-        expect(_to(totalRequired: 1, totalConfirmed: 1).isFull, isTrue);
+        expect(_to(type: 'contract', totalRequired: 1, totalConfirmed: 1).isFull, isTrue);
       });
       test('A2-08 req=0, confirmed=5 → isFull=false (req=0 이면 항상 false)', () {
-        expect(_to(totalRequired: 0, totalConfirmed: 5).isFull, isFalse);
+        expect(_to(type: 'contract', totalRequired: 0, totalConfirmed: 5).isFull, isFalse);
       });
       test('A2-09 req=10000, confirmed=9999 → isFull=false', () {
-        expect(_to(totalRequired: 10000, totalConfirmed: 9999).isFull, isFalse);
+        expect(_to(type: 'contract', totalRequired: 10000, totalConfirmed: 9999).isFull, isFalse);
       });
       test('A2-10 req=10000, confirmed=10000 → isFull=true', () {
-        expect(_to(totalRequired: 10000, totalConfirmed: 10000).isFull, isTrue);
+        expect(_to(type: 'contract', totalRequired: 10000, totalConfirmed: 10000).isFull, isTrue);
       });
     });
 
@@ -185,8 +195,9 @@ void _runToIsClosedTests() {
       test('A3-03 status=ACTIVE → isClosed=false', () {
         expect(_to(status: TOStatus.active).isClosed, isFalse);
       });
-      test('A3-04 status=FULL → isClosed=false (status=FULL은 단독으로 isClosed 미유발)', () {
-        expect(_to(status: TOStatus.full, totalRequired: 0).isClosed, isFalse);
+      test('A3-04 장기 공고 status=FULL → isClosed=false (status=FULL은 단독으로 isClosed 미유발)', () {
+        // [INVITE-CAPACITY] 장기 공고는 합계가 정원이다. 슬롯 공고의 FULL 은 A2-F2.
+        expect(_to(type: 'contract', status: TOStatus.full, totalRequired: 0).isClosed, isFalse);
       });
       test('A3-05 status=SCHEDULED → isClosed=false', () {
         expect(_to(status: TOStatus.scheduled).isClosed, isFalse);
@@ -230,7 +241,7 @@ void _runToIsClosedTests() {
         expect(_to(status: TOStatus.closed, isManualClosed: true).isClosed, isTrue);
       });
       test('A5-02 status=ACTIVE + isManualClosed=false + req=5, conf=5 → isClosed=true', () {
-        expect(_to(status: TOStatus.active, isManualClosed: false, totalRequired: 5, totalConfirmed: 5).isClosed, isTrue);
+        expect(_to(type: 'contract', status: TOStatus.active, isManualClosed: false, totalRequired: 5, totalConfirmed: 5).isClosed, isTrue);
       });
       test('A5-03 status=CLOSED + totalRequired=0 → isClosed=true', () {
         expect(_to(status: TOStatus.closed, totalRequired: 0).isClosed, isTrue);
@@ -710,6 +721,7 @@ void _runEdgeCaseTests() {
 
     // ── F4. 다양한 totalRequired/Confirmed 경계 ──────────────
     group('F4. totalRequired/Confirmed 경계', () {
+      // [INVITE-CAPACITY] 합계 경계는 장기(contract) 공고의 사건이다.
       final cases = [
         (1, 0, false),
         (1, 1, true),
@@ -725,7 +737,7 @@ void _runEdgeCaseTests() {
       ];
       for (final (req, conf, expected) in cases) {
         test('F4 req=$req, conf=$conf → isFull=$expected', () {
-          expect(_to(totalRequired: req, totalConfirmed: conf).isFull, expected ? isTrue : isFalse);
+          expect(_to(type: 'contract', totalRequired: req, totalConfirmed: conf).isFull, expected ? isTrue : isFalse);
         });
       }
     });
@@ -983,6 +995,7 @@ void _runParameterizedTests() {
 
     // I1. TOModel.isClosed 대량 표
     group('I1. TOModel.isClosed 조합표', () {
+      // [INVITE-CAPACITY] 합계 조합표는 장기(contract) 공고 기준. 슬롯 공고 FULL 은 A2-F*.
       final cases = <(String, bool, String, int, int, bool)>[
         // (desc, isManualClosed, status, req, conf, expected)
         ('수동마감만', true, TOStatus.active, 0, 0, true),
@@ -1004,7 +1017,7 @@ void _runParameterizedTests() {
       for (final (desc, manual, status, req, conf, expected) in cases) {
         test('I1-$desc', () {
           expect(
-            _to(isManualClosed: manual, status: status, totalRequired: req, totalConfirmed: conf).isClosed,
+            _to(type: 'contract', isManualClosed: manual, status: status, totalRequired: req, totalConfirmed: conf).isClosed,
             expected ? isTrue : isFalse,
           );
         });
@@ -1144,8 +1157,9 @@ void _runRealWorldScenarioTests() {
       expect(SlotStatusUtil.slotStatus(slot, to), SlotDisplayStatus.closed);
     });
 
-    test('J-04 [인원 충족 후 TO 상태] req=10, conf=10 → TO isFull=true, isClosed=true', () {
-      final to = _to(totalRequired: 10, totalConfirmed: 10);
+    test('J-04 [인원 충족 후 TO 상태] 장기 req=10, conf=10 → TO isFull=true, isClosed=true', () {
+      // [INVITE-CAPACITY] 합계로 차는 것은 장기 공고다(슬롯 공고는 서버 FULL — A2-F*).
+      final to = _to(type: 'contract', totalRequired: 10, totalConfirmed: 10);
       expect(to.isFull, isTrue);
       expect(to.isClosed, isTrue);
     });
@@ -1212,8 +1226,8 @@ void _runRealWorldScenarioTests() {
       expect(to.isClosed, isTrue);
     });
 
-    test('J-15 [공고 상태 FULL 단독] status=FULL, req=0 → isClosed=false (isFull=false)', () {
-      final to = _to(status: TOStatus.full, totalRequired: 0);
+    test('J-15 [장기 공고 상태 FULL 단독] status=FULL, req=0 → isClosed=false (isFull=false)', () {
+      final to = _to(type: 'contract', status: TOStatus.full, totalRequired: 0);
       expect(to.isFull, isFalse);
       expect(to.isClosed, isFalse);
     });

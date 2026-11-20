@@ -18,6 +18,7 @@ import '../../services/payroll_payment_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_batch_action_bar.dart';
 import '../../widgets/common/app_empty_state.dart';
@@ -68,6 +69,10 @@ class _InterimSettlementRequestScreenState
 
   // 로드 대상 최근 개월 수 (최대 3개월치)
   static const int _monthsToLoad = 3;
+
+  /// [DU257] 안내 배너 문구 — 낱말 단위 줄바꿈을 위해 상수로 옮겼다(내용 같음).
+  static const _bannerText = '급여 확정된 근무일 중 정산받을 날짜를 선택하세요.\n'
+      '관리자 승인 후 이체 예정일이 안내됩니다.';
 
   @override
   void initState() {
@@ -204,7 +209,9 @@ class _InterimSettlementRequestScreenState
     // [R7-P3-4] 내 지원(flat)에서 들어오는데 이 화면만 파란 헤더였다.
     //   제목에 사업장명이 붙어 길어질 수 있어 좁은 화면 렌더를 함께 확인한다.
     return AppPageScaffold(
-      title: '중간정산 요청 · ${widget.app.businessName}',
+      // [DU257] 제목은 짧게. 공용 스캐폴드가 긴 제목을 두 줄 '…' 로 줄여 사업장명이 잘렸다(B320 '강남 물류센터 …').
+      //   사업장명은 본문 첫 줄(_buildBusinessHeader)에 말줄임 없이 둔다.
+      title: '중간정산 요청',
       actions: appPageActions(context, onRefresh: _loadConfirmedAttendances),
       bottomNavigationBar: const PendingContractBar(useSafeArea: true),
       body: SafeArea(
@@ -238,46 +245,26 @@ class _InterimSettlementRequestScreenState
                     ))
               : Column(
                   children: [
-                    // 안내 배너
-                    _buildInfoBanner(),
-
-                    // 이유 입력
-                    Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: ResponsiveHelper.spacing(context, 16),
-                        vertical: ResponsiveHelper.spacing(context, 8),
-                      ),
-                      child: TextField(
-                        controller: _reasonController,
-                        decoration: InputDecoration(
-                          hintText: '요청 사유 (선택사항)',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: AppColors.grey300),
-                          ),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: ResponsiveHelper.spacing(context, 12),
-                            vertical: ResponsiveHelper.spacing(context, 10),
-                          ),
-                          prefixIcon: Icon(Icons.edit_note,
-                              color: AppColors.grey500,
-                              size: ResponsiveHelper.iconSize(context, 20)),
-                        ),
-                        style: ResponsiveHelper.bodyStyle(context),
-                        maxLines: 2,
-                        maxLength: 100,
-                      ),
-                    ),
-
-                    // 출근기록 목록
+                    // [DU257] 사업장명·안내·사유·출근기록을 **한 스크롤**로 묶는다(일괄 선택 바만 아래 고정).
+                    //   이전에는 배너·사유 칸이 고정이고 목록만 Expanded 였다. 그래서 B320(2배)에서 고정 부분이
+                    //   화면을 다 차지해 목록 높이가 0 이 됐다(카드가 보이지도·눌리지도 않았고 26px 넘쳤다).
                     Expanded(
                       child: ListView.builder(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: ResponsiveHelper.spacing(context, 12),
-                          vertical: ResponsiveHelper.spacing(context, 8),
+                        padding: EdgeInsets.only(
+                          bottom: ResponsiveHelper.spacing(context, 8),
                         ),
-                        itemCount: _records.length,
-                        itemBuilder: (ctx, i) => _buildAttendanceCard(_records[i]),
+                        itemCount: _records.length + 3,
+                        itemBuilder: (ctx, i) {
+                          if (i == 0) return _buildBusinessHeader();
+                          if (i == 1) return _buildInfoBanner();
+                          if (i == 2) return _buildReasonField();
+                          return Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: ResponsiveHelper.spacing(context, 12),
+                            ),
+                            child: _buildAttendanceCard(_records[i - 3]),
+                          );
+                        },
                       ),
                     ),
 
@@ -300,26 +287,75 @@ class _InterimSettlementRequestScreenState
     );
   }
 
+  /// [DU257] 어느 사업장의 정산인지 — 제목에서 잘리던 사업장명을 본문 첫 줄에 다 보인다.
+  Widget _buildBusinessHeader() {
+    final name = widget.app.businessName;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 16),
+        ResponsiveHelper.spacing(context, 16),
+        ResponsiveHelper.spacing(context, 16),
+        0,
+      ),
+      child: Text(
+        TextLayout.identity(name),
+        semanticsLabel: name,
+        style: ResponsiveHelper.subtitleStyle(context).copyWith(
+            fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+      ),
+    );
+  }
+
+  /// 요청 사유 입력(선택) — [DU257] 본문 스크롤 안으로 옮겼다(내용 같음).
+  Widget _buildReasonField() {
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 8),
+      ),
+      child: TextField(
+        controller: _reasonController,
+        // [DU257] 테두리 덮어쓰기(반경 8·grey300)는 테마의 enabled/focused 테두리(반경 12)에 가려 쓰이지 않았다
+        //   — 지우고 테마 하나로 둔다. 힌트는 낱말 단위 줄바꿈, 앞 아이콘 grey500(2.5) → textSecondary.
+        decoration: InputDecoration(
+          hintText: TextLayout.keepWords('요청 사유 (선택사항)'),
+          contentPadding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12),
+            vertical: ResponsiveHelper.spacing(context, 10),
+          ),
+          prefixIcon: Icon(Icons.edit_note,
+              color: AppColors.textSecondary,
+              size: ResponsiveHelper.iconSize(context, 20)),
+        ),
+        style: ResponsiveHelper.bodyStyle(context),
+        maxLines: 2,
+        maxLength: 100,
+      ),
+    );
+  }
+
   Widget _buildInfoBanner() {
     return Container(
       margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+      // [DU257] 청록 면·선 → 대표색 옅은 면(홈 안내 상자와 같은 brandSurface)·반경 12·선 없음.
+      //   아이콘 대표색, 글자 12 청록 → 13 보조색·낱말 단위 줄바꿈(B320 '선택하/세요' 끊김).
       decoration: BoxDecoration(
-        color: AppColors.tealBg,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.teal.withValues(alpha: 0.4)),
+        color: AppColors.brandSurface,
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(Icons.info_outline,
-              color: AppColors.tealDark,
+              color: AppColors.brand,
               size: ResponsiveHelper.iconSize(context, 16)),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Expanded(
             child: Text(
-              '급여 확정된 근무일 중 정산받을 날짜를 선택하세요.\n'
-              '관리자 승인 후 이체 예정일이 안내됩니다.',
-              style: ResponsiveHelper.tinyStyle(context, color: AppColors.tealDark),
+              TextLayout.keepWords(_bannerText),
+              semanticsLabel: _bannerText,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
             ),
           ),
         ],
@@ -349,15 +385,16 @@ class _InterimSettlementRequestScreenState
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 6)),
+        // [DU257] 선택 = 대표색(청록 → brandSurface 면·brand 선). 반경 10 → 16(S042 목록 카드와 같음).
         decoration: BoxDecoration(
           color: selected
-              ? AppColors.tealBg
+              ? AppColors.brandSurface
               : hasWage
-                  ? Colors.white
+                  ? AppColors.surface
                   : AppColors.grey50,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: selected ? AppColors.teal : AppColors.grey200,
+            color: selected ? AppColors.brand : AppColors.grey200,
             width: selected ? 1.5 : 1,
           ),
         ),
@@ -375,11 +412,10 @@ class _InterimSettlementRequestScreenState
                     : hasWage
                         ? Icons.radio_button_unchecked
                         : Icons.lock_outline,
+                // [DU257] 청록·grey400(1.9)·grey300(1.3) → 대표색·textTertiary(5.25)
                 color: selected
-                    ? AppColors.teal
-                    : hasWage
-                        ? AppColors.grey400
-                        : AppColors.grey300,
+                    ? AppColors.brand
+                    : AppColors.textTertiary,
                 size: ResponsiveHelper.iconSize(context, 22),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 10)),
@@ -394,14 +430,15 @@ class _InterimSettlementRequestScreenState
                       DateFormat('MM.dd (E)', 'ko').format(att.workDate),
                       style: ResponsiveHelper.bodyStyle(context).copyWith(
                         fontWeight: FontWeight.w600,
-                        color: hasWage ? null : AppColors.grey400,
+                        // [DU257] 급여 없는 줄 grey400(1.8) → textTertiary
+                        color: hasWage ? AppColors.textPrimary : AppColors.textTertiary,
                       ),
                     ),
                     if (att.checkInAt != null || att.checkOutAt != null)
                       Text(
                         _formatTimeRange(att.checkInAt, att.checkOutAt),
                         style: ResponsiveHelper.tinyStyle(
-                            context, color: AppColors.grey500),
+                            context, color: AppColors.textSecondary), // [DU257] grey500(2.68)
                       ),
                   ],
                 ),
@@ -416,14 +453,15 @@ class _InterimSettlementRequestScreenState
                       FormatHelper.formatWage(netWage),
                       style: ResponsiveHelper.bodyStyle(context).copyWith(
                         fontWeight: FontWeight.bold,
-                        color: selected ? AppColors.tealDark : AppColors.grey800,
+                        // [DU257] 선택은 면·선·아이콘이 보여 준다 — 금액은 늘 본문색
+                        color: AppColors.textPrimary,
                       ),
                     ),
                     if (totalAmount != netWage)
                       Text(
                         '세전 ${FormatHelper.formatWage(totalAmount)}',
                         style: ResponsiveHelper.tinyStyle(
-                            context, color: AppColors.grey500),
+                            context, color: AppColors.textSecondary), // [DU257] grey500(2.68)
                       ),
                   ],
                 )
@@ -431,7 +469,7 @@ class _InterimSettlementRequestScreenState
                 Text(
                   '급여 정보 없음',
                   style:
-                      ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+                      ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary), // [DU257] grey400(1.8)
                 ),
             ],
           ),

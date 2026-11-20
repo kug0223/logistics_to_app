@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../models/core/user_region.dart';
 import '../../data/korean_regions.dart';
 
@@ -89,6 +90,42 @@ class _HomeRegionPickerSheetState extends State<HomeRegionPickerSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final sheetHeight = MediaQuery.sizeOf(context).height * 0.65;
+    final title = _showCities && _province != null
+        ? '$_province — 시/군/구 선택'
+        : '시/도 선택';
+    // [DU266 r1] 줄표는 앞 지역명에 붙인다(B320 에서 '—' 가 한 줄에 홀로 남았다).
+    final titleText = _showCities && _province != null
+        ? '${TextLayout.unit('$_province —')} ${TextLayout.keepWords('시/군/구 선택')}'
+        : TextLayout.keepWords(title);
+    // [DU266 r2] 머리 요소 — 큰 글자(1.3배 이상)면 뒤로·닫기 줄 아래 전체 폭에 제목(좁은 칸에서 '경상북도 —' 가 쪼개졌다).
+    final stackedHeader = MediaQuery.textScalerOf(context).scale(10) >= 13;
+    // [DU266] 아이콘에 탭만 붙어 터치·낭독 이름이 없었다 → IconButton(48·'뒤로')
+    Widget backButton() => IconButton(
+          onPressed: _goBackToProvince,
+          tooltip: '뒤로',
+          color: AppColors.textPrimary,
+          icon: Icon(
+            Icons.arrow_back_ios,
+            size: ResponsiveHelper.iconSize(context, 20),
+          ),
+        );
+    Widget closeButton() => TextButton(
+          onPressed: () => Navigator.pop(context, null),
+          child: Text(
+            '닫기',
+            style: ResponsiveHelper.bodyStyle(
+              context,
+              color: AppColors.textSecondary, // [DU266] grey500(2.68)
+            ),
+          ),
+        );
+    // [DU266] 본문색 명시·낱말 단위 줄바꿈
+    Widget titleWidget() => Text(
+          titleText,
+          semanticsLabel: title,
+          style: ResponsiveHelper.titleStyle(context, color: AppColors.textPrimary)
+              .copyWith(fontWeight: FontWeight.bold),
+        );
 
     return Container(
       height: sheetHeight,
@@ -115,39 +152,28 @@ class _HomeRegionPickerSheetState extends State<HomeRegionPickerSheet> {
               horizontal: ResponsiveHelper.spacing(context, 20),
               vertical: ResponsiveHelper.spacing(context, 16),
             ),
-            child: Row(
-              children: [
-                if (_showCities) ...[
-                  GestureDetector(
-                    onTap: _goBackToProvince,
-                    child: Icon(
-                      Icons.arrow_back_ios,
-                      size: ResponsiveHelper.iconSize(context, 20),
-                    ),
+            child: stackedHeader
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        if (_showCities) backButton(),
+                        const Spacer(),
+                        closeButton(),
+                      ]),
+                      titleWidget(),
+                    ],
+                  )
+                : Row(
+                    children: [
+                      if (_showCities) ...[
+                        backButton(),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                      ],
+                      Expanded(child: titleWidget()),
+                      closeButton(),
+                    ],
                   ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                ],
-                Expanded(
-                  child: Text(
-                    _showCities && _province != null
-                        ? '$_province — 시/군/구 선택'
-                        : '시/도 선택',
-                    style: ResponsiveHelper.titleStyle(context)
-                        .copyWith(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(context, null),
-                  child: Text(
-                    '닫기',
-                    style: ResponsiveHelper.bodyStyle(
-                      context,
-                      color: AppColors.grey500,
-                    ),
-                  ),
-                ),
-              ],
-            ),
           ),
 
           const Divider(height: 1),
@@ -212,31 +238,32 @@ class _HomeRegionPickerSheetState extends State<HomeRegionPickerSheet> {
           horizontal: ResponsiveHelper.spacing(context, 20),
           vertical: ResponsiveHelper.spacing(context, 14),
         ),
-        color: isSelected
-            ? theme.primaryColor.withValues(alpha: 0.08)
-            : null,
+        // [DU266] 선택 = 대표색(알파 8% → brandSurface 토큰), 미선택 본문색, 꺾쇠 grey400(1.9) → textTertiary
+        color: isSelected ? AppColors.brandSurface : null,
         child: Row(
           children: [
             Expanded(
               child: Text(
-                label,
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                TextLayout.keepWords(label),
+                semanticsLabel: label,
+                style: ResponsiveHelper.bodyStyle(context,
+                        color: isSelected ? AppColors.brand : AppColors.textPrimary)
+                    .copyWith(
                   fontWeight:
                       isSelected ? FontWeight.bold : FontWeight.normal,
-                  color: isSelected ? theme.primaryColor : null,
                 ),
               ),
             ),
             if (isSelected)
               Icon(
                 Icons.check,
-                color: theme.primaryColor,
+                color: AppColors.brand,
                 size: ResponsiveHelper.iconSize(context, 18),
               )
             else if (trailing != null)
               Icon(
                 trailing,
-                color: AppColors.grey400,
+                color: AppColors.textTertiary,
                 size: ResponsiveHelper.iconSize(context, 18),
               ),
           ],

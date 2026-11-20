@@ -10,12 +10,14 @@ import 'package:cloud_functions/cloud_functions.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/business_model.dart' show AttendanceRules;
 import '../../utils/attendance_policy_disclosure.dart';
+import '../../utils/text_layout.dart';
 import '../../models/core/attendance_model.dart';
 import '../../models/core/employment_contract_model.dart';
 import '../../models/core/monthly_review_model.dart';
 import '../../models/core/review_request_model.dart';
 import '../../models/core/to_model.dart';
 import '../../models/ui/invite_capacity_state.dart';
+import '../../models/ui/invite_accept_readiness.dart';
 import '../../screens/contract/contract_sign_screen.dart';
 import '../../screens/user/interim_settlement_request_screen.dart';
 import '../../widgets/dialogs/long_term_work_management_dialog.dart';
@@ -25,6 +27,7 @@ import '../../services/firestore_service.dart';
 import '../../services/monthly_review_service.dart';
 import '../../widgets/dialogs/business_review_dialog.dart';
 import '../../providers/user_provider.dart';
+import '../../widgets/common/attendance_rule_guide_view.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/skeleton_widget.dart';
 import '../../utils/toast_helper.dart';
@@ -35,6 +38,7 @@ import '../../utils/period_revision_disclosure.dart';
 import '../../widgets/user/period_revision_notice_card.dart';
 import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/light_app_bar_style.dart';
 import '../../theme/app_text_styles.dart';
 import '../../utils/responsive_helper.dart';
 import '../../models/core/confirmed_reassignment_proposal.dart';
@@ -103,12 +107,17 @@ class MyApplicationsScreen extends StatefulWidget {
   /// [R7-P2-2 후속 P22-M] 목록을 만들 때의 읽기 경계. production 은 null.
   final MyApplicationsReads? reads;
 
+  /// [E1-MYA] 상태 판정이 보는 시계. production 은 null().
+  ///   확정 근무가 '지났는가' 는 이 한 값으로 갈리므로 테스트가 쥘 수 있어야 한다.
+  final DateTime Function()? clock;
+
   const MyApplicationsScreen({
     super.key,
     this.initialTabIndex = 0,
     this.onBack,
     this.focusApplicationId,
     this.reads,
+    this.clock,
   });
 
   @override
@@ -116,12 +125,15 @@ class MyApplicationsScreen extends StatefulWidget {
 }
 
 class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
+  DateTime _now() => (widget.clock ?? DateTime.now)();
   /// [R5.3E.2] 나에게 온 진행 중인 근무 변경 제안.
   List<ConfirmedReassignmentProposal> _reassignProposals = const [];
   // ─── 포맷터 캐싱 ──────────────────────────────────────────────────────────
   // [R1.2] 근무 날짜(workDate)는 FormatHelper의 KST 변환을 쓴다 — 여기에
-  //   DateFormat을 다시 만들지 않는다. _mdhmFmt는 초대 만료 '시각'용이다.
-  static final _mdhmFmt = DateFormat('MM.dd HH:mm');
+  //   DateFormat을 다시 만들지 않는다.
+  // [ISG2] 초대 만료 '시각' 포맷터(`MM.dd HH:mm`)도 지웠다. 이 화면이
+  //   직접 가지고 있으면 기기 시간대 성분이 찍힌다 —
+  //   `FormatHelper.formatKstMonthDayTime` 한 곳이 KST 로 고정한다.
 
   // ─── 서비스 ───────────────────────────────────────────────────────────────
   final FirestoreService    _firestoreService = FirestoreService();
@@ -141,6 +153,19 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   final Set<String>                     _toLoadFailedIds = {};
   final Map<String, MonthlyReviewModel?> _reviewKeyCache = {};
   bool _contractsLoaded = false;
+
+  /// [E1-MYA] 확정 근무가 실제로 어떻게 끝났는지 — applicationId 로 건다.
+  ///
+  ///   키는 출퇴근 화면·홈과 **같은 것**(`attendance.applicationId`)이다.
+  ///   새 식별자를 만들지 않는다.
+  final Map<String, AttendanceModel> _attendanceByApp = {};
+
+  /// 이미 읽은 (year, month) — 같은 달을 두 번 읽지 않는다.
+  final Set<String> _attendanceMonths = {};
+
+  /// [ERROR ≠ ZERO] 근태를 **못 읽었다**. "근무 기록이 없다"와 다르다.
+  ///   못 읽었으면 완료도 노쇼도 말하지 않는다.
+  bool _attendanceFailed = false;
 
   /// [R8-P7.3] 계약 조회가 실패했다 — "계약이 아직 없다"와 다른 상태다.
   ///   실패를 빈 맵으로 두면 화면이 "관리자가 계약서를 준비 중"이라고
@@ -168,6 +193,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   // ─── 진행 중 action 상태 ──────────────────────────────────────────────────
   final Set<String> _cancellingIds        = {};
   final Set<String> _acceptingIds         = {};
+  // [INVITE-PREACCEPT] 서류 열람 동의 진행 중인 초대.
+  final Set<String> _consentingIds        = {};
   final Set<String> _decliningIds         = {};
   final Set<String> _reviewDialogOpenIds  = {};
   bool _isContractSignOpening             = false;
@@ -231,6 +258,14 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       _toCache.clear();
       _reviewKeyCache.clear();
       _cachedFiltered = null;
+      // [ATTENDANCE-SCREEN-REFRESH] 전체 다시 읽기(새로고침·재시도·복귀)는 근태도 다시
+      //   읽는다. 월 키를 한 번 넣으면 비우지 않아, 출근한 뒤 새로고침해도 '오늘 근무
+      //   예정이에요'가 남았다(DEVICE 10/20 12:38, 근태 조회 0). 실패 표시도 함께
+      //   되돌린다 — 예전에는 한 번 실패하면 '다시 시도' 뒤에도 영구히 실패였다.
+      //   다음 페이지 로드(_loadMore)는 이 집합을 그대로 써서 같은 달을 다시 읽지 않는다.
+      _attendanceMonths.clear();
+      _attendanceByApp.clear();
+      _attendanceFailed = false;
     });
 
     try {
@@ -253,6 +288,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           return <String, EmploymentContractModel>{};
         }),
         _loadWrittenReviews(uid, appWithTOs).catchError((_) => <String, MonthlyReviewModel?>{}),
+        // [E1-MYA] 근태는 목록과 **같은 왕복**에 합류한다. 실패해도 목록은
+        //   그대로 그리고, 실패했다는 사실만 남겨 완료 단정을 막는다.
+        _loadAttendances(uid, appWithTOs),
       ]);
       final contractMap = initResults[0] as Map<String, EmploymentContractModel>;
       final reviewMap   = initResults[1] as Map<String, MonthlyReviewModel?>;
@@ -404,6 +442,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 return <String, EmploymentContractModel>{};
               }),
         _loadWrittenReviews(uid, appWithTOs),
+        // [E1-MYA] 다음 페이지의 지난 근무도 근태를 보고 말해야 한다.
+        //   이미 읽은 달은 건너뛰므로 보통 추가 왕복이 없다.
+        _loadAttendances(uid, appWithTOs),
       ]);
       final newContracts = moreResults[0] as Map<String, EmploymentContractModel>;
       final newReviews   = moreResults[1] as Map<String, MonthlyReviewModel?>;
@@ -492,6 +533,128 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     return result;
   }
 
+  /// [E1-MYA] 확정 근무의 **실제 결말**을 읽는다.
+  ///
+  ///   읽는 달은 "판정이 필요한 지원서"의 달뿐이다 — 미래 근무는 완료를
+  ///   주장할 일이 없으므로 제외한다. QA 목록 8건 기준 달은 하나였다.
+  ///   목록 전체에 대한 지원서별 개별 조회(N+1)는 하지 않는다.
+  ///
+  ///   한 달이라도 실패하면 `_attendanceFailed` 를 세운다 — 부분 결과로
+  ///   "이 근무는 기록이 없다"고 말하면 안 되기 때문이다.
+  Future<void> _loadAttendances(
+      String uid, List<_ApplicationWithTO> items) async {
+    final today = FormatHelper.toKstDate(_now());
+    final months = <String, DateTime>{};
+    for (final e in items) {
+      final app = e.application;
+      if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
+      final rd = _reviewDate(app);
+      if (rd == null) continue;
+      final d = FormatHelper.toKstDate(rd);
+      if (d.isAfter(today)) continue; // 아직 오지 않은 근무는 판정 대상이 아니다
+      months['${d.year}-${d.month}'] = d;
+    }
+    if (months.isEmpty) return;
+
+    for (final entry in months.entries) {
+      if (_attendanceMonths.contains(entry.key)) continue;
+      try {
+        final list = await _reads.monthlyAttendances(
+          userId: uid, year: entry.value.year, month: entry.value.month,
+        );
+        for (final att in list) {
+          if (att.userId != uid) continue;      // self-uid 계약을 화면에서도 지킨다
+          if (att.applicationId.isEmpty) continue;
+          _attendanceByApp[att.applicationId] = att;
+        }
+        _attendanceMonths.add(entry.key);
+      } catch (e) {
+        debugPrint('⚠️ 근태 조회 실패(${entry.key}): $e');
+        _attendanceFailed = true;
+      }
+    }
+  }
+
+  /// [E1-MYA] 그 지원서의 근태. 못 읽었으면 **null 이 아니라 UNKNOWN** 이므로
+  ///   호출부가 `_attendanceFailed` 를 먼저 본다.
+  AttendanceModel? _attendanceOf(ApplicationModel app) =>
+      _attendanceByApp[app.id];
+
+  // ── [DEVICE-MISMATCH-FIX] 근태 결말이 지원서 상태보다 먼저다 ────────────
+  static const _missedShiftText = Text(
+    '근무 시간이 지났어요 · 출근 기록이 없어요',
+    style: TextStyle(
+        fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.warningDark),
+  );
+  static const _settlingText = Text(
+    '근무가 끝났어요 · 정산 중',
+    style: TextStyle(fontSize: 13, color: AppColors.infoDark),
+  );
+
+  /// 노쇼·결근으로 마감된 근무의 상태 배지. 그 외에는 null(지원서 상태를 쓴다).
+  _StatusInfo? _attendanceStatusInfo(ApplicationModel app) {
+    if (!AppStatus.confirmedStatuses.contains(app.status)) return null;
+    final att = _attendanceOf(app);
+    if (att == null) return null;
+    if (att.isNoShow) {
+      return const _StatusInfo(
+          label: '노쇼', color: AppColors.errorDark, bgColor: AppColors.errorBg);
+    }
+    if (att.isAbsent) {
+      return const _StatusInfo(
+          label: '결근',
+          color: AppColors.warningDark,
+          bgColor: AppColors.warningBg);
+    }
+    return null;
+  }
+
+  /// 오늘이거나 지난 근무의 **근태 결말**. 결말을 말할 근거가 없으면 null —
+  ///   호출부(계약 진행 중)가 원래 문구로 이어간다.
+  ///
+  ///   근태를 못 읽었으면(ERROR) 결말을 지어내지 않고 null 을 돌려준다.
+  Widget? _pastShiftOutcome(ApplicationModel app, {required DateTime now}) {
+    final rd = _reviewDate(app);
+    if (rd == null) return null;
+    if (FormatHelper.toKstDate(rd).isAfter(FormatHelper.toKstDate(now))) {
+      return null;
+    }
+    final att = _attendanceOf(app);
+    if (att == null) {
+      if (_attendanceFailed) return null;
+      return app.hasShiftEndedAt(now) ? _missedShiftText : null;
+    }
+    if (att.isNoShow) {
+      return const Text('노쇼 처리됐어요',
+          style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: AppColors.errorDark));
+    }
+    if (att.isAbsent) {
+      return const Text('결근 처리됐어요',
+          style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: AppColors.warningDark));
+    }
+    if (!att.hasCheckedIn) {
+      return app.hasShiftEndedAt(now) ? _missedShiftText : null;
+    }
+    if (!att.hasCheckedOut) {
+      return const Text('근무 중이에요',
+          style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: AppColors.infoDark));
+    }
+    if (att.isWageConfirmed || att.isWageTransferred) {
+      return const Text('근무 완료',
+          style: TextStyle(fontSize: 13, color: AppColors.grey600));
+    }
+    return _settlingText;
+  }
+
   Future<Map<String, MonthlyReviewModel?>> _loadWrittenReviews(
     String uid,
     List<_ApplicationWithTO> items,
@@ -522,7 +685,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         .toList();
     if (uncachedKeys.isNotEmpty) {
       final fetched = await Future.wait(
-        uncachedKeys.map((key) => _reviewService.getReviewById(key)),
+        uncachedKeys.map((key) => _reads.reviewById(key)),
       );
       for (var i = 0; i < uncachedKeys.length; i++) {
         _reviewKeyCache[uncachedKeys[i]] = fetched[i];
@@ -594,6 +757,10 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               title: const Text('내 지원 내역'),
               backgroundColor: Colors.white,
               foregroundColor: AppColors.textPrimary,
+              // [E2-APPBAR-ON-LIGHT] foregroundColor 만으로는 테마의 흰
+              //   titleTextStyle·iconTheme 를 못 이긴다 — 제목·뒤로가기가 사라졌다.
+              titleTextStyle: LightAppBarStyle.title(context),
+              iconTheme: LightAppBarStyle.iconTheme,
               elevation: 0,
               leading: BackButton(
                 onPressed: () => Navigator.of(context).pop(),
@@ -744,23 +911,28 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                   color: AppColors.grey300,
                 ),
                 const SizedBox(height: 22),
-                const Text(
-                  '아직 지원한 일자리가 없어요',
+                // [DU462] B(320 · 2.0)에서 '일자 / 리가'로 음절이 끊겼다 — 낱말 사이에서만 줄바꿈(읽기는 원문).
+                Text(
+                  TextLayout.keepWords('아직 지원한 일자리가 없어요'),
+                  semanticsLabel: '아직 지원한 일자리가 없어요',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w600,
                     color: AppColors.grey700,
                   ),
                 ),
                 const SizedBox(height: 10),
-                const Text(
-                  '일하고 싶은 날짜를 선택하고\n나에게 맞는 일자리를 찾아보세요.',
+                // [DU462] B 에서 '선 / 택하고'로 끊겼다 — 줄바꿈 문자는 두고 낱말 사이에서만(TextLayout.phrases).
+                Text(
+                  TextLayout.phrases('일하고 싶은 날짜를 선택하고\n나에게 맞는 일자리를 찾아보세요.'),
+                  semanticsLabel: '일하고 싶은 날짜를 선택하고\n나에게 맞는 일자리를 찾아보세요.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 15,
                     height: 1.4,
-                    color: AppColors.grey500,
+                    // [DU461] 빈 상태 부제 grey500(2.68) → textTertiary(AppEmptyState 기본 부제 · DU248).
+                    color: AppColors.textTertiary,
                   ),
                 ),
                 const SizedBox(height: 32),
@@ -848,8 +1020,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     }
 
     final contract   = _contractMap[app.id];
-    final statusInfo = _statusInfo(app.status, app: app);
-    final now        = DateTime.now();
+    // [DEVICE-MISMATCH-FIX] 근태가 노쇼·결근으로 마감된 근무는 지원서 상태
+    //   (계약 진행 중·확정)보다 그 결말을 먼저 말한다.
+    final statusInfo = _attendanceStatusInfo(app) ??
+        _statusInfo(app.status, app: app);
+    final now        = _now();
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -980,6 +1155,14 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         to == null && app.toId != null && _toLoadFailedIds.contains(app.toId);
     final isDeleted = to == null && !loadFailed;
     final statusInfo = _statusInfo(app.status, app: app);
+    // [DU462] B(320 · 2.0)에서 제목이 '공고 정보를 불…'로 잘리고 부제가 '지원 검 / 토 중'으로 끊겼다 —
+    //   말줄임 대신 낱말 사이에서만 줄바꿈(제목 keepWords · 부제 phrases · 읽기는 원문).
+    final titleText = loadFailed
+        ? '공고 정보를 불러오지 못했어요'
+        : (to == null ? '삭제된 공고' : to.title);
+    final subText = '${app.businessName} · ${statusInfo.label}'
+        '${isDeleted ? ' · 공고 삭제됨' : ''}'
+        '${loadFailed ? ' · 새로고침하면 다시 보여요' : ''}';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -996,22 +1179,21 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(
-                loadFailed
-                    ? '공고 정보를 불러오지 못했어요'
-                    : (to == null ? '삭제된 공고' : to.title),
+                TextLayout.keepWords(titleText),
+                semanticsLabel: titleText,
                 style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: AppColors.grey600,
+                  // [DU462] grey600(grey50 위 4.41) → textSecondary — 제목 textSecondary · 부제 textTertiary 위계.
+                  color: AppColors.textSecondary,
                 ),
-                overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(height: 2),
               Text(
-                '${app.businessName} · ${statusInfo.label}'
-                '${isDeleted ? ' · 공고 삭제됨' : ''}'
-                '${loadFailed ? ' · 새로고침하면 다시 보여요' : ''}',
-                style: const TextStyle(fontSize: 12, color: AppColors.grey400),
+                TextLayout.phrases(subText),
+                semanticsLabel: subText,
+                // [DU461] 부제 grey400(grey50 위 1.79) → textTertiary(같은 화면 카드 보조 줄 · DU459).
+                style: const TextStyle(fontSize: 12, color: AppColors.textTertiary),
               ),
             ]),
           ),
@@ -1050,11 +1232,13 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         const Icon(Icons.calendar_today_outlined,
             size: 13, color: AppColors.grey500),
         const SizedBox(width: 4),
+        // [E2-NARROW] 근무 시각은 사실이라 자르지 않는다 — 320dp × 1.3 에서
+        //   `14:00~1…` 로 종료 시각이 사라졌다. 좁으면 다음 줄로 흐른다
+        //   (`14:00~15:00` 은 공백이 없어 한 덩어리로 넘어간다).
         Flexible(
           child: Text(
             dateText,
             style: AppTextStyles.jobMeta(),
-            overflow: TextOverflow.ellipsis,
           ),
         ),
         if (app.isLongTermApplication &&
@@ -1074,11 +1258,13 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
     final String label;
     final Color  color;
-    if (remaining < 0)       { label = '만료';        color = AppColors.grey500; }
-    else if (remaining == 0) { label = 'D-Day';       color = AppColors.error;   }
-    else if (remaining <= 7) { label = 'D-$remaining'; color = AppColors.error;   }
-    else if (remaining <= 14){ label = 'D-$remaining'; color = AppColors.warning; }
-    else                     { label = 'D-$remaining'; color = AppColors.success; }
+    // [DU477] 글자는 진한 짝(면 · 테두리는 color 그대로). 이전에는 글자도 color 라 10% 면 위 1.99–3.23 이었다.
+    final Color  ink;
+    if (remaining < 0)       { label = '만료';        color = AppColors.grey500; ink = AppColors.textSecondary; }
+    else if (remaining == 0) { label = 'D-Day';       color = AppColors.error;   ink = AppColors.errorDark; }
+    else if (remaining <= 7) { label = 'D-$remaining'; color = AppColors.error;   ink = AppColors.errorDark; }
+    else if (remaining <= 14){ label = 'D-$remaining'; color = AppColors.warning; ink = AppColors.warningDark; }
+    else                     { label = 'D-$remaining'; color = AppColors.success; ink = AppColors.successDark; }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
@@ -1092,7 +1278,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.w700,
-          color: color,
+          color: ink,
         ),
       ),
     );
@@ -1186,6 +1372,13 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
       // ── 계약 진행 중 ─────────────────────────────────────────────────────────
       case AppStatus.contractPending:
+        // [DEVICE-MISMATCH-FIX] 지난 근무는 계약 진행보다 근태 결말이 먼저다.
+        //   DEV 실측: NO_SHOW 로 마감된 CONTRACT_PENDING 3건이 모두
+        //   `관리자가 계약서를 준비 중이에요`로 보였다(그중 1건은 좌석 반납으로
+        //   관리자 미발송 목록에서도 빠져 계약서가 오지 않는다).
+        final pastOutcome = _pastShiftOutcome(app, now: now);
+        if (pastOutcome != null) return pastOutcome;
+
         final String ctxText;
         final VoidCallback? action;
 
@@ -1230,18 +1423,96 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
         if (rd != null) {
           final rdDate = FormatHelper.toKstDate(rd);
-          if (rdDate == today) {
-            // 근무 당일
-            return const Text(
-              '오늘 근무 예정이에요',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: AppColors.successDark,
-              ),
-            );
-          } else if (rdDate.isBefore(today)) {
-            // 근무 완료 이후
+          if (!rdDate.isAfter(today)) {
+            // ── [E1-MYA] 오늘이거나 지난 확정 근무 ───────────────────────
+            //
+            //   예전에는 `rdDate.isBefore(today)` 하나로 `근무 완료`를 말하고
+            //   리뷰까지 권했다. **날짜가 지났다는 것은 근무를 마쳤다는 뜻이
+            //   아니다** — DEV 실측에서 노쇼로 기록된 근무 3건이 모두
+            //   `리뷰를 작성해 주세요`로 보였다.
+            //
+            //   여기서부터는 실제 근태가 말한다. 판정식은 새로 만들지 않고
+            //   출퇴근 화면·홈과 같은 술어를 쓴다(노쇼/결근 → 출근 → 퇴근),
+            //   완료 여부는 리뷰 자격이 이미 쓰던 기준(`isWageConfirmed ||
+            //   isWageTransferred`)을 그대로 따른다.
+            final att = _attendanceOf(app);
+
+            // 못 읽었으면 완료도 노쇼도 말하지 않는다(ERROR ≠ ZERO).
+            if (att == null && _attendanceFailed) {
+              return _contextTextRow(
+                text: '근무 상태를 확인하지 못했어요',
+                color: AppColors.grey600,
+                action: () => _loadApplications(),
+              );
+            }
+
+            if (att != null && att.isNoShow) {
+              return const Text(
+                '노쇼 처리됐어요',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.errorDark),
+              );
+            }
+            if (att != null && att.isAbsent) {
+              return const Text(
+                '결근 처리됐어요',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.warningDark),
+              );
+            }
+
+            if (att == null) {
+              // 근태 문서가 없다. 오늘이면 아직 근무 전일 수 있고, 지난 날이면
+              //   완료라고 말할 근거가 없다.
+              // [DEVICE-MISMATCH-FIX] 오늘이어도 예정 시간이 끝났으면 "예정"이
+              //   아니다 — DEV 실측 Zdn7(10:00~11:00, 근태 없음)이 14시 넘어서도
+              //   `오늘 근무 예정이에요`였다.
+              if (rdDate == today && app.hasShiftEndedAt(now)) {
+                return _missedShiftText;
+              }
+              return rdDate == today
+                  ? const Text(
+                      '오늘 근무 예정이에요',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.successDark),
+                    )
+                  : const Text(
+                      '근무 기록이 없어요',
+                      style: TextStyle(fontSize: 13, color: AppColors.grey600),
+                    );
+            }
+            if (!att.hasCheckedIn) {
+              return const Text(
+                '출근 기록이 없어요',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.warningDark),
+              );
+            }
+            if (!att.hasCheckedOut) {
+              return const Text(
+                '근무 중이에요',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.infoDark),
+              );
+            }
+            if (!(att.isWageConfirmed || att.isWageTransferred)) {
+              // 퇴근까지 했지만 근태·급여 확정 전이다. 둘을 같은 말로 합치지
+              //   않는다 — 리뷰도 이 단계에서는 권하지 않는다.
+              // [DEVICE-MISMATCH-FIX] 홈·수입의 `정산 중`과 같은 이름으로 부른다.
+              return _settlingText;
+            }
+
+            // ── 여기부터가 기존 완료 분기 — 근태가 확정된 근무뿐이다 ──
             if (review != null) {
               return const Text(
                 '근무 완료 · 리뷰 작성 완료',
@@ -1298,14 +1569,16 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         if (app.invitedAt != null) {
           return const Text(
             '초대를 거절했어요',
-            style: TextStyle(fontSize: 13, color: AppColors.grey500),
+            // [DU459] 13px 상태 문장 grey500(2.68) → grey600 — 같은 함수 중립 상태 문장과 같다.
+            style: TextStyle(fontSize: 13, color: AppColors.grey600),
           );
         }
         return Text(
           app.rejectMessage?.isNotEmpty == true
               ? app.rejectMessage!
               : '이번 지원은 확정되지 않았어요',
-          style: const TextStyle(fontSize: 13, color: AppColors.grey500),
+          // [DU459] grey500 → grey600(같은 함수 중립 상태 문장).
+          style: const TextStyle(fontSize: 13, color: AppColors.grey600),
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         );
@@ -1322,13 +1595,15 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           children: [
             Text(
               app.workerEndReasonSentence,
-              style: const TextStyle(fontSize: 13, color: AppColors.grey500),
+              // [DU459] grey500 → grey600(같은 함수 중립 상태 문장).
+              style: const TextStyle(fontSize: 13, color: AppColors.grey600),
             ),
             if (conflictContext != null) ...[
               const SizedBox(height: 2),
               Text(
                 conflictContext,
-                style: const TextStyle(fontSize: 12, color: AppColors.grey400),
+                // [DU459] 12px 보조 줄 grey400(1.88) → textTertiary.
+                style: const TextStyle(fontSize: 12, color: AppColors.textTertiary),
               ),
             ],
           ],
@@ -1351,11 +1626,15 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         //   떴다. 읽지 못한 것은 자리가 있다는 뜻이 아니다.
         //   관리자 화면과 같은 어휘(InviteCapacityState)를 쓴다.
         if (app.workInstanceCapacityState == InviteCapacityState.full) {
+          // [INVITE-CLOSURE-PROJECTION] 정원이 찬 초대는 **끝난 초대가 아니다** —
+          //   INVITED 그대로이고 자리가 다시 생기면 수락할 수 있다(R2.2).
+          //   그래서 `초대 정리`(=끝난 것을 치우는 말)가 아니라 근로자 자신의
+          //   결정인 `거절`을 그 이름 그대로 둔다.
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                '모집이 완료된 초대예요',
+                '모집 인원이 찼어요',
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
@@ -1364,13 +1643,15 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               ),
               const SizedBox(height: 2),
               const Text(
-                '이 근무는 인원이 모두 찼어요',
-                style: TextStyle(fontSize: 12, color: AppColors.grey500),
+                '자리가 다시 생기면 수락할 수 있어요',
+                // [DU459] 12px 보조 줄 grey500(2.68) → textTertiary.
+                style: TextStyle(fontSize: 12, color: AppColors.textTertiary),
               ),
               const SizedBox(height: 8),
               _inviteActionButton(
-                label: '초대 정리',
-                color: AppColors.grey600,
+                label: '거절',
+                // [DU469] grey600/grey100(4.23) → textSecondary(5.43 · 중립 배지 DU468 과 같은 짝).
+                color: AppColors.textSecondary,
                 bgColor: AppColors.grey100,
                 loading: _decliningIds.contains(app.id),
                 onTap: () => _declineInvite(app.id),
@@ -1379,35 +1660,39 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           );
         }
         if (app.workInstanceCapacityState == InviteCapacityState.closed) {
-          // [R2 FINAL] FULL != CLOSED. 자리가 남아 있어도 모집이 끝났을 수 있다.
-          //   `인원이 모두 찼어요`라고 말하면 사실이 아닌 것을 말하는 것이다.
+          // [INVITE-CLOSURE-PROJECTION] `closed` 는 이제 **초대 효력이 끝난 것**만
+          //   말한다(수동 마감·공고 삭제·사업장 비활성 등 — 서버 수락 tx 와 같은
+          //   판정). 공개 지원 접수의 자동 마감은 여기 오지 않는다.
           //
-          //   종료 사유(수동 마감 / 지원 마감시간 경과 / 상위 공고 종료)는
-          //   구분해 말하지 않는다 — 근로자가 할 수 있는 일이 같고, 사유를
-          //   내세우면 `사업장이 종료했다`가 시간 만료에도 붙어 틀린 말이 된다.
+          //   정리 버튼을 두지 않는다. 그 버튼은 거절(REJECTED, `근로자가
+          //   거절함`)을 썼는데 실제 사건은 사업장 쪽 종료다 — 원장의 사유와
+          //   다른 기록이 남는다. 초대는 유효 기한에 만료(EXPIRED)로 정리되고
+          //   그때 대기 인원도 돌려준다.
+          final deleted = app.inviteEndedReason == 'POSTING_DELETED';
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '모집이 종료된 초대예요',
-                style: TextStyle(
+              Text(
+                deleted ? '삭제된 공고의 초대예요' : '모집이 마감된 초대예요',
+                style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
                   color: AppColors.grey600,
                 ),
               ),
               const SizedBox(height: 2),
-              const Text(
-                '이 근무는 더 이상 모집하지 않아요',
-                style: TextStyle(fontSize: 12, color: AppColors.grey500),
+              Text(
+                deleted
+                    ? '이 근무는 더 이상 진행되지 않아요'
+                    : '사업장이 모집을 마감해 수락할 수 없어요',
+                // [DU459] 12px 보조 줄 grey500 → textTertiary.
+                style: const TextStyle(fontSize: 12, color: AppColors.textTertiary),
               ),
-              const SizedBox(height: 8),
-              _inviteActionButton(
-                label: '초대 정리',
-                color: AppColors.grey600,
-                bgColor: AppColors.grey100,
-                loading: _decliningIds.contains(app.id),
-                onTap: () => _declineInvite(app.id),
+              const SizedBox(height: 2),
+              const Text(
+                '초대 기한이 지나면 목록에서 자동으로 정리돼요',
+                // [DU459] 12px 보조 줄 grey400(1.88) → textTertiary.
+                style: TextStyle(fontSize: 12, color: AppColors.textTertiary),
               ),
             ],
           );
@@ -1431,12 +1716,14 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               const SizedBox(height: 2),
               const Text(
                 '새로고침 후 다시 확인해 주세요',
-                style: TextStyle(fontSize: 12, color: AppColors.grey500),
+                // [DU459] 12px 보조 줄 grey500 → textTertiary.
+                style: TextStyle(fontSize: 12, color: AppColors.textTertiary),
               ),
               const SizedBox(height: 8),
               _inviteActionButton(
                 label: '거절',
-                color: AppColors.grey600,
+                // [DU469] grey600/grey100(4.23) → textSecondary(5.43 · 중립 배지 DU468 과 같은 짝).
+                color: AppColors.textSecondary,
                 bgColor: AppColors.grey100,
                 loading: _decliningIds.contains(app.id),
                 onTap: () => _declineInvite(app.id),
@@ -1448,6 +1735,17 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         //   `근무 초대가 도착했어요`라고만 하면 근로자는 이것이 **기존 지원을
         //   대신하는 선택**이라는 것을 모른다. 무엇을 포기하는지 먼저 말한다.
         final isOffer = app.isAlternativeWorkOffer;
+        // [ISG2] 수락 가능 여부는 이 화면의 시계로 본다 — 목록의 다른
+        //   날짜 판정과 같은 시각을 써야 한 화면 안에서 말이 엇갈리지 않는다.
+        final inviteDeadline = app.effectiveInviteDeadline;
+        final acceptable =
+            inviteDeadline == null || _now().isBefore(inviteDeadline);
+        // [ISG2] 마감 표기는 **KST 고정**이다. `DateFormat.format` 은 받은
+        //   DateTime 의 자기 성분을 쓰므로 기기 시간대에 따라 다른 시각이
+        //   찍힌다(실측: KST 20:00 마감이 11:00 으로 렌더).
+        final inviteDeadlineLabel = inviteDeadline == null
+            ? ''
+            : FormatHelper.formatKstMonthDayTime(inviteDeadline);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1479,30 +1777,55 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 '수락하면 기존 지원'
                 '${app.sourceWorkType != null ? "(${app.sourceWorkType})" : ""}'
                 '은 자동으로 정리돼요',
-                style: const TextStyle(fontSize: 12, color: AppColors.grey500),
+                // [DU459] 12px 보조 줄 grey500 → textTertiary.
+                style: const TextStyle(fontSize: 12, color: AppColors.textTertiary),
               ),
             ],
-            if (app.inviteExpiresAt != null) ...[
+            // [ISG2] 표시하는 마감은 **실제로 수락 가능한 마지막 시각**이다.
+            //   저장된 inviteExpiresAt 만 읽으면, 그 계약 이전에 만들어진
+            //   초대에서 근무가 끝난 다음 날까지 수락 가능한 것처럼 보인다.
+            //   데이터를 고치지 않고 읽는 쪽에서 같은 계약을 적용한다.
+            if (app.effectiveInviteDeadline != null) ...[
               const SizedBox(height: 2),
               Text(
-                '~${_mdhmFmt.format(app.inviteExpiresAt!)} 만료',
-                style: const TextStyle(fontSize: 12, color: AppColors.grey500),
+                acceptable
+                    ? '~$inviteDeadlineLabel 만료'
+                    : '수락 기한이 지났어요 (~$inviteDeadlineLabel)',
+                style: TextStyle(
+                  fontSize: 12,
+                  // [DU459] 기한 grey500 → textTertiary(보조 줄) · 지남 error(3.68) → errorDark('노쇼 처리됐어요'와 같다).
+                  color: acceptable ? AppColors.textTertiary : AppColors.errorDark,
+                ),
               ),
             ],
+            // [INVITE-PREACCEPT] 기한 안에서는 **수락 준비 상태**를 말한다.
+            //   판정은 서버 값 그대로다. [INVITE-PARITY] 모르면(unknown·
+            //   unavailable) 이유를 말하고 수락을 막는다 — 다시 확인이 먼저다.
+            // [INVITE-CLOSURE-PROJECTION] 공개 지원은 끝났어도 이 초대는 유효하다 —
+            //   공고 목록에서 사라진 근무라 근로자가 헷갈리지 않게 한 줄로 말한다.
+            if (acceptable && app.publicIntakeClosed) ...[
+              const SizedBox(height: 2),
+              const Text(
+                '공개 모집은 마감됐지만, 받은 초대는 기한까지 수락할 수 있어요',
+                style: TextStyle(fontSize: 12, color: AppColors.grey600),
+              ),
+            ],
+            if (acceptable) ..._inviteReadinessLine(app),
             const SizedBox(height: 8),
-            Row(
+            // [INVITE-PREACCEPT] 좁은 화면·큰 글자에서 버튼이 줄 밖으로 나가지
+            //   않게 Row 대신 Wrap — 넘치면 다음 줄로 내려간다.
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
-                _inviteActionButton(
-                  label: isOffer ? '제안 조건으로 수락' : '수락하기',
-                  color: AppColors.brand,
-                  bgColor: AppColors.infoBg,
-                  loading: _acceptingIds.contains(app.id),
-                  onTap: () => _acceptInvite(app.id),
-                ),
-                const SizedBox(width: 8),
+                // [ISG2] 마감이 지난 초대는 눌러도 서버가 거절한다.
+                //   누를 수 있게 두고 실패 토스트를 보여 주는 대신,
+                //   버튼을 비활성으로 두고 이유를 위에서 말한다.
+                ..._invitePrimaryActions(app, isOffer: isOffer, acceptable: acceptable),
                 _inviteActionButton(
                   label: '거절',
-                  color: AppColors.grey600,
+                  // [DU469] grey600/grey100(4.23) → textSecondary(5.43).
+                  color: AppColors.textSecondary,
                   bgColor: AppColors.grey100,
                   loading: _decliningIds.contains(app.id),
                   onTap: () => _declineInvite(app.id),
@@ -1516,7 +1839,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       case AppStatus.expired:
         return const Text(
           '초대 유효기간이 종료되었어요',
-          style: TextStyle(fontSize: 13, color: AppColors.grey400),
+          // [DU459] 13px 상태 문장 grey400(1.88) → grey600(같은 함수 중립 상태 문장).
+          style: TextStyle(fontSize: 13, color: AppColors.grey600),
         );
 
       default:
@@ -1555,29 +1879,154 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   }
 
   /// 초대 수락/거절 버튼
+  /// [INVITE-PREACCEPT] 기한 안의 초대가 지금 어느 단계인지 한 줄로 말한다.
+  ///
+  /// 서버가 준 [InviteAcceptReadiness] 그대로다. ready·unknown 은 덧붙이지
+  /// 않는다 — 수락 버튼이 곧 다음 행동이다.
+  List<Widget> _inviteReadinessLine(ApplicationModel app) {
+    final String? text;
+    switch (app.inviteAcceptReadiness) {
+      case InviteAcceptReadiness.consentRequired:
+        text = '사업장이 서류를 확인해야 수락할 수 있어요. 먼저 서류 열람에 동의해 주세요.';
+        break;
+      case InviteAcceptReadiness.reviewPending:
+        text = '사업장이 서류를 확인하고 있어요. 확인이 끝나면 수락할 수 있어요.';
+        break;
+      case InviteAcceptReadiness.documentRequired:
+        text = '신분증을 등록해야 수락할 수 있어요.';
+        break;
+      case InviteAcceptReadiness.unavailable:
+        // 서버가 확인하려다 못 했다 — READY 가 아니다. 다시 확인하게 한다.
+        text = '수락할 수 있는지 확인하지 못했어요. 다시 확인해 주세요.';
+        break;
+      case InviteAcceptReadiness.unknown:
+        // [INVITE-PARITY] 서버가 이 값을 아예 주지 않았다(구버전 서버). 조회
+        //   실패와 다른 이유다 — 근로자가 할 수 있는 일은 같다(다시 확인).
+        text = '지금은 수락 가능 여부를 확인할 수 없어요. 잠시 후 다시 확인해 주세요.';
+        break;
+      case InviteAcceptReadiness.ready:
+        text = null;
+        break;
+    }
+    if (text == null) return const [];
+    return [
+      const SizedBox(height: 4),
+      Text(text, style: const TextStyle(fontSize: 12, color: AppColors.grey600)),
+    ];
+  }
+
+  /// [INVITE-PREACCEPT] 단계별 주 버튼.
+  ///
+  ///   동의 필요   → `서류 열람 동의` (수락이 아니다)
+  ///   확인 대기   → `수락하기` 비활성(서버가 거절할 버튼을 열어 두지 않는다)
+  ///   신분증 없음 → `서류 등록하기`
+  ///   수락 가능   → `수락하기`
+  ///   조회 실패·모름 → `다시 확인` + `수락하기` 비활성
+  ///   기한 종료   → `수락하기` 비활성
+  List<Widget> _invitePrimaryActions(
+    ApplicationModel app, {
+    required bool isOffer,
+    required bool acceptable,
+  }) {
+    final acceptLabel = isOffer ? '제안 조건으로 수락' : '수락하기';
+    Widget accept({required bool enabled}) => _inviteActionButton(
+          label: acceptLabel,
+          color: AppColors.brand,
+          bgColor: AppColors.infoBg,
+          loading: _acceptingIds.contains(app.id),
+          onTap: enabled ? () => _acceptInvite(app.id) : null,
+        );
+    if (!acceptable) return [accept(enabled: false)];
+    switch (app.inviteAcceptReadiness) {
+      case InviteAcceptReadiness.consentRequired:
+        return [
+          _inviteActionButton(
+            label: '서류 열람 동의',
+            color: AppColors.brand,
+            bgColor: AppColors.infoBg,
+            loading: _consentingIds.contains(app.id),
+            onTap: () => _giveInviteConsent(app),
+          ),
+        ];
+      case InviteAcceptReadiness.reviewPending:
+        return [accept(enabled: false)];
+      case InviteAcceptReadiness.documentRequired:
+        return [
+          _inviteActionButton(
+            label: '서류 등록하기',
+            color: AppColors.brand,
+            bgColor: AppColors.infoBg,
+            loading: false,
+            onTap: () async {
+              await ApplyPrerequisitesScreen.show(context, isFlexType: true);
+              if (mounted) _loadApplications();
+            },
+          ),
+        ];
+      case InviteAcceptReadiness.unavailable:
+      case InviteAcceptReadiness.unknown:
+        // [INVITE-PARITY] 모르면 수락하지 않게 한다. 확인되지 않은 상태로
+        //   누르게 두면 서버 거절을 사용자가 처음 듣는 자리가 된다.
+        //   다시 확인이 다음 행동이다.
+        return [
+          _inviteActionButton(
+            label: '다시 확인',
+            color: AppColors.brand,
+            bgColor: AppColors.infoBg,
+            loading: false,
+            onTap: _loadApplications,
+          ),
+          accept(enabled: false),
+        ];
+      case InviteAcceptReadiness.ready:
+        return [accept(enabled: true)];
+    }
+  }
+
   Widget _inviteActionButton({
     required String label,
     required Color color,
     required Color bgColor,
     required bool loading,
-    required VoidCallback onTap,
+    // [ISG2] null 이면 비활성 — 마감이 지난 초대의 `수락하기`가 그렇다.
+    //   누를 수 있게 두고 서버 실패 토스트로 알리는 대신 미리 막는다.
+    required VoidCallback? onTap,
   }) {
+    final disabled = loading || onTap == null;
     return GestureDetector(
-      onTap: loading ? null : onTap,
+      onTap: disabled ? null : onTap,
       behavior: HitTestBehavior.opaque,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
         decoration: BoxDecoration(
-          color: bgColor,
+          color: disabled ? AppColors.grey100 : bgColor,
           borderRadius: BorderRadius.circular(8),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: loading ? AppColors.grey400 : color,
-          ),
+        // [INVITE-PREACCEPT] 진행 중이면 **보이는** 표시를 준다 — 글자색만
+        //   흐려지면 눌렸는지 알 수 없어 다시 누르게 된다.
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (loading) ...[
+              const SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: AppColors.grey400),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Flexible(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: disabled ? AppColors.grey400 : color,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1618,7 +2067,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         if (app?.invitedAt != null) {
           return const _StatusInfo(
             label: '초대 거절',
-            color: AppColors.grey600,
+            // [DU468] 중립 배지 grey600/grey100(4.23) → textSecondary/grey100(중립 상태 칩 짝 · DU274 · 소급8 · DU466 과 같다).
+            color: AppColors.textSecondary,
             bgColor: AppColors.grey100,
           );
         }
@@ -1630,7 +2080,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       case AppStatus.canceled:
         return const _StatusInfo(
           label: '취소',
-          color: AppColors.grey600,
+          // [DU468] 중립 배지 grey600/grey100(4.23) → textSecondary/grey100(중립 상태 칩 짝 · DU274 · 소급8 · DU466 과 같다).
+          color: AppColors.textSecondary,
           bgColor: AppColors.grey100,
         );
       case AppStatus.autoCanceled:
@@ -1646,7 +2097,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         }
         return const _StatusInfo(
           label: '자동 취소',
-          color: AppColors.grey600,
+          // [DU468] 중립 배지 grey600/grey100(4.23) → textSecondary/grey100(중립 상태 칩 짝 · DU274 · 소급8 · DU466 과 같다).
+          color: AppColors.textSecondary,
           bgColor: AppColors.grey100,
         );
       case AppStatus.invited:
@@ -1658,14 +2110,16 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       case AppStatus.expired:
         return const _StatusInfo(
           label: '초대 종료',
-          color: AppColors.grey600,
-          bgColor: AppColors.grey200,
+          // [DU468] 중립 배지 grey600/grey200(3.97) → textSecondary/grey100(중립 상태 칩 짝 · DU274 · 소급8 · DU466 과 같다).
+          color: AppColors.textSecondary,
+          bgColor: AppColors.grey100,
         );
       default:
         return const _StatusInfo(
           label: '알 수 없음',
-          color: AppColors.grey600,
-          bgColor: AppColors.grey200,
+          // [DU468] 중립 배지 grey600/grey200(3.97) → textSecondary/grey100(중립 상태 칩 짝 · DU274 · 소급8 · DU466 과 같다).
+          color: AppColors.textSecondary,
+          bgColor: AppColors.grey100,
         );
     }
   }
@@ -1910,10 +2364,43 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   ///   계약서·PDF·관리자 확인 시트가 같은 목록을 쓴다.
   ///
   ///   값은 전달받은 snapshot 만 쓴다. 사업장 문서를 다시 읽지 않는다.
-  Widget _attendancePolicyBlock(AttendanceRules? rules) {
+  /// 수락 확인창 맨 위 — 이 초대가 어느 근무인지(날짜·업무·시간·급여).
+  Widget _inviteAcceptSummary(ApplicationModel app) {
+    final day = app.isLongTermApplication ? (app.desiredStartDate ?? app.workDate) : app.workDate;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.infoBg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${FormatHelper.formatDateKorean(day)} · ${app.selectedWorkType}',
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 2),
+          Text('${app.startTime} ~ ${app.endTime} · ${app.formattedWage}',
+              style: const TextStyle(fontSize: 13, color: AppColors.grey700)),
+        ],
+      ),
+    );
+  }
+
+  Widget _acceptDialogSectionTitle(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Text(text,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+      );
+
+  /// [ATTENDANCE-RULE-GUIDE.29-A1] 초대 수락 — 이 약속(지원서 snapshot)의 '근태 인정 기준'.
+  ///   공고·계약과 같은 형식: 근무시간 → 출근/퇴근 기준, 기준 설명은 늘 보이고 이 근무 시각의
+  ///   사례는 '시간 예시 보기' 로 편다. 예전의 따로 떨어진 회색 사례 묶음(같은 내용)을 합쳤다.
+  ///   기록이 없으면 **사업장 현재 기준으로 채우지 않는다.**
+  Widget _attendancePolicyBlock(AttendanceRules? rules, ApplicationModel app) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: AppColors.grey50,
         borderRadius: BorderRadius.circular(8),
@@ -1922,46 +2409,22 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(kAttendancePolicyTitle,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+          const Text(kAttendanceRuleGuideTitle,
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
           const SizedBox(height: 4),
-          // 기록이 없으면 **사업장 현재 기준으로 채우지 않는다.**
           if (rules == null)
             const Text(kAttendancePolicyUnknownNote,
                 style: TextStyle(fontSize: 12, color: AppColors.grey700))
           else ...[
-            for (final g in attendancePolicyGroups(rules)) ...[
-              Padding(
-                padding: const EdgeInsets.only(top: 4, bottom: 2),
-                child: Text(g.title,
-                    style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.grey600)),
-              ),
-              for (final line in g.lines)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 2),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(
-                        width: 78,
-                        child: Text(line.label,
-                            style: const TextStyle(
-                                fontSize: 12, color: AppColors.grey700)),
-                      ),
-                      Expanded(
-                        child: Text(line.value,
-                            style: const TextStyle(
-                                fontSize: 12, fontWeight: FontWeight.w600)),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
+            AttendanceRuleGuideView(
+              guide: attendanceRuleGuide(rules,
+                  startHHmm: app.startTime, endHHmm: app.endTime),
+              collapsibleExamples: true,
+            ),
             const SizedBox(height: 4),
             // 근로자에게 가는 문구다 — 폰트 하한(12px)을 지킨다.
+            const Text(kAttendancePolicyEffectNote,
+                style: TextStyle(fontSize: 12, color: AppColors.grey600)),
             const Text(kAttendancePolicyFrozenNote,
                 style: TextStyle(fontSize: 12, color: AppColors.grey600)),
           ],
@@ -2025,7 +2488,81 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   }
 
   Future<void> _acceptInvite(String applicationId) async {
+    // [INVITE-PREACCEPT] 누른 **즉시** 진행 중으로 표시하고 중복 탭을 막는다.
+    //   예전에는 세무 상태 읽기·확인창 준비가 끝난 뒤(DEV 실측 2.4~6.4초)에야
+    //   표시가 바뀌어, 반응 없는 버튼을 다시 누르면 확인창이 겹칠 수 있었다.
     if (_acceptingIds.contains(applicationId)) return;
+    setState(() => _acceptingIds.add(applicationId));
+    try {
+      await _acceptInviteFlow(applicationId);
+    } finally {
+      if (mounted) setState(() => _acceptingIds.remove(applicationId));
+    }
+  }
+
+  /// [INVITE-PREACCEPT] 이 초대에 서류 열람 동의**만** 기록한다.
+  ///
+  /// 수락이 아니다 — 상태·자리·계약은 그대로다. 동의가 있어야 사업장이
+  /// 서류를 확인할 수 있고, 확인이 끝나야 수락할 수 있다. 수락은 근로자가
+  /// 따로 한다. 문구와 버전은 [DocumentAccessConsent] 한 곳에서 온다.
+  Future<void> _giveInviteConsent(ApplicationModel app) async {
+    if (_consentingIds.contains(app.id)) return;
+    setState(() => _consentingIds.add(app.id));
+    try {
+      final ok = await DialogHelper.showCustom<bool>(
+        context,
+        title: '서류 열람 동의',
+        icon: Icons.assignment_ind_outlined,
+        iconColor: AppColors.brand,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '사업장이 서류를 확인해야 이 초대를 수락할 수 있어요.\n'
+              '동의만으로 근무가 확정되지는 않아요. 확인이 끝나면 '
+              '수락은 따로 해 주세요.',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            DocumentAccessConsent.inviteCard(app.businessName),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context, rootNavigator: true).pop(false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.brand),
+            onPressed: () => Navigator.of(context, rootNavigator: true).pop(true),
+            child: const Text('동의하기', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      );
+      if (ok != true || !mounted) return;
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGiveApplicationDocumentConsent')
+          .call({
+        'applicationId': app.id,
+        'documentAccessConsentVersion': DocumentAccessConsent.inviteVersion,
+      });
+      if (!mounted) return;
+      ToastHelper.showSuccess('동의했어요. 사업장이 서류를 확인하면 수락할 수 있어요.');
+      _loadApplications();
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) {
+        ToastHelper.showError(e.message ?? '동의를 기록하지 못했어요. 다시 시도해 주세요.');
+        _loadApplications();
+      }
+    } catch (_) {
+      if (mounted) ToastHelper.showError('동의를 기록하지 못했어요. 다시 시도해 주세요.');
+    } finally {
+      if (mounted) setState(() => _consentingIds.remove(app.id));
+    }
+  }
+
+  Future<void> _acceptInviteFlow(String applicationId) async {
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
     if (uid == null) { ToastHelper.showError('로그인이 필요합니다.'); return; }
 
@@ -2131,8 +2668,14 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               '정리됩니다. 취소·노쇼 불이익은 적용되지 않습니다.',
               style: TextStyle(fontSize: 13),
             ),
-          ] else
-            const Text('이 업무에 참여하시겠습니까?\n수락 후 일정 충돌이 없으면 확정됩니다.'),
+          ] else ...[
+            // [INVITE-ACCEPT-READABILITY] 무엇을 수락하는지가 맨 위 — 질문만 있고
+            //   어느 근무인지가 없어 아래 긴 고지 속에서 찾아야 했다(Pixel 5 10-23).
+            _inviteAcceptSummary(offerApp),
+            const SizedBox(height: 8),
+            const Text('이 업무에 참여하시겠습니까?\n수락 후 일정 충돌이 없으면 확정됩니다.',
+                style: TextStyle(fontSize: 13, height: 1.45)),
+          ],
           // [R7-PAYROLL-POLICY.4A §22·§23·§30] 수락 전에 **이 약속에 고정된**
           //   근태·급여 기준을 볼 수 있어야 한다. 사업장의 현재 설정이 아니다 —
           //   초대·제안을 보낸 시점의 기준이고, 사업장이 그 뒤에 기준을 바꿔도
@@ -2141,28 +2684,37 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           // [R7-PAYROLL-POLICY.4B] 기록이 없어도 **그 사실을 말한다** —
           //   아무것도 보여주지 않으면 근로자는 기준이 없는지 화면이 빠뜨린
           //   것인지 알 수 없고, 사업장 현재 설정으로 대신 채우는 것은 금지다.
-          const SizedBox(height: 12),
-          _attendancePolicyBlock(offerApp.attendancePolicySnapshot),
-          const SizedBox(height: 12),
-          DocumentAccessConsent.card(item.application.businessName),
+          // [INVITE-ACCEPT-READABILITY] 버튼이 말하는 '동의'의 내용을 기준표보다 먼저,
+          //   제목으로 나눠 보인다. 동의 문구는 그대로다(버전 토큰이 문장을 가리킨다).
+          const SizedBox(height: 16),
+          _acceptDialogSectionTitle('서류 열람 동의'),
+          DocumentAccessConsent.inviteCard(item.application.businessName),
+          const SizedBox(height: 16),
+          _attendancePolicyBlock(offerApp.attendancePolicySnapshot, offerApp),
         ],
       ),
+      // [INVITE-ACCEPT-POP] 확인창은 루트 Navigator 에 뜨는데 이 화면은 탭 안의 중첩 Navigator 에 있다 —
+      //   `Navigator.pop(context)` 는 탭 Navigator 를 닫으려 해서 버튼이 아무것도 하지 않았다(Pixel 5 10-23).
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context, false),
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(false),
           child: const Text('취소'),
         ),
         ElevatedButton(
           style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
-          onPressed: () => Navigator.pop(context, true),
-          child: Text(isOfferAccept ? '동의하고 제안 수락' : '동의하고 초대 수락',
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(true),
+          // [.29-A1] 좁은 폭·큰 글자에서 '동의하 / 고 초대 / 수락' 으로 낱말이 갈렸다 — 띄어쓰기에서만 줄바꿈.
+          child: Text(
+              TextLayout.keepWords(isOfferAccept ? '동의하고 제안 수락' : '동의하고 초대 수락'),
+              semanticsLabel: isOfferAccept ? '동의하고 제안 수락' : '동의하고 초대 수락',
+              textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white)),
         ),
       ],
     );
     if (confirmed != true || !mounted) return;
 
-    setState(() => _acceptingIds.add(applicationId));
+    // 진행 표시·중복 탭 방지는 [_acceptInvite] 가 이미 켰다.
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableAcceptTOInvitation');
@@ -2171,17 +2723,24 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       await callable.call({
         'applicationId': applicationId,
         'documentAccessConsentGiven': true,
-        'documentAccessConsentVersion': DocumentAccessConsent.version,
+        'documentAccessConsentVersion': DocumentAccessConsent.inviteVersion,
       });
       if (!mounted) return;
       ToastHelper.showSuccess('초대를 수락했습니다!');
       _loadApplications();
     } on FirebaseFunctionsException catch (e) {
-      if (mounted) ToastHelper.showError(e.message ?? '수락 중 오류가 발생했습니다.');
+      if (!mounted) return;
+      // [INVITE-PREACCEPT] 서버가 근로자용 문구와 상태 코드를 준다.
+      //   목록을 다시 읽어 카드가 그 상태(동의 필요·확인 대기 등)로
+      //   바뀌게 한다 — 근로자가 다음에 무엇을 해야 하는지가 카드에 보인다.
+      // [MW-52] 서버 문장이 길다(최저임금 미달 초대 안내) — 기기에서 '요/청해'로 낱말 가운데가 끊겼다.
+      ToastHelper.showError(TextLayout.keepWords(e.message ?? '수락 중 오류가 발생했습니다.'));
+      final details = e.details;
+      if (details is Map && details['inviteAcceptReadiness'] != null) {
+        _loadApplications();
+      }
     } catch (e) {
       if (mounted) ToastHelper.showError('수락 중 오류가 발생했습니다.');
-    } finally {
-      if (mounted) setState(() => _acceptingIds.remove(applicationId));
     }
   }
 
@@ -2190,18 +2749,15 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
     if (uid == null) { ToastHelper.showError('로그인이 필요합니다.'); return; }
 
-    final confirmed = await DialogHelper.showCancelConfirm(
-      context,
-      title: '초대 거절',
-      message: '초대를 거절하시겠습니까?',
-    );
+    final confirmed = await DialogHelper.showDeclineInviteConfirm(context);
     if (!confirmed || !mounted) return;
 
     setState(() => _decliningIds.add(applicationId));
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableDeclineTOInvitation');
-      await callable.call({'applicationId': applicationId});
+      // [INVITE-DECLINE-INTENT] 상태를 보여 준 뒤의 명시 거절임을 서버에 알린다.
+      await callable.call({'applicationId': applicationId, 'declineIntent': 'EXPLICIT'});
       if (!mounted) return;
       ToastHelper.showInfo('초대를 거절했습니다.');
       _loadApplications();

@@ -393,6 +393,12 @@ class EmploymentContractModel {
   final ContractStatus status;
 
   // 사업주 서명
+  //
+  // [R8P6-SIG-CUTOVER] `employerSignatureUrl` 은 **레거시 계약에만** 남아 있는
+  //   영구 토큰 URL 이다 — 열람 근거로 쓰지 않는다. 서명 이미지는 그때의 권한으로
+  //   `callableGetContractSignatureUrl` 이 15분 링크를 낸다.
+  //   필드를 지우지 않는 이유: 구버전 앱이 이 값으로 서명을 그리고, 서버가
+  //   레거시 계약의 Storage 경로를 여기서 역산한다.
   final String? employerSignatureUrl;
   final DateTime? employerSignedAt;
 
@@ -400,8 +406,29 @@ class EmploymentContractModel {
   final String? workerSignatureUrl;
   final DateTime? workerSignedAt;
 
+  /// [R8P6-SIG-CUTOVER] CF 응답이 알려주는 "서명이 있다" 표식 — `pdfAvailable` 과 같은 모양.
+  ///
+  ///   목록·상세 CF 는 서명 Storage 경로를 내려주지 않는다. 단계 C 의 신규 계약은
+  ///   응답에 URL 도 경로도 없으므로, 서명란을 그릴지·PDF 에 서명을 넣어야 하는지는
+  ///   이 boolean 이 유일한 근거가 된다. Firestore 에 저장하는 필드가 아니다.
+  final bool employerSignatureAvailable;
+  final bool workerSignatureAvailable;
+
   // 완성 PDF
+  //
+  // [R8P6-PDF-REMEDIATION] 영구 토큰 URL 은 신규 발급하지 않는다.
+  //   canonical 은 Storage 경로(`pdfStoragePath`) 하나이고, 열람 링크는
+  //   `callableGetContractPdfSignedUrl` 이 그때의 권한으로 15분짜리를 낸다.
+  //   `pdfUrl` 은 **레거시 계약에만** 남아 있는 값이다 — 새로 쓰지 않는다.
   final String? pdfUrl;
+  final String? pdfStoragePath;
+
+  /// [R8P6-PDF-REMEDIATION.2] CF 목록 응답이 알려주는 "PDF 가 있다" 표식.
+  ///
+  ///   목록 CF 는 경로를 내려주지 않는다(접근 근거가 되면 안 된다). 그래서
+  ///   신규 계약은 응답에 pdfUrl·pdfStoragePath 가 둘 다 없고, 이 boolean 만
+  ///   공유 버튼을 띄울 근거가 된다. Firestore 에 저장하는 필드가 아니다.
+  final bool pdfAvailable;
 
   // 서명 시점 계약 내용 스냅샷
   final ContractSnapshot snapshot;
@@ -438,6 +465,10 @@ class EmploymentContractModel {
     this.workerSignatureUrl,
     this.workerSignedAt,
     this.pdfUrl,
+    this.pdfStoragePath,
+    this.pdfAvailable = false,
+    this.employerSignatureAvailable = false,
+    this.workerSignatureAvailable = false,
     required this.snapshot,
     this.articles = const [],
     this.templateId,
@@ -448,6 +479,28 @@ class EmploymentContractModel {
   });
 
   bool get isCompleted => status == ContractStatus.completed;
+
+  /// [R8P6-PDF-REMEDIATION] PDF 가 있는가.
+  ///
+  ///   신규 계약은 `pdfStoragePath`, 레거시 계약은 `pdfUrl` 로 판단한다.
+  ///   둘 중 하나라도 있으면 열람 링크를 받을 수 있다 — 링크 자체는
+  ///   `callableGetContractPdfSignedUrl` 이 그때 만든다.
+  bool get hasPdf =>
+      pdfAvailable ||
+      (pdfStoragePath != null && pdfStoragePath!.isNotEmpty) ||
+      (pdfUrl != null && pdfUrl!.isNotEmpty);
+
+  /// [R8P6-SIG-CUTOVER] 사업주·근로자 서명 이미지가 있는가.
+  ///
+  ///   신규 계약은 CF 가 주는 boolean, 레거시 계약은 남아 있는 URL 로 판단한다.
+  ///   링크 자체는 `callableGetContractSignatureUrl` 이 그때 만든다 —
+  ///   여기서 참이라는 것은 "받을 수 있다"는 뜻이고 "이미 들고 있다"가 아니다.
+  bool get hasEmployerSignature =>
+      employerSignatureAvailable ||
+      (employerSignatureUrl != null && employerSignatureUrl!.isNotEmpty);
+  bool get hasWorkerSignature =>
+      workerSignatureAvailable ||
+      (workerSignatureUrl != null && workerSignatureUrl!.isNotEmpty);
   bool get needsEmployerSignature => status == ContractStatus.pendingEmployer;
   bool get needsWorkerSignature => status == ContractStatus.pendingWorker;
   bool get hasVoidFailedApps => voidFailedAppIds.isNotEmpty;
@@ -544,6 +597,10 @@ class EmploymentContractModel {
       workerSignatureUrl: d['workerSignatureUrl'],
       workerSignedAt: parseTimestampNullable(d['workerSignedAt']),
       pdfUrl: d['pdfUrl'],
+      pdfStoragePath: d['pdfStoragePath'],
+      pdfAvailable: d['pdfAvailable'] == true,
+      employerSignatureAvailable: d['employerSignatureAvailable'] == true,
+      workerSignatureAvailable: d['workerSignatureAvailable'] == true,
       snapshot: d['snapshot'] != null
           ? ContractSnapshot.fromMap(
               Map<String, dynamic>.from(d['snapshot'] as Map))
@@ -584,6 +641,7 @@ class EmploymentContractModel {
         ? Timestamp.fromDate(workerSignedAt!)
         : null,
     'pdfUrl': pdfUrl,
+    'pdfStoragePath': pdfStoragePath,
     'snapshot': snapshot.toMap(),
     'articles': articles.map((a) => a.toMap()).toList(),
     'templateId': templateId,
@@ -600,6 +658,10 @@ class EmploymentContractModel {
     String? workerSignatureUrl,
     DateTime? workerSignedAt,
     String? pdfUrl,
+    String? pdfStoragePath,
+    bool? pdfAvailable,
+    bool? employerSignatureAvailable,
+    bool? workerSignatureAvailable,
     List<ContractArticle>? articles,
     String? templateId,
     DateTime? updatedAt,
@@ -621,6 +683,12 @@ class EmploymentContractModel {
       workerSignatureUrl: workerSignatureUrl ?? this.workerSignatureUrl,
       workerSignedAt: workerSignedAt ?? this.workerSignedAt,
       pdfUrl: pdfUrl ?? this.pdfUrl,
+      pdfStoragePath: pdfStoragePath ?? this.pdfStoragePath,
+      pdfAvailable: pdfAvailable ?? this.pdfAvailable,
+      employerSignatureAvailable:
+          employerSignatureAvailable ?? this.employerSignatureAvailable,
+      workerSignatureAvailable:
+          workerSignatureAvailable ?? this.workerSignatureAvailable,
       snapshot: snapshot,
       articles: articles ?? this.articles,
       templateId: templateId ?? this.templateId,

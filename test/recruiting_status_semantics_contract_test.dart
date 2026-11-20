@@ -170,8 +170,9 @@ void main() {
         reason: '모집중인데 정보색이 아니다:\n${missing.join('\n')}');
   });
 
-  test('RS-H CTA brand 색을 배지에 쓰지 않는다', () {
-    // primary CTA(#1565C0)와 같은 값을 쓰면 배지가 버튼처럼 읽힌다.
+  // [DU1-F5] 예전 계약은 '모집중' 근처에 brand 문자열이 없을 것이었다 — 배지 코드가 4줄 밖에 있으면 아무것도 지키지 못했다.
+  //   DU1 기준: 배지 = 옅은 바탕 + 진한 글자, 주 행동 = brand 채움 + 흰 글자. **형태**로 구분한다.
+  test('RS-H 모집 상태 배지는 brand 채움+흰 글자(CTA 형태)가 아니다', () {
     for (final path in _recruitingSurfaces) {
       final lines = _codeOf(_read(path)).split('\n');
       for (var i = 0; i < lines.length; i++) {
@@ -179,17 +180,33 @@ void main() {
         final from = (i - 4).clamp(0, lines.length);
         final to = (i + 5).clamp(0, lines.length);
         final block = lines.sublist(from, to).join('\n');
-        expect(block, isNot(contains('AppColors.brand')),
-            reason: '$path:${i + 1} — 배지가 CTA 색을 집었다');
+        final filledBrand = RegExp(r'(color|backgroundColor):\s*AppColors\.brand\b').hasMatch(block);
+        expect(filledBrand && block.contains('Colors.white'), isFalse,
+            reason: '$path:${i + 1} — 배지가 CTA(채운 brand+흰 글자) 형태를 집었다');
       }
     }
+  });
+
+  test('RS-H2 상세 상단 상태 배지 — 모집중=brandSurface 바탕+brand 글자, 마감임박=warning 쌍, 종료=중립', () {
+    final src = _codeOf(_read('lib/screens/common/job_posting_screen.dart'));
+    final at = src.indexOf('final (bg, fg) = statusColor == AppColors.warning');
+    expect(at, greaterThan(0), reason: '상단 배지가 바탕/글자 쌍을 고른다');
+    final block = src.substring(at, at + 1400);
+    expect(block, contains('(AppColors.warningBg, AppColors.warningDark)'));
+    expect(block, contains('(AppColors.grey100, AppColors.textSecondary)'));
+    expect(block, contains('(AppColors.brandSurface, AppColors.brand)'));
+    expect(block, contains('color: bg'));
+    expect(block, contains('color: fg'));
+    expect(block, isNot(contains('Colors.white')), reason: '배지 글자가 흰색(채움 형태)이 아니다');
   });
 
   test('RS-I 토큰 값이 의도한 그대로다', () {
     final colors = _read('lib/theme/app_colors.dart');
     expect(colors, contains('infoMedium     = Color(0xFF1E88E5)'));
     expect(colors, contains('infoDeep       = Color(0xFF0D47A1)'));
-    expect(colors, contains('brand = workTypeBlue'));
+    // [DU1] brand 를 업무 색 workTypeBlue 에서 분리했다(공통 기준 v1). 업무 색 팔레트는 그대로다.
+    expect(colors, contains('brand = Color(0xFF3859E8)'));
+    expect(colors, contains('workTypeBlue      = Color(0xFF1565C0)'));
     // 새 색 family 를 만들지 않았다.
     expect(colors, isNot(contains('recruitingBlue')));
     expect(colors, isNot(contains('AppColors.recruiting')));

@@ -6,9 +6,12 @@ import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/resign_auto_approval.dart';
 import '../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../pickers/date_picker_bottom_sheet.dart';
 import 'styled_dialog.dart';
+import '../common/app_empty_state.dart';
+import '../../utils/text_layout.dart';
 
 /// 고정근무 관리 다이얼로그
 class LongTermWorkManagementDialog extends StatefulWidget {
@@ -66,26 +69,11 @@ class _LongTermWorkManagementDialogState
   }
 
   /// 빈 상태
+  /// [DU271] 직접 그린 빈 상태(disabledColor 아이콘·bodySmall 글자) → 공용 AppEmptyState(DU248 값, 문구 같음)
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.work_off, 
-            size: ResponsiveHelper.iconSize(context, 64),  // ⭐ 변경
-            color: Theme.of(context).disabledColor,
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
-          Text(
-            '확정된 고정근무가 없습니다',
-            style: ResponsiveHelper.subtitleStyle(  // ⭐ 변경
-              context,
-              color: Theme.of(context).textTheme.bodySmall?.color,
-            ),
-          ),
-        ],
-      ),
+    return const AppEmptyState(
+      icon: Icons.work_off,
+      title: '확정된 고정근무가 없습니다',
     );
   }
 
@@ -95,13 +83,17 @@ class _LongTermWorkManagementDialogState
     final isPending = app.resignStatus == AppStatus.pending;
     final isRejected = app.resignStatus == AppStatus.rejected;
 
-    return Card(
-      margin: EdgeInsets.only(  // ⭐ const 제거
-        bottom: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
+    // [DU271] 그림자 Card → 흰 면·radius 16·grey200 선(시안 카드)
+    return Container(
+      margin: EdgeInsets.only(
+        bottom: ResponsiveHelper.spacing(context, 12),
       ),
-      elevation: 2,
-      child: Padding(
-        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.grey200),
+      ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -111,12 +103,13 @@ class _LongTermWorkManagementDialogState
                 Icon(
                   Icons.business, 
                   size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
-                  color: Theme.of(context).primaryColor,
+                  color: AppColors.textSecondary, // [DU271] 대표색 → 중립 아이콘
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                 Expanded(
                   child: Text(
-                    app.businessName,
+                    TextLayout.identity(app.businessName),
+                    semanticsLabel: app.businessName,
                     style: ResponsiveHelper.subtitleStyle(context),  // ⭐ 변경
                   ),
                 ),
@@ -129,6 +122,7 @@ class _LongTermWorkManagementDialogState
               Icons.calendar_today,
               '근무 기간',
               app.workPeriodDisplay,
+              shown: TextLayout.keepWords(app.workPeriodDisplay),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
 
@@ -138,6 +132,7 @@ class _LongTermWorkManagementDialogState
                 Icons.event_repeat,
                 '근무 요일',
                 app.workDaysDisplay!,
+                shown: TextLayout.keepWords(app.workDaysDisplay!),
               ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
 
@@ -146,28 +141,39 @@ class _LongTermWorkManagementDialogState
               Icons.access_time,
               '근무 시간',
               '${app.startTime} ~ ${app.endTime}',
+              shown: TextLayout.range(app.startTime, app.endTime),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
 
             // 업무 유형 & 급여
-            Row(
-              children: [
-                Expanded(
-                  child: _buildInfoRow(
-                    Icons.work,
-                    '업무',
-                    app.selectedWorkType,
+            // [DU271] 큰 글자(DU256 규칙)에서는 반 폭 두 칸 대신 위·아래 두 줄(B320 '상/하/차'·'12/,0/00/원')
+            if (MediaQuery.textScalerOf(context).scale(10) >= 13) ...[
+              _buildInfoRow(Icons.work, '업무', app.selectedWorkType,
+                  shown: TextLayout.identity(app.selectedWorkType)),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              _buildInfoRow(Icons.attach_money, '급여', FormatHelper.formatWage(app.wage),
+                  shown: TextLayout.keepWords(FormatHelper.formatWage(app.wage))),
+            ] else
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildInfoRow(
+                      Icons.work,
+                      '업무',
+                      app.selectedWorkType,
+                      shown: TextLayout.identity(app.selectedWorkType),
+                    ),
                   ),
-                ),
-                Expanded(
-                  child: _buildInfoRow(
-                    Icons.attach_money,
-                    '급여',
-                    FormatHelper.formatWage(app.wage),
+                  Expanded(
+                    child: _buildInfoRow(
+                      Icons.attach_money,
+                      '급여',
+                      FormatHelper.formatWage(app.wage),
+                      shown: TextLayout.keepWords(FormatHelper.formatWage(app.wage)),
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
 
             // 퇴사 요청 상태 표시
             if (hasResignRequest) ...[
@@ -178,53 +184,31 @@ class _LongTermWorkManagementDialogState
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
 
             // 버튼
+            // [DU271] 퇴사 진입은 중립 테두리 버튼(DU245 — 위험색은 확인 순간에만). 이전 빨강 테두리 3.68·빨강 채움 3.68·주황 2.16.
             if (isPending)
               // 퇴사 요청 대기 중 - 취소 버튼만
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () => _handleCancelResignRequest(app),
-                  icon: const Icon(Icons.cancel_outlined),
-                  label: const Text('퇴사 요청 취소'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.warning,
-                    side: const BorderSide(color: AppColors.warning),
-                  ),
-                ),
-              )
+              _entryButton(Icons.cancel_outlined, '퇴사 요청 취소', () => _handleCancelResignRequest(app))
             else if (isRejected)
               // 퇴사 거절됨 - 재요청 버튼
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () => _handleResignRequest(app),
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('퇴사 재요청'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.error,
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-              )
+              _entryButton(Icons.refresh, '퇴사 재요청', () => _handleResignRequest(app))
             else
               // 정상 상태 - 퇴사 요청 버튼
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () => _handleResignRequest(app),
-                  icon: const Icon(Icons.exit_to_app),
-                  label: const Text('퇴사 요청'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.error,
-                    side: const BorderSide(color: AppColors.error),
-                  ),
-                ),
-              ),
+              _entryButton(Icons.exit_to_app, '퇴사 요청', () => _handleResignRequest(app)),
           ],
         ),
-      ),
     );
   }
+
+  /// [DU271] 퇴사 진입 버튼 — 공용 Outlined 테마(grey300 선·48) + 보조색 글자, 낱말 단위 줄바꿈. 아이콘·문구·동작은 같다.
+  Widget _entryButton(IconData icon, String label, VoidCallback onPressed) => SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: onPressed,
+          icon: Icon(icon),
+          label: Text(TextLayout.keepWords(label), semanticsLabel: label),
+          style: OutlinedButton.styleFrom(foregroundColor: AppColors.textSecondary),
+        ),
+      );
 
   /// 퇴사 상태 배너
   Widget _buildResignStatusBanner(ApplicationModel app, DateTime now) {
@@ -236,25 +220,32 @@ class _LongTermWorkManagementDialogState
 
     switch (app.resignStatus) {
       case AppStatus.pending:
-        bgColor = AppColors.warning.withValues(alpha: 0.1);
-        textColor = AppColors.warning;
+        // [DU271] 의미색 10% 면·원색 글자(1.99~3.23) → 토큰 쌍(대기 4.81·거절 5.80·승인 6.47)
+        bgColor = AppColors.warningBg;
+        textColor = AppColors.warningDark;
         icon = Icons.schedule;
         statusText = '퇴사 승인 대기중';
         final requestDate = DateFormat('M월 d일').format(app.resignRequestDate ?? DateTime.now());
-        final daysLeft = 3 - now.difference(app.resignRequestedAt ?? now).inDays;
-        detailText = '$requestDate 퇴사 요청 ($daysLeft일 후 자동 승인)';
+        // [D3-RETRO-EXCLUDE] 소급 요청은 자동 승인되지 않는다 — 일정은 서버와 같은 식(KST 날짜)으로 정한다.
+        //   이전 식(경과 시간 floor)은 D+3 이 지나면 음수 일수를 보였다.
+        final plan = ResignAutoApproval.of(
+          requestedAt: app.resignRequestedAt,
+          requestDate: app.resignRequestDate,
+          now: now,
+        );
+        detailText = '$requestDate 퇴사 요청 (${plan.workerDetailText})';
         break;
       case AppStatus.rejected:
-        bgColor = AppColors.error.withValues(alpha: 0.1);
-        textColor = AppColors.error;
+        bgColor = AppColors.errorBg;
+        textColor = AppColors.errorDark;
         icon = Icons.cancel;
         statusText = '퇴사 요청 거절됨';
         detailText = app.resignRejectReason ?? '사유 없음';
         break;
       case AppStatus.approved:
       case AppStatus.autoApproved:
-        bgColor = AppColors.success.withValues(alpha: 0.1);
-        textColor = AppColors.success;
+        bgColor = AppColors.successBg;
+        textColor = AppColors.successDark;
         icon = Icons.check_circle;
         statusText = app.resignStatus == AppStatus.autoApproved ? '퇴사 자동 승인됨' : '퇴사 승인됨';
         final resignDate = DateFormat('M월 d일').format(app.actualResignDate ?? DateTime.now());
@@ -268,8 +259,7 @@ class _LongTermWorkManagementDialogState
       padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
       decoration: BoxDecoration(
         color: bgColor,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: textColor.withValues(alpha: 0.3)),
+        borderRadius: BorderRadius.circular(12), // [DU271] 선 제거(다른 안내 면과 같음)
       ),
       child: Row(
         children: [
@@ -284,7 +274,8 @@ class _LongTermWorkManagementDialogState
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  statusText,
+                  TextLayout.keepWords(statusText),
+                  semanticsLabel: statusText,
                   style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
                     context,
                     color: textColor,
@@ -292,12 +283,11 @@ class _LongTermWorkManagementDialogState
                 ),
                 ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
+                // [DU271] tiny·알파 0.8 → smallStyle 같은 진한 색, 낱말 단위(화면 읽기는 원문)
                 Text(
-                  detailText,
-                  style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
-                    context,
-                    color: textColor.withValues(alpha: 0.8),
-                  ),
+                  TextLayout.keepWords(detailText),
+                  semanticsLabel: detailText,
+                  style: ResponsiveHelper.smallStyle(context, color: textColor),
                 ),
               ],
               ],
@@ -309,30 +299,43 @@ class _LongTermWorkManagementDialogState
   }
 
   /// 정보 행
-  Widget _buildInfoRow(IconData icon, String label, String value) {
+  /// [DU271] 아이콘·이름 textSecondary, 값 본문색 w600(이전 grey600 4.61). 값 표시만 줄바꿈 단위([shown], 화면 읽기는 원문).
+  ///   큰 글자(DU256 규칙)에서는 이름 줄 위·값 아래(아이콘 폭만큼 들여쓰기) — 좁은 값 칸에서 음절이 끊겼다.
+  Widget _buildInfoRow(IconData icon, String label, String value, {String? shown}) {
+    final iconW = Icon(
+      icon,
+      size: ResponsiveHelper.iconSize(context, 16),
+      color: AppColors.textSecondary,
+    );
+    final gap = ResponsiveHelper.spacing(context, 8);
+    final labelW = Text(
+      '$label: ',
+      style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+    );
+    final valueW = Text(
+      shown ?? value,
+      semanticsLabel: value,
+      style: ResponsiveHelper.smallStyle(context,
+          color: AppColors.textPrimary, fontWeight: FontWeight.w600),
+    );
+    if (MediaQuery.textScalerOf(context).scale(10) >= 13) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [iconW, SizedBox(width: gap), Flexible(child: labelW)]),
+          Padding(
+            padding: EdgeInsets.only(left: ResponsiveHelper.iconSize(context, 16) + gap),
+            child: valueW,
+          ),
+        ],
+      );
+    }
     return Row(
       children: [
-        Icon(
-          icon, 
-          size: ResponsiveHelper.iconSize(context, 16),  // ⭐ 변경
-          color: Theme.of(context).textTheme.bodySmall?.color,
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
-        Text(
-          '$label: ',
-          style: ResponsiveHelper.smallStyle(  // ⭐ 변경
-            context,
-            color: Theme.of(context).textTheme.bodySmall?.color,
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: ResponsiveHelper.smallStyle(context).copyWith(  // ⭐ 변경
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
+        iconW,
+        SizedBox(width: gap),
+        labelW,
+        Expanded(child: valueW),
       ],
     );
   }
@@ -351,17 +354,22 @@ class _LongTermWorkManagementDialogState
 
       if (resignDate == null || !mounted) return;
 
+      // [D3-RETRO-EXCLUDE] 희망일이 오늘(KST)보다 이르면 소급 요청 — 서버가 자동 승인하지 않는다.
+      final isRetro = ResignAutoApproval.isRetro(
+          requestedAt: DateTime.now(), requestDate: resignDate);
       final confirmed = await DialogHelper.showConfirm(
         context,
         title: '퇴사 요청',
         message:
             '${DateFormat('yyyy년 M월 d일').format(resignDate)}자로 퇴사 요청합니다.\n\n'
-            '✓ 관리자가 3일 이내에 승인/거절합니다\n'
-            '✓ 3일 후에도 처리가 없으면 자동 승인됩니다\n'
+            '${isRetro
+                ? '✓ 지난 날짜로 요청하면 자동 승인되지 않고 관리자가 직접 검토합니다\n'
+                : '✓ 관리자가 3일 이내에 승인/거절합니다\n'
+                  '✓ 3일 후에도 처리가 없으면 자동 승인됩니다\n'}'
             '✓ 승인 전까지 요청을 취소할 수 있습니다\n\n'
             '요청하시겠습니까?',
         confirmText: '퇴사 요청',
-        confirmColor: AppColors.error,
+        confirmColor: AppColors.errorDark, // [DU271] 확정 순간의 위험색은 유지하고 읽히게(3.68 → errorDark)
       );
 
       if (!confirmed || !mounted) return;
@@ -395,7 +403,7 @@ class _LongTermWorkManagementDialogState
         title: '퇴사 요청 취소',
         message: '퇴사 요청을 취소하시겠습니까?',
         confirmText: '취소하기',
-        confirmColor: AppColors.warning,
+        confirmColor: AppColors.brand, // [DU271] 요청 취소는 위험 행동이 아니다(warning 위 흰 2.16 → 대표색)
       );
 
       if (!confirmed || !mounted) return;

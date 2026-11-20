@@ -160,10 +160,13 @@ void main() {
     test('FKN-43 그 판단은 이미 하던 읽기에서 가져온다 — 왕복을 늘리지 않는다', () {
       final f = _flat(screenCode);
       // fingerprint 를 확인하던 바로 그 snapshot 에서 koreanName 도 읽는다.
+      // [FULL13-REEVAL.3 갱신] 같은 한 번의 읽기(data)에서 문서 버전도 함께 본다 — 왕복은 그대로 1회.
       expect(
-        f.contains("hasFingerprint = docSnap.data()?['foreignIdentityFingerprint'] != null; storedKoreanName = docSnap.data()?['koreanName'] as String?;"),
+        f.contains("hasFingerprint = data?['foreignIdentityFingerprint'] != null; storedKoreanName = data?['koreanName'] as String?;"),
         isTrue,
       );
+      expect(RegExp(r"collection\('users'\)\.doc\(uid\)\.get\(\)").allMatches(f).length,
+          lessThanOrEqualTo(2), reason: '재개 경로 1 + 신규 경로 1 — 읽기를 늘리지 않는다');
     });
 
     test('FKN-44 finalize 실패는 가입 실패로 처리된다 — 조용히 넘어가지 않는다', () {

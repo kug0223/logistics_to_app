@@ -22,6 +22,7 @@
 //   퇴사·해지 승인 완료                      → guard 자체를 건너뜀
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -38,6 +39,7 @@ import 'package:ALfit/models/core/work_detail_data.dart';
 import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/common/job_posting_reads.dart';
+import 'package:ALfit/services/work_type_guide_resolver.dart';
 import 'package:ALfit/screens/common/job_posting_screen.dart';
 import 'package:ALfit/services/firestore_service.dart';
 import 'package:ALfit/services/schedule_conflict_service.dart';
@@ -267,7 +269,7 @@ JobPostingReads _reads({
       businessById: (id) async => _business(),
       slots: (id, {bool visibleOnly = true}) async => [_slot(details)],
       myApplications: (uid) async => myApps,
-      businessWorkTypes: (id) async => const <BusinessWorkTypeModel>[],
+      workTypeCatalog: (id) async => WorkTypeCatalog.empty,
       applicationOnce: (id) async => null,
     );
 
@@ -496,7 +498,11 @@ void main() {
 
       // CTA 의 N 은 신규 지원 가능한 것만 센다.
       expect(find.textContaining('개 업무 선택됨'), findsNothing);
-      expect(find.text('지원할 업무를 선택해주세요'), findsOneWidget);
+      // [ISG2-CTA] 유일한 업무가 이미 `지원완료` 면 고를 것이 없다 —
+      //   예전에는 여기서도 `지원할 업무를 선택해주세요` 라고 해서
+      //   할 수 없는 일을 시켰다(에뮬레이터 실측).
+      expect(find.text('지원할 업무를 선택해주세요'), findsNothing);
+      expect(find.text('지금 지원할 수 있는 업무가 없어요'), findsOneWidget);
     });
 
     testWidgets('ARP-31 CONFIRMED 업무는 확정으로 보여준다', (tester) async {
@@ -505,7 +511,7 @@ void main() {
         details: [_wd(wdId: 'wdA')],
         myApps: [_app(status: AppStatus.confirmed, wdId: 'wdA')],
       );
-      expect(find.text('확정'), findsWidgets);
+      expect(findVisibleText('확정'), findsWidgets);
       expect(find.text('선택'), findsNothing);
     });
 
@@ -608,7 +614,9 @@ void main() {
         expect(find.text('일정 겹침'), findsOneWidget,
             reason: '색만으로 말하지 않는다 — 이유가 글자로 보인다');
         expect(find.text('선택'), findsNothing);
-        expect(find.text('지원할 업무를 선택해주세요'), findsOneWidget);
+        // [ISG2-CTA] 하나뿐인 업무가 겹쳐서 막혔으면 고를 것이 없다.
+        expect(find.text('지원할 업무를 선택해주세요'), findsNothing);
+        expect(find.text('지금 지원할 수 있는 업무가 없어요'), findsOneWidget);
         // `마감`(정원) 과 다른 상태다.
         expect(find.text('지원완료'), findsNothing);
         // 업무 자체는 숨기지 않는다 — 발견은 유지한다.
@@ -836,7 +844,7 @@ void main() {
         works: [_wd(wdId: 'wdA')],
         myApps: [_app(status: AppStatus.confirmed, wdId: 'wdA')],
       );
-      expect(find.text('확정'), findsWidgets);
+      expect(findVisibleText('확정'), findsWidgets);
       expect(find.widgetWithText(InkWell, '지원'), findsNothing);
     });
 
@@ -846,7 +854,7 @@ void main() {
         works: [_wd(wdId: 'wdA')],
         myApps: [_app(status: AppStatus.contractPending, wdId: 'wdA')],
       );
-      expect(find.text('확정'), findsWidgets);
+      expect(findVisibleText('확정'), findsWidgets);
       expect(find.widgetWithText(InkWell, '지원'), findsNothing);
     });
 

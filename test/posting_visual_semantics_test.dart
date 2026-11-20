@@ -187,10 +187,11 @@ void main() {
       }
     });
 
-    test('01-e warning 토큰 자체는 무변경', () {
+    // [DU1] 공통 기준 v1 이 warning 텍스트/배경을 대비 기준으로 바꿨다(사용자 승인 디자인 범위). 기본 warning 은 그대로다.
+    test('01-e warning 토큰 — DU1 기준값', () {
       expect(AppColors.warning, const Color(0xFFFF9800));
-      expect(AppColors.warningBg, const Color(0xFFFFF3E0));
-      expect(AppColors.warningDark, const Color(0xFFF57C00));
+      expect(AppColors.warningBg, const Color(0xFFFFF5D6));
+      expect(AppColors.warningDark, const Color(0xFF946200));
     });
 
     test('01-f scheduled 사용처는 전부 예약/준비 의미다', () {
@@ -480,7 +481,8 @@ void main() {
       for (final entry in {
         _cardPath: 'recruitmentComplete: isRecruitmentComplete',
         _itemCardPath: 'recruitmentComplete: isRecruitmentComplete',
-        _dialogPath: 'recruitmentComplete: slot.isFull || widget.to.isFull',
+        // [INVITE-CAPACITY] 날짜 행은 그 날짜의 충원으로만(FULL≠DONE).
+        _dialogPath: 'recruitmentComplete: slot.isFull,',
       }.entries) {
         expect(_flat(_codeOf(_src(entry.key))).contains(entry.value), true,
             reason: entry.key);
@@ -666,14 +668,15 @@ void main() {
     test('11-c 모집중 · 모집 완료 라벨이 본문 기준(4.5)을 넘는다', () {
       // successDark/successBg는 약 3.87로 13px 라벨에 부족했다.
       //   이미 존재하던 successDeep으로 올렸다 — 새 토큰 없음.
-      expect(ratio(AppColors.successDark, AppColors.successBg), lessThan(4.5),
-          reason: '이 값이 4.5를 넘게 되면 이 correction의 전제가 사라진다');
+      // [DU1] successDark/successBg 자체가 4.5 를 넘게 됐다(#166534/#EAF7EF 6.47) — 이 correction 의 전제가 해소됐다.
+      expect(ratio(AppColors.successDark, AppColors.successBg), greaterThan(4.5));
       expect(ratio(AppColors.successDeep, AppColors.successBg),
           greaterThan(4.5));
     });
 
-    test('11-f successDark 토큰 자체는 그대로다 — 전역 blast radius 없음', () {
-      expect(AppColors.successDark, const Color(0xFF388E3C));
+    // [DU1] successDark 는 공통 기준 v1 값으로 전역 변경했다(승인된 디자인 범위 — 전역 영향은 의도).
+    test('11-f successDark 토큰 — DU1 기준값', () {
+      expect(AppColors.successDark, const Color(0xFF166534));
       expect(AppColors.successDeep, const Color(0xFF1B5E20));
       expect(AppColors.success, const Color(0xFF4CAF50));
       expect(AppColors.confirmedDark, AppColors.successDark,

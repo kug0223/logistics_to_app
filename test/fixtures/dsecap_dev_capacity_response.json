@@ -1,0 +1,49 @@
+{
+  "at": "2026-10-13T09:12:38.063Z",
+  "slots": {
+    "2026-10-12": {
+      "slotId": "7xWPBKHrY0UnRdBWp0Q9",
+      "http": 200,
+      "count": 1,
+      "applications": [
+        {
+          "id": "ZujrV62Z2ctTDtdVZy9y_7xWPBKHrY0UnRdBWp0Q9_UBxR73VI78Z6MSkSd04Z_xZah9HCRGMgniYckU1bYSvt8Lw93",
+          "businessId": "qa_qamv2ef85p_biz",
+          "toId": "ZujrV62Z2ctTDtdVZy9y",
+          "selectedWorkType": "QA 분류",
+          "startTime": "09:00",
+          "endTime": "13:00",
+          "type": "short",
+          "workDate": {
+            "_seconds": 1791730800,
+            "_nanoseconds": 0
+          },
+          "slotId": "7xWPBKHrY0UnRdBWp0Q9",
+          "workDetailId": "UBxR73VI78Z6MSkSd04Z",
+          "wdId": "UBxR73VI78Z6MSkSd04Z",
+          "appliedAt": {
+            "_seconds": 1791684220,
+            "_nanoseconds": 631000000
+          },
+          "status": "CONTRACT_PENDING"
+        }
+      ]
+    },
+    "2026-10-13": {
+      "slotId": "DlsAIUhcdN76T9fNFItd",
+      "http": 200,
+      "count": 0,
+      "applications": []
+    }
+  },
+  "authz": {
+    "otherBiz": {
+      "http": 403,
+      "status": "PERMISSION_DENIED"
+    },
+    "worker": {
+      "http": 403,
+      "status": "PERMISSION_DENIED"
+    }
+  }
+}

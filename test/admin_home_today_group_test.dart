@@ -484,7 +484,8 @@ void main() {
 
     test('03-g chevron은 onTap이 있을 때만 그려진다', () {
       final flat = _flat(_codeOf(issueRowBody));
-      expect(flat, contains('if (onTap != null) Icon(Icons.chevron_right'));
+      // [SCALE-BALANCE.34] chevron 은 첫 줄 정렬용 Padding 안에 있다 — onTap 이 있을 때만 그린다는 계약은 그대로.
+      expect(flat, matches(RegExp(r'if \(onTap != null\) Padding\([^;]*?Icon\(Icons\.chevron_right')));
       expect(flat, contains('onTap == null ? row : InkWell'));
     });
   });
@@ -600,7 +601,8 @@ void main() {
         2,
       );
       final flat = _flat(_codeOf(issueRowBody));
-      expect(flat, contains('fontSize: 15, fontWeight: FontWeight.w600'));
+      // [SCALE-BALANCE.34] 두 행 같은 helper·같은 크기. 굵기는 quiet(Hero 와 같은 부족 반복)일 때만 보통.
+      expect(flat, contains('fontSize: 15, fontWeight: quiet ? FontWeight.w400 : FontWeight.w600'));
     });
 
     test('05-f semantic color만 다르다', () {

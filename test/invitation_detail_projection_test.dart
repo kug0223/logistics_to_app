@@ -531,7 +531,7 @@ void main() {
           reason: '수락 경로도 같은 사전조건 함수를 지난다');
       expect(
           s.contains("'documentAccessConsentGiven': true, "
-              "'documentAccessConsentVersion': DocumentAccessConsent.version,"),
+              "'documentAccessConsentVersion': DocumentAccessConsent.inviteVersion,"),
           true);
     });
   });

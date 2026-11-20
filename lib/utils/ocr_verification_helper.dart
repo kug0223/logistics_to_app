@@ -253,6 +253,7 @@ class OcrVerificationHelper {
     DocFieldOutcome identifierOutcome = DocFieldOutcome.unassessed;
     bool isResidentNumberValid = false;
     String? extractedResidentNumber;
+    List<String> serverIdentifierCandidates = const [];
 
     if (expectedResidentNumber != null && expectedResidentNumber.isNotEmpty) {
       // [OCR-P0-001 FIX] any-match 방식 교체 —
@@ -340,9 +341,12 @@ class OcrVerificationHelper {
       //   읽었다는 뜻이 아니다 — 그걸 세면 못 읽은 사진이 MISMATCH 가 된다.
       //   서버도 같은 필터를 다시 적용한다(MISMATCH 방향을 클라이언트
       //   신뢰에 걸어 두지 않는다).
-      final anyCandidate = identityCandidates(rawText, isForeign: isForeign)
-          .usableIdentityCandidates
-          .isNotEmpty;
+      final usable = identityCandidates(rawText, isForeign: isForeign)
+          .usableIdentityCandidates;
+      final anyCandidate = usable.isNotEmpty;
+      // [FULL13-REEVAL] 앱 판정은 화면 안내용이다. 서버가 같은 후보를 다시
+      //   대조해 판정을 적는다(세무 등록 때 현재 업로드 신분증에 묶어서).
+      serverIdentifierCandidates = usable;
       isResidentNumberValid = matchedCandidate != null;
       extractedResidentNumber = matchedCandidate;
       identifierOutcome = isResidentNumberValid
@@ -380,6 +384,7 @@ class OcrVerificationHelper {
       // Consumer는 null을 '확인 불가'/'인식 실패'로 처리.
       'extractedName': null,
       'extractedResidentNumber': extractedResidentNumber,
+      'identifierCandidates': serverIdentifierCandidates,
     };
   }
 
@@ -853,9 +858,28 @@ class OcrVerificationHelper {
     if (digits.length == 11 && digits.startsWith('01')) return true; // 휴대전화
     if (digits.length == 10 && digits.startsWith('01')) return true;
     if (digits.length == 8) return true; // 1588-2588 류 대표번호
-    if (digits.length == 9 && digits.startsWith('02')) return true;
+    // [R7-P4.4E.9A.2] 지역 유선·인터넷·수신자부담 번호.
+    //   예전엔 9자리 02 만 봤다. 그래서 통장 표지 `계좌관리점 … 02-1234-5678`
+    //   (OCR 에서 라벨과 값이 다른 줄)이 **계좌 후보**가 됐고, 그 번호를 계좌로
+    //   입력하면 MATCHED, 계좌를 못 읽으면 MISMATCH 가 됐다.
+    //   자릿수까지 함께 본다 — 14자리 IBK 형(`031-123456-01-011`)은 앞자리가
+    //   지역번호와 같아도 여기 걸리지 않는다.
+    //   한계: 라벨·구분자 없는 10·11자리 지역번호형 숫자는 계좌와 형태로 구별할
+    //   수 없다. 그 경우 계좌로 쓰지 않는다 — 거짓 MATCHED 보다 UNREADABLE 이 낫다.
+    if (digits.startsWith('02') &&
+        (digits.length == 9 || digits.length == 10)) {
+      return true; // 서울 02-XXX-XXXX / 02-XXXX-XXXX
+    }
+    if (_regionalPrefix.hasMatch(digits) &&
+        (digits.length == 10 || digits.length == 11)) {
+      return true; // 031-XXX-XXXX / 031-XXXX-XXXX · 070 · 080
+    }
     return false;
   }
+
+  /// 지역번호(031–033·041–044·051–055·061–064)·인터넷전화 070·수신자부담 080.
+  static final RegExp _regionalPrefix =
+      RegExp(r'^0(?:3[1-3]|4[1-4]|5[1-5]|6[1-4]|70|80)');
 
   /// 통장사본 OCR 텍스트에서 **쓸 수 있는 계좌 후보**를 모은다.
   ///
@@ -868,30 +892,85 @@ class OcrVerificationHelper {
   }) collectAccountCandidates(String rawText) {
     final usable = <String>[];
     final rejected = <String>[];
-
-    for (final line in rawText.split('\n')) {
-      for (final m in _numericCandidatePattern.allMatches(line)) {
-        final c = _classifyCandidate(m.group(0) ?? '', line);
-        if (c.digits.length < accountMinDigits ||
-            c.digits.length > accountMaxDigits) {
-          rejected.add(c.digits);
-          continue;
-        }
-        if (c.dateLike) {
-          rejected.add(c.digits);
-          continue;
-        }
-        if (_looksLikePhone(
-            digits: c.digits, negative: c.negative, positive: c.positive)) {
-          rejected.add(c.digits);
-          continue;
-        }
-        usable.add(c.digits);
-      }
+    for (final c in _scanAccountCandidates(rawText)) {
+      (c.usable ? usable : rejected).add(c.digits);
     }
     return (
       usableAccountCandidates: usable,
       rejectedNonAccountCandidates: rejected,
+    );
+  }
+
+  /// 후보 수집·분류의 **단일 구현**. [collectAccountCandidates] 와
+  /// [diagnoseBankbookText] 가 같은 결과를 본다 — 진단이 판정을 따로 흉내내지 않는다.
+  ///
+  ///   [E9B-DIAG] 분류 순서는 그대로다: 자릿수 → 날짜 → 전화 → 계좌 후보.
+  static List<AccountCandidateDiagnosis> _scanAccountCandidates(
+      String rawText) {
+    final out = <AccountCandidateDiagnosis>[];
+    for (final line in rawText.split('\n')) {
+      for (final m in _numericCandidatePattern.allMatches(line)) {
+        final raw = m.group(0) ?? '';
+        final c = _classifyCandidate(raw, line);
+        final lengthOk = c.digits.length >= accountMinDigits &&
+            c.digits.length <= accountMaxDigits;
+        final phoneShape = _looksLikePhone(
+            digits: c.digits, negative: c.negative, positive: c.positive);
+        final String? rejectReason = !lengthOk
+            ? AccountCandidateDiagnosis.rejectLength
+            : c.dateLike
+                ? AccountCandidateDiagnosis.rejectDate
+                : phoneShape
+                    ? AccountCandidateDiagnosis.rejectPhone
+                    : null;
+        out.add(AccountCandidateDiagnosis(
+          digits: c.digits,
+          shape: raw.trim().split(RegExp(r'[-\s]+')).map((s) => s.length).join('-'),
+          positiveLabel: c.positive,
+          negativeLabel: c.negative,
+          rejectReason: rejectReason,
+        ));
+      }
+    }
+    return out;
+  }
+
+  /// [E9B-DIAG] 통장 OCR **진단 전용** — 기기에서 읽은 원문으로 production 판정
+  ///   함수(`_verifyBankbookFromText`)를 그대로 부르고, 후보 분류 근거를 덧붙인다.
+  ///
+  ///   · `production` 은 서류 등록 화면과 같은 인자다 — 그 화면은 은행명을 넘기지
+  ///     않는다(`expectedBankName` 미사용). 그래서 은행 판정은 `withBank` 로 따로 낸다.
+  ///   · 원문·후보 숫자는 호출자가 화면·로그에 내보내지 않을 책임을 진다.
+  ///   · 서류 등록 흐름은 이 함수를 부르지 않는다.
+  @visibleForTesting
+  static BankbookDiagnosis diagnoseBankbookText(
+    String rawText, {
+    RecognizedText? recognizedText,
+    String? expectedName,
+    String? expectedAccountNumber,
+    String? expectedBankName,
+  }) {
+    final production = _verifyBankbookFromText(
+      rawText,
+      expectedName,
+      expectedAccountNumber: expectedAccountNumber,
+      recognizedText: recognizedText,
+    );
+    final withBank = (expectedBankName == null || expectedBankName.isEmpty)
+        ? null
+        : _verifyBankbookFromText(
+            rawText,
+            expectedName,
+            expectedAccountNumber: expectedAccountNumber,
+            expectedBankName: expectedBankName,
+            recognizedText: recognizedText,
+          );
+    return BankbookDiagnosis(
+      production: production,
+      withBank: withBank,
+      holderLabeled: _extractAccountHolder(rawText, recognizedText).labeled,
+      candidates: _scanAccountCandidates(rawText),
+      canonicalBank: canonicalBankOf(rawText),
     );
   }
 
@@ -1389,4 +1468,65 @@ class OcrVerificationHelper {
         .replaceAll(RegExp(r'[^\w가-힣]'), '')
         .toLowerCase();
   }
+}
+
+/// [E9B-DIAG] 통장 OCR 숫자 후보 하나의 분류 근거 — 진단 전용.
+///
+///   `digits` 는 원문 숫자다. 진단 화면은 이것을 **그대로 보여 주지 않는다**
+///   (입력값과의 동일 여부만 쓴다).
+@visibleForTesting
+class AccountCandidateDiagnosis {
+  static const String rejectLength = 'LENGTH';
+  static const String rejectDate = 'DATE';
+  static const String rejectPhone = 'PHONE';
+
+  const AccountCandidateDiagnosis({
+    required this.digits,
+    required this.shape,
+    required this.positiveLabel,
+    required this.negativeLabel,
+    required this.rejectReason,
+  });
+
+  final String digits;
+
+  /// 구분자 기준 구간 길이 — 예: `3-6-2-3`.
+  final String shape;
+
+  /// 같은 줄에 계좌 라벨(`계좌번호`·`평생계좌`…)이 있었다.
+  final bool positiveLabel;
+
+  /// 같은 줄에 비계좌 라벨(`고객센터`·`전화`…)이 있었다.
+  final bool negativeLabel;
+
+  /// null 이면 계좌 후보로 쓰였다.
+  final String? rejectReason;
+
+  bool get usable => rejectReason == null;
+}
+
+/// [E9B-DIAG] [OcrVerificationHelper.diagnoseBankbookText] 결과.
+@visibleForTesting
+class BankbookDiagnosis {
+  const BankbookDiagnosis({
+    required this.production,
+    required this.withBank,
+    required this.holderLabeled,
+    required this.candidates,
+    required this.canonicalBank,
+  });
+
+  /// 서류 등록 화면과 같은 인자로 낸 판정(은행명 미전달).
+  final Map<String, dynamic> production;
+
+  /// 은행명까지 넘긴 보조 판정. 은행명을 안 넣었으면 null.
+  final Map<String, dynamic>? withBank;
+
+  /// 예금주를 라벨('예금주'·'계좌주') 옆에서 읽었다.
+  final bool holderLabeled;
+
+  final List<AccountCandidateDiagnosis> candidates;
+
+  /// 문서에서 읽은 은행의 canonical 이름(제품 금융기관 목록 기준). 없으면 null.
+  final String? canonicalBank;
 }

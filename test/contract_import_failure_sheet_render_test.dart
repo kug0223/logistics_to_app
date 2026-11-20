@@ -32,6 +32,8 @@ import 'package:provider/provider.dart';
 import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/screens/business_admin/contract_import_paste_screen.dart';
 
+import 'support/visible_text.dart';
+
 // 화면 AppBar 의 알림 배지가 NotificationProvider → FirestoreService 를 타므로
 // core 플랫폼만 가짜로 세운다. 실제 읽기·쓰기는 하지 않는다.
 class _FakeApp extends Fake
@@ -101,6 +103,11 @@ Future<void> _openFailureSheet(
   );
   await tester.pumpAndSettle();
 
+  // [UI-INTEGRATION.33] 320x640·2.0 에서는 제목·안내가 커져 입력창이 첫 화면 아래(아직 안 그려진
+  //   목록 항목)에 있다 — 사용자처럼 스크롤해 도달한 뒤 붙여넣는다.
+  await tester.dragUntilVisible(
+      find.byType(TextField), find.byType(ListView).first, const Offset(0, -120));
+  await tester.pumpAndSettle();
   await tester.enterText(find.byType(TextField).first, kUnparsable);
   await tester.pumpAndSettle();
 
@@ -109,11 +116,12 @@ Future<void> _openFailureSheet(
 }
 
 /// 버튼이 지금 보이거나, 스크롤해서 보이게 할 수 있어야 한다.
+/// [DU337 시험 추종] 시트 제목 · CTA 가 낱말 단위 표시 문자열이 됐다 — 보이는 글자 기준 finder(DU255).
 Future<void> _expectReachable(
   WidgetTester tester,
   String label,
 ) async {
-  final finder = find.text(label);
+  final finder = findVisibleText(label);
   expect(finder, findsOneWidget, reason: '$label 버튼이 트리에 없다');
   // 스크롤이 있으면 끌어와서 보이게 한다 — 없어도 에러가 아니다.
   await tester.ensureVisible(finder);
@@ -147,7 +155,7 @@ void main() {
         (tester) async {
       await _openFailureSheet(tester, w: w, h: h, textScale: s);
 
-      expect(find.text(kSheetTitle), findsOneWidget,
+      expect(findVisibleText(kSheetTitle), findsOneWidget,
           reason: '실패 시트가 뜨지 않았다 — 측정 대상에 도달하지 못했다');
 
       expect(tester.takeException(), isNull,
@@ -167,7 +175,7 @@ void main() {
     // 패치 전 360x640 의 시트 maxHeight 는 360.0(=9/16) 이었고 본문 356 이
     // 319.6 으로 눌려 36px 넘쳤다. isScrollControlled 로 그 상한이 풀려야 한다.
     await _openFailureSheet(tester, w: 360, h: 640, textScale: 1.0);
-    expect(find.text(kSheetTitle), findsOneWidget);
+    expect(findVisibleText(kSheetTitle), findsOneWidget);
     tester.takeException();
 
     final sheet = tester

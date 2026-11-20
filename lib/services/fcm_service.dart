@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'app_version_service.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'fcm_token_revoker.dart';
 import '../screens/common/notification_screen.dart';
 import '../screens/contract/contract_sign_screen.dart';
 import '../screens/user/my_applications_screen.dart';
@@ -28,6 +31,22 @@ class FCMService {
   final FirebaseMessaging _messaging = FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
+
+  // [.69 FCM-DEVICE-REVOKE] 로그아웃 때 기기 토큰 폐기 — 다음 계정에 같은 토큰이 붙지 않게(fcm_token_revoker.dart).
+  static const String _kRevokePendingKey = 'fcm_device_token_revoke_pending';
+  static const Duration _kRevokeWait = Duration(seconds: 4);
+  late final DeviceTokenRevoker _revoker = DeviceTokenRevoker(
+    deleteToken: () => _messaging.deleteToken(),
+    readPending: () async => (await SharedPreferences.getInstance()).getBool(_kRevokePendingKey) ?? false,
+    writePending: (v) async {
+      final p = await SharedPreferences.getInstance();
+      v ? await p.setBool(_kRevokePendingKey, true) : await p.remove(_kRevokePendingKey);
+    },
+  );
+
+  /// 앱 시작 — 이전 로그아웃이 끝내지 못한 기기 토큰 폐기를 이어서 한다(로그인하지 않아도).
+  /// 결과는 표식으로 남는다. 로그인은 [initialize] 에서 이 폐기를 다시 기다린다.
+  Future<bool> settlePendingRevoke() => _revoker.settle(timeout: const Duration(seconds: 10));
 
   String? _currentUserId;
   bool _currentUserIsAdmin = false;  // 역할 가드 판단용 (contractSigned 등)
@@ -155,7 +174,11 @@ class FCMService {
       await _initializeLocalNotifications();
 
       // 3. FCM 토큰 저장 — 권한 거부 시 저장하지 않음 (불필요한 FCM 발송 비용 방지)
-      if (authorized) await _saveToken();
+      //   [.69] 이전 계정의 기기 토큰 폐기가 남아 있으면 먼저 끝낸다 — 못 끝내면 이번에는 등록하지 않는다
+      //   (같은 토큰이 두 계정에 붙으면 이전 계정 알림이 이 기기로 온다). 다음 로그인·앱 시작이 다시 시도한다.
+      final revokeSettled = await _revoker.settle(timeout: _kRevokeWait);
+      if (!revokeSettled) debugPrint('⚠️ FCM 이전 토큰 폐기 미완료 — 이번 로그인은 토큰 등록을 미룬다');
+      if (authorized && revokeSettled && _currentUserId == userId) await _saveToken();
 
       // 4. 토큰 갱신 리스너
       _tokenRefreshSub?.cancel();
@@ -420,6 +443,12 @@ class FCMService {
     required String destinationKey,
     required WidgetBuilder builder,
   }) {
+    // [VERSION-GATE] 업데이트로 막아 둔 앱을 알림 한 번으로 열 수 없다 —
+    //   딥링크는 차단 화면 **위로** push 되므로 여기서 멈춘다.
+    if (AppVersionService.entryBlocked) {
+      debugPrint("⛔ 최소 버전 미달 — 딥링크 이동을 막는다");
+      return;
+    }
     if (_navigatorKey?.currentState == null) return;
     final targetName = 'fcm:$destinationKey';
     // 실제 root navigator top route name과 비교 — _fcmKeyStack이 아닌 observer 기반
@@ -930,6 +959,12 @@ class FCMService {
       debugPrint('⚠️ Navigator가 아직 준비되지 않음');
       return;
     }
+    // [VERSION-GATE] 업데이트로 막아 둔 앱을 알림 한 번으로 열 수 없다 —
+    //   딥링크는 차단 화면 **위로** push 되므로 여기서 멈춘다.
+    if (AppVersionService.entryBlocked) {
+      debugPrint("⛔ 최소 버전 미달 — 딥링크 이동을 막는다");
+      return;
+    }
     if (_notificationScreenVisible) return;
 
     _notificationScreenVisible = true;
@@ -952,37 +987,58 @@ class FCMService {
   }
 
   /// 로그아웃 시 토큰 삭제
-  Future<void> clearToken() async {
+  ///
+  /// [.68] 구독·계정 상태는 네트워크를 기다리기 **전에** 정리한다. 예전에는 서버 응답 뒤(finally)에 정리했는데,
+  ///   오프라인이면 토큰 문서 갱신이 서버 확인을 기다리며 끝나지 않아 로그아웃 전체가 멈췄다(기기: 30초 넘게 SA 홈,
+  ///   재연결 뒤에야 로그인 화면). [networkTimeout] 을 주면 그 시간 뒤 정리를 포기하고 돌아온다 — 상태는 이미
+  ///   정리됐으므로, 늦게 끝난 요청이 다음 계정의 구독을 지우는 일이 없다.
+  ///
+  /// [.69] 반환값 = 서버 문서에서 **이 기기 토큰**을 지웠다고 확인했는가(토큰을 알았고, 갱신이 상한 안에 끝남).
+  ///   [revokeDevice] 는 로그아웃 전용 — 기기 토큰 자체를 폐기한다(문서 정리가 못 끝나도 이전 계정 알림이 이 기기로 못 오게).
+  ///   폐기 전에 현재 토큰을 먼저 읽는다(폐기 뒤 새 토큰을 지우려 하지 않게).
+  Future<bool> clearToken({Duration? networkTimeout, bool revokeDevice = false}) async {
+    final uid = _currentUserId;
+    // _currentUserId null 여부와 무관하게 구독은 항상 취소
+    _tokenRefreshSub?.cancel();
+    _tokenRefreshSub = null;
+    _onMessageSub?.cancel();
+    _onMessageSub = null;
+    _onMessageOpenedAppSub?.cancel();
+    _onMessageOpenedAppSub = null;
+    _currentUserId = null;
+    _isInitialized = false;
+    _isInitializing = false;
+    _notificationScreenVisible = false; // 로그아웃 시 리셋 — 재로그인 후 알림 화면 진입 가능하도록
+    _pendingColdStartPayload = null;    // [Phase 9D] cross-account replay 방지
+    // _fcmKeyStack 제거됨 — AppNavigatorObserver가 실제 top route 추적 (NAV.3-FIX-A)
+    Future<T> bounded<T>(Future<T> f) => networkTimeout == null ? f : f.timeout(networkTimeout);
+    String? currentToken;
     try {
-      if (_currentUserId != null) {
-        final currentToken = await _messaging.getToken();
+      currentToken = await bounded(_messaging.getToken());
+    } catch (e) {
+      debugPrint('⚠️ FCM 현재 토큰 확인 실패: $e');
+    }
+    Future<bool> removeToken() async {
+      if (uid == null) return false;
+      try {
         final updates = <String, dynamic>{'fcmToken': FieldValue.delete()};
         if (currentToken != null) {
           // 현재 디바이스 토큰만 배열에서 제거 — 다른 디바이스 토큰은 유지
           updates['fcmTokens'] = FieldValue.arrayRemove([currentToken]);
         }
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(_currentUserId)
-            .update(updates);
+        await bounded(FirebaseFirestore.instance.collection('users').doc(uid).update(updates));
         debugPrint('✅ FCM 토큰 삭제 완료');
+        return currentToken != null;
+      } catch (e) {
+        debugPrint('❌ FCM 토큰 삭제 실패: $e');
+        return false;
       }
-    } catch (e) {
-      debugPrint('❌ FCM 토큰 삭제 실패: $e');
-    } finally {
-      // _currentUserId null 여부와 무관하게 구독은 항상 취소
-      _tokenRefreshSub?.cancel();
-      _tokenRefreshSub = null;
-      _onMessageSub?.cancel();
-      _onMessageSub = null;
-      _onMessageOpenedAppSub?.cancel();
-      _onMessageOpenedAppSub = null;
-      _currentUserId = null;
-      _isInitialized = false;
-      _isInitializing = false;
-      _notificationScreenVisible = false; // 로그아웃 시 리셋 — 재로그인 후 알림 화면 진입 가능하도록
-      _pendingColdStartPayload = null;    // [Phase 9D] cross-account replay 방지
-      // _fcmKeyStack 제거됨 — AppNavigatorObserver가 실제 top route 추적 (NAV.3-FIX-A)
     }
+    final results = await Future.wait([
+      removeToken(),
+      if (revokeDevice) _revoker.revoke(timeout: networkTimeout ?? _kRevokeWait),
+    ]);
+    if (revokeDevice && !results.last) debugPrint('⚠️ FCM 기기 토큰 폐기 미완료 — 다음 로그인·앱 시작에서 이어서 한다');
+    return results.first;
   }
 }

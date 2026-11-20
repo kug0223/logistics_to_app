@@ -11,14 +11,39 @@
 //   - 목록 조회는 pageSize=30 기본
 //   - 상태 필터는 서버사이드 where()
 
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/core/attendance_model.dart';
 import '../models/core/payment_change_request_model.dart';
 import '../models/core/interim_settlement_request_model.dart';
 import '../utils/format_helper.dart';
+import '../utils/payroll_due_scope.dart';
+
+/// [PAYROLL-BANNER-COMPLETENESS] 미이체 조회를 끝까지 하지 못했다 — "0건"도 "N건"도 아니다.
+class PayrollQueryIncomplete implements Exception {
+  const PayrollQueryIncomplete(this.reason, {this.unreadable = const []});
+  final String reason;
+
+  /// [PAYROLL-INCOMPLETE-STALE-ACTION] 읽지 못한 급여 기록 — 근태 문서 id 와 오류 **유형**만.
+  ///   값·이름·계좌는 담지 않는다. 재시도로 풀리지 않는 데이터 오류를 찾는 재료다.
+  final List<({String id, String type})> unreadable;
+
+  /// 관리자에게 보일 짧은 참조 코드(문제 기록 id 들의 해시 앞 6자) — 지원 요청 시 로그와 맞춘다.
+  String? get reference {
+    if (unreadable.isEmpty) return null;
+    final ids = unreadable.map((u) => u.id).toList()..sort();
+    return sha256.convert(utf8.encode(ids.join(','))).toString().substring(0, 6);
+  }
+
+  @override
+  String toString() => 'PayrollQueryIncomplete: $reason'
+      '${unreadable.isEmpty ? '' : ' ref=$reference unreadable=${unreadable.length}'}';
+}
 
 // CF 응답에서 {_seconds, _nanoseconds} 맵을 Timestamp로 재수화
 Map<String, dynamic> _cfHydrate(Map<String, dynamic> m) {
@@ -62,13 +87,33 @@ class PayrollPaymentService {
   final _db = FirebaseFirestore.instance;
   final _cf = FirebaseFunctions.instanceFor(region: 'asia-northeast3');
 
+  /// [PERF-A1.F] 급여 근태 **읽기** 한 번을 기다리는 최대 시간.
+  ///
+  ///   `HttpsCallableOptions(timeout:)` 은 연결이 성립하지 않는 동안에는 적용되지
+  ///   않았다 — 서버에 닿지 못하면 기기 TCP 재시도가 끝날 때까지 기다렸다
+  ///   (LOCAL 실측 135초, .38 84초). 같은 30초를 화면 쪽에서도 지킨다.
+  ///   기다리기만 멈춘다 — 늦게 온 응답은 버려지고 화면은 오류·다시 시도를 보인다.
+  ///   읽기 전용이다. 쓰기(이체·정산)에는 쓰지 않는다 — 결과 불명을 실패로 단정하지 않는다.
+  static const readWait = Duration(seconds: 30);
+
+  Future<HttpsCallableResult<Map<String, dynamic>>> _readAttendances(
+          Map<String, dynamic> data) =>
+      _cf
+          .httpsCallable('callableGetAdminAttendances',
+              options: HttpsCallableOptions(timeout: readWait))
+          .call<Map<String, dynamic>>(data)
+          .timeout(readWait);
+
   // ══════════════════════════════════════════════════════════
   // 송금 처리 (이체 완료 처리) — CF callableMarkTransferredBatch 경유
   // confirmed→transferred 법적 상태 전이: Trust Boundary Charter 기준 CF 필수
   // ══════════════════════════════════════════════════════════
 
   /// 단건 이체 완료 처리 — callableMarkTransferredBatch(attendanceIds 1건) 위임
-  Future<void> markTransferred({
+  ///
+  /// [SIM-XFER-COUNT] 서버가 말한 결과(이번에 바꾼 건수·이미 이체된 건)를 돌려준다.
+  ///   제외는 여전히 [TransferBlockedException] 으로 올라온다.
+  Future<MarkTransferResult> markTransferred({
     required String attendanceId,
     required String businessId,
     String? transferNote,
@@ -79,14 +124,17 @@ class PayrollPaymentService {
     int? finalWage,
     String? applicationId,
   }) async {
+    // [PAYROLL-V3-NAME · O1] 이름은 알림 문구의 장식일 뿐 수신자·대상이 아니다.
+    //   이름을 모르면 알림을 빼지 않고 이름 칸만 뺀다 — 화면 대체 문구('이름 확인 불가')나
+    //   uid 를 사람 이름처럼 서버로 보내지 않는다. 문구는 서버가 이름 유무로 고른다.
+    final name = workerName?.trim();
     final notifications = (workerUserId != null &&
-            workerName != null &&
             businessName != null &&
             finalWage != null)
         ? [
             {
               'userId': workerUserId,
-              'workerName': workerName,
+              if (name != null && name.isNotEmpty) 'workerName': name,
               'businessName': businessName,
               'businessId': businessId,
               'finalWage': finalWage,
@@ -113,8 +161,15 @@ class PayrollPaymentService {
     final already = (data['alreadyTransferred'] as List?)?.cast<String>() ?? [];
     final blocked = (data['blocked'] as Map?) ?? {};
 
-    if (already.contains(attendanceId)) return; // 멱등 — 이미 이체됨
-    if (!skipped.contains(attendanceId)) return; // 정상 처리
+    final processed = (data['processed'] as int?) ?? 0;
+    final outcome = MarkTransferResult(
+      bankSkipped: const [],
+      settlementLocked: const [],
+      transferredNow: processed,
+      alreadyTransferred: already,
+    );
+    if (already.contains(attendanceId)) return outcome; // 멱등 — 이미 이체됨
+    if (!skipped.contains(attendanceId)) return outcome; // 정상 처리
 
     final reason = blocked[attendanceId];
     throw TransferBlockedException(
@@ -136,7 +191,9 @@ class PayrollPaymentService {
     final allNotifications = notificationInfos
         ?.map((n) => {
               'userId': n.workerUserId,
-              'workerName': n.workerName,
+              // [PAYROLL-V3-NAME · O1] 모르는 이름은 보내지 않는다(단건 경로와 같은 규칙).
+              if (n.workerName != null && n.workerName!.trim().isNotEmpty)
+                'workerName': n.workerName!.trim(),
               'businessName': n.businessName,
               'businessId': n.businessId,
               'finalWage': n.finalWage,
@@ -265,9 +322,7 @@ class PayrollPaymentService {
       final monthStart = DateTime(year, month, 1);
       final monthEnd   = DateTime(year, month + 1, 1);
 
-      final result = await _cf.httpsCallable('callableGetAdminAttendances',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
-          .call<Map<String, dynamic>>({
+      final result = await _readAttendances({
         'businessId': businessId,
         'startMs': monthStart.millisecondsSinceEpoch,
         'endMs': monthEnd.millisecondsSinceEpoch,
@@ -294,23 +349,20 @@ class PayrollPaymentService {
   // 오늘 처리할 송금 조회
   // ══════════════════════════════════════════════════════════
 
-  /// 오늘 지급 예정 건수 (배지용)
-  /// [CF 이전 2026-07-13] callableGetAdminAttendances (paymentDueDateLteMs + wageStatus)
+  /// 오늘(KST)까지 지급 예정인 미이체 건수 (급여 탭 배너)
+  ///
+  /// [PAYROLL-BANNER-DUE-SCOPE] 배너를 누르면 여는 목록(전체 미이체 + 오늘까지 지급
+  ///   예정)과 **같은 조회·같은 조건**으로 센다. 예전에는 기기 로컬 23:59:59 를 기준으로
+  ///   서버에 따로 물었고(`paymentDueDateLteMs`), 0원 노쇼도 걸러내지 않았다.
   Future<int?> getTodayPaymentCount({
     required String businessId,
     DateTime? referenceDate,
   }) async {
     try {
-      final ref = referenceDate ?? DateTime.now();
-      final todayEnd = DateTime(ref.year, ref.month, ref.day, 23, 59, 59);
-      final result = await _cf.httpsCallable('callableGetAdminAttendances',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
-          .call<Map<String, dynamic>>({
-        'businessId': businessId,
-        'paymentDueDateLteMs': todayEnd.millisecondsSinceEpoch,
-        'wageStatus': AttendanceModel.wageConfirmed,
-      });
-      return (result.data['items'] as List? ?? []).length;
+      final records = await getAllOutstandingWages(businessId: businessId);
+      return PayrollDueScope.dueByToday(
+              records, referenceDate ?? PayrollDueScope.now())
+          .length;
     } catch (e) {
       debugPrint('❌ 오늘 지급 건수 조회 실패: $e');
       return null; // 0 반환 시 지급 건 없는 것으로 오인 → null로 미조회 상태 구분
@@ -333,41 +385,95 @@ class PayrollPaymentService {
       // 서버 조건이 > 이므로 730일 == TWO_YEARS_MS는 통과.
       const chunkDuration = Duration(days: 730);
 
-      final allItems = <AttendanceModel>[];
+      // [PAYROLL-ALL-UNTRANSFERRED] 구간 경계는 예전과 같다 — 먼저 전부 정한다.
+      final ranges = <(DateTime, DateTime)>[];
       DateTime chunkStart = farPast;
-
       while (chunkStart.isBefore(tomorrow)) {
         DateTime chunkEnd = chunkStart.add(chunkDuration);
         if (chunkEnd.isAfter(tomorrow)) {
           chunkEnd = tomorrow;
         }
-
-        final result = await _cf
-            .httpsCallable('callableGetAdminAttendances',
-                options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
-            .call<Map<String, dynamic>>({
-          'businessId': businessId,
-          'startMs': chunkStart.millisecondsSinceEpoch,
-          'endMs': chunkEnd.millisecondsSinceEpoch,
-          'wageStatus': AttendanceModel.wageConfirmed,
-        });
-
-        final rawItems = (result.data['items'] as List? ?? []);
-        final chunkAttendances = rawItems.whereType<Map>().map((m) {
-          final raw = _cfHydrate(Map<String, dynamic>.from(m));
-          final id = raw.remove('id') as String? ?? '';
-          return AttendanceModel.tryFromMap(raw, id);
-        }).whereType<AttendanceModel>().toList();
-
-        allItems.addAll(chunkAttendances);
+        ranges.add((chunkStart, chunkEnd));
         chunkStart = chunkEnd; // half-open: next start = previous end
       }
 
-      return allItems;
+      // 구간끼리는 서로의 결과를 쓰지 않는다(사업장·구간·급여상태만 입력, 서버는
+      //   workDate >= start AND < end). 그래서 함께 보낸다 — 예전에는 앞 구간
+      //   응답을 기다려 왕복이 구간 수만큼 쌓였다.
+      //   결과는 구간 순서대로 이어 붙인다(각 구간은 서버가 workDate 오름차순) —
+      //   직렬일 때와 같은 목록이다. 하나라도 실패하면 전체가 실패다(부분 목록 없음).
+      final perRange = await Future.wait(ranges
+          .map((r) => _fetchConfirmedRangeComplete(businessId, r.$1, r.$2)));
+
+      return [for (final items in perRange) ...items];
     } catch (e) {
       debugPrint('[PayrollService] getAllOutstandingWages 실패: $e');
       rethrow; // [ERROR-EMPTY-01] caller가 success-empty와 failure를 구분할 수 있도록
     }
+  }
+
+  /// [PAYROLL-BANNER-COMPLETENESS] 한 구간을 **끝까지** 읽는다.
+  ///
+  ///   서버(callableGetAdminAttendances)는 workDate 오름차순으로 최대 10,000건을 주고,
+  ///   더 있으면 `limitReached: true` 만 알린다(커서 없음). 예전에는 그 신호를 버려
+  ///   잘린 목록이 배너 숫자·전체 미이체 금액이 됐다.
+  ///   잘렸으면 받은 마지막 workDate 부터 다시 묻고(그 시각 포함 — id 로 중복 제거),
+  ///   더 나아갈 수 없으면(한 시각에 10,000건 초과, 쪽수 상한) 또는 받은 항목을
+  ///   읽지 못하면 [PayrollQueryIncomplete] 를 던진다 — 일부를 전체처럼 쓰지 않는다.
+  Future<List<AttendanceModel>> _fetchConfirmedRangeComplete(
+      String businessId, DateTime start, DateTime end) async {
+    const maxPages = 20;
+    final byId = <String, AttendanceModel>{};
+    var cursorMs = start.millisecondsSinceEpoch;
+    for (var page = 0;; page++) {
+      if (page >= maxPages) {
+        throw const PayrollQueryIncomplete('조회 쪽수 상한을 넘었습니다');
+      }
+      final result = await _readAttendances({
+        'businessId': businessId,
+        'startMs': cursorMs,
+        'endMs': end.millisecondsSinceEpoch,
+        'wageStatus': AttendanceModel.wageConfirmed,
+      });
+      final rawItems = (result.data['items'] as List? ?? []).whereType<Map>().toList();
+      var lastMs = cursorMs;
+      final unreadable = <({String id, String type})>[];
+      for (final m in rawItems) {
+        final raw = _cfHydrate(Map<String, dynamic>.from(m));
+        final id = raw.remove('id') as String? ?? '';
+        if (id.isEmpty) {
+          unreadable.add((id: '(id 없음)', type: 'MISSING_ID'));
+          continue;
+        }
+        AttendanceModel rec;
+        try {
+          rec = AttendanceModel.fromMap(raw, id);
+        } catch (e) {
+          // 오류 **유형**만 남긴다 — 메시지에는 값이 섞일 수 있다.
+          unreadable.add((id: id, type: e.runtimeType.toString()));
+          continue;
+        }
+        byId[id] = rec;
+        final w = rec.workDate.millisecondsSinceEpoch;
+        if (w > lastMs) lastMs = w;
+      }
+      if (unreadable.isNotEmpty) {
+        // 읽지 못한 급여를 빼고 세면 그 숫자는 전체가 아니다.
+        final err = PayrollQueryIncomplete('읽지 못한 급여 기록이 있습니다', unreadable: unreadable);
+        debugPrint('[PAYROLL-INCOMPLETE] ref=${err.reference} biz=$businessId '
+            'unreadable=${unreadable.length} '
+            '${unreadable.map((u) => '${u.id}:${u.type}').join(',')}');
+        throw err;
+      }
+      if (result.data['limitReached'] != true) break;
+      if (lastMs <= cursorMs) {
+        throw const PayrollQueryIncomplete('한 시각에 조회 상한을 넘는 기록이 있습니다');
+      }
+      cursorMs = lastMs;
+    }
+    final out = byId.values.toList()
+      ..sort((a, b) => a.workDate.compareTo(b.workDate));
+    return out;
   }
 
   // [R7-P1-5 후속] `getTotalNotTransferredCount` 를 제거했다.
@@ -773,7 +879,8 @@ class MarkTransferResult {
 /// markTransferredBatch 알림 발송용 개별 근무자 정보
 class TransferNotificationInfo {
   final String workerUserId;
-  final String workerName;
+  /// 알림 문구용 이름. 모르면 null — 서버가 이름 없는 문구를 쓴다(uid·대체 문구를 넣지 않는다).
+  final String? workerName;
   final String businessName;
   final String businessId;
   final int finalWage;
@@ -783,7 +890,7 @@ class TransferNotificationInfo {
 
   const TransferNotificationInfo({
     required this.workerUserId,
-    required this.workerName,
+    this.workerName,
     required this.businessName,
     required this.businessId,
     required this.finalWage,
@@ -805,7 +912,8 @@ List<TransferNotificationInfo> buildTransferNotificationInfos({
     final net = wd?.effectiveNetWage ?? 0;
     return TransferNotificationInfo(
       workerUserId: r.userId,
-      workerName: workerNameByUid[r.userId] ?? r.userId,
+      // [PAYROLL-V3-NAME · O1] 예전: `?? r.userId` — 이름을 모르면 근로자 uid 가 알림 본문에 들어갔다.
+      workerName: workerNameByUid[r.userId],
       businessName: r.businessName,
       businessId: r.businessId,
       finalWage: net,

@@ -131,14 +131,18 @@ void main() {
       expect(f, contains('const allAppDocs = [...pendingSnap.docs, ...delReport.canceled];'));
     });
 
-    test('10 사업장 비활성화 — TO 루프', () {
-      expect(cf, contains('const deactivateReport = await srvLifecycleCancelBulk('));
-      expect(cf, contains('const canceledCount = deactivateReport.canceled.length;'));
+    // [ARCHIVE-CASCADE-PAGINATION] 공고별 루프·잔여 CONFIRMED 경로는 사업장 전체 id 페이지 한 벌
+    //   (srvRunBusinessArchiveCascade)로 합쳐졌다 — 같은 helper 를 같은 경계로 지난다.
+    test('10 사업장 비활성화 — 확정 계열(계약 대기·확정) 페이지 처리', () {
+      expect(cf, contains('for (const st of ["CONTRACT_PENDING", "CONFIRMED"]) {'));
+      expect(cf, contains('const rep = await srvLifecycleCancelBulk(srvNotStartedOnly(docs), {'));
+      expect(cf, contains('c.commitmentsCanceled += rep.canceled.length;'));
     });
 
-    test('11 사업장 비활성화 — 잔여 CONFIRMED 경로', () {
-      expect(cf, contains('const closedReport = await srvLifecycleCancelBulk('));
-      expect(cf, contains('closedConfirmedSnap.docs,'));
+    test('11 사업장 비활성화 — 예정 시작 전 건만 넘기고, 판정 실패는 실패로 센다', () {
+      // [BUSINESS-ARCHIVE] 운영 종료는 예정 시작 전 건만 넘긴다 — 같은 경계(helper)는 그대로 지난다.
+      expect(cf, contains('srvLifecycleCancelBulk(srvNotStartedOnly(docs),'));
+      expect(cf, contains('c.failures += rep.failed.length;'));
     });
 
     test('12 사업장 삭제', () {
@@ -154,8 +158,10 @@ void main() {
     });
 
     test('14 다섯 호출부가 같은 helper를 쓴다', () {
-      expect('srvLifecycleCancelBulk('.allMatches(cf).length, 6,
-          reason: '정의 1 + 탈퇴 1 + 비활성화 2 + 사업장삭제 1 + 공고삭제 1');
+      // [ARCHIVE-CASCADE-PAGINATION] 비활성화의 세 호출(공고별·잔여 계약 대기·잔여 확정)이
+      //   사업장 전체 페이지 루프 하나(srvRunBusinessArchiveCascade)로 합쳐졌다.
+      expect('srvLifecycleCancelBulk('.allMatches(cf).length, 5,
+          reason: '정의 1 + 탈퇴 1 + 비활성화 1 + 사업장삭제 1 + 공고삭제 1');
       expect('srvLifecycleCancelOne('.allMatches(cf).length, 2,
           reason: '정의 1 + bulk 내부 1');
     });
@@ -187,7 +193,9 @@ void main() {
     test('19 보존 건수를 응답과 로그에 남긴다', () {
       expect(cf, contains('preservedCount: delPreserved.length'));
       expect(cf, contains('[lifecycle] 실근무 보존'));
-      expect(cf, contains(r'실근무 보존 ${closedReport.preserved.length}건'));
+      // [ARCHIVE-CASCADE-PAGINATION] 비활성화는 보존(실근무 계약 대기)을 사업장 문서에 남긴다.
+      expect(cf, contains('else if (cls === "WORKED_CONTRACT_PENDING") c.preservedWorkedContractPending++;'));
+      expect(cf, contains('archiveCascade: {state: r.state, counts: r.counts,'));
     });
   });
 

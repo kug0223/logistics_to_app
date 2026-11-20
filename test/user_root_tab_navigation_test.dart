@@ -1,3 +1,4 @@
+// ignore_for_file: depend_on_referenced_packages
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -16,6 +17,8 @@ import 'package:ALfit/screens/user/tabs/user_job_tab.dart';
 import 'package:ALfit/screens/user/tabs/user_my_tab.dart';
 import 'package:ALfit/screens/user/user_home_screen.dart';
 import 'package:ALfit/screens/user/user_root_screen.dart';
+import 'package:ALfit/utils/text_layout.dart';
+import 'package:ALfit/widgets/common/app_bottom_tab_bar.dart';
 
 /// [R7-P2-1 P21-N] **실제 지원자 루트**의 네 탭 선택과 뒤로 경로.
 ///
@@ -68,6 +71,15 @@ class _UserProviderDouble extends UserProvider {
   bool get hasPendingContract => false;
 }
 
+// [CP02 C1] 실제량 계수 — mount·pump·tap. tearDownAll 이 URN-FINAL 로 출력한다.
+int _mounts = 0, _pumps = 0, _taps = 0;
+
+/// [CP02 C1] 하단 탭(AppBottomTabBar) 안의 라벨 — 표시 문자열의 줄바꿈 제어문자를 뺀 원문으로 찾는다.
+Finder _tabLabel(String label) => find.descendant(
+    of: find.byType(AppBottomTabBar),
+    matching: find.byWidgetPredicate(
+        (w) => w is Text && TextLayout.plain(w.data ?? '') == label));
+
 Future<void> _pump(WidgetTester tester,
     {Size size = const Size(390, 900)}) async {
   tester.view.physicalSize = size;
@@ -85,12 +97,19 @@ Future<void> _pump(WidgetTester tester,
       child: const MaterialApp(home: UserRootScreen()),
     ),
   );
+  _mounts++;
   for (var i = 0; i < 20; i++) {
     await tester.pump(const Duration(milliseconds: 100));
+    _pumps++;
   }
 }
 
 void main() {
+  tearDownAll(() {
+    // ignore: avoid_print
+    print('URN-FINAL mounts=$_mounts pumps=$_pumps pumpPlusMount=${_mounts + _pumps} taps=$_taps drags=0');
+  });
+
   setUp(() {
     SharedPreferences.setMockInitialValues({
       'tour_completed_user_home': true,
@@ -103,7 +122,7 @@ void main() {
     await initializeDateFormatting('ko_KR', null);
   });
 
-  testWidgets('URN-1 네 탭의 루트는 홈·일자리·일정·MY 이고 홈이 처음 선택된다',
+  testWidgets('URN-1 네 탭의 루트는 홈·일자리·내 일정·내 정보 이고 홈이 처음 선택된다',
       (tester) async {
     await _pump(tester);
 
@@ -114,22 +133,26 @@ void main() {
     expect(find.byType(MyScheduleScreen, skipOffstage: false), findsOneWidget);
     expect(find.byType(UserMyTab, skipOffstage: false), findsOneWidget);
 
-    final bar = tester.widget<BottomNavigationBar>(
-        find.byType(BottomNavigationBar));
+    final bar = tester.widget<AppBottomTabBar>(find.byType(AppBottomTabBar));
     expect(bar.currentIndex, 0, reason: '첫 화면은 홈이다');
     expect(bar.items.map((i) => i.label).toList(),
-        ['홈', '일자리', '일정', 'MY']);
+        ['홈', '일자리', '내 일정', '내 정보']);
+    for (final l in const ['홈', '일자리', '내 일정', '내 정보']) {
+      expect(_tabLabel(l), findsOneWidget, reason: '$l 라벨이 바 안에 정확히 하나');
+    }
   });
 
   testWidgets('URN-2 탭을 누르면 그 탭이 선택된다', (tester) async {
     await _pump(tester);
 
-    for (final entry in const {'일자리': 1, '일정': 2, 'MY': 3, '홈': 0}.entries) {
-      await tester.tap(find.text(entry.key).last);
+    for (final entry in const {'일자리': 1, '내 일정': 2, '내 정보': 3, '홈': 0}.entries) {
+      expect(_tabLabel(entry.key), findsOneWidget, reason: '${entry.key} 라벨이 바 안에 정확히 하나');
+      await tester.tap(_tabLabel(entry.key));
+      _taps++;
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      final bar = tester
-          .widget<BottomNavigationBar>(find.byType(BottomNavigationBar));
+      _pumps += 2;
+      final bar = tester.widget<AppBottomTabBar>(find.byType(AppBottomTabBar));
       expect(bar.currentIndex, entry.value,
           reason: '${entry.key} 탭을 눌렀는데 다른 탭이 선택됐다');
     }
@@ -147,6 +170,7 @@ void main() {
         builder: (_) => const Scaffold(body: Text('탭 안쪽 화면'))));
     for (var i = 0; i < 10; i++) {
       await tester.pump(const Duration(milliseconds: 100));
+      _pumps++;
     }
     expect(find.text('탭 안쪽 화면'), findsOneWidget);
 
@@ -158,6 +182,7 @@ void main() {
     expect(popped, isTrue);
     for (var i = 0; i < 10; i++) {
       await tester.pump(const Duration(milliseconds: 100));
+      _pumps++;
     }
     expect(find.text('탭 안쪽 화면'), findsNothing,
         reason: '탭 안에 쌓인 화면이 있는데 시스템 뒤로가 앱을 닫으면 안 된다');

@@ -138,10 +138,22 @@ void main() {
   });
 
   group('INV-3 — 자기 자신으로 검증하지 않는다', () {
-    test('11 외국인 가입 3경로가 UNASSESSED를 명시적으로 보낸다', () {
+    test('11 외국인 가입 3경로가 같은 근거 함수를 명시적으로 보낸다', () {
+      // [FULL13-REEVAL.2 갱신] 번호를 직접 입력받게 되면서 자기 대조(INV-3)가
+      //   사라졌다. 세 경로는 `_markSelfCheck()` 하나로 근거를 만든다 — 수집 OFF
+      //   이면 여전히 unassessedSelfCheck, ON 이면 같은 사진의 OCR 번호를 후보로.
+      //   이름은 독립 근거가 없어 항상 UNASSESSED 다(foreignSignupSelfCheck).
       final reg = _codeOf(_src(_foreignReg));
-      final n = 'DocumentPickResult.unassessedSelfCheck()'.allMatches(reg).length;
-      expect(n, 3, reason: '세 경로 모두 — 보내지 않는 것과 없다고 말하는 것은 다르다');
+      final n = '_markSelfCheck()'.allMatches(reg).length;
+      expect(n, 4, reason: '정의 1 + 세 경로 — 보내지 않는 것과 없다고 말하는 것은 다르다');
+      final pick = _flat(_codeOf(_sliceOf(_src(_pickPath),
+          'static Map<String, dynamic> foreignSignupSelfCheck(', "'identifierCandidates'")));
+      expect(pick, contains('if (!collectionEnabled || !ocrAttempted) return unassessedSelfCheck();'));
+      // [FULL13-REEVAL.3 갱신] 이름도 직접 입력 — 이름 판정은 입력 ↔ OCR 이름 비교 결과다.
+      //   비교하지 않았으면 기본값 UNASSESSED 이고, 판정 단어를 위조하지 않는다.
+      expect(pick, contains('DocFieldOutcome nameOutcome = DocFieldOutcome.unassessed'));
+      expect(pick, contains("'name': nameOutcome.wire"));
+      expect(pick, contains("'identifier': DocFieldOutcome.unassessed.wire"));
       // 가짜 통과를 채워 넣지 않는다.
       expect(reg, isNot(contains("'nameMatched': true")));
       expect(reg, isNot(contains("'identifier': 'MATCHED'")));

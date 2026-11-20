@@ -42,6 +42,17 @@ String _src(String p) {
 String _codeOf(String s) =>
     s.split('\n').where((l) => !l.trimLeft().startsWith('//')).join('\n');
 
+// [RETRY-OVERLAP 2026-10-27] D+3 계약해지 자동 승인 블록 — 고정 글자수 창 대신 블록 경계로 자른다.
+//   승인과 알림을 한 transaction 으로 합치며 관리자 목록 계산이 transaction 앞으로 와서,
+//   1450자 창이 판정 코드(`if (!d3Effective)` 등)에 닿지 않게 됐다. 검사 대상은 그대로 그 블록이다.
+String _autoTermBlock(String cf) {
+  final i = cf.indexOf('const pendingTerminationSnap');
+  if (i < 0) throw StateError('const pendingTerminationSnap 를 찾지 못함');
+  final e = cf.indexOf('autoTerminationCount = termResults', i);
+  if (e < 0) throw StateError('D+3 계약해지 블록 끝을 찾지 못함');
+  return cf.substring(i, e);
+}
+
 String _after(String src, String name, int chars) {
   final i = src.indexOf(name);
   if (i < 0) throw StateError('$name 를 찾지 못함');
@@ -193,7 +204,7 @@ void main() {
     });
 
     test('P1-09 §4 manual/auto 가 같은 fail-closed 정책을 쓴다', () {
-      final auto = _after(cf, 'const pendingTerminationSnap', 1450);
+      final auto = _autoTermBlock(cf);
       expect(auto.contains('if (!d3Effective)'), isTrue);
       expect(approve.contains('if (!terminationEffectiveDate) {'), isTrue);
     });
@@ -241,7 +252,8 @@ void main() {
 
     test('P1-15 §16 종료된 관계의 접근은 authorization 이 막는다', () {
       // check-in: 소유권 · businessId · 확정상태 · 마지막 근무일
-      final ci = _after(cf, 'export const callableCheckIn', 4000);
+      // [BUSINESS-ARCHIVE 4단계] 장기 분기에 운영 종료 가드가 들어가 본문이 길어졌다.
+      final ci = _after(cf, 'export const callableCheckIn', 6000);
       expect(ci.contains('appData.businessId !== businessId'), isTrue);
       expect(ci.contains('confirmedStatuses.includes(appData.status'), isTrue);
       expect(ci.contains('actualResignDate'), isTrue);
@@ -270,7 +282,7 @@ void main() {
     final approveResign = _after(cf, 'callableApproveResignation = onCall', 4150);
     final autoResign =
         _after(cf, '.where("resignRequestedAt", "<=", threeDaysAgoUTC)', 3200);
-    final autoTerm = _after(cf, 'const pendingTerminationSnap', 1450);
+    final autoTerm = _autoTermBlock(cf);
     final transition =
         _after(cf, 'async function processExitEffectiveTransition', 11350);
 
@@ -425,7 +437,7 @@ void main() {
   group('§49 D+3 자동 승인 — manual 과 같은 operational truth', () {
     // 측정된 span: 이 블록의 마지막 단정 대상(actualResignDate: d3Effective)이
     //   +1305 에 있고, 금지 토큰(status:"CANCELED" 등)은 +19,246 이후다.
-    final auto = _after(cf, 'const pendingTerminationSnap', 1450);
+    final auto = _autoTermBlock(cf);
 
     test('T-10 terminationStatus=AUTO_APPROVED', () {
       expect(auto.contains('terminationStatus: "AUTO_APPROVED"'), isTrue);

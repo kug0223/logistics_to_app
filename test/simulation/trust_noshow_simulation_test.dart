@@ -281,21 +281,29 @@ void main() {
   // SIM-N: 점수를 지운 뒤, 노쇼는 어디서 막히는가
   // ═══════════════════════════════════════════════════════════
   group('SIM-N. 노쇼 카운터의 소유자', () {
+    // [NS-LEDGER] 90일 배열 재계산([FIX-90D-RECALC])은 원장 파생으로 바뀌었다 — 같은 불변조건을 현재 구조로 본다.
     test('N-01: 최근 카운터는 서버가 갱신한다 — 클라이언트 쓰기 금지 필드다', () {
       final cf = _cf();
-      expect(cf.contains('userUpdates.recentNoShowCount = recent90dCount2'),
-          isTrue);
+      expect(cf.contains('recentNoShowCount: d.recent,'), isTrue,
+          reason: '최근 카운터는 원장(srvDeriveFromLedger)에서 서버가 파생한다');
       expect(
           cf.contains('noShowCount·restrictedUntil은 CF Admin SDK 전용 필드'),
           isTrue,
           reason: '규칙에서 클라이언트 쓰기를 막는다는 기록');
+      final rules = File('firestore.rules').readAsStringSync();
+      expect(rules.contains("'noShowDates', 'recentNoShowCount', 'restrictionParts',"), isTrue,
+          reason: '규칙이 클라이언트의 최근 카운터 쓰기를 막는다');
     });
 
-    test('N-02: 노쇼 취소는 배열로 재계산한다 — 단순 감산이 아니다', () {
+    test('N-02: 노쇼 취소는 원장에서 그 건을 지우고 다시 파생한다 — 단순 감산이 아니다', () {
       // 경계가 지나면 저장된 카운터가 실제보다 커져 제재가 잘못 남는다.
       final cf = _cf();
-      expect(cf.contains('arrayRemove'), isTrue);
-      expect(cf.contains('[FIX-90D-RECALC]'), isTrue);
+      final off = cf.substring(cf.indexOf('되돌림 skip — 이 근무가 trigger 소유자로'));
+      final block = off.substring(0, off.indexOf('if (userUpdates) {'));
+      expect(block.contains('if (nsLedgerKey) delete newLedger[nsLedgerKey];'), isTrue);
+      expect(block.contains('userUpdates = srvLedgerUserUpdates(userData, newLedger);'), isTrue);
+      expect(RegExp(r'recentNoShowCount\s*-\s*1|currentNoShowCount\s*-\s*1').hasMatch(block), isFalse,
+          reason: '저장 카운터에서 1을 빼지 않는다');
     });
   });
 }

@@ -1,3 +1,4 @@
+import 'support/visible_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -172,9 +173,9 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.byType(AppPageScaffold), findsOneWidget);
     expect(find.byType(GradientScaffold), findsNothing);
-    expect(find.text('관리'), findsWidgets);
+    expect(findVisibleText('관리'), findsWidgets);
     // 프로필 블록이 사라지지 않았다 — body 최상단 카드로 내려왔다.
-    expect(find.text('김의관'), findsWidgets);
+    expect(findVisibleText('김의관'), findsWidgets);
   });
 
   testWidgets('ASF-2 USER 의 설정도 flat shell 이다', (tester) async {
@@ -187,7 +188,7 @@ void main() {
     //   역할 차이는 사라지지 않았다 — 제목·우상단 액션·계약 바가 갈린다(SHU-5/6).
     expect(find.byType(GradientScaffold), findsNothing);
     expect(find.byType(AppPageScaffold), findsOneWidget);
-    expect(find.text('설정'), findsWidgets);
+    expect(findVisibleText('설정'), findsWidgets);
   });
 
   testWidgets('ASF-3 SubAdmin 은 모드에 따라 같은 flat shell 의 제목이 바뀐다',
@@ -196,14 +197,14 @@ void main() {
     await _pump(tester, const SettingsScreen(),
         provider: _RoleProvider(UserRole.USER, subAdminAdminMode: false));
     expect(find.byType(AppPageScaffold), findsOneWidget);
-    expect(find.text('설정'), findsWidgets);
+    expect(findVisibleText('설정'), findsWidgets);
 
     // 관리 모드 — 제목 '관리'
     await _pump(tester, const SettingsScreen(),
         provider: _RoleProvider(UserRole.USER, subAdminAdminMode: true));
     expect(tester.takeException(), isNull);
     expect(find.byType(AppPageScaffold), findsOneWidget);
-    expect(find.text('관리'), findsWidgets);
+    expect(findVisibleText('관리'), findsWidgets);
   });
 
   testWidgets('ASF-4 320dp·배율 1.3 에서 프로필 카드와 목록이 함께 보인다',
@@ -214,7 +215,7 @@ void main() {
         textScale: 1.3);
 
     expect(tester.takeException(), isNull);
-    expect(find.text('김의관'), findsWidgets);
+    expect(findVisibleText('김의관'), findsWidgets);
     // 목록이 잘리지 않고 스크롤 가능하다.
     expect(find.byType(ListView), findsWidgets);
     await tester.drag(find.byType(ListView).first, const Offset(0, -200));
@@ -230,7 +231,7 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.byType(AppPageScaffold), findsOneWidget);
     expect(find.byType(GradientScaffold), findsNothing);
-    expect(find.text('시스템 설정'), findsWidgets);
+    expect(findVisibleText('시스템 설정'), findsWidgets);
   });
 
   testWidgets('ASF-6 super-admin 시스템 설정 320dp·배율 2.0', (tester) async {
@@ -240,7 +241,7 @@ void main() {
         textScale: 2.0);
 
     expect(tester.takeException(), isNull);
-    expect(find.text('시스템 설정'), findsWidgets);
+    expect(findVisibleText('시스템 설정'), findsWidgets);
   });
 // ══════════════════════════════════════════════════════════
   // [R7-P1-6 P16-C] 계약 목록 — 조회 실패를 완료로 말하지 않는다
@@ -257,9 +258,9 @@ void main() {
         provider: _RoleProvider(UserRole.BUSINESS_ADMIN));
 
     tester.takeException(); // 조회 실패 자체가 이 테스트의 조건이다
-    expect(find.text('계약서 목록을 불러오지 못했습니다'), findsOneWidget);
-    expect(find.text('다시 시도'), findsOneWidget);
-    expect(find.text('계약서가 없습니다'), findsNothing);
+    expect(findVisibleText('계약서 목록을 불러오지 못했습니다'), findsOneWidget);
+    expect(findVisibleText('다시 시도'), findsOneWidget);
+    expect(findVisibleText('계약서가 없습니다'), findsNothing);
   });
 
   testWidgets('ACM-2 미발송 탭 실패를 "모두 발송했다"로 말하지 않는다',
@@ -273,9 +274,9 @@ void main() {
         provider: _RoleProvider(UserRole.BUSINESS_ADMIN));
 
     tester.takeException();
-    expect(find.text('미발송 계약서를 확인하지 못했습니다'), findsOneWidget);
+    expect(findVisibleText('미발송 계약서를 확인하지 못했습니다'), findsOneWidget);
     // 완료 주장(체크 아이콘 + '미발송 계약서 없음')이 나오지 않는다.
-    expect(find.text('미발송 계약서 없음'), findsNothing);
+    expect(findVisibleText('미발송 계약서 없음'), findsNothing);
     expect(find.byIcon(Icons.check_circle_outline), findsNothing);
   });
 
@@ -292,8 +293,8 @@ void main() {
         textScale: 1.3);
 
     tester.takeException();
-    expect(find.text('계약서 목록을 불러오지 못했습니다'), findsOneWidget);
-    expect(find.text('다시 시도'), findsOneWidget);
+    expect(findVisibleText('계약서 목록을 불러오지 못했습니다'), findsOneWidget);
+    expect(findVisibleText('다시 시도'), findsOneWidget);
   });
 testWidgets('ACM-4 정상 0건은 실패와 다른 문구다', (tester) async {
     await _pump(
@@ -303,8 +304,8 @@ testWidgets('ACM-4 정상 0건은 실패와 다른 문구다', (tester) async {
         provider: _RoleProvider(UserRole.BUSINESS_ADMIN));
 
     expect(tester.takeException(), isNull);
-    expect(find.text('미발송 계약서 없음'), findsOneWidget);
-    expect(find.text('미발송 계약서를 확인하지 못했습니다'), findsNothing);
+    expect(findVisibleText('미발송 계약서 없음'), findsOneWidget);
+    expect(findVisibleText('미발송 계약서를 확인하지 못했습니다'), findsNothing);
   });
 // ══════════════════════════════════════════════════════════
   // [R7-P1-7 P17-A] 남겼던 5화면 — 탭 대비와 넓은 표 접근성
@@ -341,15 +342,15 @@ testWidgets('ACM-4 정상 0건은 실패와 다른 문구다', (tester) async {
         textScale: 1.3);
     tester.takeException();
 
-    expect(find.text('지원자 FAQ'), findsOneWidget);
-    expect(find.text('관리자 FAQ'), findsOneWidget);
-    await tester.tap(find.text('관리자 FAQ'));
+    expect(findVisibleText('지원자 FAQ'), findsOneWidget);
+    expect(findVisibleText('관리자 FAQ'), findsOneWidget);
+    await tester.tap(findVisibleText('관리자 FAQ'));
     for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
     expect(tester.takeException(), isNull, reason: '탭 전환에서 예외 0');
     // 라벨이 잘려 사라지지 않는다.
-    expect(find.text('관리자 FAQ'), findsOneWidget);
+    expect(findVisibleText('관리자 FAQ'), findsOneWidget);
   });
 
   testWidgets('P17A-3 넓은 표 2화면 — flat shell + 새로고침 행동 유지',
@@ -389,7 +390,7 @@ testWidgets('ACM-4 정상 0건은 실패와 다른 문구다', (tester) async {
     tester.takeException();
 
     // 실패를 0원·0건으로 말하지 않는다(P16-S 계약의 렌더 확인).
-    expect(find.textContaining('0원'), findsNothing);
+    expect(findVisibleTextContaining('0원'), findsNothing);
     // CF 타임아웃 타이머를 흘려보낸다 — 남으면 하네스가 실패한다.
     await tester.pump(const Duration(seconds: 90));
     tester.takeException();

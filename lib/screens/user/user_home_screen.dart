@@ -2,6 +2,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -10,6 +11,7 @@ import '../../services/fcm_service.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/attendance_model.dart';
 import '../../models/core/business_model.dart';
+import '../../models/core/employment_contract_model.dart';
 import '../../models/core/id_card_access_request_model.dart';
 import '../../models/core/slot_model.dart';
 import '../../models/core/to_model.dart';
@@ -18,11 +20,11 @@ import '../../models/core/user_region.dart';
 import '../../models/ui/pending_id_request_surface.dart';
 import '../../models/ui/pending_termination_surface.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../providers/user_provider.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text_styles.dart';
-import '../../widgets/section_header.dart';
-import '../../utils/attendance_list_pdf.dart';
+import '../../theme/concept_tokens.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/tour_helper.dart';
@@ -30,6 +32,7 @@ import '../../widgets/auth/account_status_banner.dart';
 import '../../widgets/common/legal_task_card.dart';
 import '../../widgets/common/business_selector_sheet.dart';
 import '../../widgets/common/notification_badge.dart';
+import '../../widgets/common/alfit_wordmark.dart';
 import '../../widgets/user/cards/job_image_placeholder.dart';
 import '../common/notification_screen.dart';
 import '../common/document_management_screen.dart';
@@ -37,10 +40,13 @@ import '../common/job_posting_screen.dart';
 import '../../utils/navigation_helper.dart';
 import '../common/tour_screen.dart';
 import 'attendance_check_screen.dart';
+import 'checkin_contract_gate.dart';
+import '../contract/contract_sign_screen.dart';
 import 'dialogs/my_requests_dialog.dart';
 import 'my_applications_screen.dart';
 import 'user_tab_scope.dart';
 import '../../widgets/calendar/app_calendar.dart';
+import 'package:table_calendar/table_calendar.dart' show AvailableGestures;
 import '../../utils/calendar_helper.dart';
 import 'income_detail_screen.dart';
 import '../auth/pass_auth_recovery_screen.dart';
@@ -105,9 +111,26 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   ///   근태를 못 읽으면 "퇴근이 남지 않았다"고 말할 수 없다. 침묵하면
   ///   미퇴근이 `missed_checkout` 으로 자동 처리돼 임금 분쟁이 된다.
   bool _overnightUnknown = false;
+
+  /// [CONTRACT-DISPATCH-B4] 이번 로드의 내 계약 목록. null = 못 읽음(동의로 치지 않는다).
+  List<EmploymentContractModel>? _contracts;
   /// businessId → BusinessModel 캐시 — 사업장 이미지·혜택 정보 표시용
   Map<String, BusinessModel> _businessCache = {};
-  bool _isLoadingData = false;
+  /// [E1-HOME-FIRST-ENTRY] **읽기 전부터 LOADING 이다.**
+  ///
+  ///   false 로 시작하면 `initState` 와 첫 `_loadHomeData()` 사이의 창이
+  ///   통째로 `SUCCESS_ZERO` 로 보인다 — 지원서 8건·오늘 출근 근무가 있는
+  ///   사용자에게 `아직 지원한 일자리가 없어요` 라고 말한 그 창이다.
+  ///   로드는 `initState` 의 postFrame 콜백에서, 그것도
+  ///   `await TourHelper.isCompleted(...)` 뒤에야 시작한다(DEV 에뮬레이터
+  ///   실측 969ms, 저장소가 느리면 더 길다). 그 사이를 빈 결과로 단정하지
+  ///   않는다.
+  ///
+  ///   영원히 로딩에 갇히지 않는 근거: 이 화면은 `AuthWrapper` 가
+  ///   `currentUser != null` 일 때만 그리므로 `_loadHomeData()` 의
+  ///   `uid == null` 조기 반환 경로는 도달하지 않는다. 그 경로가 실제로
+  ///   관측되면 그때 트리거를 복구한다(추정으로 넣지 않는다).
+  bool _isLoadingData = true;
 
   // ── 초대 카운트 (INVITED 상태 지원서 수) ────────────────────────
   int get _invitedCount =>
@@ -164,6 +187,13 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   ///   여기서 늘어나는 읽기는 **내가 지원한 flex 공고 수**(보통 0~2)다.
   ///
   ///   실패는 삼키고 남긴다 — 못 읽은 것을 "모집 없음" 으로 바꾸지 않는다.
+  ///
+  ///   [SIM-FULL-FLEX-HOME] 서버가 **FULL 로 적은** flex 공고도 읽는다.
+  ///   관계가 없으면 슬롯을 모르고, 모르는 공고는 남기므로 정원이 찬 공고가
+  ///   "모집중" 카드로 보였다(DEVICE 10-18, 상세는 "인원 마감"). status 를
+  ///   정답으로 쓰지는 않는다 — 읽은 슬롯으로 projection 이 판정하고, status 가
+  ///   낡았으면(취소 직후 등) 그대로 남는다. 늘어나는 읽기는 FULL 로 표시된
+  ///   flex 후보 수(회차당 1회)이고, ACTIVE 공고는 여전히 읽지 않는다.
   Future<void> _loadRelationSlots(bool Function() superseded) async {
     final flexIds = <String>{};
     for (final to in _publishedTos) {
@@ -178,7 +208,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             s == AppStatus.confirmed ||
             s == AppStatus.invited;
       });
-      if (hasActive) flexIds.add(to.id);
+      if (hasActive || to.status == TOStatus.full) flexIds.add(to.id);
     }
     if (flexIds.isEmpty) return;
 
@@ -255,6 +285,18 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       if (!AppStatus.confirmedStatuses.contains(a.status)) return false;
       return a.isWorkingOnDate(today);
     }).toList();
+    // [DEVICE-MISMATCH-FIX] 오늘 근무가 여럿이면 **아직 끝나지 않은** 근무가
+    //   현재 할 일이다(가장 이른 것부터). 모두 끝났으면 가장 최근 근무를
+    //   보인다 — 오전에 놓친 근무가 오후에 마친 근무를 가리지 않게 한다.
+    //   예전에는 목록 순서 그대로 first 였다.
+    todayList.sort((a, b) {
+      final ea = a.hasShiftEndedAt(now);
+      final eb = b.hasShiftEndedAt(now);
+      if (ea != eb) return ea ? 1 : -1;
+      return ea
+          ? b.startTime.compareTo(a.startTime)
+          : a.startTime.compareTo(b.startTime);
+    });
     _heroTodayApp = todayList.isEmpty ? null : todayList.first;
 
     // STATE A: STATE B가 없을 때만 평가 — 72시간 이내 미확인 신규 확정
@@ -373,11 +415,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   /// 이 화면은 지금까지 조회 실패를 빈 목록으로 받아 "검토중 0 · 확정 0"으로
   /// 그렸다. 0건과 못 불러온 것은 근로자에게 전혀 다른 뜻이다 —
   /// 앞은 지원하러 가라는 말이고, 뒤는 다시 시도하라는 말이다.
-  ///   LOADING          _isLoadingData
-  ///   ERROR            _homeLoadFailed && _applications.isEmpty
+  ///   LOADING          _isLoadingData          ← **읽기 전 포함**(초기값 true)
+  ///   ERROR            _homeLoadFailed && _applications.isEmpty && !_isLoadingData
   ///   PARTIAL(stale)   _homeLoadFailed && _applications.isNotEmpty
-  ///   SUCCESS_ZERO     !_homeLoadFailed && _applications.isEmpty
+  ///   SUCCESS_ZERO     !_homeLoadFailed && _applications.isEmpty && !_isLoadingData
   ///   SUCCESS_NONZERO  !_homeLoadFailed && _applications.isNotEmpty
+  ///
+  /// [E1-HOME-FIRST-ENTRY] 예전에는 "아직 읽지 않음" 이 이 표에 없었고,
+  ///   그래서 첫 프레임이 SUCCESS_ZERO 로 떨어졌다. UNKNOWN != EMPTY.
   bool _homeLoadFailed = false;
   DateTime? _lastAutoRefreshAt;
 
@@ -390,11 +435,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     WidgetsBinding.instance.addObserver(this);
     _onFcmRefresh = () { if (mounted) _autoRefresh(); };
     FCMService().addUserDataRefreshListener(_onFcmRefresh);
-    AttendanceListPdf.preloadFonts();
+    // [WORKER-HOME-STARTUP.23] 출근부 PDF 한글 폰트 미리 읽기를 뺐다 — 근로자 화면은 출근부 PDF 를
+    //   만들지 않는다(쓰는 곳은 관리자 화면뿐이고, 쓸 때 _loadFonts 가 스스로 읽는다).
+    //   여기서는 큰 TTF 두 개를 메인 스레드에서 해석해 첫 화면 직후 홈 로드 시작을 ~1.2초 밀었다(LOCAL 디버그 로그).
     _initSeenIds(); // STATE A "미확인" 목록 복원 (SharedPreferences)
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      if (!await TourHelper.isCompleted(TourHelper.userHome)) {
+      final tourDone = await TourHelper.isCompleted(TourHelper.userHome);
+      if (!tourDone) {
         if (mounted) _showTourDialog();
       }
       _loadHomeData();
@@ -466,11 +514,15 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   int _homeLoadSeq = 0;
 
   Future<void> _loadHomeData() async {
-    if (_isLoadingHomeData) return; // 동시 실행 방어
+    if (_isLoadingHomeData) {
+      return; // 동시 실행 방어
+    }
     final uid = context.read<UserProvider>().currentUser?.uid;
     // 추천 점수 계산에 사용 — await 이전에 동기 캡처 (갱신 주기와 무관하게 안전)
     final user = context.read<UserProvider>().currentUser;
-    if (uid == null || !mounted) return;
+    if (uid == null || !mounted) {
+      return;
+    }
     final seq = ++_homeLoadSeq;
     bool superseded() {
       if (seq != _homeLoadSeq) return true;
@@ -492,7 +544,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       //   실패해도 홈 로드를 깨뜨리지 않는다 — 배너는 부가 정보다.
       unawaited(context
           .read<UserProvider>()
-          .refreshPendingContracts()
+          .refreshPendingContracts(joinInFlight: true) // 로그인 직후 같은 조회가 날아가 있으면 합류
           .catchError((Object e) => debugPrint('⚠️ 미서명 계약 갱신 실패: $e')));
 
       // [PREDEVICE-WORKER-ERROR-NOT-ZERO] 도메인별로 실패를 따로 받는다.
@@ -505,6 +557,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       Object? tosErr;
       Object? idErr;
       Object? tailErr;
+      Object? contractsErr;
       // [R7-P2-1 최종] 월별 원장의 연·월도 **KST 달력월**이다 — 서버가 그
       //   자로 자른다(`getMyMonthlyAttendances`).
       final kstNow = FormatHelper.toKstDate(now);
@@ -547,6 +600,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           })
         else
           Future<List<AttendanceModel>>.value(const <AttendanceModel>[]),
+        // [CONTRACT-DISPATCH-B4] 오늘 근무 CTA 의 계약 판정 근거(출퇴근 화면과 같은 읽기)
+        _reads.myContracts(uid).catchError((Object e) {
+          contractsErr = e;
+          return <EmploymentContractModel>[];
+        }),
       ]);
       if (!mounted || superseded()) return;
 
@@ -584,6 +642,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       }
       // 어느 쪽이든 못 읽었으면 어제의 퇴근 여부를 말할 수 없다.
       _overnightUnknown = attsErr != null || tailErr != null;
+      // 못 읽었으면 null(=모름) — 이전 값으로 동의를 추정하지 않는다.
+      if (contractsErr != null) debugPrint('⚠️ 홈 계약 조회 실패: $contractsErr');
+      _contracts = contractsErr == null
+          ? results[5] as List<EmploymentContractModel>
+          : null;
       _rebuildCaches();
 
       // [R7-P4.4E.8A] 관계가 있는 flex 공고의 슬롯만 뒤이어 읽는다.
@@ -633,6 +696,15 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         return;
       }
 
+      // [WORKER-HOME-CRITICAL-PATH] 홈의 숫자·일정·추천 목록은 위 1라운드로 이미 정해졌다.
+      //   아래 사업장 문서는 추천 카드 **이미지**(mainImageUrl)에만 쓰인다 — 그것 때문에
+      //   지원·근태·수입까지 스켈레톤으로 붙잡아 두지 않는다(LOCAL 추적: 주요 정보가
+      //   1라운드 + 사업장 문서 왕복을 다 기다렸다). 값은 모두 이번 회차의 새 응답이다.
+      setState(() {
+        _isLoadingData = false;
+        _homeLoadFailed = false;
+      });
+
       // ── BusinessModel 캐시 로드 — 추천 카드에 사업장 이미지·혜택 표시용
       // _getRecommendedTos 점수 기준 상위 8개 TO의 businessId만 로드한다.
       // · _getRecommendedTos는 _businessCache를 사용하지 않으므로 여기서 안전하게 호출 가능
@@ -654,19 +726,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         final bizResults = await Future.wait(
           targetBizIds.map((id) => _reads.businessById(id)),
         );
-        if (!mounted) return;
+        if (!mounted || superseded()) return;
         final cache = <String, BusinessModel>{};
         for (var i = 0; i < targetBizIds.length; i++) {
           final biz = bizResults[i];
           if (biz != null) cache[targetBizIds[i]] = biz;
         }
-        _businessCache = cache;
+        setState(() => _businessCache = cache);
       }
-
-      setState(() {
-        _isLoadingData = false;
-        _homeLoadFailed = false;
-      });
     } catch (e) {
       debugPrint('❌ 홈 데이터 로드 실패: $e');
       if (mounted) {
@@ -675,7 +742,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           _isLoadingData = false;
           _homeLoadFailed = true;
         });
-        ToastHelper.showError('데이터를 불러오지 못했습니다. 새로고침을 시도해주세요.');
+        ToastHelper.showError('홈 정보를 불러오지 못했어요. 다시 시도해 주세요');
       }
     } finally {
       _isLoadingHomeData = false;
@@ -697,7 +764,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       setState(() => _idRequestSurface = PendingIdRequestSurface.from(reqs));
     } catch (e) {
       debugPrint('❌ 신분증 요청 갱신 실패: $e');
-      if (mounted) ToastHelper.showError('요청 목록을 갱신하지 못했습니다.');
+      if (mounted) ToastHelper.showError('요청 목록을 새로 불러오지 못했어요');
     }
   }
 
@@ -790,7 +857,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                '본인인증이 필요합니다. 인증 완료 후 공고 지원이 가능합니다.',
+                '지원을 위해 본인인증이 필요해요',
                 style: const TextStyle(
                   fontSize: 12,
                   color: Color(0xFFBF360C),
@@ -831,61 +898,53 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   Widget _buildHeader(BuildContext context, double s, UserModel? user,
       UserProvider up) {
     return Container(
-      padding: EdgeInsets.fromLTRB(20 * s, 10 * s, 12 * s, 10 * s),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: AppColors.borderLight)),
-      ),
-      child: Row(
-        children: [
-          // 로고 아이콘 (앱 아이콘 asset 사용)
-          Container(
-            width: 32 * s, height: 32 * s,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: [AppColors.infoDark, AppColors.info],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            clipBehavior: Clip.hardEdge,
-            child: Image.asset(
-              'assets/icons/app_icon_foreground.png',
-              width: 32 * s,
-              height: 32 * s,
-              fit: BoxFit.cover,
-            ),
-          ),
-          SizedBox(width: 8 * s),
-          Text('ALfit',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
-                color: AppColors.infoDark,
-                letterSpacing: -0.6,
-              )),
-          const Spacer(),
-          // SubAdmin 모드 토글 (서브어드민 전용) — 구현 계획서 주의사항
-          if (up.isSubAdmin) ...[
-            _buildModeToggle(context, s, up),
+      // [DU306 Standards §12.1] 머리 관계 — 왼쪽은 본문과 같은 gutter(<360:16 / 그 밖 20), 아래 0. 행동행(알림 48, 역할 전환이
+      //   다음 줄이면 그 줄까지) → 계정 메타 합계 8 은 본문 첫 블록의 위 여백 [_kHeaderToMeta] 하나가 맡는다(중복 없음).
+      //   [DU306 L2] 위 8 → 0(배율 s 를 곱하지 않는다). 로고 잉크 top = 머리 시작 + (행 높이 − 28)/2 + 2 — 배너 숨김·행 48 이면
+      //   SafeArea top + 12. 오른쪽 12*s·로고(잉크 24/slot 84×28)·알림 48 receiver·역할 전환 배치 규칙은 그대로다.
+      padding: EdgeInsets.fromLTRB(_gutter(context), 0, 12 * s, 0),
+      // [DU1 구현69 VQ-01] 시안은 헤더와 본문을 선이 아니라 여백으로 나눈다 — 아래 구분선 제거
+      decoration: const BoxDecoration(color: Colors.white),
+      // [CP01] 로고 = 공용 글자 로고(고정 그림, 정본 DU_concept_precise_spec_audit §3). 원형 앱 아이콘 장식은 뺀다.
+      //   SubAdmin 역할 전환이 로고·알림과 한 줄에 다 들어가지 않는 폭·글자 배율이면 다음 줄 오른쪽으로 내린다
+      //   (글자를 줄이지 않는다). 필요한 폭은 실제 글자 배율·번들 글꼴로 잰다.
+      child: LayoutBuilder(builder: (context, c) {
+        // 알림 버튼
+        // [DU306 L2] 머리 위 여백 0 → 배지 위 끝도 버튼 위(0)에 둔다(기본 −4 는 SafeArea 위로 4 돌출).
+        final bell = NotificationBadge(
+          badgeTop: 0,
+          child: _headerIconBtn(
+              context, s, Icons.notifications_outlined, '알림',
+              () => Navigator.push(context,
+                  MaterialPageRoute(
+                      builder: (_) => const NotificationScreen()))),
+        );
+        // 내 정보 버튼 제거 — 하단 MY 탭이 공식 진입점으로 통일됨
+        if (!up.isSubAdmin) {
+          return Row(children: [const AlfitWordmark(), const Spacer(), bell]);
+        }
+        // SubAdmin 모드 토글 (서브어드민 전용) — 구현 계획서 주의사항
+        final toggle = _buildModeToggle(context, s, up);
+        final need = AlfitWordmark.slotWidth + 8 * s + _modeToggleWidth(context, s) + 8 * s + 48;
+        if (c.maxWidth >= need) {
+          return Row(children: [
+            const AlfitWordmark(),
+            const Spacer(),
+            toggle,
             SizedBox(width: 8 * s),
-          ],
-          // 알림 버튼
-          NotificationBadge(
-            child: _headerIconBtn(
-                context, s, Icons.notifications_outlined, '알림',
-                () => Navigator.push(context,
-                    MaterialPageRoute(
-                        builder: (_) => const NotificationScreen()))),
-          ),
-          // 내 정보 버튼 제거 — 하단 MY 탭이 공식 진입점으로 통일됨
-        ],
-      ),
+            bell,
+          ]);
+        }
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [const AlfitWordmark(), const Spacer(), bell]),
+          Align(alignment: Alignment.centerRight, child: toggle),
+        ]);
+      }),
     );
   }
 
   /// 흰 헤더용 아이콘 버튼 (dark icon on white bg)
+  /// [CP01] 누름 영역 최소 48×48 — 보이는 아이콘(22*s)·여백은 그대로 두고 영역만 넓힌다(이전 38*s).
   Widget _headerIconBtn(BuildContext context, double s, IconData icon,
       String label, VoidCallback onTap) {
     return Semantics(
@@ -894,50 +953,112 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: EdgeInsets.all(8 * s),
-          child: Icon(icon, color: AppColors.textSecondary, size: 22 * s),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          child: Align(
+            widthFactor: 1,
+            heightFactor: 1,
+            child: Padding(
+              padding: EdgeInsets.all(8 * s),
+              child: Icon(icon, color: AppColors.textSecondary, size: 22 * s),
+            ),
+          ),
         ),
       ),
     );
   }
 
   // ── 모드 토글 (서브어드민 전용) — 흰 배경용 색상 ──────────────
+  // [CP01] 선택지마다 누름 영역 48×48 이상(이전 글자 높이+8*s ≈ 24). 보이는 모양은 그대로 —
+  //   테두리 띠는 선택 알약+위아래 3dp 를 감싸고, 남는 높이는 띠 바깥의 투명한 누름 영역이다.
+  //   선택 색은 예전 파랑(infoDark) → 브랜드(brand): 같은 머리의 글자 로고와 한 색.
   Widget _buildModeToggle(BuildContext context, double s, UserProvider up) {
     final isAdmin = up.isAdminMode;
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: AppColors.background,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.borderLight),
+    final pillH = _modeTogglePillHeight(context, s);
+    final optH = pillH + 6 > 48 ? pillH + 6 : 48.0;
+    final inset = (optH - (pillH + 6)) / 2;
+    return Stack(children: [
+      Positioned.fill(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: inset),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.borderLight),
+            ),
+          ),
+        ),
       ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        _toggleOpt(context, s, label: '지원자', selected: !isAdmin,
-            onTap: () { if (isAdmin) up.toggleAdminMode(); }),
-        _toggleOpt(context, s, label: '관리자', selected: isAdmin,
-            onTap: () { if (!isAdmin) _switchToAdminMode(context, up); }),
-      ]),
-    );
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 3),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          _toggleOpt(context, s, label: '지원자', selected: !isAdmin, height: optH,
+              onTap: () { if (isAdmin) up.toggleAdminMode(); }),
+          _toggleOpt(context, s, label: '관리자', selected: isAdmin, height: optH,
+              onTap: () { if (!isAdmin) _switchToAdminMode(context, up); }),
+        ]),
+      ),
+    ]);
+  }
+
+  /// [CP01] 역할 전환 글자 한 줄을 실제 글자 배율·번들 글꼴로 잰다(굵게 = 넓은 쪽).
+  TextPainter _modeToggleLabel(BuildContext context, String label) => TextPainter(
+        text: TextSpan(
+            text: label,
+            style: DefaultTextStyle.of(context).style.merge(
+                const TextStyle(fontSize: 12, fontWeight: FontWeight.bold))),
+        textDirection: TextDirection.ltr,
+        textScaler: MediaQuery.textScalerOf(context),
+        locale: Localizations.maybeLocaleOf(context),
+        maxLines: 1,
+      )..layout();
+
+  /// [CP01] 선택 알약 높이 = 글자 줄 높이 + 위아래 4*s.
+  double _modeTogglePillHeight(BuildContext context, double s) {
+    final tp = _modeToggleLabel(context, '지원자');
+    final h = tp.height + 8 * s;
+    tp.dispose();
+    return h;
+  }
+
+  /// [CP01] 역할 전환 토글 전체 폭 — 선택지 = 글자 + 좌우 10*s(최소 48), 바깥 좌우 3.
+  double _modeToggleWidth(BuildContext context, double s) {
+    double opt(String label) {
+      final tp = _modeToggleLabel(context, label);
+      final w = tp.width + 20 * s;
+      tp.dispose();
+      return w < 48 ? 48 : w;
+    }
+    return opt('지원자') + opt('관리자') + 6;
   }
 
   Widget _toggleOpt(BuildContext context, double s,
-      {required String label, required bool selected, required VoidCallback onTap}) {
+      {required String label, required bool selected, required double height,
+      required VoidCallback onTap}) {
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: EdgeInsets.symmetric(horizontal: 10 * s, vertical: 4 * s),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.infoDark : Colors.transparent,
-          borderRadius: BorderRadius.circular(9),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? Colors.white : AppColors.textSecondary,
-            fontSize: 12,
-            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minWidth: 48, minHeight: height),
+        child: Align(
+          widthFactor: 1,
+          heightFactor: 1,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: EdgeInsets.symmetric(horizontal: 10 * s, vertical: 4 * s),
+            decoration: BoxDecoration(
+              color: selected ? AppColors.brand : Colors.transparent,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: selected ? Colors.white : AppColors.textSecondary,
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
           ),
         ),
       ),
@@ -950,91 +1071,157 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   // ─────────────────────────────────────────────────────────────
   Widget _buildUserBody(BuildContext context, double s, UserProvider up) {
     final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // ① 인사말
-        _buildGreeting(context, s, up),
-        // [R7-P2-1 잔여] 자정을 넘긴 근무의 **퇴근**은 이미 시작된 일이다.
-        //   앞으로의 약속(아래 Priority Hero)보다 먼저 둔다 — 응답하지 않으면
-        //   `missed_checkout` 으로 자동 처리돼 임금이 다퉈진다.
-        //   Hero 를 대체하지 않는다: 오늘 출근 약속이 함께 있으면 두 카드가
-        //   **둘 다** 보인다.
-        _buildOvernightCheckoutCard(context, s),
-        // ② Priority Card — State B(오늘 출근) / State A(새 확정) / 없으면 사라짐
-        // 날짜 탐색과 독립 — 확정이 있어도 아래 날짜 탐색은 항상 표시
-        _buildPriorityCard(context, s, theme),
-        // [DS-03] 신분증 열람 요청 진입점 — pending 있을 때만 표시.
-        // Priority Card 계산에는 참여하지 않는다 (Hero 우선순위 불변).
-        // 상대방이 기다리는 요청이므로 자기 서류 준비(아래)보다 위에 둔다.
-        _buildIdRequestCard(context, s, up),
-        // 계약해지 응답 — 신분증 요청과 **별도** 표면 (의미가 다르다)
-        _buildTerminationRequestCard(context, s, up),
-        // [RENEWAL-PROPOSAL-COMMITMENT] 연장 제안 — 사업장이 근로자의
-        //   대답을 기다리고 있다. 서류 보완보다 위에 둔다.
-        _buildRenewalProposalCard(context, s),
-        // [PII-DOC-R1.6.1] 서류 보완 할 일 — 이미 일한 급여가 막혀 있을 수
-        //   있으므로 지원 준비보다 위에 둔다.
-        _buildCorrectionTaskCard(context, s),
-        // [R7-LEGAL.1B.1] 약관 재동의 할 일.
-        //   새 필수 약관이 발행되면 새 지원이 막히므로 서류 준비보다 위에
-        //   둔다. 해당 없으면 스스로 사라진다.
-        LegalTaskCard(scale: s),
-        // 지원 준비 Compact Card — 서류 미완료 시만 표시, 날짜 Hero 바로 위
-        _buildReadinessCard(context, s, up),
-        // ③ 날짜 기반 일자리 탐색 — 상시 노출 (신규/기존 회원 동일)
-        _buildDateExplorer(context, s, theme),
-        // 초대 배너 (INVITED 있을 때)
-        _buildInviteBanner(context, s, theme),
-        // ④ 일자리 발견 영역 — 날짜 탐색 바로 아래 고정
-        // 날짜 선택 → "M월 D일 일자리" / 경험 있음 → "나에게 맞는 일" / 신규 → "지금 지원 가능한 일자리"
-        _buildRecommendSection(context, s, up),
-        // ⑤ 지원 현황 — 항상 일자리 발견 영역 아래
-        Container(height: 8, color: AppColors.background),
-        _buildApplicationStatus(context, s),
-        // ④ 이번 주 일정 — 8dp 회색 구분 갭
-        Container(height: 8, color: AppColors.background),
-        _buildThisWeekSchedule(context, s, theme),
-        // ⑤ 이번 달 수입 — 8dp 회색 구분 갭
-        Container(height: 8, color: AppColors.background),
-        _buildIncomeSection(context, s, theme),
-        // ⑥ 나의 ALfit — 8dp 회색 구분 갭
-        Container(height: 8, color: AppColors.background),
-        _buildCareerSection(context, s, up),
-        // 하단 여백 (흰 배경이므로 Scaffold와 동색)
-        const SizedBox(height: 20),
-      ],
+    // [CP03] 순서·리듬 = 구성 확정 Q2·Q9(requests/DU_concept_CP03_composition_decision_2026-11-11.md).
+    //   보이는(높이>0) 블록 사이에만 간격을 둔다 — 같은 수준 카드끼리 12, 그 밖 24. 숨은 카드는 간격도 남기지 않는다.
+    //   각 블록의 표시 조건·목적지·복귀 갱신은 그대로다(순서만 바뀐다).
+    return Padding(
+      padding: const EdgeInsets.only(bottom: ConceptSpace.sectionGap),
+      child: _RhythmColumn(children: [
+        // ① 계정 이름 · 큰 머리 · KST 날짜 →16→ 탐색 날짜띠(선택 뒤 일자리 CTA)
+        _RhythmSlot(
+          kind: _Rhythm.block,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            _buildGreeting(context, s, up),
+            const SizedBox(height: ConceptSpace.dateToStrip),
+            _buildDateExplorer(context, s, theme),
+          ]),
+        ),
+        // ② 독립 필수응답 — 약속보다 앞(Q2). 각자 표시 조건으로 스스로 숨는다.
+        // [R7-P2-1 잔여] 자정을 넘긴 근무의 **퇴근**은 이미 시작된 일이다 — 응답하지 않으면
+        //   `missed_checkout` 으로 자동 처리돼 임금이 다퉈진다. 오늘 약속이 함께 있으면 **둘 다** 보인다.
+        _RhythmSlot(kind: _Rhythm.card, child: _buildOvernightCheckoutCard(context, s)),
+        // [DS-03] 신분증 열람 요청 — 상대방이 기다리는 요청. Hero 우선순위 계산에 참여하지 않는다.
+        _RhythmSlot(kind: _Rhythm.card, child: _buildIdRequestCard(context, s, up)),
+        // 계약해지 응답 — 신분증 요청과 **별도** 표면(의미가 다르다)
+        _RhythmSlot(kind: _Rhythm.card, child: _buildTerminationRequestCard(context, s, up)),
+        // [RENEWAL-PROPOSAL-COMMITMENT] 연장 제안 — 사업장이 대답을 기다린다.
+        _RhythmSlot(kind: _Rhythm.card, child: _buildRenewalProposalCard(context, s)),
+        // [PII-DOC-R1.6.1] 서류 보완 할 일 — 이미 일한 급여가 막혀 있을 수 있다.
+        _RhythmSlot(kind: _Rhythm.card, child: _buildCorrectionTaskCard(context, s)),
+        // [R7-LEGAL.1B.1] 약관 재동의 — 해당 없으면 스스로 사라진다(공용 카드, 안쪽 여백은 범위 밖).
+        _RhythmSlot(kind: _Rhythm.card, child: LegalTaskCard(scale: s, loadReadiness: _reads.legalReadiness)),
+        // ③ 약속 — B(오늘) > A(새 확정) > 정상0. 로딩 중 skeleton, 지원 조회 실패면 숨김.
+        _RhythmSlot(kind: _Rhythm.section, child: _buildPriorityCard(context, s, theme)),
+        // 일반 지원 준비 — 자기 서류 등록 안내(필수응답으로 재분류하지 않는다)
+        _RhythmSlot(kind: _Rhythm.card, child: _buildReadinessCard(context, s, up)),
+        // ④ 내 지원 현황 → 초대 → 일자리 발견 → 이번 주 일정 → 이번 달 수입 → 내 근무 기록
+        _RhythmSlot(kind: _Rhythm.section, child: _buildApplicationStatus(context, s)),
+        _RhythmSlot(kind: _Rhythm.card, child: _buildInviteBanner(context, s, theme)),
+        _RhythmSlot(kind: _Rhythm.section, child: _buildRecommendSection(context, s, up)),
+        _RhythmSlot(kind: _Rhythm.section, child: _buildThisWeekSchedule(context, s, theme)),
+        _RhythmSlot(kind: _Rhythm.section, child: _buildIncomeSection(context, s, theme)),
+        _RhythmSlot(kind: _Rhythm.section, child: _buildCareerSection(context, s, up)),
+      ]),
     );
+  }
+
+  /// [CP03] 화면 좌우 여백 — 폭 360 미만 16, 그 외 20(다시 s 를 곱하지 않는다).
+  double _gutter(BuildContext context) => ConceptSpace.gutter(MediaQuery.sizeOf(context).width);
+
+  /// [DU306 Standards §12.1] 머리 행동행 묶음 아래 → 계정 메타 위 = 합계 8(머리 아래 여백 0 + 이 값).
+  ///   관리자 홈이 같이 쓰는 ConceptSpace.headerToHero(16)는 바꾸지 않는다(관리자 홈은 다음 묶음).
+  static const double _kHeaderToMeta = 8;
+
+  /// [CP03] 홈 섹션 머리 — 제목 20/700, 행동 14/700 brand + 꺾쇠 아이콘 1개(문자열에 `›` 없음), receiver ≥48.
+  ///   실제 사용 폭에 제목(한 줄 필요 폭) + 행동이 들어가지 않으면 행동을 제목 아래 오른쪽 줄로 내린다(정밀 §8 B 규칙 2).
+  ///   [actionText] 는 보이는 글자(줄바꿈 제어문자 포함 가능), [actionLabel] 은 의미 이름(없으면 actionText).
+  Widget _sectionHeader(BuildContext context,
+      {required String title, String? subtitle, String? actionText, String? actionLabel, VoidCallback? onAction}) {
+    final titleText = Text(TextLayout.keepWords(title), style: ConceptText.section(), semanticsLabel: title);
+    final head = subtitle == null
+        ? titleText
+        : Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            titleText,
+            const SizedBox(height: 4),
+            Text(subtitle, style: ConceptText.meta()),
+          ]);
+    if (actionText == null || onAction == null) return head;
+    // [wrap] 은 제목 아래 줄에 놓일 때만 — 그때는 폭이 정해져 있어 목적지 문구가 좁으면 줄을 바꾼다(말줄임·축소 없음).
+    //   한 줄 배치(측정상 들어감)에서는 글자를 고정 폭으로 둔다(바깥 Row 의 비유연 자식).
+    Widget action({required bool wrap}) {
+      final label = Text(actionText, style: ConceptText.count().copyWith(height: 1.3));
+      // [CP03 C1] excludeSemantics 가 아래 GestureDetector 의 tap 의미를 지운다 — 같은 콜백을 이 의미 노드에 둔다(독립 노드).
+      return Semantics(
+        container: true,
+        button: true,
+        label: actionLabel ?? actionText,
+        excludeSemantics: true,
+        onTap: onAction,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onAction,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: ConceptSpace.minTouch, minHeight: ConceptSpace.minTouch),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (wrap) Flexible(child: label) else label,
+              const Icon(Icons.chevron_right, size: 18, color: AppColors.brand),
+            ]),
+          ),
+        ),
+      );
+    }
+    return LayoutBuilder(builder: (context, c) {
+      final need = _oneLineWidth(context, title, ConceptText.section()) + 8 + _actionWidth(context, actionText);
+      if (need <= c.maxWidth) {
+        return Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+          Expanded(child: head),
+          const SizedBox(width: 8),
+          action(wrap: false),
+        ]);
+      }
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+        head,
+        Align(alignment: Alignment.centerRight, child: action(wrap: true)),
+      ]);
+    });
+  }
+
+  /// [CP03] 한 줄 필요 폭 — 실제 글자 배율·DefaultTextStyle·locale 로 잰다(번들 글꼴).
+  double _oneLineWidth(BuildContext context, String text, TextStyle style) {
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: DefaultTextStyle.of(context).style.merge(style)),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
+      maxLines: 1,
+    )..layout();
+    final w = tp.width;
+    tp.dispose();
+    return w;
+  }
+
+  /// [CP03] 행동(글자 + 꺾쇠 18) 필요 폭 — 최소 receiver 48.
+  double _actionWidth(BuildContext context, String text) {
+    final w = _oneLineWidth(context, text, ConceptText.count().copyWith(height: 1.3)) + 18;
+    return w < ConceptSpace.minTouch ? ConceptSpace.minTouch : w;
   }
 
   // ── 인사말 (시안 .greeting) ──────────────────────────────────
   Widget _buildGreeting(BuildContext context, double s, UserProvider up) {
     final user = up.currentUser;
-    return Container(
-      padding: EdgeInsets.fromLTRB(20 * s, 16 * s, 20 * s, 14 * s),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: AppColors.borderLight)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('안녕하세요,',
-              style: TextStyle(
-                fontSize: 13,
-                color: AppColors.textHint,
-                fontWeight: FontWeight.w500,
-              )),
-          SizedBox(height: 2 * s),
-          Text('${user?.name ?? '사용자'}님',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-                color: AppColors.textPrimary,
-                letterSpacing: -0.6,
-              )),
-        ],
-      ),
+    // [DU-VQ-01] 인사는 맥락일 뿐 다음 행동이 아니다 — 22sp 두 줄 + 구분선이 확정 카드보다 먼저 시선을 잡았다.
+    //   한 줄(인사 보조색 + 이름 굵게)로 낮추고 구분선을 없앤다. 이름은 그대로 보인다(말줄임 없음, 길면 줄바꿈).
+    // [DU1 구현69 VQ-01] 시안 '오늘도, 내 일정에 맞게 / 11월 5일 목요일' — 인사 아래 오늘 날짜(KST)로 화면 맥락을 준다.
+    //   인사 크기는 후속14 결정대로 확정 카드보다 낮게 둔다(날짜는 보조색).
+    final today = FormatHelper.toKstDate(_now());
+    const wd = ['월', '화', '수', '목', '금', '토', '일'];
+    // [CP03 Q1] 헤더 →16→ 계정 이름(14/400, 계정 메타) →4→ 큰 머리 `오늘도, 내 일정에 맞게`(24/700) →4→ KST 날짜(14/400).
+    //   인사 조각은 큰 머리로 바꾸고 이름은 지우지 않고 메타로 옮긴다. 이름은 전문 그대로 자연 줄바꿈(말줄임 없음).
+    //   큰 머리는 고정 문구라 낱말 사이에서만 줄을 바꾼다(의미 이름은 원문).
+    final g = _gutter(context);
+    return Padding(
+      // [DU306 §12.1] 머리 →8→ 계정 메타(이전 머리 아래 10*s + 16 = W 25.2 / B 24.2).
+      padding: EdgeInsets.fromLTRB(g, _kHeaderToMeta, g, 0),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // [CP03 C1] 표시만 낱말 단위로 묶는다 — 긴 이름의 마지막 낱말과 `님`이 갈리지 않게(의미 이름·계정 원문 그대로).
+        Text(TextLayout.keepWords('${user?.name ?? '사용자'}님'),
+            style: ConceptText.meta(), semanticsLabel: '${user?.name ?? '사용자'}님'),
+        const SizedBox(height: 4),
+        Text(TextLayout.keepWords('오늘도, 내 일정에 맞게'),
+            style: ConceptText.hero(), semanticsLabel: '오늘도, 내 일정에 맞게'),
+        const SizedBox(height: ConceptSpace.heroToDate),
+        Text('${today.month}월 ${today.day}일 ${wd[today.weekday - 1]}요일', style: ConceptText.meta()),
+      ]),
     );
   }
 
@@ -1044,7 +1231,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     if (count == 0) return const SizedBox.shrink();
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(20 * s, 14 * s, 20 * s, 20 * s),
+      // [CP03 Q9] 좌우 화면 여백만 — 위아래 간격은 본문 리듬(_RhythmColumn)이 맡는다.
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
       child: GestureDetector(
         onTap: () => Navigator.of(context, rootNavigator: true).push(
           MaterialPageRoute(
@@ -1052,30 +1240,23 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             builder: (_) => const MyApplicationsScreen(initialTabIndex: 6),
           ),
         ).then((_) { if (mounted) _loadHomeData(); }),
+        // [DU306 Standards §12.2] 초대는 확정 상태가 아니다 — 넓은 녹색 gradient·녹색 그림자를 걷고,
+        //   같은 홈의 '기다리는 요청' 카드(신분증 열람 요청)와 같은 brand 한 겹(바탕 .07·테두리 .32·채운 원 아이콘)으로 낮춘다.
+        //   건수·문구·마감 안내·목적지(초대 탭 6)·복귀 갱신·0건 숨김은 그대로다.
         child: Container(
           padding: EdgeInsets.symmetric(
-            horizontal: 16 * s, vertical: 13 * s),
+            horizontal: 16 * s, vertical: 12 * s),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [AppColors.success, AppColors.successDark],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
+            color: AppColors.brand.withValues(alpha: 0.07),
             borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.success.withValues(alpha: 0.30),
-                blurRadius: 8,
-                offset: const Offset(0, 4),
-              ),
-            ],
+            border: Border.all(color: AppColors.brand.withValues(alpha: 0.32)),
           ),
           child: Row(children: [
             Container(
               width: 38 * s,
               height: 38 * s,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.20),
+              decoration: const BoxDecoration(
+                color: AppColors.brand,
                 shape: BoxShape.circle,
               ),
               child: Icon(Icons.mail_outlined,
@@ -1087,25 +1268,32 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '업무 초대가 $count개 도착했어요!',
+                    '업무 초대가 $count건 있어요',
                     style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  SizedBox(height: 2 * s),
+                  SizedBox(height: 3 * s),
+                  // [ISG2] 마감은 둘 중 **더 이른 쪽**이다 — 초대 후
+                  //   24시간, 그리고 근무 시작. 어느 한쪽만 말하면 다른
+                  //   쪽이 먼저 끝나는 경우를 숨긴다: 근무가 오늘 밤이면
+                  //   24시간은 틀린 말이고, 다음 주 근무면 24시간이 먼저
+                  //   끝난다. 건별 정확한 시각은 목록 카드가 말한다.
                   Text(
-                    '24시간 내 수락하지 않으면 자동 만료됩니다',
+                    '초대 후 24시간과 근무 시작 중 빠른 때까지 수락할 수 있어요',
+                    // 부제는 읽히는 보조색(textSecondary 5.92:1) — 흰 85% 글자를 녹색 위에 두던 것을 대신한다.
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.85),
-                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                      fontSize: 13,
                     ),
                   ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right, color: Colors.white, size: 20 * s),
+            SizedBox(width: 8 * s),
+            Icon(Icons.chevron_right, color: AppColors.brand, size: 20 * s),
           ]),
         ),
       ),
@@ -1134,6 +1322,35 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   //     · `checkIn == null`             → 미출근이면 퇴근 CTA 를 만들지 않는다
   //     · 지원서가 `confirmedStatuses` 가 아니면 제외(취소·해지)
   //     · `userId` 재확인 — self-uid 계약을 화면에서도 깨지 않는다
+  // ── 오늘 근무의 실제 근태 기록 ────────────────────────────────
+  //
+  // [E1-HACI] Hero(STATE B)는 진행 라벨·진행 바·CTA 를 **시계만 보고** 정했다.
+  //   그래서 출근 기록이 없는 근무도 종료 시각이 지나면 `근무 완료` + 100% 로
+  //   그려지고, 그 아래에 `출근하기` 버튼이 함께 떴다 — 한 카드가 서로
+  //   모순되는 두 사실을 말했다(DEV 실측: 2026-10-13 10:00~11:00 확정 근무,
+  //   근태 문서 0건).
+  //
+  //   매칭 술어는 새로 만들지 않는다 — `_openOvernightAttendance` 와
+  //   `_rebuildCaches` 가 이미 쓰는 `userId` + `applicationId` 한 벌이고,
+  //   목적지(`attendance_check_screen`)도 같은 `applicationId` 로 조회한다.
+  //   읽기도 추가하지 않는다: `_attendances` 가 이번 달(KST) 전체 근태이므로
+  //   오늘 건은 이미 메모리에 있다.
+  //
+  //   날짜는 `att.workDate` 로 본다(`app.workDate` 아님) — 장기 근무의
+  //   `app.workDate` 는 계약 시작일 고정값이다.
+  AttendanceModel? _todayAttendanceFor(ApplicationModel app) {
+    final uid = context.read<UserProvider>().currentUser?.uid;
+    if (uid == null) return null;
+    final today = FormatHelper.toKstDate(_now());
+    for (final att in _attendances) {
+      if (att.userId != uid) continue;
+      if (att.applicationId != app.id) continue;
+      if (FormatHelper.toKstDate(att.workDate) != today) continue;
+      return att;
+    }
+    return null;
+  }
+
   AttendanceModel? _openOvernightAttendance() {
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) return null;
@@ -1168,7 +1385,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     // [ERROR ≠ EMPTY] 못 읽었으면 "퇴근이 남지 않았다"고 말하지 않는다.
     if (_overnightUnknown) {
       return Padding(
-        padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+        padding: EdgeInsets.symmetric(horizontal: _gutter(context)), // [CP03 Q9]
         child: GestureDetector(
           onTap: _isLoadingData ? null : () => _loadHomeData(),
           child: Container(
@@ -1194,11 +1411,12 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                 ),
               ),
               SizedBox(width: 8 * s),
+              // [DU306 §12.2] 재시도 = 일반 진행 행동 → brand(예전 파랑 infoDark #1976D2 대신). 카드 전체 탭·목적지 그대로.
               Text('다시 시도',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.infoDark,
+                    color: AppColors.brand,
                   )),
             ]),
           ),
@@ -1212,9 +1430,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     final wd = FormatHelper.toKstDate(att.workDate);
     final started = att.checkIn; // HH:mm — 반올림 적용 후 최종 출근 시각
     const accent = AppColors.warning;
+    final subtitle = [
+      '${wd.month}/${wd.day} 근무',
+      if (att.businessName.isNotEmpty) att.businessName,
+      if (started != null) '$started 출근',
+    ].join(' · ');
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)), // [CP03 Q9]
       child: GestureDetector(
         onTap: () async {
           await Navigator.push(
@@ -1231,69 +1454,129 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: accent.withValues(alpha: 0.32)),
           ),
-          child: Row(
-            children: [
-              Container(
-                width: 38 * s,
-                height: 38 * s,
-                decoration:
-                    const BoxDecoration(color: accent, shape: BoxShape.circle),
-                child: Icon(Icons.logout_rounded,
-                    size: 20 * s, color: Colors.white),
-              ),
-              SizedBox(width: 12 * s),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      '퇴근 기록이 남았어요',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    SizedBox(height: 3 * s),
-                    Text(
-                      [
-                        '${wd.month}/${wd.day} 근무',
-                        if (att.businessName.isNotEmpty) att.businessName,
-                        if (started != null) '$started 출근',
-                      ].join(' · '),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 13, color: AppColors.grey500),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(width: 8 * s),
-              const Text('퇴근하기',
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: accent)),
-            ],
+          // [CP03] 정밀 §8 B 규칙 1 — 필수 행동 문구는 말줄임 없이 전문(자연 줄바꿈).
+          // [CP03 C1] 제목·부제는 낱말(부제는 구분점 조각) 사이에서만 줄을 바꾸고, 본문 폭이 모자라면 `퇴근하기`를 아래 오른쪽 줄로.
+          child: _taskCardRow(
+            context,
+            s,
+            icon: Container(
+              width: 38 * s,
+              height: 38 * s,
+              decoration:
+                  const BoxDecoration(color: accent, shape: BoxShape.circle),
+              child: Icon(Icons.logout_rounded,
+                  size: 20 * s, color: Colors.white),
+            ),
+            iconWidth: 38 * s,
+            title: '퇴근 기록이 필요해요',
+            titleDisplay: TextLayout.keepWords('퇴근 기록이 필요해요'),
+            titleStyle: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+            subtitle: subtitle,
+            subtitleDisplay: TextLayout.phrases(subtitle),
+            subtitleStyle: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            actionText: '퇴근하기',
+            actionStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: accent),
           ),
         ),
       ),
     );
   }
 
+  /// [CP03 C1] 필수응답 카드(미퇴근·신분증 열람 요청) 안쪽 — 아이콘 · 본문(제목·부제 전문, 자연 높이) · 행동 글자.
+  ///   필요 폭 = 제목·부제 표시 문자열의 가장 긴 낱말 단위(공백으로 나눈 조각) 한 줄 폭(실제 배율·DefaultTextStyle·locale).
+  ///   행동을 같은 줄에 둘 때 본문에 남는 폭이 그보다 좁으면 행동을 본문 아래 오른쪽 줄로 내린다(말줄임·축소 없음).
+  ///   [CP03 C1 r3] 같은 줄은 본문에 남는 폭이 **아이콘을 포함한 안쪽 전체 가용 폭(c.maxWidth)의 절반 이상**일 때만이다.
+  ///   낱말 하나만 겨우 들어가는 좁은 기둥(B 미퇴근 115.5px, 제목 3줄·부제 6줄)을 막는다
+  ///   (records/requests/DU_concept_CP03_c1_r3_resume_2026-11-12.md §2).
+  ///   행동 글자는 따로 누르는 곳이 아니다 — 카드 전체 탭·목적지·표시 조건은 호출부 그대로다.
+  Widget _taskCardRow(
+    BuildContext context,
+    double s, {
+    required Widget icon,
+    required double iconWidth,
+    required String title,
+    required String titleDisplay,
+    required TextStyle titleStyle,
+    required String subtitle,
+    required String subtitleDisplay,
+    required TextStyle subtitleStyle,
+    required String actionText,
+    required TextStyle actionStyle,
+    Widget? actionTrailing,
+    double actionTrailingWidth = 0,
+  }) {
+    final body = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(titleDisplay, style: titleStyle, semanticsLabel: title),
+        SizedBox(height: 3 * s),
+        Text(subtitleDisplay, style: subtitleStyle, semanticsLabel: subtitle),
+      ],
+    );
+    // [wrap] 은 아래 줄에 놓일 때만 — 그때는 폭이 정해져 있다(바깥 Row 의 비유연 자식일 때는 고정 폭 글자).
+    Widget action({required bool wrap}) {
+      final label = Text(actionText, style: actionStyle);
+      return Row(mainAxisSize: MainAxisSize.min, children: [
+        if (wrap) Flexible(child: label) else label,
+        if (actionTrailing != null) actionTrailing,
+      ]);
+    }
+
+    return LayoutBuilder(builder: (context, c) {
+      double widest(String display, TextStyle style) {
+        var w = 0.0;
+        for (final unit in display.split(' ')) {
+          if (unit.isEmpty) continue;
+          final uw = _oneLineWidth(context, unit, style);
+          if (uw > w) w = uw;
+        }
+        return w;
+      }
+
+      final tw = widest(titleDisplay, titleStyle);
+      final sw = widest(subtitleDisplay, subtitleStyle);
+      final need = tw > sw ? tw : sw;
+      final actionW = _oneLineWidth(context, actionText, actionStyle) + actionTrailingWidth;
+      final inlineBody = c.maxWidth - iconWidth - 12 * s - 8 * s - actionW;
+      if (inlineBody >= need && inlineBody >= c.maxWidth * 0.5) {
+        return Row(children: [
+          icon,
+          SizedBox(width: 12 * s),
+          Expanded(child: body),
+          SizedBox(width: 8 * s),
+          action(wrap: false),
+        ]);
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(children: [
+            icon,
+            SizedBox(width: 12 * s),
+            Expanded(child: body),
+          ]),
+          SizedBox(height: 8 * s),
+          Align(alignment: Alignment.centerRight, child: action(wrap: true)),
+        ],
+      );
+    });
+  }
+
   Widget _buildPriorityCard(BuildContext context, double s, ThemeData theme) {
+    final g = _gutter(context);
     // 로딩 중: skeleton (State B/A 여부 미확정이므로 자리 유지)
     if (_isLoadingData) {
-      return Container(
-        padding: EdgeInsets.all(16 * s),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          border: Border(bottom: BorderSide(color: AppColors.borderLight)),
-        ),
+      return Padding(
+        padding: EdgeInsets.symmetric(horizontal: g),
         child: Container(
           height: 90 * s,
           decoration: BoxDecoration(
@@ -1303,70 +1586,177 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         ),
       );
     }
+    // [CP03 Q3·Q4·Q7] 섹션 제목은 카드 밖(20/700, 장식 점 없음) →12→ 카드.
+    Widget section(String title, Widget card) => Padding(
+          padding: EdgeInsets.symmetric(horizontal: g),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            _sectionHeader(context, title: title),
+            const SizedBox(height: ConceptSpace.sectionTitleToCard),
+            card,
+          ]),
+        );
     // State B: 오늘 출근 (최우선)
     if (_heroTodayApp != null) {
-      return Container(
-        padding: EdgeInsets.all(16 * s),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          border: Border(bottom: BorderSide(color: AppColors.borderLight)),
-        ),
-        child: _buildHeroStateB(context, s, _heroTodayApp!),
-      );
+      return section('오늘의 약속', _buildHeroStateB(context, s, _heroTodayApp!));
     }
     // State A: 새 확정 미확인
     if (_heroNewConfirmApp != null) {
-      return Container(
-        padding: EdgeInsets.all(16 * s),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          border: Border(bottom: BorderSide(color: AppColors.borderLight)),
-        ),
-        child: _buildHeroStateA(context, s, _heroNewConfirmApp!),
-      );
+      return section('새로 확정된 근무', _buildHeroStateA(context, s, _heroNewConfirmApp!));
     }
-    // 처리할 이벤트 없음 → 영역 자체 숨김
+    // [CP03 Q7] 정상 약속 0 — 로딩 끝(위에서 걸렀다)·지원 조회 성공·B/A 없음일 때만.
+    //   지원 조회 실패·이전 값 유지(stale)는 0 으로 말하지 않는다 — 아래 `내 지원 현황`의 실패/고지 표면이 말한다.
+    //   독립 필수응답·서류/근태 오류·지원 준비 카드는 숨김 조건에 넣지 않는다(각자 위치에서 함께 보인다).
+    if (!_homeLoadFailed) {
+      return section('오늘의 약속', _buildPromiseEmpty(context));
+    }
     return const SizedBox.shrink();
+  }
+
+  /// [CP03 Q7] 정상 약속 0 카드 — conceptRaised(이 카드 한정 opt-in).
+  ///   안내 16/400 textSecondary + 보조 outlined `일자리 찾기`(brand, 최소 48, 기존 일자리 탭 경로). 채움 주 CTA 는 쓰지 않는다.
+  Widget _buildPromiseEmpty(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(ConceptSpace.cardPadding),
+      decoration: ConceptSurface.raised(),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('오늘 확정된 근무가 없어요', style: ConceptText.body(color: AppColors.textSecondary)),
+        const SizedBox(height: ConceptSpace.infoToCta),
+        OutlinedButton(
+          onPressed: () => UserTabScope.of(context)?.switchToTab(1),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.brand,
+            side: const BorderSide(color: AppColors.brand),
+            minimumSize: const Size(ConceptSpace.minTouch, ConceptSpace.minTouch),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          child: Text('일자리 찾기', style: ConceptText.button().copyWith(color: AppColors.brand)),
+        ),
+      ]),
+    );
+  }
+
+  /// [CP03 Q4] 큰 시간 — `HH:mm` 과 `–HH:mm` 두 토큰 사이에서만 줄을 바꾼다(시각 안 숫자는 나누지 않는다). 의미는 원문 한 줄.
+  Widget _promiseTime(String start, String end) {
+    return Semantics(
+      label: '$start–$end',
+      excludeSemantics: true,
+      child: Wrap(children: [
+        Text(start, style: ConceptText.promiseTime()),
+        Text('–$end', style: ConceptText.promiseTime()),
+      ]),
+    );
   }
 
   // ── 날짜 기반 일자리 탐색 — 상시 노출 (Priority Card와 독립) ──
   // 확정/출근 유무와 무관하게 항상 표시. ALfit의 핵심 탐색 기능.
   Widget _buildDateExplorer(BuildContext context, double s, ThemeData theme) {
-    return Container(
-      padding: EdgeInsets.all(16 * s),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: AppColors.borderLight)),
-      ),
+    // [CP03 Q6] KST 날짜 아래 16(본문 블록 안) — 좌우 화면 여백만. 안쪽 카드·테두리 없음.
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
       child: _buildHeroStateC(context, s, theme),
     );
+  }
+
+  /// [DEVICE-MISMATCH-FIX] Hero 제목 — 진행 라벨·CTA 와 **같은 판정 순서**
+  ///   (조회 실패 → 노쇼·결근 → 퇴근 → 출근 → 종료 → 출근 전).
+  ///   근태를 못 읽었으면 출근 전이라고도, 끝났다고도 단정하지 않는다.
+  String _heroTitle(
+    ApplicationModel app, {
+    required bool hasTime,
+    required bool attUnknown,
+    required bool isNoShow,
+    required bool isAbsent,
+    required bool hasCheckedIn,
+    required bool hasCheckedOut,
+  }) {
+    final at = hasTime ? '${app.startTime} ' : '';
+    if (attUnknown) return hasTime ? '오늘 ${app.startTime} 근무가 있어요' : '오늘 근무가 있어요';
+    if (isNoShow) return '오늘 근무가 노쇼 처리됐어요';
+    if (isAbsent) return '오늘 근무가 결근 처리됐어요';
+    if (hasCheckedOut) return '오늘 근무를 마쳤어요';
+    if (hasCheckedIn) return '오늘 근무 중이에요';
+    if (app.hasShiftEndedAt(_now())) return '오늘 $at근무 시간이 지났어요';
+    return hasTime ? '오늘 ${app.startTime} 출근이에요' : '오늘 근무가 있어요';
   }
 
   // ── STATE B: 오늘 출퇴근 (시안 .hB) ──────────────────────────
   Widget _buildHeroStateB(BuildContext context, double s, ApplicationModel app) {
     final hasTime = app.startTime.isNotEmpty && app.endTime.isNotEmpty;
 
+    // [E1-HACI] 상태의 주인은 근태 기록이다. 시계는 **아직 하지 않은 일**의
+    //   남은 시간만 말한다 — 시간이 지났다는 이유로 출근·퇴근·완료를
+    //   확정하지 않는다. 근태를 못 읽었으면(UNKNOWN) 완료도 미출근도
+    //   단정하지 않는다(ERROR ≠ ZERO).
+    final attUnknown = _attendancesFailed;
+    final att = attUnknown ? null : _todayAttendanceFor(app);
+    final isNoShow = att?.status == AttendanceModel.statusNoShow;
+    final isAbsent = att?.status == AttendanceModel.statusAbsent;
+    final hasCheckedIn = att?.hasCheckedIn ?? false;
+    final hasCheckedOut = att?.hasCheckedOut ?? false;
+
     // 카운트다운 진행 상태 계산
     String progressLabel = '출근 준비 중';
     double progressValue = 0.0;
-    if (hasTime) {
-      try {
-        final now = _now();
-        final today0 = DateTime(now.year, now.month, now.day);
-        final sParts = app.startTime.split(':');
-        final eParts = app.endTime.split(':');
-        final startDt = today0.add(Duration(
-            hours: int.parse(sParts[0]), minutes: int.parse(sParts[1])));
-        final endDt = today0.add(Duration(
-            hours: int.parse(eParts[0]), minutes: int.parse(eParts[1])));
-        if (now.isBefore(startDt)) {
+    // 사실을 말하는 라벨(완료·노쇼·결근·조회 실패)은 진행 안내와 색을 달리한다.
+    // [DU306 §12.2] 일반 진행(출근 준비·출근까지·퇴근까지)은 brand — 같은 카드의 출근/퇴근 CTA 와 한 색.
+    //   아래 사실 분기(조회 실패 grey600·노쇼 errorDark·결근/기록 없음 warningDark·완료 successDark)는 그대로다.
+    Color progressColor = AppColors.brand;
+    if (attUnknown) {
+      // 근태를 못 읽었다 — `근무 완료`도 `출근 기록 없음`도 말할 수 없다.
+      progressLabel = '근태 기록을 불러오지 못했어요';
+      progressColor = AppColors.grey600;
+    } else if (isNoShow || isAbsent) {
+      // 목적지 화면과 같은 문구 — 노쇼·결근을 근무 완료로 바꿔 말하지 않는다.
+      progressLabel = isNoShow ? '노쇼 처리됨' : '결근 처리됨';
+      progressColor = isNoShow ? AppColors.errorDark : AppColors.warningDark;
+    } else if (hasCheckedOut) {
+      // 퇴근 기록이 있을 때만 완료다. 근태 확정(급여) 여부는 별개이므로
+      // 여기서 `근태 확정`이라고 말하지 않는다.
+      progressLabel = '출퇴근 완료';
+      progressValue = 1.0;
+      progressColor = AppColors.successDark;
+    } else if (hasTime) {
+      // [E1-TZ] 근무 시각의 기준은 기기 시간대가 아니라 canonical KST 다.
+      //   예전에는 KST 벽시계 문자열(`startTime`)을 **기기 local 자정**에
+      //   더했다. 그래서 GMT 기기에서 10:00 근무가 19:00 로 해석돼
+      //   "출근까지 9시간" 같은 잘못된 안내가 나왔다(DEV 에뮬레이터 실측).
+      //   날짜도 '오늘'이 아니라 **그 근무의 KST 날짜**에서 출발한다.
+      final now = _now();
+      final kstDay = FormatHelper.toKstDate(app.workDate);
+      final startDt = FormatHelper.kstWallClockInstant(kstDay, app.startTime);
+      var endDt = FormatHelper.kstWallClockInstant(kstDay, app.endTime);
+      if (startDt == null || endDt == null) {
+        // 시각을 못 읽었다 — 남은 시간을 지어내지 않는다.
+        progressLabel = '출근 준비 중';
+      } else {
+        // 자정을 넘기는 근무(23:00~01:00)는 종료가 다음 날이다.
+        if (!endDt.isAfter(startDt)) {
+          endDt = endDt.add(const Duration(days: 1));
+        }
+        if (now.isBefore(startDt) && hasCheckedIn) {
+          // [UI-4] 일찍 출근한 경우 — 제목은 `근무 중`인데 `출근까지 N분`(0%)이
+          //   함께 나와 서로 다른 말을 했다(LOCAL 실측). 출근 사실을 말한다.
+          progressLabel = '출근했어요 · ${app.startTime} 시작';
+          progressColor = AppColors.successDark;
+        } else if (now.isBefore(startDt)) {
           final rem = startDt.difference(now);
           final h = rem.inHours;
           final m = rem.inMinutes % 60;
           progressLabel = h > 0 ? '출근까지 $h시간 $m분' : '출근까지 $m분';
+        } else if (!hasCheckedIn) {
+          // 시작 시각이 지났는데 출근 기록이 없다 — 완료가 아니다.
+          // [DEVICE-MISMATCH-FIX] 종료까지 지났으면 그 사실을 말한다.
+          progressLabel = now.isBefore(endDt)
+              ? '출근 기록이 없어요'
+              : '근무 시간이 지났어요 · 출근 기록이 없어요';
+          progressColor = AppColors.warningDark;
         } else if (now.isAfter(endDt)) {
-          progressLabel = '근무 완료';
+          // 출근은 했고 퇴근만 남았다. 시간 경과로 퇴근을 기록하지 않는다.
           progressValue = 1.0;
+          progressLabel = '퇴근 기록이 필요해요';
+          progressColor = AppColors.warningDark;
         } else {
           final total = endDt.difference(startDt).inMinutes;
           final elapsed = now.difference(startDt).inMinutes;
@@ -1376,120 +1766,185 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           final m = rem.inMinutes % 60;
           progressLabel = h > 0 ? '퇴근까지 $h시간 $m분' : '퇴근까지 $m분';
         }
-      } catch (_) {
-        progressLabel = '출근 준비 중';
       }
     }
 
+    // CTA — 목적지(`attendance_check_screen`)의 4분기와 같은 순서·같은 술어.
+    //   목적지는 바꾸지 않는다(그 화면이 출퇴근 canonical writer). 여기서는
+    //   **무엇을 할 차례인지**만 같은 사실로 말한다.
+    final String ctaLabel;
+    final IconData ctaIcon;
+    final Color ctaColor;
+    // [CONTRACT-DISPATCH-B4] 출근 전에는 출퇴근 화면과 **같은 계약 판정**을 쓴다(그 화면이 버튼을 닫는 조건).
+    //   이미 출근했으면 보지 않는다 — 퇴근 입구를 계약으로 막지 않는다.
+    final contractGate = CheckInContractGate.evaluate(
+        work: app,
+        uid: context.read<UserProvider>().currentUser?.uid ?? '',
+        contracts: _contracts);
+    final EmploymentContractModel? signContract = contractGate.signable;
+    if (attUnknown) {
+      ctaLabel = '출퇴근 화면에서 확인';
+      ctaIcon = Icons.help_outline_rounded;
+      ctaColor = AppColors.grey600;
+    } else if (isNoShow || isAbsent) {
+      // 출근을 요구하지 않는다 — 이미 처리된 상태다.
+      ctaLabel = '근태 기록 확인';
+      ctaIcon = Icons.info_outline_rounded;
+      ctaColor = AppColors.grey600;
+    } else if (!hasCheckedIn && app.hasShiftEndedAt(_now())) {
+      // [DEVICE-MISMATCH-FIX] 예정 시간이 끝난 근무에 `출근하기`를 권하지
+      //   않는다. 목적지 화면도 이 경우 버튼을 닫는다.
+      ctaLabel = '근태 기록 확인';
+      ctaIcon = Icons.info_outline_rounded;
+      ctaColor = AppColors.grey600;
+    } else if (!hasCheckedIn &&
+        contractGate.state == CheckInContractState.workerPending) {
+      // 근로자가 지금 할 수 있는 일 — 그 계약으로 바로 간다.
+      ctaLabel = '계약서 확인하고 동의하기';
+      ctaIcon = Icons.draw_outlined;
+      ctaColor = AppColors.brand;
+    } else if (!hasCheckedIn &&
+        (contractGate.state == CheckInContractState.missing ||
+            contractGate.state == CheckInContractState.employerPending)) {
+      // 근로자가 할 수 없는 일(사업장 발송·서명)을 요구하지 않는다 — 기다림을 말한다.
+      ctaLabel = '계약서를 기다리고 있어요';
+      ctaIcon = Icons.hourglass_top_rounded;
+      ctaColor = AppColors.grey600;
+    } else if (!hasCheckedIn &&
+        contractGate.state == CheckInContractState.unknown) {
+      ctaLabel = '출퇴근 화면에서 확인';
+      ctaIcon = Icons.help_outline_rounded;
+      ctaColor = AppColors.grey600;
+    } else if (!hasCheckedIn) {
+      ctaLabel = '출근하기';
+      ctaIcon = Icons.login_rounded;
+      ctaColor = AppColors.brand;
+    } else if (!hasCheckedOut) {
+      ctaLabel = '퇴근하기';
+      ctaIcon = Icons.logout_rounded;
+      ctaColor = AppColors.brand;
+    } else {
+      ctaLabel = '출퇴근 기록 보기';
+      ctaIcon = Icons.check_circle_outline_rounded;
+      // [DU306 §12.2·§9.1] 상태색이 버튼색을 정하지 않는다 — 완료 사실은 위 진행 라벨 `출퇴근 완료`(successDark)가 말한다.
+      //   기록 보기는 같은 자리의 다른 확인 입구(`근태 기록 확인`)와 같은 중립 테두리·grey600 글자.
+      ctaColor = AppColors.grey600;
+    }
+
+    // [CP03 Q3] 오늘 약속 카드 — conceptPromise 한 겹. 섹션 제목 `오늘의 약속` 은 카드 밖(_buildPriorityCard).
+    //   기존 7종 상태 제목 16/700 →12→ 사업장 20/700 →4→ 업무 16/400(있을 때) →8→ 시간 28/700(hasTime) →4→
+    //   요율 14/400(app.wage > 0 일 때만, A 와 같은 formatter) → [12 → 약한 구분선 → 12 → 진행 라벨 13/700 →8→ 막대 6](hasTime)
+    //   →16→ 기존 CTA(전폭·최소 52·반경 12). 별도 `근무 확정` 필은 두지 않는다(노쇼·결근 포함 B 전체).
+    //   글자는 전부 실제 배율·자연 줄바꿈(말줄임·축소·고정 높이 없음). 진행 표시 조건·라벨·값·색은 그대로다.
+    final heroTitle = _heroTitle(app,
+        hasTime: hasTime,
+        attUnknown: attUnknown,
+        isNoShow: isNoShow,
+        isAbsent: isAbsent,
+        hasCheckedIn: hasCheckedIn,
+        hasCheckedOut: hasCheckedOut);
+    final wageType = app.wageType; // 없으면 라벨을 지어내지 않는다
+    final showWage = app.wage > 0; // 모델이 누락 wage 를 0 으로 읽는다 — 0 이하이면 줄과 간격을 두지 않는다
+    final wageStr = wageType != null
+        ? FormatHelper.formatWageWithType(app.wage, wageType)
+        : FormatHelper.formatWage(app.wage);
     return Container(
-        padding: EdgeInsets.all(18 * s),
-        decoration: BoxDecoration(
-          // 시안 .hB: linear-gradient(150deg, #E8F0FE → #F0F4FF), 테두리 #BBDEFB
-          gradient: const LinearGradient(
-            colors: [Color(0xFFE8F0FE), Color(0xFFF0F4FF)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFBBDEFB), width: 1.5),
-        ),
+        width: double.infinity,
+        padding: const EdgeInsets.all(ConceptSpace.cardPadding),
+        decoration: ConceptSurface.promise(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 레이블 (시안 .hB-label)
-            Row(children: [
-              Container(
-                width: 7 * s, height: 7 * s,
-                decoration: const BoxDecoration(
-                    shape: BoxShape.circle, color: AppColors.infoDark),
-              ),
-              SizedBox(width: 5 * s),
-              Text('오늘의 근무',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.infoDark,
-                    letterSpacing: 0.5,
-                  )),
-            ]),
-            SizedBox(height: 10 * s),
-            // 제목 (시안 .hB-title) — "오늘 N:N 출근이에요"
+            // 상태 제목 — 진행 라벨·CTA 와 같은 근태 사실(7종 그대로).
+            // [DEVICE-MISMATCH-FIX] DEVICE(10-20): 출퇴근을 마친 RUBE 에 `출퇴근 완료` 바로 위 제목이
+            //   여전히 `오늘 13:00 출근이에요`(앞으로 출근할 것처럼)였다.
+            // [CP03 C1] 표시만 낱말 사이에서 줄바꿈(7종 문구·분기·색 그대로), 의미 이름은 원문.
             Text(
-              hasTime ? '오늘 ${app.startTime} 출근이에요' : '오늘 근무가 있어요',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
-                color: AppColors.textPrimary,
-                letterSpacing: -0.5,
-                height: 1.25,
-              ),
+              TextLayout.keepWords(heroTitle),
+              semanticsLabel: heroTitle,
+              style: ConceptText.taskTitle().copyWith(fontSize: 16, height: 1.3),
             ),
-            SizedBox(height: 3 * s),
-            // 부제목 (시안 .hB-sub)
-            Text(
-              [
-                if (app.selectedWorkType.isNotEmpty)
-                  '${app.businessName} · ${app.selectedWorkType}'
-                else
-                  app.businessName,
-                if (hasTime) '${app.startTime} – ${app.endTime}',
-              ].join('  |  '),
-              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            SizedBox(height: 14 * s),
-            // 진행 박스 (시안 .hB-box)
-            if (hasTime) ...[
-              Container(
-                padding: EdgeInsets.fromLTRB(13 * s, 11 * s, 13 * s, 13 * s),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.80),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(progressLabel,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.infoDark,
-                        )),
-                    SizedBox(height: 8 * s),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: LinearProgressIndicator(
-                        value: progressValue,
-                        minHeight: 6 * s,
-                        backgroundColor: AppColors.infoBg,
-                        color: AppColors.infoDark,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(height: 14 * s),
+            const SizedBox(height: ConceptSpace.promiseChipToBusiness),
+            Text(TextLayout.keepWords(app.businessName),
+                style: ConceptText.promiseBusiness(), semanticsLabel: app.businessName),
+            if (app.selectedWorkType.isNotEmpty) ...[
+              const SizedBox(height: ConceptSpace.promiseBusinessToWork),
+              Text(TextLayout.keepWords(app.selectedWorkType),
+                  style: ConceptText.body(color: AppColors.textSecondary), semanticsLabel: app.selectedWorkType),
             ],
-            // 출근하기 버튼 (시안 .h-btn-primary)
+            if (hasTime) ...[
+              const SizedBox(height: ConceptSpace.promiseWorkToTime),
+              _promiseTime(app.startTime, app.endTime),
+            ],
+            if (showWage) ...[
+              const SizedBox(height: ConceptSpace.promiseTimeToRate),
+              Text(wageStr, style: ConceptText.meta()),
+            ],
+            // 진행 — 중첩 흰 상자 없이 약한 구분선 아래 행으로(정밀 §6 conceptPromise).
+            if (hasTime) ...[
+              const SizedBox(height: ConceptSpace.infoGroupGap),
+              Container(height: 1, color: AppColors.conceptCardBorder),
+              const SizedBox(height: ConceptSpace.infoGroupGap),
+              Text(progressLabel,
+                  style: ConceptText.pill(progressColor)),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: progressValue,
+                  minHeight: 6,
+                  // [DU306 §12.2] 막대 바탕 = brand 계열 옅은 면(brandSurface) — 예전 파랑 바탕(infoBg) 대신.
+                  backgroundColor: AppColors.brandSurface,
+                  color: progressColor,
+                ),
+              ),
+            ],
+            const SizedBox(height: ConceptSpace.infoToCta),
+            // 출퇴근 CTA — 문구·색·분기·목적지·복귀 갱신은 그대로. 최소 52·반경 12·내용만큼 자연 높이.
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
+                // [ATTENDANCE-SCREEN-REFRESH] 출퇴근은 목적지 화면에서 일어난다 — 돌아오면
+                //   다시 읽는다. 예전에는 복귀 뒤에도 출근 전 Hero('출근까지 N분·출근하기')가
+                //   앱 복귀·새로고침 전까지 남았다(DEVICE 10/20 12:37). 같은 파일의 다른
+                //   push 복귀와 같은 패턴이고, 근태 캐시는 출퇴근 성공 시 서비스가 이미 비운다.
                 onPressed: () => Navigator.push(context,
                     MaterialPageRoute(
-                        builder: (_) => const AttendanceCheckScreen())),
-                icon: Icon(Icons.login_rounded, size: 18 * s),
-                label: Text('출근하기',
-                    style: TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w800)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.infoDark,
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(vertical: 13 * s),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(13)),
-                  elevation: 0,
-                ),
+                        builder: (_) => (!hasCheckedIn && signContract != null)
+                            ? ContractSignScreen(
+                                contract: signContract, role: 'worker')
+                            : const AttendanceCheckScreen()))
+                    .then((_) { if (mounted) _loadHomeData(); }),
+                icon: Icon(ctaIcon, size: 18),
+                // [CP03 C1] 표시만 낱말 사이에서 줄바꿈(문구·분기 그대로), 의미 이름은 원문.
+                label: Text(TextLayout.keepWords(ctaLabel),
+                    semanticsLabel: ctaLabel,
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w700, height: 1.3)),
+                // [UI-4] 지금 근로자가 할 행동(계약 동의·출근·퇴근)만 브랜드 채움.
+                //   기다림·확인 입구(계약 대기·근태 확인·기록 보기)는 진한 회색
+                //   채움이 비활성 버튼처럼 보였다 — 중립 테두리로 낮춘다(눌리는 건 같다).
+                // [CP03 Q3] 최소 52·반경 12·글자 16/700(정밀 §8 상태필/버튼), 높이는 내용만큼 자연 확장.
+                style: ctaColor == AppColors.brand
+                    ? ElevatedButton.styleFrom(
+                        backgroundColor: ctaColor,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size.fromHeight(ConceptSpace.primaryCtaMinHeight),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
+                      )
+                    : ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: ctaColor,
+                        minimumSize: const Size.fromHeight(ConceptSpace.primaryCtaMinHeight),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            side: const BorderSide(color: AppColors.border)),
+                        elevation: 0,
+                      ),
               ),
             ),
           ],
@@ -1503,7 +1958,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     final kstDate = FormatHelper.toKstDate(app.workDate);
     final dateStr = '${kstDate.month}월 ${kstDate.day}일';
     final hasTime = app.startTime.isNotEmpty && app.endTime.isNotEmpty;
-    final wageStr = FormatHelper.formatWage(app.wage);
+    // [DU1-F2] 금액 단위 — 저장 wageType 의 기존 라벨(시급/일급). 예상 총액·실수령 새 계산은 하지 않는다.
+    final wageType = app.wageType; // 없으면 라벨을 지어내지 않는다
+    final wageStr = wageType != null
+        ? FormatHelper.formatWageWithType(app.wage, wageType)
+        : FormatHelper.formatWage(app.wage);
 
     return GestureDetector(
       onTap: () async {
@@ -1518,98 +1977,88 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         setState(() {});
       },
       child: Container(
-        padding: EdgeInsets.all(18 * s),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFFF0FBF1), Color(0xFFFAFFFE), Color(0xFFF5FBFF)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFC8E6C9), width: 1.5),
-        ),
+        width: double.infinity,
+        padding: const EdgeInsets.all(ConceptSpace.cardPadding),
+        // [CP03 Q4] 새 확정 약속 — conceptPromise 한 겹. 섹션 제목 `새로 확정된 근무` 는 카드 밖(_buildPriorityCard).
+        decoration: ConceptSurface.promise(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // "새로운 소식" label (시안 .hA-label)
-            Row(children: [
-              Container(
-                width: 7 * s, height: 7 * s,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.success,
+            // 상태 묶음 — `근무 확정` 필(conceptConfirmed, 13/700 #166534) + `근무가 확정됐어요`(13/400). 넘치면 다음 줄·자연 높이.
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: ConceptSurface.confirmed(),
+                  child: Text('근무 확정', style: ConceptText.pill(AppColors.successDark)), // #166534
                 ),
-              ),
-              SizedBox(width: 5 * s),
-              Text('새로운 소식',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.successDark,
-                    letterSpacing: 0.5,
-                  )),
-            ]),
-            SizedBox(height: 10 * s),
-            // 제목 "N월 N일 근무가 확정됐어요 🎉" (시안 .hA-title)
-            Text('$dateStr 근무가\n확정됐어요 🎉',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w900,
-                  color: AppColors.textPrimary,
-                  letterSpacing: -0.5,
-                  height: 1.25,
-                )),
-            SizedBox(height: 14 * s),
-            // 흰 정보 박스 (시안 .hA-box)
+                Text('근무가 확정됐어요',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w400, height: 1.3, color: AppColors.textSecondary)),
+              ],
+            ),
+            const SizedBox(height: ConceptSpace.promiseChipToBusiness),
+            // [CP03 Q5] A 는 모든 폭에서 기존 날짜·시간 선행을 유지한다(DU1 구현69: 320·2.0 에서 긴 사업장명이 시간을 밀었다).
+            //   상태 →12→ KST 날짜 14/400 →4→ 시간 28/700 →12→ 사업장 20/700 →4→ 업무 16/400 →4→ 요율 →16→ CTA. 없는 필드는 간격도 없다.
+            Text(
+                '$dateStr(${const ['월', '화', '수', '목', '금', '토', '일'][kstDate.weekday - 1]})',
+                style: ConceptText.meta()),
+            if (hasTime) ...[
+              const SizedBox(height: 4),
+              _promiseTime(app.startTime, app.endTime),
+            ],
+            const SizedBox(height: ConceptSpace.infoGroupGap),
+            // 낱말 단위 줄바꿈(음절 끊김 금지) — '2|공장'·'검|수'(H35-B after r1). 의미 이름은 원문.
+            Text(TextLayout.keepWords(app.businessName),
+                style: ConceptText.promiseBusiness(), semanticsLabel: app.businessName),
+            if (app.selectedWorkType.isNotEmpty) ...[
+              const SizedBox(height: ConceptSpace.promiseBusinessToWork),
+              Text(TextLayout.keepWords(app.selectedWorkType),
+                  style: ConceptText.body(color: AppColors.textSecondary), semanticsLabel: app.selectedWorkType),
+            ],
+            const SizedBox(height: 4),
+            _heroInfoRow(s, Icons.payments_outlined, wageStr),
+            const SizedBox(height: ConceptSpace.infoToCta),
+            // 주 행동 — 카드 전체가 같은 탭 대상이라 별도 버튼 위젯이 아니라 모양만 준다. 최소 52·반경 12.
             Container(
-              padding: EdgeInsets.all(13 * s),
+              width: double.infinity,
+              constraints: const BoxConstraints(minHeight: ConceptSpace.primaryCtaMinHeight),
+              alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.88),
+                color: AppColors.brand,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    app.selectedWorkType.isNotEmpty
-                        ? '${app.businessName} · ${app.selectedWorkType}'
-                        : app.businessName,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                  SizedBox(height: 4 * s),
-                  Text(
-                    hasTime
-                        ? '${FormatHelper.formatDateCompact(app.workDate)}  ${app.startTime} – ${app.endTime}\n$wageStr'
-                        : '${FormatHelper.formatDateCompact(app.workDate)}  $wageStr',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
-                      height: 1.75,
-                    ),
-                  ),
-                ],
-              ),
+              child: Text('근무 확인하기', style: ConceptText.button()),
             ),
-            SizedBox(height: 14 * s),
-            // CTA 텍스트 버튼 (시안 .hA-cta)
-            Row(mainAxisSize: MainAxisSize.min, children: [
-              Text('근무 확인하기',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.successDark,
-                  )),
-              SizedBox(width: 5 * s),
-              Icon(Icons.arrow_forward_rounded,
-                  size: 18 * s, color: AppColors.successDark),
-            ]),
           ],
         ),
       ),
+    );
+  }
+
+  /// [DU-VQ-01] 확정 카드 정보 행 — 아이콘 + 글자(넘치면 줄바꿈, 말줄임 없음).
+  Widget _heroInfoRow(double s, IconData icon, String text, {bool strong = false}) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(top: 2 * s),
+          child: Icon(icon, size: 15 * s, color: AppColors.textSecondary),
+        ),
+        SizedBox(width: 6 * s),
+        Expanded(
+          child: Text(text,
+              style: TextStyle(
+                fontSize: strong ? 14 : 13,
+                fontWeight: strong ? FontWeight.w600 : FontWeight.w400,
+                color: strong ? AppColors.textPrimary : AppColors.textSecondary,
+                height: 1.35,
+              )),
+        ),
+      ],
     );
   }
 
@@ -1629,7 +2078,9 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           top: false,
           child: Padding(
             padding: EdgeInsets.fromLTRB(16 * s, 8 * s, 16 * s, 16 * s),
-            child: Column(
+            // [DU191] 큰 글자·좁은 화면에서 시트 내용이 높이를 넘으면 시트 안에서만 세로 스크롤한다(내용·순서·여백·SafeArea 그대로).
+            child: SingleChildScrollView(
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 // 핸들 바
@@ -1652,6 +2103,10 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                 AppCalendar(
                   focusedDay: focusedDay,
                   selectedDay: _selectedDateChip,
+                  // [DU193] 시트 세로 스크롤과 겹치지 않게 이 달력은 가로 월 이동만 받는다(세로 drag 는 시트 스크롤로 간다).
+                  availableGestures: AvailableGestures.horizontalSwipe,
+                  // [DU194 C1] 큰 글자에서 두 자리 날짜가 칸 여백 때문에 줄바뀜·잘리지 않게 이 시트만 칸 여백을 좁힌다(글자 크기 그대로, 보통 배율은 기본 여백).
+                  cellMargin: MediaQuery.textScalerOf(ctx2).scale(10) > 15 ? const EdgeInsets.all(1) : null,
                   onDaySelected: (sel, foc) {
                     final selDate = DateTime.utc(sel.year, sel.month, sel.day);
                     if (selDate.isBefore(today)) return; // 과거 선택 불가
@@ -1706,13 +2161,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                       Text('공고 있음',
                           style: TextStyle(
                             fontSize: 12,
-                            color: AppColors.textHint,
+                            color: AppColors.textSecondary,
                           )),
                     ],
                   ),
                 ),
                 SizedBox(height: 4 * s),
               ],
+            ),
             ),
           ),
         ),
@@ -1722,7 +2178,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
   // ── STATE C: 기본 — 날짜 탐색 (시안 .hC) ───────────────────────
   Widget _buildHeroStateC(BuildContext context, double s, ThemeData theme) {
-    // 오늘부터 7일 (과거 없음, _stripStart는 날짜 더보기 선택 시 변경됨)
+    // 오늘부터 7일 (과거 없음, _stripStart는 날짜 선택 시트에서 바뀐다)
     final stripDays = List.generate(7, (i) => _stripStart.add(Duration(days: i)));
     final hasSelectedDate = _selectedDateChip != null;
     // 범례는 현재 표시 중인 7일 스트립 안에 확정 근무가 있을 때만 표시.
@@ -1730,299 +2186,287 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     final hasConfirmedInStrip = stripDays.any(
       (d) => _confirmedDateSet.contains(DateTime.utc(d.year, d.month, d.day)),
     );
+    // [DU1 구현98 S080 V8] 7일 중 공고가 있는 날이 **하나도 없으면** 공고 수 줄 자체를 두지 않는다.
+    //   하루라도 공고가 있으면 일곱 칸 모두 같은 크기로 자리를 지켜 기준선을 맞춘다(DATE-STRIP-COUNT-CLIP 그대로).
+    final stripHasJobs = stripDays.any(
+      (d) => (_toDateCounts[DateTime.utc(d.year, d.month, d.day)] ?? 0) > 0,
+    );
+    const wd = ['월', '화', '수', '목', '금', '토', '일'];
+    // [S080 T1 · 판정59] 오늘(KST · 주입 시계) — 오늘 칸은 미선택이면 brand 외곽선 · brand 숫자, 선택이면 기존 채움이 우선한다.
+    //   범위(7일) 밖이면 표시하지 않는다(억지 노출 0). 오늘을 자동 선택하지 않는다.
+    final todayKst = FormatHelper.toKstDate(_now());
+    final todayKey = DateTime.utc(todayKst.year, todayKst.month, todayKst.day);
 
-    // State C 그라데이션 — 파란 계열 (State B와 유사, 더 연하게)
-    // 프로토타입 State B: #E8F0FE→#F0F4FF / State C는 더 은은하게
-    return Container(
-      padding: EdgeInsets.all(18 * s),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFFEDF4FF), Color(0xFFF4F8FF), Color(0xFFFAFBFF)],
-          stops: [0.0, 0.55, 1.0],
-        ),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Color(0xFFBBDEFB), width: 1.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // [DATE-HERO-ONE-LINE] 제목은 **카드 전폭**을 쓴다.
-          //
-          //   예전에는 제목과 `날짜 더보기` 가 같은 Row 에 있었다. 더보기는
-          //   고정 폭(텍스트 57.9 + 아이콘 16s + 간격 8s ≈ 79.5px)이라 제목이
-          //   쓸 수 있는 폭을 그만큼 깎았다. 실측(번들 NotoSansKR):
-          //
-          //     제목 필요 폭 @24sp w700 = 216.0px
-          //     320dp(s=.85) 가용 180.9 → **35.1px 부족 → 2줄**
-          //     360dp(s=.90) 가용 216.3 → 여유 **0.3px** (사실상 0)
-          //     390dp(s=.90) 가용 246.3 → 여유 30.3
-          //
-          //   360dp 의 여유 0.3px 이 문제의 핵심이다. 기기 기본 한글 폰트가
-          //   번들본과 조금만 달라도, 시스템 글자 배율이 1.0 을 조금만 넘어도
-          //   줄이 꺾인다. **글자를 줄여서 맞추지 않고** 제목에서 고정 폭
-          //   형제를 치웠다 — 그러면 가용 폭이 259.2(320dp)~340.0(411dp) 이
-          //   되어 네 대표 폭 **전부 한 줄**이다(여유 43~124px).
-          //
-          //   더보기는 7일 스트립 밖 날짜를 고르는 입구다. 부제목
-          //   `일할 날짜를 선택해보세요.` 가 바로 그 안내이므로 같은 줄에
-          //   두는 것이 위계상 더 맞다.
-          Text('언제 일하고 싶으세요?', style: AppTextStyles.heroTitle()),
-          SizedBox(height: 3 * s),
-          // 부제목 + 범례(확정 근무 있을 때만) + 날짜 더보기
-          //
-          //   세 조각이 한 줄에 다 들어가지 않는 폭(≤360dp에서 범례까지 있는
-          //   경우)에서는 **다음 줄로 내려간다**. 자르거나 줄이지 않는다.
-          SizedBox(
-            width: double.infinity,
-            child: Wrap(
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 8 * s,
-              runSpacing: 4 * s,
-              children: [
-                Text('일할 날짜를 선택해보세요.',
-                    style: AppTextStyles.heroDescription()),
-                Row(mainAxisSize: MainAxisSize.min, children: [
-                  if (hasConfirmedInStrip) ...[
-                    Container(
-                      width: 5 * s,
-                      height: 5 * s,
-                      decoration: const BoxDecoration(
-                        color: AppColors.successDark,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    SizedBox(width: 4 * s),
-                    // 큰 배율에서 범례+입구가 한 줄을 넘으면 범례 문구가
-                    //   먼저 흐른다 — 입구(터치 대상)는 온전히 남는다.
-                    Flexible(
-                      child: Text(
-                        '확정 근무',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: AppColors.textSecondary,
+    // [CP03 Q6] 제목·부제 없이 KST 날짜 아래 띠(질문 `언제 일하고 싶으세요?`·부제 `일할 날짜를 선택해보세요.` 시각 삭제).
+    //   요일 12/400·숫자 15/700, 주말도 중립색(일요일 빨강 제거). 선택 = brand 채움 + 흰 숫자, 확정 점·조건부 `N개` 유지.
+    //   각 칸 폭 ≥48 이고 실제 배율의 필요 폭만큼 늘린다. 일곱 칸이 들어가면 균등 분배, 넘치면 가로 스크롤.
+    final dowStyle = const TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: AppColors.textSecondary);
+    const numStyle = TextStyle(fontSize: 15, fontWeight: FontWeight.w700);
+    const countStyle = TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.brand);
+    final circleD = 36.0 * s;
+
+    Widget cell(DateTime day) {
+      final dayKey = DateTime.utc(day.year, day.month, day.day);
+      final count = _toDateCounts[dayKey] ?? 0;
+      final hasJobs = count > 0;
+      // 확정 근무 있는 날 — Green Dot 표시 + 선택 활성
+      final hasConfirmed = _confirmedDateSet.contains(dayKey);
+      final isSelected = _selectedDateChip == dayKey;
+      // [S080 T2 · 판정59 — CP03 Q6 시각 술어 재개정] 칸 전체 흐림(.38 · 숫자 약 2.28:1)을 없앤다.
+      //   탭 불가 날 = 불투명 textSecondary 숫자(흰 5.92) · 요일은 기존 textSecondary. 탭 조건(기존 술어)은 그대로다.
+      final tappable = !(!hasJobs && !hasConfirmed);
+      final isToday = dayKey == todayKey;
+      final numColor = isSelected
+          ? Colors.white
+          : (isToday ? AppColors.brand : (tappable ? AppColors.textPrimary : AppColors.textSecondary));
+      final dowLabel = wd[day.weekday - 1];
+      // 의미 — 전체 날짜·선택(플래그)·확정 존재·기존 조회 건수만. `지원 가능` 보장으로 바꾸지 않는다.
+      final semLabel = [
+        '${day.month}월 ${day.day}일 $dowLabel요일',
+        if (isToday) '오늘', // [S080 T1] 날짜 의미에서 한 번만 구별 — 선택 플래그와 합치지 않는다
+        if (hasConfirmed) '확정 근무 있음',
+        if (hasJobs) '일자리 $count개',
+      ].join(', ');
+      // [CP03 C1] 콜백 하나를 의미 노드(excludeSemantics 바깥)와 GestureDetector 가 함께 쓴다 — 탭 가능한 날짜에만.
+      // 공고가 없어도 확정 근무가 있는 날은 선택 가능(같은 날 추가 근무 탐색, 기존 일정 인지 목적)
+      final VoidCallback? onCellTap = tappable
+          ? () => setState(() {
+                _selectedDateChip = _selectedDateChip == dayKey ? null : dayKey;
+              })
+          : null;
+      return Semantics(
+        container: true,
+        button: true,
+        enabled: tappable,
+        selected: isSelected,
+        label: semLabel,
+        excludeSemantics: true,
+        onTap: onCellTap,
+        child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onCellTap,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: ConceptSpace.minTouch, minHeight: ConceptSpace.minTouch),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(dowLabel, style: dowStyle),
+                  SizedBox(height: 5 * s),
+                  // 숫자 상자 = 최소 36*s + 내용(구현100 C100-1 — 큰 배율에서 숫자가 잘리지 않게). 확정 점은 상자 아래 겹쳐 그린다.
+                  Stack(
+                    clipBehavior: Clip.none,
+                    alignment: Alignment.topCenter,
+                    children: [
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        curve: Curves.easeOut,
+                        constraints: BoxConstraints(minWidth: circleD, minHeight: circleD),
+                        padding: EdgeInsets.symmetric(horizontal: 2 * s),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          color: isSelected ? AppColors.brand : Colors.transparent,
+                        ),
+                        // [S080 T1] 미선택 오늘 = brand 외곽선(앞면 장식 — 상자 크기 · 숫자 위치 불변)
+                        foregroundDecoration: (isToday && !isSelected)
+                            ? BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.brand, width: 1.5))
+                            : null,
+                        child: Center(
+                          widthFactor: 1.0,
+                          heightFactor: 1.0,
+                          child: Text('${day.day}', style: numStyle.copyWith(color: numColor)),
                         ),
                       ),
-                    ),
-                    SizedBox(width: 10 * s),
-                  ],
-                  // 날짜 더보기 — 캘린더 열어 현재 7일 범위 밖 날짜 선택 가능
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => _showDatePickerSheet(context, s),
-                    child: Padding(
-                      // 가로는 Wrap spacing 이 맡는다 — 세로만 넓혀 터치 표적을
-                      //   키운다(폭을 다시 먹지 않는다).
-                      padding: EdgeInsets.symmetric(vertical: 4 * s),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        Text('날짜 더보기',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.infoDark,
-                            )),
-                        Icon(Icons.chevron_right_rounded,
-                            size: 16 * s, color: AppColors.infoDark),
-                      ]),
-                    ),
+                      if (hasConfirmed)
+                        Positioned(
+                          bottom: -8 * s,
+                          left: 0,
+                          right: 0,
+                          child: Center(
+                            child: Container(
+                              width: 5 * s,
+                              height: 5 * s,
+                              decoration: const BoxDecoration(color: AppColors.successDark, shape: BoxShape.circle),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
-                ]),
-              ],
+                  SizedBox(height: 10 * s),
+                  // 공고 수 — 없는 날은 같은 크기를 유지한 채 감춘다(일곱 칸 기준선 유지, DATE-STRIP-COUNT-CLIP).
+                  if (stripHasJobs)
+                    Visibility(
+                      visible: hasJobs,
+                      maintainSize: true,
+                      maintainAnimation: true,
+                      maintainState: true,
+                      child: Text('$count개', textAlign: TextAlign.center, style: countStyle),
+                    ),
+                ],
+              ),
             ),
           ),
-          SizedBox(height: 14 * s),
-          // 날짜 스트립 — 캘린더 스타일 (구글 캘린더처럼 숫자만 원형 선택)
-          // 7일을 Expanded로 균등 분배 → 한눈에 보임, 스크롤 없음
-          Row(
-            children: stripDays.map((day) {
-              final dayKey = DateTime.utc(day.year, day.month, day.day);
-              final count = _toDateCounts[dayKey] ?? 0;
-              final hasJobs = count > 0;
-              // 확정 근무 있는 날 — Green Dot 표시 + 선택 활성
-              final hasConfirmed = _confirmedDateSet.contains(dayKey);
-              final isSelected = _selectedDateChip == dayKey;
-              final isSunday = day.weekday == DateTime.sunday;
+      );
+    }
 
-              // 공고도 없고 확정 근무도 없는 날만 흐리게
-              final cellOpacity =
-                  (!isSelected && !hasJobs && !hasConfirmed) ? 0.38 : 1.0;
+    // 칸 필요 폭 — 실제 배율의 숫자(두 자리)·`N개`·요일·숫자 상자 중 가장 넓은 것, 최소 48.
+    double cellNeed() {
+      var w = ConceptSpace.minTouch;
+      for (final d in stripDays) {
+        final dayKey = DateTime.utc(d.year, d.month, d.day);
+        final count = _toDateCounts[dayKey] ?? 0;
+        final candidates = <double>[
+          circleD,
+          _oneLineWidth(context, '${d.day}', numStyle) + 4 * s,
+          _oneLineWidth(context, wd[d.weekday - 1], dowStyle),
+          if (stripHasJobs) _oneLineWidth(context, '$count개', countStyle),
+        ];
+        for (final c in candidates) {
+          if (c > w) w = c;
+        }
+      }
+      return w;
+    }
 
-              // 요일 색상 — 일반 요일: textTertiary / 일요일: error / 토요일은 나중에 isSaturday 분기 가능
-              final dowColor = isSunday ? AppColors.error : AppColors.textTertiary;
+    final strip = LayoutBuilder(builder: (context, c) {
+      final need = cellNeed();
+      if (need * 7 <= c.maxWidth) {
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          for (final d in stripDays) Expanded(child: cell(d)),
+        ]);
+      }
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          for (final d in stripDays) SizedBox(width: need, child: cell(d)),
+        ]),
+      );
+    });
 
-              // 날짜 숫자 색상 — 원 안(선택)은 흰색, 나머지는 기본
-              final dateColor = isSelected
-                  ? Colors.white
-                  : isSunday
-                      ? AppColors.error
-                      : AppColors.textPrimary;
+    // 범례(조건부) + `날짜 선택` — 들어가면 한 줄, 아니면 범례 아래 오른쪽 줄(자연 높이).
+    const legendStyle = TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: AppColors.textSecondary);
+    final legendDot = Container(
+      width: 5 * s,
+      height: 5 * s,
+      decoration: const BoxDecoration(color: AppColors.successDark, shape: BoxShape.circle),
+    );
+    // 날짜 선택 — 기존 날짜 선택 시트(7일 밖 날짜). 행동 이름을 보이는 글자로 남긴다.
+    // [CP03 C1] 같은 콜백을 의미 노드(독립)와 GestureDetector 에 둔다.
+    void onPick() => _showDatePickerSheet(context, s);
+    final pick = Semantics(
+      container: true,
+      button: true,
+      label: '날짜 선택',
+      excludeSemantics: true,
+      onTap: onPick,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onPick,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: ConceptSpace.minTouch, minHeight: ConceptSpace.minTouch),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text('날짜 선택', style: ConceptText.count().copyWith(height: 1.3)),
+            const Icon(Icons.chevron_right, size: 18, color: AppColors.brand),
+          ]),
+        ),
+      ),
+    );
+    final belowStrip = LayoutBuilder(builder: (context, c) {
+      if (!hasConfirmedInStrip) return Align(alignment: Alignment.centerRight, child: pick);
+      final legendW = 5 * s + 4 + _oneLineWidth(context, '확정 근무', legendStyle);
+      if (legendW + 8 + _actionWidth(context, '날짜 선택') <= c.maxWidth) {
+        // 한 줄에 들어간다(측정) — 범례 글자는 고정 폭으로 둔다.
+        return Row(children: [
+          legendDot,
+          const SizedBox(width: 4),
+          const Text('확정 근무', style: legendStyle),
+          const Spacer(),
+          pick,
+        ]);
+      }
+      // 들어가지 않으면 범례 아래 오른쪽 줄로 `날짜 선택`(자연 높이). 범례 글자는 남는 폭에서 줄을 바꾼다.
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+        Row(children: [
+          legendDot,
+          const SizedBox(width: 4),
+          const Expanded(child: Text('확정 근무', style: legendStyle)),
+        ]),
+        Align(alignment: Alignment.centerRight, child: pick),
+      ]);
+    });
 
-              // 원형 크기 — 반응형
-              final circleD = 36.0 * s;
-
-              return Expanded(
-                child: Opacity(
-                  opacity: cellOpacity,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    // 공고가 없어도 확정 근무가 있는 날은 선택 가능
-                    // (같은 날 추가 근무 탐색, 기존 일정 인지 목적)
-                    onTap: (!hasJobs && !hasConfirmed)
-                        ? null
-                        : () => setState(() {
-                              _selectedDateChip =
-                                  _selectedDateChip == dayKey ? null : dayKey;
-                            }),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // 요일
-                        Text(_dayLabel(day),
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: dowColor,
-                              fontWeight: FontWeight.w500,
-                            )),
-                        SizedBox(height: 5 * s),
-                        // 날짜 숫자 — 선택 시만 원형 배경
-                        // 확정 근무가 있으면 원 하단에 Dot을 Positioned overlay로 표시.
-                        // Dot이 없는 날짜는 여분 row를 잡지 않으므로 "붕 뜨는" 공간이 생기지 않음.
-                        Stack(
-                          clipBehavior: Clip.none, // Dot이 원 아래로 overflow 허용
-                          alignment: Alignment.topCenter,
-                          children: [
-                            AnimatedContainer(
-                              duration: const Duration(milliseconds: 160),
-                              curve: Curves.easeOut,
-                              width: circleD,
-                              height: circleD,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: isSelected
-                                    ? AppColors.infoDark
-                                    : Colors.transparent,
-                              ),
-                              child: Center(
-                                child: Text('${day.day}',
-                                    style: TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w700,
-                                      color: dateColor,
-                                    )),
-                              ),
-                            ),
-                            // Dot: 원 바닥 3dp 아래부터 5dp 크기 → bottom = -(3+5)dp
-                            if (hasConfirmed)
-                              Positioned(
-                                bottom: -8 * s,
-                                left: 0,
-                                right: 0,
-                                child: Center(
-                                  child: Container(
-                                    width: 5 * s,
-                                    height: 5 * s,
-                                    decoration: const BoxDecoration(
-                                      color: AppColors.successDark,
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                        // Dot overlay 공간 — 모든 셀 동일(10*s)으로 공고수 baseline 통일
-                        //   확정 있음: 원↓3dp 간격 → 5dp dot → 2dp 간격 → 공고수
-                        //   확정 없음: 10dp 최소 간격만 (기존 12dp 슬롯 대비 간격 대폭 축소)
-                        SizedBox(height: 10 * s),
-                        // 공고 수 — 작은 파란 텍스트 (없으면 자리만 비워 둔다)
-                        //
-                        // [DATE-STRIP-COUNT-CLIP] 예전에는 `height: 14 * s` 로
-                        //   봉투를 고정해 놓고 12sp 글자를 담았다. 한글 줄 높이는
-                        //   그보다 크다 — 번들 NotoSansKR 실측 **17.0px** 이라
-                        //   봉투(11.9~14.0)보다 3.0~5.1px 커서 **아래가 잘렸다**.
-                        //   배율을 키우면 더 벌어진다(x1.3 23.0 · x2.0 35.0).
-                        //
-                        //   테스트 기본 폰트는 글자마다 정사각이라 이 글자가
-                        //   12.0px 로 잡힌다 — 그래서 렌더 테스트가 이 결함을
-                        //   구조적으로 볼 수 없었다. 실제 폰트로만 보인다.
-                        //
-                        //   높이를 다른 숫자로 바꾸지 않는다. 글자 자체가 자리를
-                        //   정하게 하고, 공고가 없는 날은 **같은 크기를 유지한 채**
-                        //   감춘다 — 그래야 일곱 칸의 기준선이 그대로다.
-                        Visibility(
-                          visible: hasJobs,
-                          maintainSize: true,
-                          maintainAnimation: true,
-                          maintainState: true,
-                          child: Text('$count개',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.infoDark,
-                              )),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-          // Dot 슬롯(12*s) 추가분을 상쇄 — 카드 전체 높이 유지
-          SizedBox(height: 6 * s),
-          // CTA — 날짜 선택 후에만 등장 (미선택 시 완전 숨김)
-          // 흐름: 날짜 선택 → 공고 수 확인 → 이동
-          AnimatedSize(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOut,
-            child: hasSelectedDate
-                ? Padding(
-                    padding: EdgeInsets.only(top: 14 * s),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () {
-                          final scope = UserTabScope.of(context);
-                          if (_selectedDateChip != null) {
-                            // 날짜 지정 이동 — 일자리 탭의 날짜 필터로 전달
-                            scope?.switchToTabWithDate(1, _selectedDateChip!);
-                          } else {
-                            scope?.switchToTab(1);
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.infoDark,
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          padding: EdgeInsets.symmetric(vertical: 13 * s),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(13),
-                          ),
-                        ),
-                        child: Text(
-                          '${_selectedDateChip!.month}월 ${_selectedDateChip!.day}일 '
-                          '일자리 ${_toDateCounts[_selectedDateChip] ?? 0}개 보기',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 그룹 의미 `일할 날짜 선택` — 탐색용 날짜(주간 확정 일정 선택이 아님). 각 날짜는 따로 읽힌다.
+        Semantics(
+          container: true,
+          explicitChildNodes: true,
+          label: '일할 날짜 선택',
+          child: strip,
+        ),
+        const SizedBox(height: 8),
+        belowStrip,
+        // CTA — 날짜 선택 후에만 등장(미선택 시 완전 숨김). 흐름: 날짜 선택 → 공고 수 확인 → 이동
+        AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+          child: hasSelectedDate
+              ? Padding(
+                  padding: const EdgeInsets.only(top: ConceptSpace.infoGroupGap),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        final scope = UserTabScope.of(context);
+                        if (_selectedDateChip != null) {
+                          // 날짜 지정 이동 — 일자리 탭의 날짜 필터로 전달
+                          scope?.switchToTabWithDate(1, _selectedDateChip!);
+                        } else {
+                          scope?.switchToTab(1);
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.brand,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        minimumSize: const Size.fromHeight(ConceptSpace.primaryCtaMinHeight),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      // [DU194 C2] 큰 글자에서 음절 끊김 없이 낱말 사이에서만 줄바꿈
+                      child: Text(
+                        TextLayout.keepWords('${_selectedDateChip!.month}월 ${_selectedDateChip!.day}일 '
+                            '일자리 ${_toDateCounts[_selectedDateChip] ?? 0}개 보기'),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, height: 1.3),
                       ),
                     ),
-                  )
-                : const SizedBox.shrink(),
-          ),
-        ],
-      ),
+                  ),
+                )
+              : const SizedBox.shrink(),
+        ),
+      ],
     );
   }
 
   // ── 지원 현황 (시안 .sec 지원현황) ──────────────────────────────
   /// [PREDEVICE-WORKER-ERROR-NOT-ZERO] ERROR — 0건이 아니라 모르는 상태.
+  /// [E1-HOME-FIRST-ENTRY] 아직 읽지 않았다 — 자리를 지키되 숫자를 말하지 않는다.
+  ///
+  ///   `_buildPriorityCard` 의 로딩 skeleton 과 같은 관용구다(회색 블록).
+  ///   문구를 쓰지 않는 이유: "불러오는 중" 도 하나의 주장인데, 이 창은
+  ///   보통 1 초 미만이라 깜빡임만 남는다.
+  Widget _applicationStatusSkeleton(double s) {
+    return Container(
+      width: double.infinity,
+      height: 92 * s,
+      decoration: BoxDecoration(
+        color: AppColors.grey100,
+        borderRadius: BorderRadius.circular(12),
+      ),
+    );
+  }
+
   Widget _applicationStatusErrorCard(double s) {
     return Container(
       width: double.infinity,
@@ -2046,26 +2490,35 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           ),
           SizedBox(height: 4 * s),
           Text(
-            '잠시 후 다시 시도해주세요',
-            style: const TextStyle(fontSize: 12, color: AppColors.textHint),
+            // [DU472] B(320 · 2.0)에서 '주세 / 요'로 끊겼다 — 낱말 사이에서만 줄바꿈(읽기는 원문).
+            TextLayout.keepWords('잠시 후 다시 시도해 주세요'),
+            semanticsLabel: '잠시 후 다시 시도해 주세요',
+            // [DU470] textHint(grey400 · 1.88) → textTertiary(보조 안내 · 화면 바탕 위 4.90).
+            style: const TextStyle(fontSize: 12, color: AppColors.textTertiary),
             textAlign: TextAlign.center,
           ),
-          SizedBox(height: 14 * s),
+          SizedBox(height: 4 * s),
+          // [CP03] 실제 재조회 행동 — receiver 최소 48(정밀 §8). 문구·목적지(_loadHomeData) 그대로.
           GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: _loadHomeData,
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Text(
-                '다시 시도',
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.infoDark,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: ConceptSpace.minTouch, minHeight: ConceptSpace.minTouch),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                // [DU306 §12.2] 재시도 = 일반 진행 행동 → brand(infoDark 대신). receiver 48·목적지 그대로.
+                Text(
+                  '다시 시도',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.brand,
+                  ),
                 ),
-              ),
-              SizedBox(width: 3 * s),
-              Icon(Icons.refresh_rounded,
-                  size: 15 * s, color: AppColors.infoDark),
-            ]),
+                SizedBox(width: 3 * s),
+                Icon(Icons.refresh_rounded,
+                    size: 15 * s, color: AppColors.brand),
+              ]),
+            ),
           ),
         ],
       ),
@@ -2073,14 +2526,19 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   }
 
   /// [PREDEVICE-WORKER-ERROR-NOT-ZERO] PARTIAL — 보여 주는 값이 최신이 아니다.
+  // [DU306 Standards §12.2] 부분 실패(이전 값 표시) = 작은 주의 표시 + 중립 설명 + brand 재시도.
+  //   주황 바탕(warning .10)·주황 `다시 시도`(흰 바탕 대비 낮음)를 걷고 중립 바탕(background)으로 낮춘다.
+  //   주의 아이콘(warning)은 작은 상태 표시로 남긴다. 띠 전체 탭 receiver 최소 48(글자 확대 시 자연 높이).
   Widget _staleNotice(double s) {
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: _loadHomeData,
       child: Container(
         width: double.infinity,
+        constraints: const BoxConstraints(minHeight: ConceptSpace.minTouch),
         padding: EdgeInsets.symmetric(vertical: 9 * s, horizontal: 12 * s),
         decoration: BoxDecoration(
-          color: AppColors.warning.withValues(alpha: 0.10),
+          color: AppColors.background,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(children: [
@@ -2088,7 +2546,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           SizedBox(width: 7 * s),
           const Expanded(
             child: Text(
-              '최신 정보를 불러오지 못했어요. 이전에 받은 내용을 보여주는 중이에요',
+              '최신 정보를 불러오지 못해 이전 내용을 보여드려요',
               style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
             ),
           ),
@@ -2098,7 +2556,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w700,
-              color: AppColors.warning,
+              color: AppColors.brand,
             ),
           ),
         ]),
@@ -2116,27 +2574,36 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
     return Container(
       color: Colors.white,
-      padding: EdgeInsets.fromLTRB(20 * s, 24 * s, 20 * s, 24 * s),
+      // [CP03 Q9] 좌우 화면 여백만 — 섹션 사이 24 는 본문 리듬이 맡는다.
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 섹션 헤더
-          SectionHeader(
-            title: '지원 현황',
-            actionText: '전체보기 ›',
+          // 섹션 헤더 — `내 지원 현황` + `전체 보기`(꺾쇠 아이콘 1개, receiver 48). 목적지 그대로.
+          _sectionHeader(
+            context,
+            title: '내 지원 현황',
+            actionText: '전체 보기',
             onAction: () => Navigator.of(context, rootNavigator: true).push(
                 MaterialPageRoute(builder: (_) => const MyApplicationsScreen())),
           ),
-          SizedBox(height: 14 * s),
+          const SizedBox(height: ConceptSpace.sectionTitleToCard),
           // [PREDEVICE-WORKER-ERROR-NOT-ZERO] ERROR를 먼저 가른다.
           //   조회에 실패하고 보여 줄 것이 하나도 없을 때 "아직 지원한 일자리가
           //   없어요"라고 말하면 거짓말이 된다. 0건이 아니라 모르는 상태다.
-          if (_homeLoadFailed && _applications.isEmpty && !_isLoadingData) ...[
+          // [E1-HOME-FIRST-ENTRY] LOADING 을 **먼저** 가른다.
+          //   예전에는 `_isLoadingData` 가 true 여도 들고 있는 지원서가
+          //   없으면 아래 `else` 로 떨어져 `검토중 0 · 확정 0` 을 자신 있게
+          //   그렸다. 아직 읽지 않은 것은 0 건이 아니다.
+          if (_isLoadingData && _applications.isEmpty) ...[
+            _applicationStatusSkeleton(s),
+          ] else if (_homeLoadFailed && _applications.isEmpty && !_isLoadingData) ...[
             _applicationStatusErrorCard(s),
           ] else if (_applications.isEmpty && !_isLoadingData) ...[
             Container(
               width: double.infinity,
-              padding: EdgeInsets.symmetric(vertical: 24 * s, horizontal: 16 * s),
+              // [DU1 구현98] 아래 여백 24 → 10: 링크 receiver(48)의 아래 여유가 시각 여백을 대신한다(위 주석).
+              padding: EdgeInsets.fromLTRB(16 * s, 24 * s, 16 * s, 10 * s),
               decoration: BoxDecoration(
                 color: AppColors.background,
                 borderRadius: BorderRadius.circular(12),
@@ -2154,26 +2621,36 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                       ),
                       textAlign: TextAlign.center),
                   SizedBox(height: 4 * s),
-                  Text('원하는 날짜의 일을 찾아 첫 지원을 해보세요',
+                  // [DU1 구현98 S080 V6·V9] 설명 textHint(#BDBDBD, 화면 바탕 1.75:1 — 실측) → textSecondary.
+                  //   탐색 링크 infoDark(#1976D2, 4.30:1) → 같은 홈의 다른 링크(`날짜 더보기`·`전체보기`)와 같은 brand.
+                  //   링크 문구·목적지(일자리 탭)·행동 있는 빈 안내라는 역할은 그대로다.
+                  Text('원하는 날짜의 일자리를 찾아보세요',
                       style: TextStyle(
                         fontSize: 12,
-                        color: AppColors.textHint,
+                        color: AppColors.textSecondary,
                       ),
                       textAlign: TextAlign.center),
-                  SizedBox(height: 14 * s),
+                  // [DU1 구현98 S080 R] 링크의 실제 receiver 가 글자 높이뿐이었다(실측 105.2×19.0) → 바깥 receiver 높이 48.
+                  //   보이는 글자 위치가 거의 그대로이도록 위 간격 14 → 4, 카드 아래 안쪽 여백 24 → 10 으로 receiver 의
+                  //   위아래 여유(각 ~14.5)를 흡수한다. 목적지·문구·누르는 동작은 그대로다.
+                  SizedBox(height: 4 * s),
                   GestureDetector(
+                    behavior: HitTestBehavior.opaque,
                     onTap: () => UserTabScope.of(context)?.switchToTab(1),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Text('일자리 찾아보기',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.infoDark,
-                          )),
-                      SizedBox(width: 3 * s),
-                      Icon(Icons.arrow_forward_rounded,
-                          size: 15 * s, color: AppColors.infoDark),
-                    ]),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 48),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text('일자리 찾기',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.brand,
+                            )),
+                        SizedBox(width: 3 * s),
+                        Icon(Icons.arrow_forward_rounded,
+                            size: 15 * s, color: AppColors.brand),
+                      ]),
+                    ),
                   ),
                 ],
               ),
@@ -2186,19 +2663,18 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             _staleNotice(s),
             SizedBox(height: 10 * s),
           ],
-          // 3열 통계 (시안 .app-summary)
+          // 3열 통계 (시안 .app-summary) — [CP03 Q9] 지원 현황 3칸 요약만 conceptRaised(한 겹). 집계·분기 그대로.
           Container(
-            decoration: BoxDecoration(
-              color: AppColors.background,
-              borderRadius: BorderRadius.circular(12),
-            ),
+            decoration: ConceptSurface.raised(),
             padding: EdgeInsets.symmetric(vertical: 12 * s),
-            child: Row(children: [
-              _statCell(s, '$pendingCount', '검토중', null),
+            // [DU424 V-c] 세 칸 숫자의 윗선을 맞춘다 — 기본 가운데 정렬이면 라벨이 두 줄인 칸(계약 대기 · 큰 글자)만
+            //   숫자가 위로 밀렸다(B 320×640@2.0 에서 17px). 라벨 · 숫자 · 집계 · 구분선 크기는 그대로다.
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              _statCell(s, '$pendingCount', '검토 중', null),
               Container(width: 1, height: 36 * s, color: AppColors.borderLight),
-              _statCell(s, '$confirmedCount', '확정', AppColors.success),
+              _statCell(s, '$confirmedCount', '확정', AppColors.successDark),
               Container(width: 1, height: 36 * s, color: AppColors.borderLight),
-              _statCell(s, '$resultWaitCount', '계약 대기', AppColors.warning),
+              _statCell(s, '$resultWaitCount', '계약 대기', AppColors.warningDark),
             ]),
           ),
           if (recent.isNotEmpty) ...[
@@ -2260,16 +2736,15 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                               overflow: TextOverflow.ellipsis,
                             ),
                             SizedBox(height: 1 * s),
+                            // [DU194 C4] 날짜·시작/종료 시각 전문 — 말줄임 없이 날짜 뒤와 '–' 뒤에서만 줄바꿈(보이는 글자는 같다)
                             Text(
                               hasTime
-                                  ? '${FormatHelper.formatDateCompact(app.workDate)}  ${app.startTime} – ${app.endTime}'
-                                  : FormatHelper.formatDateCompact(app.workDate),
+                                  ? '${TextLayout.keepWords(FormatHelper.formatDateCompact(app.workDate))}  ${TextLayout.unit('${app.startTime} –')} ${TextLayout.unit(app.endTime)}'
+                                  : TextLayout.keepWords(FormatHelper.formatDateCompact(app.workDate)),
                               style: TextStyle(
                                 fontSize: 12,
-                                color: AppColors.textHint,
+                                color: AppColors.textSecondary,
                               ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
                             ),
                           ],
                         ),
@@ -2309,7 +2784,9 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         Text(value,
             style: AppTextStyles.statNumber(color: color)),
         SizedBox(height: 2 * s),
-        Text(label,
+        Text(TextLayout.keepWords(label),
+            semanticsLabel: label,
+            textAlign: TextAlign.center,
             style: AppTextStyles.statLabel()),
       ]),
     );
@@ -2349,7 +2826,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     //   판정은 CalendarHelper.isScheduledIncome 한 곳에 있다.
     final wageScheduled = monthApps
         .where((a) => AppStatus.confirmedStatuses.contains(a.status))
-        .where((a) => CalendarHelper.isScheduledIncome(a, _attendances))
+        .where((a) =>
+            CalendarHelper.isScheduledIncome(a, _attendances, now: _now()))
         .fold<int>(0, (sum, a) => sum + _scheduledDailyWage(a));
 
     // 일했지만 금액이 아직 확정되지 않은 근무 — 어느 합계에도 더하지 않는다.
@@ -2360,14 +2838,17 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
     return Container(
       color: Colors.white,
-      padding: EdgeInsets.fromLTRB(20 * s, 24 * s, 20 * s, 24 * s),
+      // [CP03 Q9] 좌우 화면 여백만 — 섹션 사이 24 는 본문 리듬이 맡는다.
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 섹션 헤더
-          SectionHeader(
+          // 섹션 헤더 — 대상 월 행동 `{년}년 {월}월` + 꺾쇠 아이콘 1개(문자열 `›` 삭제). 목적지·대상 월 그대로.
+          _sectionHeader(
+            context,
             title: '수입 현황',
-            actionText: '${now.year}년 ${now.month}월 ›',
+            actionText: '${TextLayout.keepWords('${now.year}년')} ${TextLayout.unit('${now.month}월')}', // [DU203 C201-2] 연/월 사이만 줄바꿈
+            actionLabel: '${now.year}년 ${now.month}월',
             onAction: () => Navigator.push(
               context,
               MaterialPageRoute(
@@ -2378,7 +2859,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               ),
             ),
           ),
-          SizedBox(height: 14 * s),
+          const SizedBox(height: ConceptSpace.sectionTitleToCard),
           // 신규 사용자 Empty State — 수입 기록 없음
           // [R7-P2-1 후속 P21-E] 근태를 못 읽었으면 "수입이 없다"고 말할 수
           //   없다 — 0원은 조회 성공일 때만 쓸 수 있는 말이다.
@@ -2398,7 +2879,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   Icon(Icons.account_balance_wallet_outlined,
                       color: AppColors.textHint, size: 30 * s),
                   SizedBox(height: 8 * s),
-                  Text('아직 이번 달 수입이 없어요',
+                  Text(TextLayout.keepWords('아직 표시할 수입 금액이 없어요'), // [DU203 C201-3] '없어요' 등 낱말 안 분절 0
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
@@ -2406,8 +2887,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                       ),
                       textAlign: TextAlign.center),
                   SizedBox(height: 3 * s),
-                  Text('첫 근무를 마치면 여기에 수입이 표시돼요',
-                      style: TextStyle(fontSize: 12, color: AppColors.textHint),
+                  // [DU1 구현99 C99-1] 읽어야 하는 안내 — textHint(#BDBDBD, 화면 바탕 1.754:1 실측) → textSecondary.
+                  // [DU398 후보] 낱말 안 줄바꿈 0 — 제목과 같은 keepWords, 읽기 이름 원문(B320@2.0 '수 / 입' 분절, DU397 관측)
+                  Text(TextLayout.keepWords('확정 금액과 근무 예정 수입이 여기에 표시돼요'),
+                      semanticsLabel: '확정 금액과 근무 예정 수입이 여기에 표시돼요',
+                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                       textAlign: TextAlign.center),
                 ],
               ),
@@ -2473,32 +2957,38 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   _incomeRow(
                     s: s,
                     label: '예상 수입',
-                    labelColor: AppColors.infoDark,
+                    labelColor: AppColors.brand,
                     value: _isLoadingData
                         ? null
                         : (_attendancesFailed
                             ? '확인 못함'
                             : FormatHelper.formatWage(wageTotal)),
-                    valueColor: AppColors.infoDark,
+                    valueColor: AppColors.brand,
                     valueBold: true,
                   ),
                   if (_attendancesFailed) ...[
                     SizedBox(height: 10 * s),
+                    // [DU306 §12.2·§12.3] 재시도 링크 = brand(infoDark 대신), 실제 receiver 최소 높이 48(글자 밖 빈 곳도 탭).
+                    //   문구·목적지·로딩 중 비활성은 그대로다.
                     GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTap: _isLoadingData ? null : () => _loadHomeData(),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(Icons.cloud_off_rounded,
-                            size: 14 * s, color: AppColors.textSecondary),
-                        SizedBox(width: 5 * s),
-                        Flexible(
-                          child: Text('이번 달 근무 기록을 불러오지 못했어요 · 다시 시도',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.infoDark,
-                              )),
-                        ),
-                      ]),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: ConceptSpace.minTouch),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.cloud_off_rounded,
+                              size: 14 * s, color: AppColors.textSecondary),
+                          SizedBox(width: 5 * s),
+                          Flexible(
+                            child: Text('이번 달 근무 기록을 불러오지 못했어요 · 다시 시도',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.brand,
+                                )),
+                          ),
+                        ]),
+                      ),
                     ),
                   ],
                 ],
@@ -2519,81 +3009,106 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
     return Container(
       color: Colors.white,
-      padding: EdgeInsets.fromLTRB(20 * s, 24 * s, 20 * s, 24 * s),
+      // [CP03 Q9] 좌우 화면 여백만 — 섹션 사이 24 는 본문 리듬이 맡는다.
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 섹션 헤더
-          SectionHeader(
+          // 섹션 헤더 — `일정 보기`(꺾쇠 아이콘 1개). 목적지 그대로.
+          _sectionHeader(
+            context,
             title: '이번 주 일정',
-            actionText: '일정 ›',
+            actionText: '일정 보기',
             // switchToTab(2): 탭0 Navigator에 push하지 않고 일정 탭으로 전환
             // Navigator.push 사용 시 탭0 스택에 MyScheduleScreen이 쌓여
             // 탭 전환 후 탭0 복귀 시 일정화면이 홈 자리에 나타나는 버그 발생
             onAction: () => UserTabScope.of(context)?.switchToTab(2),
           ),
-          SizedBox(height: 14 * s),
+          const SizedBox(height: ConceptSpace.sectionTitleToCard),
           // 7일 도트 뷰
-          Row(
-            children: weekDays.map((day) {
+          // [DU397] 숫자 상자 폭 = max(32*s, 실제 한 줄 숫자 폭 + 1) — 내용 기준(칸 전체 배경 아님, 한 자리 · 기본 배율은 그대로 32*s).
+          //   칸 필요 폭(숫자 상자 · 요일 · 점 최대)이 가용/7 안이면 기존 7칸 균등, 넘으면 일주일 행만 가로 스크롤(_ThisWeekScrollRow).
+          //   숫자 분리 · 축소 · 말줄임 · 이웃 칸 침범으로 풀지 않는다(DU394 11-30 B@2.0 '30' → '3/0' 수리).
+          LayoutBuilder(builder: (context, constraints) {
+            // [CP03] 정밀 §4 지원자 홈 — 토·일 요일 글자도 다른 날과 같은 textSecondary(주말 파랑·빨강 제거).
+            const dayStyle = TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600);
+            TextStyle numStyle(bool isToday) => TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: isToday ? Colors.white : AppColors.textPrimary,
+                );
+            final boxW = <DateTime, double>{};
+            var cellNeed = 5 * s;
+            for (final d in weekDays) {
+              final digits = _oneLineWidth(context, TextLayout.unit('${d.day}'), numStyle(false)) + 1;
+              final w = digits > 32 * s ? digits : 32 * s;
+              boxW[d] = w;
+              if (w > cellNeed) cellNeed = w;
+              final label = _oneLineWidth(context, _dayLabel(d), dayStyle);
+              if (label > cellNeed) cellNeed = label;
+            }
+            final avail = constraints.maxWidth;
+
+            Widget cell(DateTime day) {
               final isToday = day == today;
               final hasConfirmed = _cachedThisWeekConfirmedDates.contains(day);
               final hasPending = _cachedThisWeekPendingDates.contains(day);
-              final isSat = day.weekday == 6;
-              final isSun = day.weekday == 7;
-
-              final Color dayLabelColor = isSat
-                  ? const Color(0xFF4A90D9)
-                  : isSun
-                      ? const Color(0xFFE05252)
-                      : AppColors.textHint;
-
+              // [DU1 구현100 셀B] 확정 = 같은 홈 날짜 탐색 줄·일정 달력과 같은 successDark(#166534).
+              // [DU1 후속101 C101-3] 대기 점 warningDarkest(#E65100, 3.79) — 일정 달력 대기 점과 같은 색.
               final Color dotColor = hasConfirmed
-                  ? AppColors.success
+                  ? AppColors.successDark
                   : hasPending
-                      ? AppColors.warning
+                      ? AppColors.warningDarkest
                       : Colors.transparent;
+              return Column(children: [
+                Text(_dayLabel(day), style: dayStyle),
+                SizedBox(height: 4 * s),
+                Container(
+                  width: boxW[day],
+                  // [DU203 C201-1] 고정 높이 32*s → 최소 높이: 큰 글자에서 숫자 아래가 잘리지 않게 내용 높이까지 늘어난다.
+                  constraints: BoxConstraints(minHeight: 32 * s),
+                  // [DU1] 오늘 표시 = brand 채운 둥근 사각형(날짜 선택 표시와 같은 형태)
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    color: isToday ? AppColors.brand : Colors.transparent,
+                  ),
+                  alignment: Alignment.center,
+                  // [DU397] 숫자 묶음 표시(숫자 사이 줄바꿈 0) · 접근성 원문
+                  child: Text(TextLayout.unit('${day.day}'), semanticsLabel: '${day.day}', style: numStyle(isToday)),
+                ),
+                SizedBox(height: 4 * s),
+                Container(
+                  width: 5 * s,
+                  height: 5 * s,
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: dotColor),
+                ),
+              ]);
+            }
 
-              return Expanded(
-                child: Column(children: [
-                  Text(_dayLabel(day),
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: dayLabelColor,
-                          fontWeight: FontWeight.w600)),
-                  SizedBox(height: 4 * s),
-                  Container(
-                    width: 32 * s,
-                    height: 32 * s,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: isToday ? AppColors.infoDark : Colors.transparent,
-                    ),
-                    alignment: Alignment.center,
-                    child: Text('${day.day}',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: isToday ? Colors.white : AppColors.textPrimary,
-                        )),
-                  ),
-                  SizedBox(height: 4 * s),
-                  Container(
-                    width: 5 * s,
-                    height: 5 * s,
-                    decoration: BoxDecoration(
-                        shape: BoxShape.circle, color: dotColor),
-                  ),
-                ]),
-              );
-            }).toList(),
-          ),
+            if (cellNeed <= avail / 7) {
+              return Row(children: [for (final d in weekDays) Expanded(child: cell(d))]);
+            }
+            // [DU411] 가로 스크롤 분기만 — 칸 폭(pitch) = 필요 폭 + 이웃 숫자 상자 사이 최소 4 logical px.
+            //   가장 넓은 숫자 상자가 칸 폭과 같으면 이웃 상자가 맞닿았다(3.0 FB). 숫자 상자는 칸 가운데라 양옆 2px 씩 비운다.
+            //   초기 위치 · 끝 이동량도 같은 pitch 로 계산한다. 7칸 균등 분기(위)는 그대로다.
+            const minGap = 4.0;
+            final pitch = cellNeed + minGap;
+            final todayIx = weekDays.indexWhere((d) => d == today);
+            final maxOff = pitch * 7 - avail;
+            var initial = todayIx < 0 ? 0.0 : todayIx * pitch - (avail - pitch) / 2;
+            if (initial < 0) initial = 0;
+            if (initial > maxOff) initial = maxOff;
+            return _ThisWeekScrollRow(
+              initialOffset: initial,
+              children: [for (final d in weekDays) SizedBox(width: pitch, child: cell(d))],
+            );
+          }),
           SizedBox(height: 10 * s),
           // 범례
           Row(children: [
-            _legendDot(s, AppColors.success, '확정'),
+            _legendDot(s, AppColors.successDark, '확정'),
             SizedBox(width: 12 * s),
-            _legendDot(s, AppColors.warning, '지원중'),
+            _legendDot(s, AppColors.warningDarkest, '지원 중'),
           ]),
         ],
       ),
@@ -2607,10 +3122,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         decoration: BoxDecoration(shape: BoxShape.circle, color: color),
       ),
       SizedBox(width: 4 * s),
+      // [DU1 구현100 C 분리 제안] 범례는 점이 무슨 뜻인지 읽어야 하는 글자 — textHint(#BDBDBD) → textSecondary.
       Text(label,
           style: TextStyle(
               fontSize: 12,
-              color: AppColors.textHint,
+              color: AppColors.textSecondary,
               fontWeight: FontWeight.w600)),
     ]);
   }
@@ -2640,12 +3156,17 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     if (_renewalProposals.isEmpty) return const SizedBox.shrink();
     final first = _renewalProposals.first;
     final more = _renewalProposals.length - 1;
-    const accent = AppColors.success;
+    // [DU306 Standards §12.2] 연장 제안은 '확정·달성'이 아니라 근로자 응답을 기다리는 요청이다 —
+    //   녹색(success) 대신 같은 홈의 기다리는 요청 카드(신분증 열람·초대)와 같은 brand 한 겹.
+    const accent = AppColors.brand;
     final start = FormatHelper.toKstDate(first.effectiveStart);
     final end = FormatHelper.toKstDate(first.effectiveEnd);
+    final title = more > 0 ? '계약 연장 제안 ${more + 1}건' : '계약 연장 제안';
+    final subtitle = '${first.businessName} · '
+        '${start.month}/${start.day}~${end.month}/${end.day}';
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)), // [CP03 Q9] 간격은 본문 리듬
       child: GestureDetector(
         onTap: () async {
           await Navigator.push(
@@ -2664,51 +3185,36 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: accent.withValues(alpha: 0.30)),
           ),
-          child: Row(
-            children: [
-              Container(
-                width: 38 * s,
-                height: 38 * s,
-                decoration:
-                    const BoxDecoration(color: accent, shape: BoxShape.circle),
-                child: Icon(Icons.autorenew,
-                    size: 20 * s, color: Colors.white),
-              ),
-              SizedBox(width: 12 * s),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      more > 0 ? '계약 연장 제안 ${more + 1}건' : '계약 연장 제안',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    SizedBox(height: 3 * s),
-                    Text(
-                      '${first.businessName} · '
-                      '${start.month}/${start.day}~${end.month}/${end.day}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 13, color: AppColors.grey500),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(width: 8 * s),
-              const Text('확인하기',
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: accent)),
-            ],
+          // [DU306 §12.3] 제목 1줄·부제 2줄 말줄임 제거 — 사업장 이름·연장 기간은 잘리면 다른 제안으로 읽힌다.
+          //   같은 홈의 필수응답 카드와 같은 공용 배치(_taskCardRow): 제목은 낱말, 부제는 구분점 조각 사이에서만
+          //   줄을 바꾸고, 본문 폭이 모자라면 `확인하기`를 아래 오른쪽 줄로 내린다(카드 전체 탭·목적지 그대로).
+          child: _taskCardRow(
+            context,
+            s,
+            icon: Container(
+              width: 38 * s,
+              height: 38 * s,
+              decoration:
+                  const BoxDecoration(color: accent, shape: BoxShape.circle),
+              child: Icon(Icons.autorenew,
+                  size: 20 * s, color: Colors.white),
+            ),
+            iconWidth: 38 * s,
+            title: title,
+            titleDisplay: TextLayout.keepWords(title),
+            titleStyle: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+            subtitle: subtitle,
+            subtitleDisplay: TextLayout.phrases(subtitle),
+            subtitleStyle: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            actionText: '확인하기',
+            actionStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: accent),
           ),
         ),
       ),
@@ -2722,8 +3228,13 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   ///   오류 페이지로 바꾸지 않는다).
   Widget _buildCorrectionFailureCard(BuildContext context, double s) {
     return Padding(
-      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
-      child: Container(
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)), // [CP03 Q9] 간격은 본문 리듬
+      // [DU306 §12.3] `다시 시도` 글자 receiver 가 약 30 높이였다 — 같은 홈의 다른 조회 실패 카드(미퇴근·계약해지)처럼
+      //   카드 전체를 같은 재조회(_reloadCorrections, 이 읽기 하나만)로 누르게 한다. 진행 중에는 둘 다 비활성.
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _isReloadingCorrections ? null : _reloadCorrections,
+        child: Container(
         padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 12 * s),
         decoration: BoxDecoration(
           color: AppColors.grey100,
@@ -2747,7 +3258,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                         color: AppColors.textPrimary,
                       )),
                   SizedBox(height: 2 * s),
-                  Text('요청이 없다는 뜻은 아닙니다.',
+                  Text('요청이 없다는 뜻은 아니에요',
                       style: TextStyle(
                         fontSize: 12,
                         color: AppColors.textSecondary,
@@ -2768,13 +3279,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.infoDark,
+                    color: AppColors.brand, // [DU306 §12.2] 재시도 = brand(infoDark 대신)
                   ),
                 ),
               ),
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -2820,7 +3332,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     const accent = AppColors.warning;
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)), // [CP03 Q9] 간격은 본문 리듬
       child: GestureDetector(
         onTap: () => Navigator.push(
           context,
@@ -2867,25 +3379,28 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                           : task.subtitleFor(),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 13, color: AppColors.grey500),
+                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
                     ),
                     if (task.isPayroll) ...[
                       SizedBox(height: 3 * s),
+                      // [DU476] grey400(옅은 주황 면 위 약 1.8) → textTertiary(약 4.9 · 홈 보조 안내 DU470/474 와 같다).
                       Text('확정된 급여 금액은 그대로 유지돼요',
                           style: TextStyle(
-                              fontSize: 12, color: AppColors.grey400)),
+                              fontSize: 12, color: AppColors.textTertiary)),
                     ],
                   ],
                 ),
               ),
               SizedBox(width: 8 * s),
+              // [DU476] 행동 글자 · 화살표 warning(옅은 주황 면 위 약 2.0) → warningDark(약 4.9).
+              //   면 · 테두리 · 원 아이콘은 accent(warning) 그대로다.
               Text('등록하기',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: accent,
+                    color: AppColors.warningDark,
                   )),
-              Icon(Icons.chevron_right, color: accent, size: 20 * s),
+              Icon(Icons.chevron_right, color: AppColors.warningDark, size: 20 * s),
             ],
           ),
         ),
@@ -2905,7 +3420,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     final accent = theme.primaryColor;
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)), // [CP03 Q9] 간격은 본문 리듬
       child: GestureDetector(
         onTap: () => _openMyRequests(uid),
         child: Container(
@@ -2915,48 +3430,37 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: accent.withValues(alpha: 0.32)),
           ),
-          child: Row(
-            children: [
-              // 채워진 아이콘 배지 — 지원 준비 카드(연한 배지)보다 한 단계 강하게
-              Container(
-                width: 38 * s,
-                height: 38 * s,
-                decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
-                child: Icon(Icons.badge_outlined, size: 20 * s, color: Colors.white),
-              ),
-              SizedBox(width: 12 * s),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _idRequestSurface.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    SizedBox(height: 3 * s),
-                    Text(
-                      _idRequestSurface.subtitle,
-                      style: TextStyle(fontSize: 13, color: AppColors.grey500),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(width: 8 * s),
-              Text('요청 확인',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: accent,
-                  )),
-              Icon(Icons.chevron_right, color: accent, size: 20 * s),
-            ],
+          // [CP03 C1] 제목 말줄임(2줄) 제거 — 제목·부제 전문·자연 높이, 낱말 사이에서만 줄바꿈.
+          //   본문 폭이 모자라면 `요청 확인`을 아래 오른쪽 줄로(카드 전체 탭·목적지 그대로).
+          child: _taskCardRow(
+            context,
+            s,
+            // 채워진 아이콘 배지 — 지원 준비 카드(연한 배지)보다 한 단계 강하게
+            icon: Container(
+              width: 38 * s,
+              height: 38 * s,
+              decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+              child: Icon(Icons.badge_outlined, size: 20 * s, color: Colors.white),
+            ),
+            iconWidth: 38 * s,
+            title: _idRequestSurface.title,
+            titleDisplay: TextLayout.keepWords(_idRequestSurface.title),
+            titleStyle: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+            subtitle: _idRequestSurface.subtitle,
+            subtitleDisplay: TextLayout.keepWords(_idRequestSurface.subtitle),
+            subtitleStyle: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            actionText: '요청 확인',
+            actionStyle: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: accent,
+            ),
+            actionTrailing: Icon(Icons.chevron_right, color: accent, size: 20 * s),
+            actionTrailingWidth: 20 * s,
           ),
         ),
       ),
@@ -2993,7 +3497,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     //   응답하지 않으면 자동 승인되는 일이라 침묵이 가장 위험하다.
     if (surface.isUnavailable) {
       return Padding(
-        padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+        padding: EdgeInsets.symmetric(horizontal: _gutter(context)), // [CP03 Q9] 간격은 본문 리듬
         child: GestureDetector(
           onTap: _isLoadingData ? null : () => _loadHomeData(),
           child: Container(
@@ -3010,7 +3514,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               SizedBox(width: 10 * s),
               Expanded(
                 child: Text(
-                  '계약해지 요청이 있는지 확인하지 못했어요',
+                  '계약해지 요청을 확인하지 못했어요',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -3018,11 +3522,12 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   ),
                 ),
               ),
+              // [DU306 §12.2] 재시도 = 일반 진행 행동 → brand(예전 파랑 infoDark #1976D2 대신). 카드 전체 탭·목적지 그대로.
               Text('다시 시도',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.infoDark,
+                    color: AppColors.brand,
                   )),
             ]),
           ),
@@ -3036,7 +3541,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     const accent = AppColors.error;
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)), // [CP03 Q9] 간격은 본문 리듬
       child: GestureDetector(
         onTap: () => _openMyRequests(uid),
         child: Container(
@@ -3075,7 +3580,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     SizedBox(height: 3 * s),
                     Text(
                       surface.subtitle,
-                      style: TextStyle(fontSize: 13, color: AppColors.grey500),
+                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
                     ),
                   ],
                 ),
@@ -3124,21 +3629,20 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     // 남은 것이 둘이면 둘 다 말한다 — 하나만 하면 끝나는 것처럼 말하지 않는다.
     final String subText;
     if (!hasId && !hasWage) {
-      subText = '지원 전에 신분증과 급여정보를 등록해주세요';
+      subText = '지원 전에 신분증과 급여정보를 등록해 주세요';
     } else if (hasId) {
-      subText = '계좌와 통장사본을 등록하면 지원 준비가 완료돼요';
+      subText = '계좌와 통장사본을 등록해 주세요';
     } else {
-      subText = '신분증을 등록하면 지원 준비가 완료돼요';
+      subText = '신분증을 등록해 주세요';
     }
     final theme = Theme.of(context);
 
     // ── 디자인: Warning이 아닌 Progress Status ──────────────────────
     // 배경·테두리는 매우 연한 파란 계열 → 날짜 Hero보다 시각적 강도 낮게 유지
     const cardBg     = Color(0xFFF5F9FF); // 매우 연한 파랑 (날짜 카드보다 약함)
-    const cardBorder = Color(0xFFD7E7FA); // 연한 blue-gray
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)), // [CP03 Q9] 간격은 본문 리듬
       child: GestureDetector(
         onTap: () => Navigator.push(
           context,
@@ -3150,7 +3654,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           decoration: BoxDecoration(
             color: cardBg,
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: cardBorder),
+            // [DU-VQ-01 · 후속14] 약관·지원 준비·날짜 카드가 연속 테두리로 겹쳐 보였다 — 이 카드는 연한 배경만으로 구분한다
             // 그림자 없음 — 날짜 Hero와 경쟁하지 않도록
           ),
           child: Row(
@@ -3203,7 +3707,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     Text(subText,
                         style: TextStyle(
                           fontSize: 13,
-                          color: AppColors.grey500,
+                          color: AppColors.textSecondary,
                         )),
                     // 1/2 상태에서만: 얇은 progress bar (카드 크기 변화 없음)
                     if (completed == 1) ...[
@@ -3299,31 +3803,39 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           '${_selectedDateChip!.month}월 ${_selectedDateChip!.day}일 일자리';
       sectionSubtitle = null; // 날짜가 제목에 있으므로 부제 불필요
     } else if (recState == 1) {
+      // [CP03] 경험 분기·신규 fallback 을 합치지 않는다 — 정렬 결과를 '지원 가능' 확정으로 부르지 않는다.
       sectionTitle =
-          _cachedWorkTypeStats.isNotEmpty ? '나에게 맞는 일자리' : '지금 지원 가능한 일자리';
-      sectionSubtitle = '${homeRegion!.city} 일자리를 먼저 보여드려요.';
+          _cachedWorkTypeStats.isNotEmpty ? '추천 일자리' : '둘러볼 일자리';
+      sectionSubtitle = '${homeRegion!.city} 일자리를 먼저 보여드려요';
     } else {
       sectionTitle =
-          _cachedWorkTypeStats.isNotEmpty ? '나에게 맞는 일' : '지금 지원 가능한 일자리';
+          _cachedWorkTypeStats.isNotEmpty ? '추천 일자리' : '둘러볼 일자리';
       sectionSubtitle = null;
     }
+    // [CP03 Q8] 전체 추천 수(기존 allRecommended.length)는 행동 문구에서 떼어 부제 요약으로 둔다.
+    //   표시 조건은 기존 행동과 같다(totalCount > 2). 홈에 보이는 두 카드 수·지역 건수로 다시 세지 않는다.
+    final countSummary = totalCount > 2 ? '일자리 $totalCount개' : null;
+    final headerSubtitle = [
+      if (sectionSubtitle != null) sectionSubtitle,
+      if (countSummary != null) countSummary,
+    ];
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // 8dp 회색 구분 갭 (Scaffold 흰 배경이므로 직접 색상 지정)
-        Container(height: 8, color: AppColors.background),
         Container(
           color: Colors.white,
-          padding: EdgeInsets.fromLTRB(20 * s, 24 * s, 20 * s, 24 * s),
+          // [CP03 Q9] 좌우 화면 여백만 — 섹션 사이 24 는 본문 리듬이 맡는다.
+          padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-          // 섹션 헤더 — 동적 제목·부제목, 3개 이상일 때만 액션
-          SectionHeader(
+          // 섹션 헤더 — 동적 제목·부제(지역 안내 · 일자리 N개), 3개 이상일 때만 `전체 보기`
+          _sectionHeader(
+            context,
             title: sectionTitle,
-            subtitle: sectionSubtitle,
-            actionText: totalCount > 2 ? '$totalCount개 모두보기 ›' : null,
+            subtitle: headerSubtitle.isEmpty ? null : headerSubtitle.join(' · '),
+            actionText: totalCount > 2 ? '전체 보기' : null,
             onAction: totalCount > 2
                 ? () {
                     final scope = UserTabScope.of(context);
@@ -3336,7 +3848,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   }
                 : null,
           ),
-          SizedBox(height: 14 * s),
+          const SizedBox(height: ConceptSpace.sectionTitleToCard),
           // 추천 카드 목록
           if (_isLoadingData)
             Column(children: [
@@ -3355,19 +3867,22 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               padding: EdgeInsets.symmetric(vertical: 20 * s),
               alignment: Alignment.center,
               child: Text(
-                '해당 날짜에 지원 가능한 공고가 없어요',
-                style: TextStyle(fontSize: 13, color: AppColors.textHint),
+                '이 날짜에 표시할 일자리가 없어요',
+                style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
               ),
             )
           else if (recState == 4)
             // STATE D: 전체 TO 없음
+            // [DU1 구현98 S080 V8·V9] 안내만 있는 빈 안내(행동 없음) — 위아래 20 → 8: 제목 → 안내 간격이 다른 섹션의
+            //   제목 → 내용(14)과 같은 리듬이 되고, 안내가 빈 면 한가운데 떠 있지 않는다. 문구·역할·가운데 정렬은 그대로.
+            //   설명 글자 textHint(#BDBDBD, 흰 바탕 1.88:1 — 실측) → textSecondary(읽어야 하는 안내).
             Container(
-              padding: EdgeInsets.symmetric(vertical: 20 * s),
+              padding: EdgeInsets.symmetric(vertical: 8 * s),
               alignment: Alignment.center,
               child: Column(
                 children: [
                   Text(
-                    '지금 지원 가능한 일자리가 없어요',
+                    '지금 표시할 일자리가 없어요',
                     style: TextStyle(
                         fontSize: 13,
                         color: AppColors.textPrimary,
@@ -3375,8 +3890,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   ),
                   SizedBox(height: 4 * s),
                   Text(
-                    '새로운 일자리가 등록되면 이곳에서 확인할 수 있어요.',
-                    style: TextStyle(fontSize: 12, color: AppColors.textHint),
+                    '새 일자리가 등록되면 여기에서 확인할 수 있어요',
+                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                     textAlign: TextAlign.center,
                   ),
                 ],
@@ -3405,7 +3920,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '${homeRegion.city}에는 아직 모집 중인 일자리가 없어요',
+                            '${homeRegion.city}에 표시할 일자리가 없어요',
                             style: TextStyle(
                                 fontSize: 12,
                                 color: AppColors.textSecondary,
@@ -3413,10 +3928,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                           ),
                           SizedBox(height: 2 * s),
                           Text(
-                            '대신 지금 지원 가능한 다른 지역 일자리를 보여드릴게요.',
+                            '다른 지역 일자리를 보여드려요',
+                            // [DU474] textHint(grey400 · grey50 위 약 1.8) → textTertiary(5.03 · 보조 안내 · DU470 실패 안내와 같다).
                             style: TextStyle(
                                 fontSize: 12,
-                                color: AppColors.textHint),
+                                color: AppColors.textTertiary),
                           ),
                         ],
                       ),
@@ -3528,8 +4044,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       final dayStr = '${sd.month}/${sd.day}(${wd[sd.weekday]})';
       final count = availableDetails.length;
       dateText = count > 0
-          ? '$dayStr · 가능한 업무 $count개'
-          : '$dayStr · 지원 가능 업무 없음';
+          ? '$dayStr · 업무 $count개'
+          : '$dayStr · 표시할 업무 없음';
     } else {
       // 날짜 미선택 모드: Group 전체 기간 요약
       if (to.isFlexType) {
@@ -3596,24 +4112,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       }
     }
 
-    // ── 상태 배지 ─────────────────────────────────────────────
-    final remaining = to.totalRequired > 0
-        ? to.totalRequired - to.totalConfirmed
-        : null;
-    final isAlmostFull = remaining != null && remaining <= 2;
-    final Color badgeBg;
-    final Color badgeFg;
-    final String badgeLabel;
-    if (isAlmostFull) {
-      badgeBg = AppColors.warningBg;
-      badgeFg = AppColors.warningDark;
-      badgeLabel = '마감임박';
-    } else {
-      // [R7-P1-2] 모집중은 진행 상태 — green 은 충족·확정 몫이다.
-      badgeBg = AppColors.infoBg;
-      badgeFg = AppColors.infoDark;
-      badgeLabel = '모집중';
-    }
+    // [CP03] 상태 배지(`마감임박` = 남은 인원≤2, `모집중` = 그 밖)는 삭제했다 — 실제 마감 기한·공개모집 상태의
+    //   근거가 아니었다(문구 감사 U:4023–4038). 후보 필터·정렬·reader 는 그대로다.
 
     // ── 추천 사유 — 우선순위 1개만 표시 ─────────────────────────
     // 우선순위:
@@ -3627,10 +4127,10 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     if (_selectedDateChip != null &&
         hasExistingSchedule && availableDetails.isNotEmpty) {
       // 기존 일정이 있는 날임에도 추가로 지원 가능한 업무가 있음
-      reasonLabel = '내 일정과 일치';
+      reasonLabel = '함께 살펴볼 업무';
       reasonIcon = Icons.event_available_outlined;
     } else if (expCount != null && expCount > 0) {
-      reasonLabel = '내 업무 경험과 일치';
+      reasonLabel = '경험 있는 업무';
       reasonIcon = Icons.thumb_up_alt_outlined;
     } else if (isNearby) {
       reasonLabel = '내 지역 일자리';
@@ -3673,11 +4173,16 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            IntrinsicHeight(
+            // [COMMON-TEXT-LAYOUT.28] 이미지 칸(96)이 고정이라 큰 글자에서 제목이 '[합성] …', 시간이 '09:00~1…' 로
+            //   잘렸다. 카드 폭이 모자라면(글자 배율 반영) 장식 이미지 칸을 내리고 글자에 폭을 준다.
+            LayoutBuilder(builder: (context, c) {
+            final showImage = TextLayout.fits(context, c.maxWidth, 300);
+            return IntrinsicHeight(
               child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // ── 사업장 이미지 (너비 고정·높이=지역 줄까지) ─────────
+            if (showImage) ...[
             ClipRRect(
               borderRadius: BorderRadius.circular(12 * s),
               child: SizedBox(
@@ -3702,6 +4207,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               ),
             ),
             SizedBox(width: 10 * s),
+            ],
             // ── 정보 영역 ───────────────────────────────────────
             Expanded(
               child: Column(
@@ -3713,27 +4219,16 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
+                        // 공고 제목은 식별 정보 — 두 줄까지(아주 길 때만 말줄임).
                         child: Text(
                           to.title.isNotEmpty ? to.title : to.businessName,
                           style: AppTextStyles.jobTitle(),
-                          maxLines: 1,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      // [CP03] `모집중`/`마감임박` 배지와 그 간격 삭제(UH167·168) — 실제 기한·공개모집 근거가 없다.
                       SizedBox(width: 6 * s),
-                      // 상태 배지
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                            horizontal: 7 * s, vertical: 2 * s),
-                        decoration: BoxDecoration(
-                          color: badgeBg,
-                          borderRadius: BorderRadius.circular(20 * s),
-                        ),
-                        child: Text(
-                          badgeLabel,
-                          style: AppTextStyles.statusBadge(color: badgeFg),
-                        ),
-                      ),
-                      SizedBox(width: 4 * s),
                       // 찜 버튼
                       GestureDetector(
                         onTap: () async {
@@ -3747,7 +4242,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                               ? Icons.favorite_rounded
                               : Icons.favorite_border_rounded,
                           size: 18 * s,
-                          color: isFav ? AppColors.error : AppColors.grey400,
+                          // [DU470] 비활성 하트 grey400(1.88) → textSecondary(공고 카드 DU458 · 일자리 탭 DU310 과 같다).
+                          color: isFav ? AppColors.error : AppColors.textSecondary,
                         ),
                       ),
                     ],
@@ -3757,7 +4253,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   Text(
                     to.businessName,
                     style: AppTextStyles.businessName(),
-                    maxLines: 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
                   SizedBox(height: 6 * s),
@@ -3779,7 +4275,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             ),
           ],
               ),
-            ),
+            );
+            }),
             SizedBox(height: 8 * s),
             // 구분선
             Divider(
@@ -3915,11 +4412,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       children: [
         Icon(icon, size: 13 * s, color: AppColors.textTertiary),
         SizedBox(width: 4 * s),
+        // [COMMON-TEXT-LAYOUT.28] 날짜·시간·지역은 말줄임하지 않는다('09:00~1…') — 모자라면 줄을 바꾼다.
         Expanded(
           child: Text(
             text,
             style: AppTextStyles.jobMeta(),
-            overflow: TextOverflow.ellipsis,
           ),
         ),
       ],
@@ -3946,8 +4443,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           ),
           SizedBox(height: 4 * s),
           Text(
-            '잠시 후 다시 시도해주세요.',
-            style: TextStyle(fontSize: 12, color: AppColors.textHint),
+            // [DU472] 지원 현황 실패 안내와 같은 방식(낱말 사이 줄바꿈 · 읽기는 원문).
+            TextLayout.keepWords('잠시 후 다시 시도해 주세요'),
+            semanticsLabel: '잠시 후 다시 시도해 주세요',
+            // [DU470] textHint(grey400) → textTertiary(지원 현황 실패 안내와 같다).
+            style: TextStyle(fontSize: 12, color: AppColors.textTertiary),
           ),
           SizedBox(height: 10 * s),
           TextButton(
@@ -4166,10 +4666,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       if (expA != expB) return expB.compareTo(expA);
 
       // 4. 마감임박 우선 (남은 자리 적을수록 긴박)
-      final remA =
-          a.totalRequired > 0 ? a.totalRequired - a.totalConfirmed : 999;
-      final remB =
-          b.totalRequired > 0 ? b.totalRequired - b.totalConfirmed : 999;
+      //    [INVITE-CAPACITY] 슬롯 공고는 합계로 남은 자리를 셀 수 없다 — 순위를 주지 않는다.
+      final remA = (!a.isFlexType && a.totalRequired > 0)
+          ? a.totalRequired - a.totalConfirmed : 999;
+      final remB = (!b.isFlexType && b.totalRequired > 0)
+          ? b.totalRequired - b.totalConfirmed : 999;
       if (remA != remB) return remA.compareTo(remB);
 
       // 5. 최신 등록 (Firebase auto-id 역순 — 시간순 생성이므로 근사치)
@@ -4231,48 +4732,58 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
     return Container(
       color: Colors.white,
-      padding: EdgeInsets.fromLTRB(20 * s, 24 * s, 20 * s, 24 * s),
+      // [CP03 Q9] 좌우 화면 여백만 — 섹션 사이 24 는 본문 리듬이 맡는다.
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 섹션 헤더
-          SectionHeader(s: s, title: '나의 ALfit'),
-          SizedBox(height: 14 * s),
+          // 섹션 헤더 — `내 근무 기록`(실제 누적 근무·시간·출근율·업무 경험의 요약, UH182)
+          _sectionHeader(context, title: '내 근무 기록'),
+          const SizedBox(height: ConceptSpace.sectionTitleToCard),
           // ── 신규 사용자 Empty State (근무 이력 없음) ──
           if (!_isLoadingData && totalDays == 0) ...[
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('아직 쌓인 근무 경험이 없어요.',
+                Text('아직 완료한 근무가 없어요',
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
                       color: AppColors.textSecondary,
                     )),
                 SizedBox(height: 4 * s),
-                Text('첫 근무부터 나의 기록이 시작됩니다.',
-                    style: TextStyle(fontSize: 13, color: AppColors.textHint)),
-                SizedBox(height: 16 * s),
+                // [DU306] 같은 홈 지원 현황 빈 안내(DU1 구현98)와 같은 처리 — 설명 textHint(1.88:1) → textSecondary,
+                //   탐색 링크 infoDark → brand, 링크 receiver 높이 48(글자 밖 빈 곳도 탭). 늘어난 receiver 위 여유가
+                //   보이는 간격을 대신하도록 위 간격 16*s → 4*s. 문구·목적지(일자리 탭)는 그대로다.
+                Text('근무를 마치면 기록이 쌓여요',
+                    style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                SizedBox(height: 4 * s),
                 GestureDetector(
+                  behavior: HitTestBehavior.opaque,
                   onTap: () => UserTabScope.of(context)?.switchToTab(1),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Text('첫 일자리 찾아보기',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.infoDark,
-                        )),
-                    SizedBox(width: 3 * s),
-                    Icon(Icons.arrow_forward_rounded,
-                        size: 15 * s, color: AppColors.infoDark),
-                  ]),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: ConceptSpace.minTouch),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Text('일자리 찾기',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.brand,
+                          )),
+                      SizedBox(width: 3 * s),
+                      Icon(Icons.arrow_forward_rounded,
+                          size: 15 * s, color: AppColors.brand),
+                    ]),
+                  ),
                 ),
               ],
             ),
           ] else ...[
           // ── 근무 이력 있는 사용자 — 한 줄 요약 ──
-          RichText(
-            text: TextSpan(
+          // [DU194 C5] RichText 는 테마 글꼴(DefaultTextStyle)을 물려받지 않았다 → Text.rich(같은 글자·스타일, 배율은 MediaQuery 그대로)
+          Text.rich(
+            textScaler: MediaQuery.textScalerOf(context),
+            TextSpan(
               style: TextStyle(fontSize: 13.5, color: AppColors.textSecondary),
               children: [
                 const TextSpan(text: '근무 완료 '),
@@ -4301,18 +4812,19 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           ),
           SizedBox(height: 14 * s),
           // 업무 경험 레이블
+          // [DU1 구현99 C99-1] 라벨·빈 안내 textHint(흰 바탕 1.879:1 실측) → textSecondary. 라벨(굵게)·안내(보통) 위계는 그대로.
           Text('업무 경험',
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
-                color: AppColors.textHint,
+                color: AppColors.textSecondary,
                 letterSpacing: 0.5,
               )),
           SizedBox(height: 8 * s),
           // 경험 칩 — 업무 유형별 완료 횟수
           if (sortedStats.isEmpty)
             Text('업무 유형 기록이 없어요',
-                style: TextStyle(fontSize: 12, color: AppColors.textHint))
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary))
           else
             Wrap(
               spacing: 6 * s,
@@ -4331,20 +4843,26 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     )),
               )).toList(),
             ),
-          SizedBox(height: 14 * s),
+          SizedBox(height: 4 * s),
           // "근무 기록 보기 →" 링크 — 일정 탭 현재 달로 이동
+          // [DU191 C2-a] 위 간격 14→4, 터치 영역 최소 높이 48(고정 높이 아님)·글자 밖 빈 곳도 탭(opaque). 글자·아이콘·색·동작 그대로.
           GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: () => UserTabScope.of(context)?.switchToScheduleNow(),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Text('근무 기록 보기',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.infoDark,
-                  )),
-              SizedBox(width: 4 * s),
-              Icon(Icons.arrow_forward_rounded, size: 16 * s, color: AppColors.infoDark),
-            ]),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                // [DU306 §12.2] 탐색 링크 = brand(같은 홈의 `날짜 더보기`·`전체보기`·`일자리 찾기`와 한 색, infoDark 대신).
+                Text('근무 기록 보기',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.brand,
+                    )),
+                SizedBox(width: 4 * s),
+                Icon(Icons.arrow_forward_rounded, size: 16 * s, color: AppColors.brand),
+              ]),
+            ),
           ),
           ],  // else 닫힘
         ],
@@ -4376,4 +4894,168 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
 }
 
+// ─────────────────────────────────────────────────────────────
+// [CP03 Q9] 홈 본문 세로 리듬 — 보이는(높이>0) 블록 사이에만 간격을 둔다.
+//   같은 수준 카드끼리 12, 그 밖(섹션 앞·뒤, 머리·날짜띠 뒤) 24(정밀 §8 V8).
+//   카드들은 숨을 때 SizedBox.shrink(높이 0)를 돌려준다 — 그 자리에는 간격도 남지 않는다.
+//   폭은 부모 폭 그대로(세로 Column 의 stretch 와 같다). 그리기·누르기는 자식 위치 그대로다.
+// ─────────────────────────────────────────────────────────────
+enum _Rhythm { block, card, section }
 
+class _RhythmColumn extends MultiChildRenderObjectWidget {
+  const _RhythmColumn({required super.children});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) => _RenderRhythmColumn();
+}
+
+class _RhythmSlot extends ParentDataWidget<_RhythmParentData> {
+  const _RhythmSlot({required this.kind, required super.child});
+
+  final _Rhythm kind;
+
+  @override
+  void applyParentData(RenderObject renderObject) {
+    final pd = renderObject.parentData! as _RhythmParentData;
+    if (pd.kind != kind) {
+      pd.kind = kind;
+      renderObject.parent?.markNeedsLayout();
+    }
+  }
+
+  @override
+  Type get debugTypicalAncestorWidgetClass => _RhythmColumn;
+}
+
+class _RhythmParentData extends ContainerBoxParentData<RenderBox> {
+  _Rhythm kind = _Rhythm.block;
+}
+
+class _RenderRhythmColumn extends RenderBox
+    with
+        ContainerRenderObjectMixin<RenderBox, _RhythmParentData>,
+        RenderBoxContainerDefaultsMixin<RenderBox, _RhythmParentData> {
+  /// 같은 수준 카드끼리 12, 그 밖 24.
+  static double _gap(_Rhythm prev, _Rhythm next) =>
+      (prev == _Rhythm.card && next == _Rhythm.card) ? ConceptSpace.cardGap : ConceptSpace.sectionGap;
+
+  @override
+  void setupParentData(RenderBox child) {
+    if (child.parentData is! _RhythmParentData) child.parentData = _RhythmParentData();
+  }
+
+  /// 자식 높이(측정 함수)로 전체 높이를 셈한다 — 높이 0 인 자식은 간격도 더하지 않는다.
+  double _stack(double Function(RenderBox child) heightOf) {
+    var y = 0.0;
+    _Rhythm? prev;
+    var child = firstChild;
+    while (child != null) {
+      final pd = child.parentData! as _RhythmParentData;
+      final h = heightOf(child);
+      if (h > 0) {
+        if (prev != null) y += _gap(prev, pd.kind);
+        y += h;
+        prev = pd.kind;
+      }
+      child = pd.nextSibling;
+    }
+    return y;
+  }
+
+  @override
+  void performLayout() {
+    final w = constraints.maxWidth;
+    final childConstraints = BoxConstraints.tightFor(width: w);
+    var y = 0.0;
+    _Rhythm? prev;
+    var child = firstChild;
+    while (child != null) {
+      final pd = child.parentData! as _RhythmParentData;
+      child.layout(childConstraints, parentUsesSize: true);
+      final h = child.size.height;
+      if (h > 0) {
+        if (prev != null) y += _gap(prev, pd.kind);
+        pd.offset = Offset(0, y);
+        y += h;
+        prev = pd.kind;
+      } else {
+        pd.offset = Offset(0, y);
+      }
+      child = pd.nextSibling;
+    }
+    size = constraints.constrain(Size(w, y));
+  }
+
+  @override
+  Size computeDryLayout(BoxConstraints constraints) {
+    final w = constraints.maxWidth;
+    final childConstraints = BoxConstraints.tightFor(width: w);
+    return constraints.constrain(Size(w, _stack((c) => c.getDryLayout(childConstraints).height)));
+  }
+
+  @override
+  double computeMinIntrinsicHeight(double width) => _stack((c) => c.getMinIntrinsicHeight(width));
+
+  @override
+  double computeMaxIntrinsicHeight(double width) => _stack((c) => c.getMaxIntrinsicHeight(width));
+
+  @override
+  double computeMinIntrinsicWidth(double height) {
+    var w = 0.0;
+    var child = firstChild;
+    while (child != null) {
+      final cw = child.getMinIntrinsicWidth(double.infinity);
+      if (cw > w) w = cw;
+      child = (child.parentData! as _RhythmParentData).nextSibling;
+    }
+    return w;
+  }
+
+  @override
+  double computeMaxIntrinsicWidth(double height) {
+    var w = 0.0;
+    var child = firstChild;
+    while (child != null) {
+      final cw = child.getMaxIntrinsicWidth(double.infinity);
+      if (cw > w) w = cw;
+      child = (child.parentData! as _RhythmParentData).nextSibling;
+    }
+    return w;
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) => defaultPaint(context, offset);
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      defaultHitTestChildren(result, position: position);
+}
+
+/// [DU397] 이번 주 일정 일주일 행의 가로 스크롤(필요 칸 폭 × 7 > 가용 폭일 때만). 오늘 칸이 첫 화면에 보이도록 처음 위치만 정한다.
+///   컨트롤러 수명을 이 위젯이 가진다. 탭 · 쓰기 · 새 receiver 없음.
+class _ThisWeekScrollRow extends StatefulWidget {
+  const _ThisWeekScrollRow({required this.initialOffset, required this.children});
+
+  final double initialOffset;
+  final List<Widget> children;
+
+  @override
+  State<_ThisWeekScrollRow> createState() => _ThisWeekScrollRowState();
+}
+
+class _ThisWeekScrollRowState extends State<_ThisWeekScrollRow> {
+  late final ScrollController _ctl = ScrollController(initialScrollOffset: widget.initialOffset);
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        controller: _ctl,
+        child: Row(children: widget.children),
+      );
+}

@@ -2,12 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 
 import 'package:ALfit/models/core/application_model.dart';
+import 'package:ALfit/services/contract_service.dart';
 import 'package:ALfit/models/core/attendance_model.dart';
 import 'package:ALfit/models/core/business_model.dart';
 import 'package:ALfit/models/core/to_model.dart';
@@ -173,7 +175,7 @@ class _Reads {
         slotWorkDetails: (toId, slotId) async => <WorkDetailData>[],
         to: (toId) async => null,
         contractStatusBatch: (ids, {required businessId}) async =>
-            <String, String?>{},
+            const ContractStatusBatch(),
       );
 }
 
@@ -240,7 +242,7 @@ void main() {
 
   String texts(WidgetTester tester) => tester
       .widgetList<Text>(find.byType(Text))
-      .map((t) => t.data ?? t.textSpan?.toPlainText() ?? '')
+      .map((t) => visibleText(t.data ?? t.textSpan?.toPlainText() ?? ''))
       .where((s) => s.isNotEmpty)
       .join(' | ');
 

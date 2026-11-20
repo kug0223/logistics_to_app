@@ -7,6 +7,7 @@ import '../../../utils/attendance_policy_disclosure.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/dialog_helper.dart';
+import '../../../utils/text_layout.dart';
 import '../../../theme/app_colors.dart';
 import '../styled_dialog.dart';
 import 'document_access_consent.dart';
@@ -79,6 +80,7 @@ class ApplyConfirmDialog extends StatelessWidget {
       children: [
         // 헤더
         _buildHeader(context),
+        const Divider(height: 1, color: AppColors.grey200), // [DU264] 흰 머리 아래 선
         // 내용 (스크롤 가능)
         Flexible(
           child: SingleChildScrollView(
@@ -138,19 +140,16 @@ class ApplyConfirmDialog extends StatelessWidget {
                 Expanded(
                   child: OutlinedButton(
                     onPressed: () => Navigator.pop(context, false),
+                    // [DU264] 선·반경 덮어쓰기 제거 → 테마 테두리 버튼(border 선·반경 12), 글자 본문색
                     style: OutlinedButton.styleFrom(
                       padding: EdgeInsets.symmetric(
                         vertical: ResponsiveHelper.spacing(context, 14),
-                      ),
-                      side: BorderSide(color: AppColors.grey300),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
                       ),
                     ),
                     child: Text(
                       '취소',
                       style: ResponsiveHelper.bodyStyle(context,
-                          color: AppColors.grey600, fontWeight: FontWeight.w600),
+                          color: AppColors.textPrimary, fontWeight: FontWeight.w600),
                     ),
                   ),
                 ),
@@ -159,13 +158,10 @@ class ApplyConfirmDialog extends StatelessWidget {
                   flex: 2,
                   child: ElevatedButton(
                     onPressed: () => Navigator.pop(context, true),
+                    // [DU264] infoDark·반경 10 덮어쓰기 제거 → 테마 대표색 채움(반경 12)
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.infoDark,
                       padding: EdgeInsets.symmetric(
                         vertical: ResponsiveHelper.spacing(context, 14),
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
                       ),
                     ),
                     child: Text(
@@ -193,9 +189,10 @@ class ApplyConfirmDialog extends StatelessWidget {
         ResponsiveHelper.spacing(context, 16),
         ResponsiveHelper.spacing(context, 16),
       ),
-      decoration: BoxDecoration(
-        color: AppColors.infoDark,
-        borderRadius: const BorderRadius.only(
+      // [DU264] 파랑 띠·흰 글자 → 흰 머리(시안)·본문색 제목·보조 부제·중립 아이콘(아래 선은 build 의 Divider).
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.only(
           topLeft: Radius.circular(20),
           topRight: Radius.circular(20),
         ),
@@ -205,7 +202,7 @@ class ApplyConfirmDialog extends StatelessWidget {
           Icon(
             Icons.assignment_outlined,
             size: ResponsiveHelper.iconSize(context, 22),
-            color: Colors.white,
+            color: AppColors.textSecondary,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           Expanded(
@@ -215,23 +212,25 @@ class ApplyConfirmDialog extends StatelessWidget {
                 Text(
                   '지원 확인',
                   style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    color: Colors.white,
+                    color: AppColors.textPrimary,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 Text(
-                  '아래 내용으로 지원하시겠습니까?',
+                  TextLayout.keepWords('아래 내용으로 지원하시겠습니까?'), // [DU264] B320 '지원/하시겠습니까?' 끊김
+                  semanticsLabel: '아래 내용으로 지원하시겠습니까?',
                   style: ResponsiveHelper.smallStyle(context,
-                      color: Colors.white.withValues(alpha: 0.85)),
+                      color: AppColors.textSecondary),
                 ),
               ],
             ),
           ),
+          // [DU264] 기본 IconButton(48 터치) — 이전 padding 0·constraints 0
           IconButton(
             onPressed: () => Navigator.pop(context, false),
-            icon: const Icon(Icons.close, color: Colors.white),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
+            icon: const Icon(Icons.close),
+            color: AppColors.textSecondary,
+            tooltip: '닫기',
           ),
         ],
       ),
@@ -246,17 +245,17 @@ class ApplyConfirmDialog extends StatelessWidget {
     final endStr = endDate != null ? FormatHelper.formatDate(endDate!) : '';
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
+      // [DU264] infoBg·infoLight 선·infoDark(4.03) → 대표색 옅은 면(선 없음)·대표색 글자·아이콘
       decoration: BoxDecoration(
-        color: AppColors.infoBg,
+        color: AppColors.brandSurface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.infoLight),
       ),
       child: Row(
         children: [
           Icon(
             Icons.calendar_month_outlined,
             size: ResponsiveHelper.iconSize(context, 28),
-            color: AppColors.infoDark,
+            color: AppColors.brand,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           Expanded(
@@ -265,14 +264,14 @@ class ApplyConfirmDialog extends StatelessWidget {
               children: [
                 Text(
                   '희망 시작일',
-                  style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.infoDark, fontWeight: FontWeight.w600),
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.brand, fontWeight: FontWeight.w600), // [DU264] 12 → 13
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                 Text(
                   startStr,
                   style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    color: AppColors.infoDark,
+                    color: AppColors.brand,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -280,7 +279,7 @@ class ApplyConfirmDialog extends StatelessWidget {
                   Text(
                     '~ $endStr',
                     style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.infoDark),
+                        color: AppColors.brand),
                   ),
               ],
             ),
@@ -324,28 +323,41 @@ class ApplyConfirmDialog extends StatelessWidget {
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Text(g.title,
                 style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.grey600)
+                        color: AppColors.textSecondary) // [DU264] grey600
                     .copyWith(fontWeight: FontWeight.w600)),
             for (final line in g.lines)
               Padding(
                 padding: EdgeInsets.only(
                     top: ResponsiveHelper.spacing(context, 2)),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: ResponsiveHelper.spacing(context, 80),
-                      child: Text(line.label,
-                          style: ResponsiveHelper.smallStyle(context,
-                              color: AppColors.grey700)),
-                    ),
-                    Expanded(
-                      child: Text(line.value,
-                          style: ResponsiveHelper.smallStyle(context)
-                              .copyWith(fontWeight: FontWeight.w600)),
-                    ),
-                  ],
-                ),
+                // [DU264] 글자 1.3배 이상이면 라벨 위·값 아래(80 폭 라벨 열 대신). 문구는 공용 formatter 그대로.
+                child: _stacked(context)
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(line.label,
+                              style: ResponsiveHelper.smallStyle(context,
+                                  color: AppColors.grey700)),
+                          Text(line.value,
+                              style: ResponsiveHelper.smallStyle(context)
+                                  .copyWith(fontWeight: FontWeight.w600)),
+                        ],
+                      )
+                    : Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            width: ResponsiveHelper.spacing(context, 80),
+                            child: Text(line.label,
+                                style: ResponsiveHelper.smallStyle(context,
+                                    color: AppColors.grey700)),
+                          ),
+                          Expanded(
+                            child: Text(line.value,
+                                style: ResponsiveHelper.smallStyle(context)
+                                    .copyWith(fontWeight: FontWeight.w600)),
+                          ),
+                        ],
+                      ),
               ),
           ],
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -353,7 +365,7 @@ class ApplyConfirmDialog extends StatelessWidget {
             '지원하면 이 기준이 이 지원서에 고정됩니다. '
             '사업장이 이후에 기준을 바꿔도 적용되지 않습니다.',
             style:
-                ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary), // [DU264] grey600
           ),
         ],
       ),
@@ -399,7 +411,7 @@ class ApplyConfirmDialog extends StatelessWidget {
             Icons.payments_outlined,
             '급여',
             _getWageDisplay(),
-            valueColor: AppColors.success,
+            valueColor: AppColors.brand, // [DU264] 초록(2.66) → 대표색(시안의 급여 강조)
             valueBold: true,
           ),
           if (work.payScheduleLabel.isNotEmpty) ...[
@@ -424,28 +436,53 @@ class ApplyConfirmDialog extends StatelessWidget {
     Color? valueColor,
     bool valueBold = false,
   }) {
+    // [DU264] 아이콘 grey500(2.57)·라벨 grey600(4.41) → textSecondary, 값 grey800 → 본문색.
+    //   글자 1.3배 이상이면 아이콘+라벨 위·값 아래 왼쪽 정렬(DU256 과 같은 기준).
+    final iconW = Icon(icon, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.textSecondary);
+    final labelW = Text(label, style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary));
+    final valueStyle = ResponsiveHelper.bodyStyle(context, color: valueColor ?? AppColors.textPrimary).copyWith(
+      fontWeight: valueBold ? FontWeight.bold : FontWeight.w500,
+    );
+    final pad = EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 8));
+    if (_stacked(context)) {
+      return Padding(
+        padding: pad,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              iconW,
+              SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+              Flexible(child: labelW),
+            ]),
+            SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+            Text(TextLayout.keepWords(value), semanticsLabel: value, style: valueStyle), // [DU264 r2] 낱말 단위
+          ],
+        ),
+      );
+    }
     return Padding(
-      padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 8)),
+      padding: pad,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.grey500),
+          iconW,
           SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-          Text(label, style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600)),
+          labelW,
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           Expanded(
-            child: Text(
-              value,
-              style: ResponsiveHelper.bodyStyle(context, color: valueColor ?? AppColors.grey800).copyWith(
-                fontWeight: valueBold ? FontWeight.bold : FontWeight.w500,
-              ),
-              textAlign: TextAlign.end,
-            ),
+            // [DU264 r2] 값은 낱말 단위로 줄을 바꾼다(W360 '분/류팀'·B320 '제2물/류동' 끊김)
+            child: Text(TextLayout.keepWords(value),
+                semanticsLabel: value, style: valueStyle, textAlign: TextAlign.end),
           ),
         ],
       ),
     );
   }
+
+  /// [DU264] 큰 글자(1.3배 이상) 배치 전환 기준 — DU256·DU262 와 같다.
+  static bool _stacked(BuildContext context) =>
+      MediaQuery.textScalerOf(context).scale(10) >= 13;
 
   Widget _buildDivider() => Divider(height: 1, color: AppColors.grey200);
 

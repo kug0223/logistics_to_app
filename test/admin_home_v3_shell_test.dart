@@ -89,11 +89,20 @@ void main() {
         true,
         reason: 'header 이름 크기가 앱 공통 body 단계와 같아야 한다',
       );
+      // [DU1 구현70 F70-1] 구현37(후속37 §2 S010)이 브랜드 표시를 지원자 홈과 한 벌로 통일했다 —
+      //   'ALfit' 20/w900/infoDark/-0.6 은 앱 공통 브랜드 블록이다. 그 블록 **한 곳만** 20 을 허용하고,
+      //   나머지 홈 코드에서는 scale 밖 값을 여전히 금지한다(전역 20 금지를 지우지 않는다).
+      const brand = "Text('ALfit', style: TextStyle( fontSize: 20, "
+          'fontWeight: FontWeight.w900, color: AppColors.infoDark, letterSpacing: -0.6))';
+      final flatCode = _flat(code);
+      expect(brand.allMatches(flatCode).length, 1,
+          reason: '승인된 브랜드 블록은 정확히 한 곳');
+      final rest = flatCode.replaceFirst(brand, '');
       // scale 밖 값을 새로 넣지 않았다
       for (final off in ['fontSize: 11', 'fontSize: 14', 'fontSize: 19',
         'fontSize: 20', 'fontSize: 21', 'fontSize: 22']) {
         if (off == 'fontSize: 14') continue; // 이 파일에 원래 있던 값
-        expect(code.contains(off), false, reason: off);
+        expect(rest.contains(off), false, reason: off);
       }
     });
 
@@ -149,8 +158,19 @@ void main() {
     });
 
     test('02-e 로고 행 유지', () {
-      expect(header.contains("assets/icons/app_icon.png"), true);
-      expect(header.contains("Text('ALfit'"), true);
+      // [DU1 구현70 F70-1] 구현37 승인 로고: 32px 그라데이션 원(infoDark→info) + 전경 asset + ALfit 20/w900.
+      //   구 `app_icon.png`(24, 배경 없음)로 돌아가지 않는다.
+      final flat = _flat(header);
+      expect(header.contains("assets/icons/app_icon_foreground.png"), true);
+      expect(header.contains("assets/icons/app_icon.png'"), false,
+          reason: '구 로고 asset 으로 되돌리지 않는다');
+      expect(flat.contains('width: 32 * s, height: 32 * s, decoration: const BoxDecoration( '
+              'shape: BoxShape.circle, gradient: LinearGradient( '
+              'colors: [AppColors.infoDark, AppColors.info],'),
+          true, reason: '32px 그라데이션 원');
+      expect(flat.contains("Text('ALfit', style: TextStyle( fontSize: 20, "
+              'fontWeight: FontWeight.w900, color: AppColors.infoDark, letterSpacing: -0.6))'),
+          true, reason: '브랜드 글자 스타일');
     });
   });
 

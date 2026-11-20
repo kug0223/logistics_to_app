@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 // [R7-P1-7 P17-A] GradientScaffold → AppPageScaffold(D0 flat admin shell).
 //   이 화면의 Colors.white 는 전부 **본문**이다(버튼 전경색·전체화면 이미지 뷰어
@@ -15,6 +17,7 @@ import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../utils/loading_state_mixin.dart';
@@ -69,7 +72,11 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     });
   }
 
+  // [BA-53] 승인·처리 실패 뒤 다시 읽기가 사용자의 새로고침과 겹칠 수 있다 — 늦게 온 이전 결과가 최신 목록을 덮지 않게 한다.
+  int _loadSeq = 0;
+
   Future<void> _loadAllBusinesses() async {
+    final seq = ++_loadSeq;
     setLoading(true);
     try {
       // [SA-01-CF] 슈퍼어드민 businesses list → callableGetAllBusinesses (Admin SDK, rate limiting 강제)
@@ -120,12 +127,14 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
         );
       });
 
-      if (!mounted) return;
+      if (!mounted || seq != _loadSeq) return;
       setState(() => _businesses = result);
       setLoading(false);
     } catch (e) {
-      if (!mounted) return;
-      ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다: $e');
+      if (!mounted || seq != _loadSeq) return;
+      debugPrint('⚠️ 사업장 목록 불러오기 실패: $e');
+      // 이전 목록은 그대로 둔다(0건으로 바꾸지 않는다). 예외 원문 대신 다시 시도를 권한다.
+      ToastHelper.showError('사업장 목록을 불러오지 못했습니다. 새로고침으로 다시 시도해 주세요.');
       setLoading(false);
     }
   }
@@ -150,9 +159,18 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '사업장 비활성화',
-      message: '「${item.business.name}」을 비활성화하시겠습니까?\n'
-          '비활성화 후 이 사업장의 공고는 지원자에게 노출되지 않습니다.\n'
-          '활성 TO는 수동으로 마감 처리해 주세요.',
+      // [SA-AUDIT.49] 실제 결과와 다르던 안내('노출되지 않습니다' · '수동으로 마감')를 고쳤다.
+      //   서버: 새 지원은 바로 막힌다. 진행 중 공고 마감·대기 지원 반려·시작 전 확정 근무 취소는
+      //   비활성 트리거가 처리하는데, 사업장 문서 상태에 따라 실행되지 않을 수 있다(LOCAL 확인).
+      //   어느 쪽이든 정리된 것은 재활성으로 되살아나지 않는다.
+      // [SA-DEACT.50] 320·1.3 기기에서 '마감되/고'·'근/무'로 낱말 가운데가 끊겼다 — 낱말 단위 줄바꿈.
+      message: TextLayout.keepWords('「${item.business.name}」을 비활성화하시겠습니까?\n\n'
+          '• 새 지원이 바로 막힙니다.\n'
+          '• 진행 중인 공고가 마감되고, 대기 중인 지원은 반려될 수 있습니다.\n'
+          // [SA-DEACT.50] 정리 기준은 날짜가 아니라 출근 기록·정산이다(c50/dc50b.json) — 지난 근무도 기록이 없으면 취소된다.
+          '• 출근 기록이 없는 확정 근무(지난 날짜 포함)가 취소되고, 서명 전 계약서는 무효가 될 수 있습니다. '
+          '출근했거나 급여 정산이 시작된 근무는 그대로 둡니다.\n'
+          '• 이렇게 정리된 공고·근무는 재활성화해도 되살아나지 않습니다.'),
       confirmText: '비활성화',
     );
     if (!confirmed || !mounted) return;
@@ -160,17 +178,22 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
 
     try {
       // [V9-FIX] CF 이전 — deactivatedBy 감사 추적 서버 강제
-      await _bizCF.call<Map<String, dynamic>>({
+      final res = await _bizCF.call<Map<String, dynamic>>({
         'action': 'deactivate',
         'businessId': item.business.id,
       });
       if (!mounted) return;
-      ToastHelper.showSuccess('사업장이 비활성화되었습니다');
+      // [SA-DEACT.50] 저장 성공 ≠ 정리 완료 — 정리는 서버 트리거가 뒤이어 한다. 반복 요청(서버 후보)은 새 처리처럼 말하지 않는다.
+      ToastHelper.showSuccess(res.data['alreadyDeactivated'] == true
+          ? '이미 비활성화된 사업장입니다'
+          : '사업장을 비활성화했습니다. 공고·근무 정리는 서버에서 이어서 진행됩니다');
       await _loadAllBusinesses();
     } on FirebaseFunctionsException catch (e) {
       if (mounted) ToastHelper.showError('처리 실패: ${e.message}');
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리 실패: $e');
+      // [SA-AUDIT.49] 응답을 못 받았어도 서버는 반영했을 수 있다 — 예외 원문 대신 확인을 권하고 목록을 다시 읽는다.
+      if (mounted) ToastHelper.showError('처리 결과를 확인하지 못했습니다. 목록에서 현재 상태를 확인해 주세요.');
+      if (mounted) unawaited(_loadAllBusinesses());
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -183,18 +206,22 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     final hasLicense = item.business.businessLicenseImageUrl != null ||
         item.ownerLicenseUrl != null;
     final bool confirmed;
+    // [BA-53] 대상이 분명하도록 사업자번호를 함께 보인다.
+    final who = '「${item.business.name}」(사업자번호 ${item.business.formattedBusinessNumber})';
     if (!hasLicense) {
-      confirmed = await DialogHelper.showDangerConfirm(
+      // [BA-53] 서버는 등록증 파일이 없으면 승인하지 않는다(재량 승인 없음) — '그래도 승인'은 사실과 달랐다.
+      confirmed = await DialogHelper.showConfirm(
         context,
         title: '사업자등록증 미확인',
-        message: '「${item.business.name}」의 사업자등록증이 확인되지 않은 사업장입니다.\n그래도 승인하시겠습니까?',
-        confirmText: '그래도 승인',
+        message: TextLayout.keepWords('$who의 사업자등록증을 이 화면에서 찾지 못했습니다.\n'
+            '서버가 등록증 파일을 다시 확인하며, 없으면 승인되지 않습니다.'),
+        confirmText: '확인 요청',
       );
     } else {
       confirmed = await DialogHelper.showConfirm(
         context,
         title: '사업장 승인',
-        message: '「${item.business.name}」을 승인하시겠습니까?\n승인 후 관리자가 공고를 등록할 수 있습니다.',
+        message: TextLayout.keepWords('$who을 승인하시겠습니까?\n승인 후 관리자가 공고를 등록할 수 있습니다.'),
         confirmText: '승인',
       );
     }
@@ -203,17 +230,28 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
 
     try {
       // [V9-FIX] CF 이전 — isApproved 법적 상태 전이 + approvedBy 서버 강제
-      await _bizCF.call<Map<String, dynamic>>({
+      // [BA-53] 이 화면이 본 값(등록증·사업자번호·사업장명)을 함께 보낸다 — 그 사이 바뀌었으면 서버가 승인하지 않는다.
+      final res = await _bizCF.call<Map<String, dynamic>>({
         'action': 'approve',
         'businessId': item.business.id,
+        'expected': {
+          'licenseUrl': item.business.businessLicenseImageUrl,
+          'businessNumber': item.business.businessNumber,
+          'name': item.business.name,
+        },
       });
       if (!mounted) return;
-      ToastHelper.showSuccess('사업장이 승인되었습니다');
+      ToastHelper.showSuccess(res.data['alreadyApproved'] == true ? '이미 승인된 사업장입니다' : '사업장이 승인되었습니다');
       await _loadAllBusinesses();
     } on FirebaseFunctionsException catch (e) {
-      if (mounted) ToastHelper.showError('처리 실패: ${e.message}');
+      if (!mounted) return;
+      // 서버 문장(등록증 없음·검토 후 변경·운영 중지)을 그대로 보이고, 목록을 다시 읽어 현재 값으로 다시 검토하게 한다.
+      ToastHelper.showError(TextLayout.keepWords(e.message ?? '승인하지 못했습니다.'));
+      unawaited(_loadAllBusinesses());
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리 실패: $e');
+      // [SA-AUDIT.49] 응답을 못 받았어도 서버는 반영했을 수 있다 — 예외 원문 대신 확인을 권하고 목록을 다시 읽는다.
+      if (mounted) ToastHelper.showError('처리 결과를 확인하지 못했습니다. 목록에서 현재 상태를 확인해 주세요.');
+      if (mounted) unawaited(_loadAllBusinesses());
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -224,7 +262,8 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     final confirmed = await DialogHelper.showConfirm(
       context,
       title: '사업장 재활성화',
-      message: '「${item.business.name}」을 재활성화하시겠습니까?\n재활성화 후 다시 공고를 등록할 수 있습니다.',
+      message: TextLayout.keepWords('「${item.business.name}」을 재활성화하시겠습니까?\n재활성화 후 다시 공고를 등록할 수 있습니다.\n'
+          '비활성화 때 마감·취소된 공고와 근무는 되살아나지 않습니다.'),
       confirmText: '재활성화',
     );
     if (!confirmed || !mounted) return;
@@ -232,17 +271,19 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
 
     try {
       // [V9-FIX] CF 이전 — reactivatedBy 감사 추적 서버 강제
-      await _bizCF.call<Map<String, dynamic>>({
+      final res = await _bizCF.call<Map<String, dynamic>>({
         'action': 'reactivate',
         'businessId': item.business.id,
       });
       if (!mounted) return;
-      ToastHelper.showSuccess('사업장이 재활성화되었습니다');
+      ToastHelper.showSuccess(res.data['alreadyActive'] == true ? '이미 활성 상태인 사업장입니다' : '사업장이 재활성화되었습니다');
       await _loadAllBusinesses();
     } on FirebaseFunctionsException catch (e) {
       if (mounted) ToastHelper.showError('처리 실패: ${e.message}');
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리 실패: $e');
+      // [SA-AUDIT.49] 응답을 못 받았어도 서버는 반영했을 수 있다 — 예외 원문 대신 확인을 권하고 목록을 다시 읽는다.
+      if (mounted) ToastHelper.showError('처리 결과를 확인하지 못했습니다. 목록에서 현재 상태를 확인해 주세요.');
+      if (mounted) unawaited(_loadAllBusinesses());
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -549,6 +590,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
         Expanded(
           child: RichText(
+            textScaler: MediaQuery.textScalerOf(context), // [SCALE-BALANCE.34] RichText 는 배율을 스스로 받지 않는다
             text: TextSpan(
               style: ResponsiveHelper.bodyStyle(
                 context,
@@ -708,6 +750,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
         Expanded(
           child: RichText(
+            textScaler: MediaQuery.textScalerOf(context), // [SCALE-BALANCE.34] RichText 는 배율을 스스로 받지 않는다
             text: TextSpan(
               style: ResponsiveHelper.bodyStyle(
                 context,

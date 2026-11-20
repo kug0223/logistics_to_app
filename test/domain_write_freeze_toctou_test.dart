@@ -339,10 +339,10 @@ void main() {
           r'.where("userId", "==", uid).where("status", "==", "scheduled").get()'));
       expect(residual, isNot(contains('"NO_SHOW"')));
       expect(residual, isNot(contains('"absent"')));
-      // 자동 결근은 기존 scheduled row 를 종결할 뿐 새로 만들지 않는다.
-      final autoAbsent = _helper(raw, 'processAutoAbsent');
-      expect(_flat(autoAbsent), contains(r'.where("status", "==", "scheduled")'));
-      expect(_flat(autoAbsent), contains('batch.update(doc.ref, { status: "absent",'));
+      // [SCHED-LEGACY-RETIRE 2026-10-27] 레거시 scheduled 자동 결근은 폐기했다 — 호출도 함수도 없다.
+      //   새 근태를 만들지 않는다는 성질은 그대로다(남은 scheduled row 는 위 residual 이 센다).
+      expect(raw, isNot(contains('processAutoAbsent(timestamp)')));
+      expect(raw, isNot(contains('async function processAutoAbsent')));
     });
   });
 

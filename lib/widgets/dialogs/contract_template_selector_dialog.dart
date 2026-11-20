@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../../models/core/business_model.dart';
 import '../../models/core/contract_template_model.dart';
 import '../../screens/business_admin/contract_import_paste_screen.dart';
 import '../../screens/business_admin/contract_template_edit_screen.dart';
@@ -20,6 +21,14 @@ import 'styled_dialog.dart';
 ///   []    → 빈 계약서로 진행
 ///   [...]  → 선택한 템플릿의 조항 목록
 class ContractTemplateSelectorDialog {
+  /// 테스트 전용 — null 이면 운영 구현(FirebaseAuth·FirestoreService·ContractTemplateService)을 쓴다.
+  ///   DayApplicantsReads.debugOverride 와 같은 관례.
+  static ({
+    String? Function() uid,
+    Future<List<BusinessModel>> Function(String uid) myBusinesses,
+    Future<List<ContractTemplateModel>> Function(String businessId) templates,
+  })? debugReads;
+
   static Future<List<ContractArticle>?> show(
     BuildContext context, {
     required String businessId,
@@ -52,25 +61,43 @@ class _SelectorSheetState extends State<_SelectorSheet> {
     _load();
   }
 
+  /// 다시 불러오기(재시도·템플릿 생성 후)가 겹치면 마지막 요청의 결과만 쓴다.
+  int _loadSeq = 0;
+
   Future<void> _load() async {
+    final seq = ++_loadSeq;
+    // [TEMPLATE-READS.22] 호출부가 준 사업장(widget.businessId)의 템플릿은 어느 경로든 읽는다 —
+    //   내 사업장 목록에 들어 있으면 그 한 칸으로, 아니면 아래 fallback 으로.
+    //   그래서 내 사업장 조회를 기다리지 않고 함께 출발시키고, 같은 사업장은 이 한 번을 다시 쓴다
+    //   (예전에는 목록 조회 → 사업장별 조회 → 0개면 같은 사업장을 한 번 더 읽는 직렬 3단계).
+    //   다른 사업장은 미리 읽지 않는다. 실패는 그 결과가 실제로 쓰일 때만 오류가 된다.
+    final reads = ContractTemplateSelectorDialog.debugReads;
+    final templatesOf = reads?.templates ?? _service.getTemplates;
+    final own = templatesOf(widget.businessId);
+    own.then((_) {}, onError: (Object _) {});
     try {
       // 통합운영: 관리자의 모든 사업장 템플릿을 합쳐서 표시
-      final uid = FirebaseAuth.instance.currentUser?.uid;
+      final uid = reads != null
+          ? reads.uid()
+          : FirebaseAuth.instance.currentUser?.uid;
       List<ContractTemplateModel> list = [];
 
       if (uid != null) {
-        final businesses = await FirestoreService().getMyBusiness(uid);
+        final businesses = await (reads?.myBusinesses ??
+            FirestoreService().getMyBusiness)(uid);
         if (businesses.isNotEmpty) {
           final allLists = await Future.wait(
-            businesses.map((b) => _service.getTemplates(b.id)),
+            businesses.map((b) =>
+                b.id == widget.businessId ? own : templatesOf(b.id)),
           );
           list = allLists.expand((l) => l).toList();
         }
       }
 
       // fallback: uid 취득 실패 or 사업장 없으면 TO의 businessId로 시도
+      //   (이미 읽은 같은 사업장 결과를 쓴다 — 0개라고 다시 읽지 않는다)
       if (list.isEmpty) {
-        list = await _service.getTemplates(widget.businessId);
+        list = await own;
       }
 
       // [5.11] 신규 계약에 쓸 수 있는 분류만 후보로 남긴다.
@@ -82,10 +109,10 @@ class _SelectorSheetState extends State<_SelectorSheet> {
       //   실패 시 재조회)를 바꾸지 않기 위해서다.
       list = ContractTemplateModel.selectableForNewContract(list);
 
-      if (mounted) setState(() { _templates = list; _loadError = null; });
+      if (mounted && seq == _loadSeq) setState(() { _templates = list; _loadError = null; });
     } catch (e) {
       debugPrint('❌ 계약 템플릿 로드 실패: $e');
-      if (mounted) setState(() { _templates = []; _loadError = e.toString(); });
+      if (mounted && seq == _loadSeq) setState(() { _templates = []; _loadError = e.toString(); });
     }
   }
 

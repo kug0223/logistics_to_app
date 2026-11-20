@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/format_helper.dart';
+import '../../../../utils/text_layout.dart';
 import '../../../../theme/app_colors.dart';
 import '../../../../widgets/pickers/date_picker_bottom_sheet.dart';
 import 'to_section_container.dart';
@@ -74,7 +75,8 @@ class _TODateSelectorState extends State<TODateSelector> {
   DateTime _focusedDay = DateTime.now();
   bool _isCalendarExpanded = true;
 
-  // 범위 선택: 첫 번째 탭으로 시작점만 기억 (selectedDates에 추가하지 않음)
+  // 범위 선택: 첫 번째 탭으로 시작점을 기억하고 그 날짜도 선택에 추가한다(onDateToggle).
+  //   두 번째 탭에서 시작점~끝 날짜 사이를 채운다. [DU1 구현51] 이전 주석의 '추가하지 않음' 은 실제 동작과 달랐다.
   DateTime? _rangeStart;
 
   String? _activeQuickSelect;
@@ -174,9 +176,12 @@ class _TODateSelectorState extends State<TODateSelector> {
               children: [
                 Icon(Icons.event_repeat, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.grey600),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Text(
-                  '근무 요일: ${widget.displayWorkDays!.join(', ')}',
-                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary),
+                // [DU1 구현48 C1 S031] 320·2.0 에서 요일 글이 줄지 않아 오른쪽으로 92px 넘쳤다 — 남은 폭 안에서 단어 단위 줄바꿈(문구 그대로)
+                Expanded(
+                  child: Text(
+                    TextLayout.keepWords('근무 요일: ${widget.displayWorkDays!.join(', ')}'),
+                    style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary),
+                  ),
                 ),
               ],
             ),
@@ -238,11 +243,16 @@ class _TODateSelectorState extends State<TODateSelector> {
     );
   }
 
-  /// 헤더 (범위 선택 중일 때 힌트로 교체 - 레이아웃 고정)
+  /// 헤더 (범위 선택 중일 때 힌트로 교체). 기본 배율은 두 상태가 같은 최소 높이라 전환 때 흔들리지 않고,
+  /// 확대 글자에서는 글 높이만큼 늘어난다(잘림 방지 — 고정 높이 아님).
   Widget _buildHeader(BuildContext context) {
 
-    return SizedBox(
-      height: ResponsiveHelper.spacing(context, 40),
+    // [DU1 구현50 C1 S030] 고정 높이(40 상당)였다 — 320·2.0 에서 범위 안내 글이 2줄(76px)을 필요로 하는데 32px 안에
+    //   갇혀 '11월 9일 (월) · 종' 까지만 보였다(종료 날짜를 탭하라는 안내 자체가 잘림). 최소 높이로 바꿔 글이 커지면 늘어난다.
+    //   기본 배율은 두 상태 모두 최소 높이 안이라 전환 때 레이아웃이 흔들리지 않는다
+    //   (50 = 안내 상자: 닫기 터치 48 + 테두리 1×2).
+    return ConstrainedBox(
+      constraints: BoxConstraints(minHeight: ResponsiveHelper.spacing(context, 40) < 50 ? 50 : ResponsiveHelper.spacing(context, 40)),
       child: AnimatedSwitcher(
         duration: const Duration(milliseconds: 250),
         switchInCurve: Curves.easeOut,
@@ -263,7 +273,7 @@ class _TODateSelectorState extends State<TODateSelector> {
             // 범위 선택 중: 시작일 안내
             ? Container(
                 key: const ValueKey('hint'),
-                padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 12)),
+                padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 12)),
                 decoration: BoxDecoration(
                   color: Theme.of(context).primaryColor.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(10),
@@ -275,14 +285,22 @@ class _TODateSelectorState extends State<TODateSelector> {
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
                       child: RichText(
+                        textScaler: MediaQuery.textScalerOf(context), // [SCALE-BALANCE.34] RichText 는 배율을 스스로 받지 않는다
                         text: TextSpan(
                           style: ResponsiveHelper.smallStyle(context, color: Theme.of(context).primaryColor),
+                          // [DU1 구현50] '종/료' 음절 끊김 — 단어 단위로 묶는다(문구 그대로)
+                          // [DU1 구현51 · 후속51 F51-1] keepWords 는 표시 전용 U+2060 을 넣는다 — 접근성 이름에는
+                          //   제어문자 없는 원문을 semanticsLabel 로 따로 준다(표시·접근성 분리).
                           children: [
                             TextSpan(
-                              text: FormatHelper.formatDateKorean(_rangeStart!),
+                              text: TextLayout.keepWords(FormatHelper.formatDateKorean(_rangeStart!)),
+                              semanticsLabel: FormatHelper.formatDateKorean(_rangeStart!),
                               style: const TextStyle(fontWeight: FontWeight.bold),
                             ),
-                            const TextSpan(text: ' · 종료 날짜를 탭하세요'),
+                            TextSpan(
+                              text: TextLayout.keepWords(' · 종료 날짜를 탭하세요'),
+                              semanticsLabel: ' · 종료 날짜를 탭하세요',
+                            ),
                           ],
                         ),
                       ),
@@ -293,7 +311,15 @@ class _TODateSelectorState extends State<TODateSelector> {
                         setState(() => _rangeStart = null);
                         widget.onDateToggle?.call(start);
                       },
-                      child: Icon(Icons.close, color: Theme.of(context).primaryColor, size: ResponsiveHelper.iconSize(context, 16)),
+                      // [DU1 구현50] 실측 13.6×13.6(320·2.0)·14.4(360·1.0) — 아이콘 크기는 그대로, 누르는 영역만 48×48
+                      behavior: HitTestBehavior.opaque,
+                      child: SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: Center(
+                          child: Icon(Icons.close, color: Theme.of(context).primaryColor, size: ResponsiveHelper.iconSize(context, 16)),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -493,13 +519,154 @@ class _TODateSelectorState extends State<TODateSelector> {
           ),
         ],
       ),
-      child: Column(
-        children: [
-          _buildCalendarHeader(context),
-          _buildWeekdayHeader(context),
-          _buildDateGrid(context, today),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-        ],
+      // [DU1 구현52 F50-1] 7열 칸에 두 자리 날짜가 안 들어가면(확대 글자 — 320·2.0 에서 칸 36.7 에 '10111213' 처럼 붙었다)
+      //   글자를 줄이지 않고 **날짜 목록**으로 배치를 바꾼다(한 줄 = 한 날짜, 전체 폭·최소 52). 기본 배율은 기존 7열 그대로.
+      child: LayoutBuilder(builder: (c, cons) {
+        final listMode = _needsDateList(c, cons.maxWidth);
+        return Column(
+          children: [
+            _buildCalendarHeader(c),
+            // [DU1 구현53 F53-1] 월말을 시작으로 고른 뒤 다음 달로 넘기면 시작일이 이 달에 없어 탭 자리 안내가 사라졌다
+            //   (머리 안내는 화면 위 밖). 시작일이 다른 달이면 월 제목 바로 아래에 시작일과 함께 안내한다.
+            if (_rangeStart != null &&
+                (_rangeStart!.year != _focusedDay.year || _rangeStart!.month != _focusedDay.month))
+              _buildInlineRangeHint(c, startLabel: FormatHelper.formatDateKorean(_rangeStart!)),
+            if (!listMode) _buildWeekdayHeader(c),
+            listMode ? _buildDateList(c, today) : _buildDateGrid(c, today),
+            SizedBox(height: ResponsiveHelper.spacing(c, 8)),
+          ],
+        );
+      }),
+    );
+  }
+
+  /// [DU1 구현52 F50-1] 날짜 칸(7열) 폭에 가장 넓은 두 자리 날짜가 좌우 여백과 함께 들어가는가 — 실제 글꼴·배율로 잰다.
+  bool _needsDateList(BuildContext context, double calendarWidth) {
+    final cellW = (calendarWidth - ResponsiveHelper.spacing(context, 4) * 2) / 7;
+    final tp = TextPainter(
+      text: TextSpan(text: '28', style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.bold)),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    final need = tp.width + 12; // 숫자 사이가 이어 보이지 않을 최소 좌우 여백(6+6)
+    tp.dispose();
+    return need > cellW;
+  }
+
+  /// [DU1 구현52 F50-1] 확대 글자용 날짜 목록 — 고를 수 있는 날짜(오늘~60일)만, 한 줄 한 날짜.
+  ///   선택·범위(첫 탭 시작 → 두 번째 탭 끝) 규칙은 달력과 같은 `_handleDateTap` 을 쓴다.
+  Widget _buildDateList(BuildContext context, DateTime today) {
+    final lastDay = DateTime(_focusedDay.year, _focusedDay.month + 1, 0).day;
+    final rows = <Widget>[];
+    for (var day = 1; day <= lastDay; day++) {
+      final date = DateTime(_focusedDay.year, _focusedDay.month, day);
+      final isPast = date.isBefore(today);
+      final isTooFar = date.isAfter(today.add(const Duration(days: _maxFutureDays)));
+      if (isPast || isTooFar) continue;
+      rows.add(_buildDateListRow(context, date, today));
+      if (_rangeStart != null && _isSameDay(date, _rangeStart!)) rows.add(_buildInlineRangeHint(context));
+    }
+    if (rows.isEmpty) {
+      rows.add(Padding(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+        child: Text(
+          TextLayout.keepWords('이 달에는 고를 수 있는 날짜가 없습니다'),
+          semanticsLabel: '이 달에는 고를 수 있는 날짜가 없습니다',
+          style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary),
+        ),
+      ));
+    }
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 8)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: rows),
+    );
+  }
+
+  Widget _buildDateListRow(BuildContext context, DateTime date, DateTime today) {
+    final isSelected = widget.selectedDates.any((d) => _isSameDay(d, date));
+    final isToday = _isSameDay(date, today);
+    final isWeekend = date.weekday == DateTime.sunday || date.weekday == DateTime.saturday;
+    final label = FormatHelper.formatDateKorean(date);
+    final primary = Theme.of(context).primaryColor;
+    final fg = isSelected ? AppColors.surface : (isWeekend ? AppColors.error : AppColors.textPrimary);
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 2)),
+      child: Semantics(
+        selected: isSelected,
+        button: true,
+        child: Material(
+          color: isSelected ? primary : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            onTap: () => _handleDateTap(date, today),
+            borderRadius: BorderRadius.circular(12),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 52),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 12),
+                  vertical: ResponsiveHelper.spacing(context, 8),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        TextLayout.keepWords(label),
+                        semanticsLabel: isToday ? '$label 오늘' : label,
+                        style: ResponsiveHelper.bodyStyle(context, color: fg).copyWith(
+                          fontWeight: (isSelected || isToday) ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                    ),
+                    if (isToday)
+                      ExcludeSemantics(
+                        child: Text('오늘', style: ResponsiveHelper.smallStyle(context, color: isSelected ? AppColors.surface : primary)),
+                      ),
+                    if (isSelected) ...[
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      Icon(Icons.check, color: AppColors.surface, size: ResponsiveHelper.iconSize(context, 18)),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// [DU1 구현52 F50-2] 첫 탭 바로 아래에 끝 날짜 안내 — 머리의 안내가 탭 위치에서 화면 밖(위)에 떠 보이지 않았다.
+  ///   접근성 이름은 머리 안내 하나로 충분하므로 이 시각 단서는 Semantics 에서 뺀다(중복 방지).
+  Widget _buildInlineRangeHint(BuildContext context, {String? startLabel}) {
+    final primary = Theme.of(context).primaryColor;
+    return ExcludeSemantics(
+      child: Container(
+        key: const ValueKey('inline-range-hint'),
+        margin: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 4),
+          vertical: ResponsiveHelper.spacing(context, 4),
+        ),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 10),
+          vertical: ResponsiveHelper.spacing(context, 6),
+        ),
+        decoration: BoxDecoration(
+          color: primary.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.touch_app, color: primary, size: ResponsiveHelper.iconSize(context, 16)),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Expanded(
+              child: Text(
+                TextLayout.keepWords(startLabel == null ? '종료 날짜를 탭하세요' : '$startLabel 시작 · 종료 날짜를 탭하세요'),
+                style: ResponsiveHelper.smallStyle(context, color: primary).copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -619,6 +786,15 @@ class _TODateSelectorState extends State<TODateSelector> {
           ),
         );
         currentRow = [];
+        // [DU1 구현52 F50-2] 범위 시작일이 든 주 바로 아래에 끝 날짜 안내(탭한 자리에서 보이게)
+        final weekStartOffset = i - 6 - firstWeekday;
+        if (_rangeStart != null &&
+            _rangeStart!.year == _focusedDay.year &&
+            _rangeStart!.month == _focusedDay.month &&
+            _rangeStart!.day - 1 >= weekStartOffset &&
+            _rangeStart!.day - 1 <= weekStartOffset + 6) {
+          rows.add(_buildInlineRangeHint(context));
+        }
       }
     }
 

@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart';
 
 // Models
 import '../../../models/core/business_model.dart';
@@ -12,6 +11,7 @@ import '../../../utils/action_guard.dart';
 import '../../../utils/close_state_utils.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../models/ui/group_header_totals.dart';
+import '../../../models/ui/invite_refresh_outcome.dart';
 import '../../../models/core/work_detail_data.dart';
 
 // Helper
@@ -24,12 +24,18 @@ import '../../../controllers/workforce_controller.dart';
 
 // Services
 import '../../../services/firestore_service.dart';
+import '../../../services/invite_save_verifier.dart';
 
 // Utils
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/text_layout.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/posting_presentation_mode.dart';
+import '../../../utils/posting_partial_revoke.dart';
+// [ISG2] 초대 수락 마감 식은 모델 쪽 canonical 함수 하나를 쓴다.
+import '../../../models/core/application_model.dart'
+    show effectiveInviteDeadlineOf;
 
 // Widgets
 import '../../../theme/app_colors.dart';
@@ -58,6 +64,7 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 import 'admin_work_detail.dart';
 import '../../../screens/common/job_posting_screen.dart';
 import '../../../screens/business_admin/dialogs/work_detail_management_dialog.dart';
+import '../../../utils/staffing_clock.dart';
 
 enum TOCardDisplayMode { list, calendar }
 
@@ -187,8 +194,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
   /// 합산식은 `1 부족`이라 하지만 실제로는 3명이 모자란다.
   late int _totalShortage;
 
+  /// [COLLAPSED-EXPANDED] 정원을 **말할 수 있는가**. false 면 `모름` 이다.
+  late bool _requiredKnown;
+
   late bool _isFull;
-  DateTime _buildNow = DateTime.now();
+  DateTime _buildNow = StaffingClock.now();
   // [PERF-2] _getEarliestDeadline() 결과 캐시 — build()마다 workDetails 순회 방지
   // _updateGroupCache() 호출 시 갱신 (groupItem/selectedDate/calendarSlot 변경 시)
   DateTime? _cachedEarliestDeadline;
@@ -200,7 +210,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
   Timer? _scrollTimer;
 
   void _updateGroupCache() {
-    _buildNow = DateTime.now();
+    _buildNow = StaffingClock.now();
     final g = widget.groupItem;
     _targetTOs = (widget.selectedDate != null && !g.isLongTerm)
         ? g.groupTOs.where((t) =>
@@ -225,12 +235,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final totals = projectGroupHeaderTotals(
       targetTOs: _targetTOs,
       singleFallback: _getSingleTOItem,
+      // [CLOSESTATE-BOUNDARY] 부족의 마감 판정은 저장 상태 — 날짜 창·서버 초대와
+      //   같은 원천이다(배지의 `_computeAllClosed` 는 지원 접수 기준이라 다르다).
+      openShortageOf: (t) => t.persistedOpenShortage(master: g.masterTO),
     );
     _totalConfirmed = totals.confirmed;
     _totalPending   = totals.pending;
     _totalRequired  = totals.required;
     _totalShortage  = totals.shortage;
     _isFull         = totals.isFull;
+    _requiredKnown  = totals.requiredKnown;
     // [PERF-2] 마감시간 캐시 갱신
     _cachedEarliestDeadline = _computeEarliestDeadline();
   }
@@ -377,7 +391,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
   /// capacity를 모르는 상태(UNKNOWN)에서는 **내리지 않는다** — 확인하지 못했다는
   /// 이유로 할 수 있는 일을 막으면 그것도 거짓 주장이다.
   bool _canInviteNow() {
-    if (_computeAllClosed(DateTime.now())) return false;
+    if (_computeAllClosed(StaffingClock.now())) return false;
     if (_isFull) return false;
     return true;
   }
@@ -480,7 +494,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
                           // [R7-P1-2] 모집 상태 배지 — 타입 옆으로 올렸다.
                           //   제목이 1순위가 된 이상, 상태는 제목 위 메타 행에서
                           //   말해야 제목보다 강해지지 않는다.
-                          Flexible(
+                          // [DU1 후속107 C106-2] Flexible + Spacer 는 남은 폭을 반씩 나눠, 큰 글자(320@2.0)에서
+                          //   배지가 절반(76.7)만 받아 `모집중` 라벨이 말줄임으로 사라졌다(제약 49.5 < 한 줄 72.5).
+                          //   Expanded 하나가 남은 폭 전체를 배지에 주고, Align 이 배지를 왼쪽에 두어 메뉴는 그대로 오른쪽 끝이다.
+                          Expanded(
                             child: Align(
                               alignment: Alignment.centerLeft,
                               child: _buildStatusBadge(
@@ -490,8 +507,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
                               ),
                             ),
                           ),
-
-                          const Spacer(),
 
                           // 메뉴 버튼
                           _buildSingleTOMenu(context),
@@ -520,7 +535,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
                       // [POSTING-V2-03R.1] 넷째 줄: 어떤 일 / 얼마나 남았나
                       _buildWorkLine(context, masterTO: masterTO, now: now),
 
-                      SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                      // [DU1 후속105 S023] 식별 묶음(제목·언제·어떤 일, 사이 3)과 인원 구획(충원·부족·대기 + 마감)을
+                      //   간격으로 나눈다 — 6 → 12. 같은 리듬이라 인원 줄이 넷째 메타 줄처럼 붙어 읽혔다. 정보·순서·색은 그대로다.
+                      SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
                       // [POSTING-V2-03R.1] 다섯째 줄: 인원 — 세 variant 동일 언어.
                       //   `필요 R`을 항상 숫자로 말한다. 이전에는 FLEX 다중과
@@ -537,9 +554,15 @@ class _TOGroupCardState extends State<TOGroupCard> {
                           pending: totalPending,
                           shortage: _totalShortage,
                           isFull: isFull,
+                          requiredKnown: _requiredKnown,
                         )
                       else
-                        _buildOperationEndedLine(context),
+                        _buildOperationEndedLine(
+                          context,
+                          confirmed: totalConfirmed,
+                          required: totalRequired,
+                          requiredKnown: _requiredKnown,
+                        ),
 
                       // 고정 공고: 공고 마감일 (계약기간은 _buildWorkLine으로 이동)
                       if (masterTO.isLongTerm) ...[
@@ -703,7 +726,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
             //   집계는 업무마다 {confirmed:0, pending:0} 으로 미리 채워진다
             //   (`loadTOWorkDetails`). 그래서 진짜 0명은 null 이 아니라 0 이고,
             //   null 은 오직 "모른다" 뿐이다. 둘을 같은 숫자로 말하지 않는다.
-            statsFailed: _singleTOStatsFailed() || stats == null,
+            // [DATE-SCOPE] 요약과 같은 판정 — identity 가 어긋난 집계의
+            //   거짓 0 을 행이 혼자 말하지 않는다.
+            statsFailed: _singleTOStatsFailed() ||
+                !_getSingleTOItem().hasLoadedStats ||
+                stats == null,
             onRetryStats: () => _retrySingleTOStats(),
             mode: _presentationMode,
           );
@@ -730,17 +757,42 @@ class _TOGroupCardState extends State<TOGroupCard> {
         now: _buildNow,
       );
 
-  /// 운영이 끝난 공고의 대표 줄. 숫자를 지우는 것이 아니라 자리에서 내린다.
-  Widget _buildOperationEndedLine(BuildContext context) {
+  /// 운영이 끝난 공고의 대표 줄.
+  ///
+  ///   [POSTING-ENDED-STAFFING.27] 운영 상태와 인원 기록을 **함께** 말한다. 예전에는 `운영 종료`
+  ///   가 인원 줄을 통째로 대신해, 끝난 공고에서 몇 명이 일했는지 카드에서 사라졌다.
+  ///   펼친 업무 행과 같은 출처·같은 단어(`충원 / 필요`)를 쓴다. 지금 할 일을 부르는
+  ///   `부족`·`대기` 는 붙이지 않고, 색도 중립이다 — 끝난 공고에 충원 행동을 권하지 않는다.
+  ///   숫자는 **지금 기록된 값**이다(종료 시점 스냅샷이 따로 없다).
+  Widget _buildOperationEndedLine(
+    BuildContext context, {
+    required int confirmed,
+    required int required,
+    required bool requiredKnown,
+  }) {
+    final safeConfirmed = confirmed < 0 ? 0 : confirmed;
+    final base = ResponsiveHelper.bodyStyle(context, color: AppColors.grey600);
     return Row(
       children: [
         Icon(Icons.event_available,
             size: ResponsiveHelper.iconSize(context, 14),
             color: AppColors.grey500),
         SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-        Text('운영 종료',
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600)
-                .copyWith(fontWeight: FontWeight.w600)),
+        Flexible(
+          child: Text.rich(
+            TextSpan(style: base, children: [
+              TextSpan(
+                  text: '운영 종료',
+                  style: base.copyWith(fontWeight: FontWeight.w600)),
+              TextSpan(
+                text: '  ·  충원 $safeConfirmed'
+                    '${!requiredKnown ? ' / 필요 확인 불가' : (required == 0 ? ' / 필요 미설정' : ' / 필요 $required')}',
+              ),
+            ]),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
       ],
     );
   }
@@ -782,19 +834,32 @@ class _TOGroupCardState extends State<TOGroupCard> {
 
   /// [POSTING-V2-01B] 단건/장기 카드 통계 재조회.
   /// 기존 loadTOWorkDetails를 그대로 재사용한다 — 신규 API 없음.
+  ///
+  /// [DU1 구현60 · 감사60 §5] 다시 읽는 동안은 **읽는 중**이다.
+  ///   예전에는 요청이 진행 중인데 업무 행이 이전 실패('지원 현황을 불러오지
+  ///   못했습니다 + 재시도')를 그대로 보였다. 그 사이 controller 는 실패 표시를
+  ///   지워(`resetWorkDetailLoad`) 다른 rebuild 가 끼면 확인되지 않은 seed 0 을
+  ///   숫자로 말할 수도 있었다. 펼침 경로(_loadingTOs)와 같은 '불러오는 중'을 보인다.
+  bool _singleStatsRetrying = false;
+
   Future<void> _retrySingleTOStats() async {
-    final target = widget.calendarSlot ??
-        (widget.groupItem.groupTOs.isNotEmpty
-            ? widget.groupItem.groupTOs.first
-            : null);
-    if (target != null) {
-      await _retryWorkDetailStats(target);
-      return;
+    if (_singleStatsRetrying) return;
+    if (mounted) setState(() => _singleStatsRetrying = true);
+    try {
+      final target = widget.calendarSlot ??
+          (widget.groupItem.groupTOs.isNotEmpty
+              ? widget.groupItem.groupTOs.first
+              : null);
+      if (target != null) {
+        await _retryWorkDetailStats(target);
+        return;
+      }
+      // groupTOs가 없는 단건/장기 TO — 통계는 TOGroupItem에 저장된다.
+      // [R7-7] 이것도 controller 가 읽는다. 카드는 부르고 다시 그릴 뿐이다.
+      await widget.onRetryGroupWorkDetailStats(widget.groupItem);
+    } finally {
+      if (mounted) setState(() => _singleStatsRetrying = false);
     }
-    // groupTOs가 없는 단건/장기 TO — 통계는 TOGroupItem에 저장된다.
-    // [R7-7] 이것도 controller 가 읽는다. 카드는 부르고 다시 그릴 뿐이다.
-    await widget.onRetryGroupWorkDetailStats(widget.groupItem);
-    if (mounted) setState(() {});
   }
 
   /// [POSTING-V2-01B] 슬롯 단위 통계 재조회.
@@ -809,9 +874,22 @@ class _TOGroupCardState extends State<TOGroupCard> {
   ///
   ///   이제 loader 는 controller 하나이고, 카드는 그것을 부르고 다시 그린다.
   ///   이 위젯에는 새 도메인 계산도 retry 정책도 두지 않는다.
+  ///
+  ///   [DU1 구현61 · 감사61 §5] 다시 읽는 동안은 그 슬롯 패널이 **읽는 중**이다.
+  ///   다중 슬롯 날짜 패널은 `_loadingTOs`(칩 첫 로드)만 보고 있어, 업무 행 재시도
+  ///   요청이 진행 중인데 이전 실패 문구 + 재시도를 그대로 보였다(구현60 단일 플래그와 같은 결함).
+  ///   로딩 정책을 새로 두는 것이 아니라 표시만 한다 — loader 는 여전히 controller 다.
+  final Set<String> _statsRetryingKeys = <String>{};
+
   Future<void> _retryWorkDetailStats(TOItem item) async {
-    await widget.onRetryWorkDetailStats(item);
-    if (mounted) setState(() {});
+    final key = item.slot?.id ?? item.to.id;
+    if (_statsRetryingKeys.contains(key)) return;
+    if (mounted) setState(() => _statsRetryingKeys.add(key));
+    try {
+      await widget.onRetryWorkDetailStats(item);
+    } finally {
+      if (mounted) setState(() => _statsRetryingKeys.remove(key));
+    }
   }
 
   /// [POSTING-V2-01B] 카드 내부 조회 실패 표시 — 기존 톤/spacing 재사용.
@@ -845,7 +923,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
               style: TextButton.styleFrom(
                 padding: EdgeInsets.symmetric(
                     horizontal: ResponsiveHelper.spacing(context, 8)),
-                minimumSize: Size.zero,
+                // [DU1 구현62 · 감사62 §5] 일정 재시도 터치 최소 48×48 — 320@2.0 85.7×37.0,
+                //   360@1.0 50.6×19.0 였다(Size.zero+shrinkWrap). 배율로 줄이지 않는 고정 하한.
+                minimumSize: const Size(48, 48),
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
               child: Text('재시도',
@@ -1089,16 +1169,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
   /// 선택된 날짜의 슬롯 상세 패널
   Widget _buildDayPanel(BuildContext context, ThemeData theme, TOItem toItem) {
     final itemKey = toItem.slot?.id ?? toItem.to.id;
-    final isLoading = widget.loadingTOs.contains(itemKey);
+    final isLoading = widget.loadingTOs.contains(itemKey) ||
+        _statsRetryingKeys.contains(itemKey);
     final workDetails = toItem.workDetails;
 
+    // [DU1 구현73 S023/S035] 공고 카드 → 회색 테두리 패널 → 흰 테두리 업무 행으로 카드가 3단 겹쳤다(시안: 카드 속 카드 억제).
+    //   선택 날짜는 위 칩의 선택 표시가 말하므로 패널의 면·테두리를 걷고 업무 행 카드와 명단 버튼만 남긴다. 내용·순서·동작 그대로.
     return Container(
       margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
-      decoration: BoxDecoration(
-        color: AppColors.grey50,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.grey200),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1138,8 +1216,13 @@ class _TOGroupCardState extends State<TOGroupCard> {
                     onAffectedTOsChanged: widget.onAffectedTOsChanged,
                     // [POSTING-V2-01B] 이 슬롯의 통계 조회 실패 여부
                     // [R7-P1-2 DEVICE.1A] 미로드(null)도 0으로 말하지 않는다.
-                    statsFailed:
-                        toItem.workDetailStatsFailed || stats == null,
+                    // [DATE-SCOPE] 요약과 **같은 판정**을 쓴다. `hasLoadedStats`
+                    //   는 이 목적으로 만들어졌는데 아무도 읽지 않아, 요약이
+                    //   카운터로 `충원 1` 이라고 말하는 동안 이 행은 집계의
+                    //   거짓 0 으로 `확정 0 · 미충원 1` 이라고 말했다.
+                    statsFailed: toItem.workDetailStatsFailed ||
+                        !toItem.hasLoadedStats ||
+                        stats == null,
                     onRetryStats: () => _retryWorkDetailStats(toItem),
                     mode: _presentationMode,
                   );
@@ -1344,8 +1427,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
         color: known ? AppColors.textPrimary : AppColors.grey500,
         fontWeight: FontWeight.w700,
       ).copyWith(height: 1.25),
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
+      // [DU1 구현59 · 감사59 §5.3] 2줄 말줄임을 풀었다 — 320@2.0 에서 긴 제목의 끝 문구
+      //   (예: `안전화 지참 필수`)가 `…` 로 잘려 공고를 식별할 수 없었다. 제목은 카드의 1순위
+      //   identity 다(위 주석). 글자를 줄이지 않고 줄바꿈으로 전문을 보인다.
     );
   }
 
@@ -1361,24 +1445,30 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final bool known = date != null;
     if (!known) {
       // ERROR != UNKNOWN — 조회 실패를 '미정'으로 덮지 않는다.
-      label = widget.hasGroupDetailError ? '근무일 확인 필요' : '근무일 미정';
+      // [DU1 구현64 · 감사64 F62-1] LOADING != UNSET — 일정을 다시 읽는 동안(재시도·펼침)은
+      //   controller 가 실패 표시를 먼저 지운다. 그 사이 '근무일 미정'(정해지지 않음)이라고 말하지 않고
+      //   진행 중임을 말한다. 표시 연결만이다 — controller 의 오류 수명은 바꾸지 않는다.
+      label = widget.hasGroupDetailError
+          ? '근무일 확인 필요'
+          : (widget.isGroupLoading ? '근무일 확인 중' : '근무일 미정');
     } else {
       label = date;
     }
     final biz = widget.groupItem.businessName.trim();
-    return RichText(
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      text: TextSpan(
+    return _richWithPlainLabel(
+      // [SCALE-BALANCE.34] RichText 는 사용자 글자 배율을 받지 않아 확대에서 이 줄만 작게 남았다 —
+      //   Text.rich 로 배율을 따르고, 1줄 말줄임 대신 줄바꿈(부족·대기 숫자가 잘리지 않게).
+      TextSpan(
         style: ResponsiveHelper.bodyStyle(
           context,
           color: known ? AppColors.textPrimary : AppColors.grey500,
         ).copyWith(fontWeight: FontWeight.w600, height: 1.25),
         children: [
-          TextSpan(text: label),
+          // [SCALE-BALANCE.34] 줄을 바꾸면 '[합|성] E7' 처럼 이름 안에서 끊겼다 — 낱말 단위로만.
+          TextSpan(text: TextLayout.keepWords(label)),
           if (biz.isNotEmpty)
             TextSpan(
-              text: '  ·  $biz',
+              text: '  ·  ${TextLayout.identity(biz)}',
               style: ResponsiveHelper.bodyStyle(context,
                   color: AppColors.grey600),
             ),
@@ -1431,12 +1521,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final remaining = _collapsedRemainingText(masterTO, now);
     if (remaining != null) parts.add(remaining);
     if (parts.isEmpty) return const SizedBox.shrink();
-    return Text(
-      parts.join(' · '),
+    // [DU231 F3] 한 줄 말줄임을 풀었다 — 긴 업무명 뒤의 '남은 N일'·'계약 기간'이 '…' 로 사라졌다(감사229).
+    //   업무명은 낱말 사이·구분점 뒤에서만 줄을 바꾸고([TextLayout.phrases]), 남은 기간은 공백을 줄바꿈 없는
+    //   공백으로 두어 한 덩어리로 읽힌다('남은 / 1일' 로 갈리지 않게). 계산·순서·색·화면 읽기 원문은 그대로다.
+    if (remaining != null) {
+      parts[parts.length - 1] = remaining.replaceAll(' ', String.fromCharCode(0xA0)); // NBSP
+    }
+    return _richWithPlainLabel(TextSpan(
+      text: TextLayout.phrases(parts.join(' · ')),
       style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-    );
+    ));
   }
 
   /// [7] 인원 — 세 variant 공통 언어.
@@ -1465,15 +1559,19 @@ class _TOGroupCardState extends State<TOGroupCard> {
     required int pending,
     required int shortage,
     required bool isFull,
+    required bool requiredKnown,
   }) {
     // CF syncTOStats 교정 전 낙관적 increment가 음수로 보이는 순간 방어
     final safeConfirmed = confirmed < 0 ? 0 : confirmed;
     final base = ResponsiveHelper.bodyStyle(context, color: AppColors.grey700);
+    // [ADMIN-DOC-REVIEW-UX] `부족`은 지금 처리 가능한 미완료다(§14). 마감된
+    //   업무·슬롯은 [shortage] 계산(TOItem.persistedOpenShortage)이 이미 뺀다 —
+    //   날짜 창과 같은 저장 상태 기준이다. `충원 / 필요` 는 사실이라 그대로.
     final showShortage = required > 0 && !isFull && shortage > 0;
-    return RichText(
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      text: TextSpan(style: base, children: [
+    return _richWithPlainLabel(
+      // [SCALE-BALANCE.34] RichText 는 사용자 글자 배율을 받지 않아 확대에서 이 줄만 작게 남았다 —
+      //   Text.rich 로 배율을 따르고, 1줄 말줄임 대신 줄바꿈(부족·대기 숫자가 잘리지 않게).
+      TextSpan(style: base, children: [
         TextSpan(
           // [R7-P1-2 DEVICE.1C] 이 숫자는 **지금 자리를 채우고 있는 사람 수**다.
           //
@@ -1482,20 +1580,26 @@ class _TOGroupCardState extends State<TOGroupCard> {
           //   단어로 두 가지를 말하면 `확정 0`이 과거를 부정하는 것처럼
           //   읽힌다. 운영 집계는 `충원`으로 부른다 — 사람의 `확정`은
           //   그대로 둔다.
-          text: '충원 $safeConfirmed',
+          text: TextLayout.keepWords('충원 $safeConfirmed'),
           style: base.copyWith(
             fontWeight: FontWeight.bold,
             color: isFull ? AppColors.successDark : AppColors.textPrimary,
           ),
         ),
         TextSpan(
-          text: required == 0 ? ' / 필요 미설정' : ' / 필요 $required',
+          // [COLLAPSED-EXPANDED] 모르는 것을  으로 적지 않는다.
+          //    은 운영 사실(정원을 안 정했다)이고,  은
+          //   우리가 못 읽은 것이다 — 관리자의 다음 행동이 다르다.
+          // [UI-BALANCE.38] 덩어리 안에서 끊지 않는다('대|기 0' 재발 방지 — .34 Text.rich 전환 때 빠졌다).
+          text: TextLayout.keepWords(!requiredKnown
+              ? ' / 필요 확인 불가'
+              : (required == 0 ? ' / 필요 미설정' : ' / 필요 $required')),
         ),
         if (showShortage) ...[
           const TextSpan(text: '  ·  '),
           TextSpan(
             // [§14] 부족은 지금 처리 가능한 미완료 — orange. red는 실패에 남긴다.
-            text: '부족 $shortage',
+            text: TextLayout.keepWords('부족 $shortage'),
             style: base.copyWith(
               fontWeight: FontWeight.bold,
               color: AppColors.warningDark,
@@ -1504,9 +1608,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
         ],
         const TextSpan(text: '  ·  '),
         TextSpan(
-          text: '대기 $pending',
+          text: TextLayout.keepWords('대기 $pending'),
           style: base.copyWith(
-            color: pending > 0 ? AppColors.warningDark : AppColors.grey500,
+            // [DU1 후속106 C106-1] 0은 중립이지만 읽어야 하는 집계다 — grey500(#9E9E9E, 흰 2.68) → DU 3순위 글자
+            //   textTertiary(#686C77, 흰 5.25). `/ 필요`(grey700 6.19)보다 한 단계 옅어 0의 조용한 위계는 그대로다.
+            color: pending > 0 ? AppColors.warningDark : AppColors.textTertiary,
           ),
         ),
       ]),
@@ -1537,7 +1643,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
               borderRadius: BorderRadius.only(
                 bottomLeft: Radius.circular(widget.isExpanded ? 0 : 16),
               ),
-              child: Padding(
+              // [DU1 구현59 · 감사59 §5.3] 터치 최소 48 — 360@1.0 에서 35.2 높이였다.
+              //   배율(ResponsiveHelper)로 줄이지 않는 고정 하한이다. 글자가 커지면 그대로 늘어난다.
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Padding(
                 padding: ResponsiveHelper.symmetricPadding(context,
                     horizontal: 12, vertical: 9),
                 child: Row(
@@ -1561,6 +1671,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                   ],
                 ),
               ),
+              ),
             ),
           ),
           InkWell(
@@ -1568,15 +1679,20 @@ class _TOGroupCardState extends State<TOGroupCard> {
             borderRadius: BorderRadius.only(
               bottomRight: Radius.circular(widget.isExpanded ? 0 : 16),
             ),
-            child: Padding(
-              padding: ResponsiveHelper.symmetricPadding(context,
-                  horizontal: 14, vertical: 9),
-              child: Icon(
-                widget.isExpanded
-                    ? Icons.keyboard_arrow_up
-                    : Icons.keyboard_arrow_down,
-                size: ResponsiveHelper.iconSize(context, 20),
-                color: AppColors.grey400,
+            // [DU1 구현59 · 감사59 §5.3] 펼침 화살표 터치 최소 48×48 — 320/360 에서
+            //   40.8×32.3 / 43.2×34.2 였다(padding·icon 이 배율로 함께 줄었다). 그림 크기는 그대로다.
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              child: Padding(
+                padding: ResponsiveHelper.symmetricPadding(context,
+                    horizontal: 14, vertical: 9),
+                child: Icon(
+                  widget.isExpanded
+                      ? Icons.keyboard_arrow_up
+                      : Icons.keyboard_arrow_down,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                  color: AppColors.grey400,
+                ),
               ),
             ),
           ),
@@ -1594,6 +1710,18 @@ class _TOGroupCardState extends State<TOGroupCard> {
 
     if (!widget.groupItem.masterTO.isLongTerm) {
       // FLEX — 카드에 보이는 그 날짜의 명단으로 간다.
+      //
+      // [DATE-SCOPE] 카드가 `10/12~10/13` 처럼 **기간**으로 말하는 중이면
+      //   "보이는 그 날짜" 라는 것이 없다. R7-P1-2 가 이미
+      //   "다중 날짜에서 날짜 하나를 공고 정체성처럼 보이게 하지 않는다" 로
+      //   정했고(`_collapsedDateRangeText`), 같은 술어를 여기서도 쓴다.
+      //   기간 합계(`충원 1 / 필요 4`) 아래의 버튼이 말없이 하루(10/13)만
+      //   열면, 관리자는 다른 날짜(10/12)에 있는 확정자를 못 보고 `확정 0`
+      //   을 본다. 확정할 수 없으면 CONTRACT 다업무와 똑같이 **펼침
+      //   (날짜별 현황)** 으로 넘긴다 — 임의 날짜로 들어가지 않는다.
+      if (_collapsedDateRangeText(widget.groupItem.masterTO) != null) {
+        return null;
+      }
       final slot = widget.groupItem.operationalSlot;
       return slot == null ? null : _ApplicantTarget.slot(slot);
     }
@@ -1643,7 +1771,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
     if (result != null && result.hasChanges && mounted) {
       setState(() {});
       widget.onChanged();
-      WorkforceController.notifyDataChanged(origin: AdminMutationOrigin.jobs);
+      // [ISG2-REFRESH] Home 은 `confirmed` 로 말한다 — 초대만 바뀐 경우는
+      //   Home 의 진실이 그대로이므로 full refresh 를 깨우지 않는다.
+      if (result.homeRelevant) {
+        WorkforceController.notifyDataChanged(origin: AdminMutationOrigin.jobs);
+      }
       if (result.affectedTOIds.isNotEmpty) {
         widget.onAffectedTOsChanged?.call(result.affectedTOIds);
       }
@@ -1852,7 +1984,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
               ],
             // FLEX: slot 수동 종료된 eligible date 존재 시에만 표시
             // [4I.1A] FULL guard 추가 — FULL 상태에서는 서버가 차단하므로 메뉴도 숨김
-            if (isClosed && !isManualClosed && !isFull &&
+            // [INVITE-CAPACITY] 슬롯 공고의 FULL 은 "열린 날짜가 다 찼다"라 수동 마감한
+            //   미충원 날짜 재오픈을 막지 않는다(서버 callableReopenSlots 와 같은 규칙).
+            //   이 메뉴 자체가 FLEX 전용이다.
+            if (isClosed && !isManualClosed &&
                 widget.groupItem.hasReopenableManualSlots)
               [
                 AppMenuSheetItem(
@@ -2082,7 +2217,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
 
   Future<void> _showInviteWorkerDialogInner(BuildContext context) async {
     final masterTO = widget.groupItem.masterTO;
-    final invited = await showDialog<bool>(
+    final invited = await showDialog<InviteDialogResult>(
       context: context,
       barrierDismissible: false,
       builder: (_) => InviteWorkerDialog(
@@ -2091,7 +2226,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
         businessName: widget.groupItem.businessName,
       ),
     );
-    if (invited == true && mounted) widget.onChanged();
+    if (!mounted) return;
+    // [E1-AMBIGUOUS-INVITE] 불명확하게 닫혔으면 대상 지원서를 다시 읽어
+    //   저장이 확인된 경우에만 카드를 갱신한다. 이 카드에는 목록이 없으므로
+    //   reload 는 곧 onChanged 다 — 확인되지 않으면 부르지 않는다.
+    final resolved = await InviteSaveVerifier.resolve(
+        inviteDialogOutcome(invited),
+        businessId: masterTO.businessId);
+    if (!mounted) return;
+    InviteSaveVerifier.announceClose(resolved.check);
+    if (resolved.outcome.propagate) widget.onChanged();
   }
 
   /// 보낸 초대 관리 바텀시트 — INVITED 상태 지원서 목록 + 취소 버튼
@@ -2308,7 +2452,15 @@ class _TOGroupCardState extends State<TOGroupCard> {
             ToastHelper.showSuccess('${closeSlots.length}개 날짜가 종료되었습니다');
           }
         } catch (e) {
-          if (mounted) {
+          if (mounted && isPostingPartialRevoke(e)) {
+            // [POSTING-AUTH-45] 앞 단계는 반영됐다 — 목록을 새로 읽어 보여 준다.
+            widget.firestoreService.clearCache(toId: masterTO.id);
+            widget.onChanged();
+            WorkforceController.notifyDataChanged(
+              origin: AdminMutationOrigin.jobs,
+            );
+            ToastHelper.showWarning(postingPartialRevokeMessage);
+          } else if (mounted) {
             final msg = _cfErrorMessage(e, fallback: '종료 처리에 실패했습니다');
             ToastHelper.showError(msg);
           }
@@ -2488,7 +2640,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
                 : '$deleted개 날짜가 삭제되었습니다');
           }
         } catch (e) {
-          if (mounted) {
+          if (mounted && isPostingPartialRevoke(e)) {
+            // [POSTING-AUTH-45] 늦게 들어온 지원서 정리는 반영됐다 — 목록을 새로 읽는다.
+            widget.firestoreService.clearCache(toId: masterTO.id);
+            widget.onChanged();
+            ToastHelper.showWarning(postingPartialRevokeMessage);
+          } else if (mounted) {
             final msg = _cfErrorMessage(e, fallback: '삭제 처리에 실패했습니다');
             ToastHelper.showError(msg);
           }
@@ -2646,6 +2803,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
   /// 단건 TO 로딩 중 여부
   bool _isSingleTOLoading() {
     if (widget.isGroupLoading) return true;
+    // [DU1 구현60] 업무 행 재시도로 다시 읽는 중(캘린더 슬롯 포함 — 같은 단건 본문)
+    if (_singleStatsRetrying) return true;
     // 캘린더 모드: isGroupLoading으로만 판단
     if (widget.calendarSlot != null) return false;
     if (widget.groupItem.groupTOs.isNotEmpty) {
@@ -2666,7 +2825,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           : calSlot.workDetails.isNotEmpty
               ? calSlot.workDetails
               : to.workDetails;
-      final refDate = calSlot.slot?.date ?? to.rangeStart ?? DateTime.now();
+      final refDate = calSlot.slot?.date ?? to.rangeStart ?? StaffingClock.now();
       if (to.deadlineType != 'HOURS_BEFORE' || (to.hoursBeforeStart ?? 0) <= 0) {
         return details;
       }
@@ -2699,11 +2858,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
               ? firstSlot.workDetails
               : to.workDetails;
       // 슬롯의 실제 날짜 사용, 없으면 마스터 TO 기준
-      refDate = firstSlot.slot?.date ?? to.rangeStart ?? DateTime.now();
+      refDate = firstSlot.slot?.date ?? to.rangeStart ?? StaffingClock.now();
     } else {
       details = to.workDetails;
       if (!to.isFlexType) return details;
-      refDate = to.rangeStart ?? DateTime.now();
+      refDate = to.rangeStart ?? StaffingClock.now();
     }
 
     // applicationDeadline이 없으면 TO 설정으로 계산 (기존 데이터 호환)
@@ -3070,8 +3229,9 @@ class _SentInvitesSheet extends StatefulWidget {
 }
 
 class _SentInvitesSheetState extends State<_SentInvitesSheet> {
-  // ─── 포맷터 캐싱 (itemBuilder 항목마다 재생성 방지) ──────────
-  static final _expiryFmt = DateFormat('MM/dd HH:mm');
+  // [ISG2] `MM/dd HH:mm` 포맷터를 지웠다 — DateFormat 은 받은 DateTime 의
+  //   자기 성분을 찍어 기기 시간대에 따라 만료 시각이 달라졌다.
+  //   `FormatHelper.formatKstMonthDayTime` 이 KST 로 고정한다.
 
   bool _isLoading = true;
   List<Map<String, dynamic>> _invites = [];
@@ -3145,20 +3305,49 @@ class _SentInvitesSheetState extends State<_SentInvitesSheet> {
     }
   }
 
-  String _formatExpiry(dynamic expiresAt) {
-    if (expiresAt == null) return '';
+  /// CF 응답의 Timestamp 표현(둘 다) → DateTime. 아니면 null.
+  DateTime? _asDateTime(dynamic v) {
+    if (v == null) return null;
+    if (v is Timestamp) return v.toDate().toLocal();
+    if (v is Map) {
+      // CF serializeFirestoreData → {_seconds, _nanoseconds}
+      final seconds = (v['_seconds'] as num?)?.toInt();
+      if (seconds == null) return null;
+      return DateTime.fromMillisecondsSinceEpoch(seconds * 1000, isUtc: true)
+          .toLocal();
+    }
+    return null;
+  }
+
+  /// [ISG2] 관리자도 **실제로 수락 가능한 마지막 시각**을 본다.
+  ///
+  ///   저장된 `inviteExpiresAt`만 읽으면 그 계약 이전에 만들어진 초대에서
+  ///   근무가 끝난 다음 날이 만료로 보인다 — 관리자는 그 자리를 아직
+  ///   채워질 자리로 읽는다. 식은 `effectiveInviteDeadlineOf` 하나다.
+  String _formatExpiry(Map<String, dynamic> inv) {
     try {
-      DateTime dt;
-      if (expiresAt is Timestamp) {
-        dt = expiresAt.toDate().toLocal();
-      } else if (expiresAt is Map) {
-        // CF serializeFirestoreData → {_seconds, _nanoseconds}
-        final seconds = (expiresAt['_seconds'] as num?)?.toInt() ?? 0;
-        dt = DateTime.fromMillisecondsSinceEpoch(seconds * 1000, isUtc: true).toLocal();
-      } else {
-        return '';
-      }
-      return '만료: ${_expiryFmt.format(dt)}';
+      final stored = _asDateTime(inv['inviteExpiresAt']);
+      final workDate = _asDateTime(inv['workDate']);
+      final startTime = inv['startTime'] as String?;
+      final workDays = inv['workDays'];
+      final slotId = inv['slotId'] as String?;
+      final isLong = (slotId == null || slotId.isEmpty) &&
+          (inv['type'] == 'long_term' ||
+              inv['workEndDate'] != null ||
+              (workDays is List && workDays.isNotEmpty));
+      final shiftStart = (workDate != null && startTime != null)
+          ? FormatHelper.kstWallClockInstant(
+              FormatHelper.toKstDate(workDate), startTime)
+          : null;
+      final dt = effectiveInviteDeadlineOf(
+        storedExpiry: stored,
+        shiftStart: shiftStart,
+        isLongTerm: isLong,
+      );
+      if (dt == null) return '';
+      // [ISG2] 표기는 KST 고정 — 기기 시간대 성분을 찍지 않는다.
+      return '만료: '
+          '${FormatHelper.formatKstMonthDayTime(dt, dateSeparator: '/')}';
     } catch (_) {
       return '';
     }
@@ -3244,7 +3433,7 @@ class _SentInvitesSheetState extends State<_SentInvitesSheet> {
                   final appId = inv['id'] as String? ?? '';
                   final uid = inv['uid'] as String? ?? '';
                   final workerName = inv['applicantName'] as String? ?? uid; // [BUG-02 수정] CF 저장 필드명 applicantName
-                  final expiryLabel = _formatExpiry(inv['inviteExpiresAt']);
+                  final expiryLabel = _formatExpiry(inv);
                   final isCanceling = _cancelingId == appId;
 
                   return Container(
@@ -3318,3 +3507,7 @@ class _SentInvitesSheetState extends State<_SentInvitesSheet> {
     );
   }
 }
+
+/// [UI-BALANCE.38] 낱말 단위 표시 문자(WORD JOINER)를 품은 Text.rich — 화면 읽기에는 원문을 준다.
+Widget _richWithPlainLabel(TextSpan span) =>
+    Text.rich(span, semanticsLabel: TextLayout.plain(span.toPlainText()));

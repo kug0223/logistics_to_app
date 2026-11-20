@@ -296,10 +296,11 @@ class TOWorkDetailCard extends StatelessWidget {
 
                 // 수정 버튼
                 if (onEdit != null) ...[
+                  // [DU331 ①] 편집 진입은 일반 진행 — brand 톤(이전 주의색 warningDark/warningExtraLight)
                   _ActionButton(
                     icon: Icons.edit_outlined,
-                    color: AppColors.warningDark,
-                    bgColor: AppColors.warningExtraLight,
+                    color: AppColors.brand,
+                    bgColor: AppColors.brandSurface,
                     onTap: onEdit!,
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 6)),
@@ -536,15 +537,26 @@ class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // [DU331 ②] 보이는 타일은 그대로, 누르는 영역은 투명 48×48(실측 30.6 / 28.9 → 48). 겹침 없이 바깥 receiver 만 넓힌다.
     return Material(
-      color: bgColor,
-      borderRadius: BorderRadius.circular(8),
+      color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-          child: Icon(icon, color: color, size: ResponsiveHelper.iconSize(context, 18)),
+        borderRadius: BorderRadius.circular(12),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          child: Center(
+            widthFactor: 1,
+            heightFactor: 1,
+            child: Container(
+              decoration: BoxDecoration(
+                color: bgColor,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              child: Icon(icon, color: color, size: ResponsiveHelper.iconSize(context, 18)),
+            ),
+          ),
         ),
       ),
     );

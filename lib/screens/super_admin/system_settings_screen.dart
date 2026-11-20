@@ -10,6 +10,7 @@ import '../../providers/user_provider.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/text_layout.dart';
 // trust_rules_settings_screen: [5A.2A] 신뢰도 규칙 메뉴 제거
 import 'review_tags_settings_screen.dart';
 import 'badge_settings_screen.dart';
@@ -17,6 +18,7 @@ import 'minimum_wage_settings_screen.dart';
 import 'insurance_rate_settings_screen.dart';
 import 'to_limit_settings_screen.dart';
 import 'business_approval_settings_screen.dart';
+import 'noshow_pending_list_screen.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 
 /// 슈퍼관리자 시스템 설정 화면
@@ -112,7 +114,28 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
           ),
           
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          
+
+          // [.67 NS-PENDING-LIST] 알림을 지워도 열린 보류에 닿는 입구(Notification != Task)
+          _buildSettingSection(
+            context,
+            title: '처리할 업무',
+            items: [
+              _SettingItem(
+                icon: Icons.pending_actions,
+                title: '노쇼 원장 보류',
+                subtitle: '자동 판정하지 못한 노쇼 기록 심사',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const NoShowPendingListScreen(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
           // 추가 설정 (향후 확장)
           _buildSettingSection(
             context,
@@ -143,7 +166,8 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
               _SettingItem(
                 icon: Icons.business_center_outlined,
                 title: '공고 등록 개수 제한',
-                subtitle: '사업장 당 동시 진행 공고 최대 개수',
+                // [POSTING-QUOTA-42] 한도는 관리자 계정의 모든 사업장 합계다(한도 화면 설명·서버 ADMIN:<ownerUid> 와 같은 말).
+                subtitle: '관리자 계정당 동시 진행 공고 최대 개수',
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -250,16 +274,19 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
               : theme.primaryColor,
         ),
       ),
+      // [.68] 320·1.3 에서 부제가 '노 / 쇼'처럼 음절 중간에서 끊겼다 — 낱말 단위로 줄바꿈한다.
       title: Text(
-        item.title,
+        TextLayout.keepWords(item.title),
         style: ResponsiveHelper.bodyStyle(context).copyWith(
           fontWeight: FontWeight.w600,
-          color: item.isDisabled ? AppColors.grey400 : null,
+          // [DU502] 비활성 제목 grey400(1.88) → textTertiary(5.25 · DU489 비활성 이름과 같다). '준비 중' 은 흐린 정도로만 말한다.
+          color: item.isDisabled ? AppColors.textTertiary : null,
         ),
       ),
       subtitle: Text(
-        item.subtitle,
-        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+        TextLayout.keepWords(item.subtitle),
+        // [DU502] 부제 grey500(2.68) → 보조 글자색(5.92).
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
       ),
       trailing: Icon(
         Icons.chevron_right,

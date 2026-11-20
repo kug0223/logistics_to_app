@@ -28,8 +28,10 @@ import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/renewal_decision_state.dart';
 import '../../../utils/renewal_effective_date.dart';
+import '../../../utils/resign_auto_approval.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/loading_state_mixin.dart';
+import '../../../utils/text_layout.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/dialogs/contract_template_selector_dialog.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
@@ -39,6 +41,8 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/pickers/date_picker_bottom_sheet.dart';
 import '../../../widgets/app_select_field.dart';
 import '../../../widgets/common/app_search_bar.dart';
+import '../../../widgets/common/app_empty_state.dart';
+import '../../../widgets/common/adaptive_action_row.dart';
 import '../../contract/contract_sign_screen.dart';
 
 /// 근무자의 특정 날짜 근무 상태
@@ -92,6 +96,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   // 고정근무자 목록 (사용자 정보 포함)
   List<_FixedWorkerItem> _fixedWorkers = [];
+
+  /// [DU537] 가장 최근 조회가 실패했는가 — 읽지 못한 것을 빈 목록으로 말하지 않는다.
+  bool _loadFailed = false;
+
+  /// [DU539] 조회 세대 — 응답은 요청한 사업장과 이 번호가 지금도 최신일 때만 화면에 반영한다
+  ///   (늦게 온 옛 성공 · 옛 실패 · 옛 로딩 해제가 새 화면을 덮지 않게).
+  int _loadGen = 0;
 
   /// 원본 지원서 id → 그것을 연장해 만들어진 신규 지원서.
   ///
@@ -244,8 +255,30 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   }
 
   /// 고정근무자 로드
-  Future<void> _loadFixedWorkers() => runWithLoading(() async {
+  /// [DU539] 로딩 표시 · 로그 · 토스트 · 로딩 해제를 이 창에서 직접 한다(순서는 이전 runWithLoading 과 같다 · 공용 mixin 은 그대로).
+  ///   요청한 사업장과 조회 세대가 지금도 최신일 때만 실패 표시 · 토스트 · 로딩 해제를 한다 —
+  ///   사업장을 바꾼 뒤 늦게 끝난 옛 조회는 로그만 남기고 화면을 건드리지 않는다.
+  Future<void> _loadFixedWorkers() async {
+    final gen = ++_loadGen;
     final businessId = _selectedBusinessId;
+    bool isCurrent() =>
+        mounted && gen == _loadGen && businessId == _selectedBusinessId;
+    setLoading(true);
+    try {
+      await _readFixedWorkers(businessId, isCurrent);
+    } catch (e) {
+      debugPrint('❌ 고정근무자 로드: $e');
+      if (isCurrent()) {
+        _loadFailed = true;
+        ToastHelper.showError('고정근무자 목록을 불러오지 못했어요');
+      }
+    } finally {
+      if (isCurrent()) setLoading(false);
+    }
+  }
+
+  Future<void> _readFixedWorkers(
+      String? businessId, bool Function() isCurrent) async {
     // 사업장이 정해지는 길목 — 구독 대상을 여기서 맞춘다.
     _watchPermsFor(businessId);
     if (businessId == null) return;
@@ -357,25 +390,35 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           .compareTo(a.application.confirmedAt ?? a.application.appliedAt));
 
       // 날짜 모드: 해당 날짜의 대기 요청 로드 (appsFuture와 병렬로 이미 실행 중)
+      // [DU539] 먼저 지역 값으로 받는다 — 화면 자료에는 아래 귀속 확인 뒤에만 넣는다.
+      List<ScheduleChangeRequestModel>? pendingForDate;
+      var scheduleReadFailed = false;
+      if (scheduleRequestsFuture != null) {
+        try {
+          pendingForDate = await scheduleRequestsFuture;
+        } catch (e) {
+          // 불러오기 실패는 `요청 없음`이 아니다.
+          debugPrint('⚠️ [고정근무] 일정변경 요청 조회 실패: $e');
+          scheduleReadFailed = true;
+        }
+      }
+
+      // [DU539] 응답 귀속 — 닫혔거나, 사업장을 바꿨거나, 더 새 조회가 시작됐으면 이 응답은 버린다.
+      if (!isCurrent()) return;
       if (scheduleRequestsFuture == null) {
         // 권한 없음(또는 날짜 모드 아님) — 호출하지 않았다.
         _pendingRequestsForDate = const [];
         _scheduleReqState = _ScheduleReqState.notPermitted;
+      } else if (scheduleReadFailed || pendingForDate == null) {
+        _pendingRequestsForDate = const [];
+        _scheduleReqState = _ScheduleReqState.error;
       } else {
-        try {
-          _pendingRequestsForDate = await scheduleRequestsFuture;
-          _scheduleReqState = _ScheduleReqState.loaded;
-        } catch (e) {
-          // 불러오기 실패는 `요청 없음`이 아니다.
-          debugPrint('⚠️ [고정근무] 일정변경 요청 조회 실패: $e');
-          _pendingRequestsForDate = const [];
-          _scheduleReqState = _ScheduleReqState.error;
-        }
+        _pendingRequestsForDate = pendingForDate;
+        _scheduleReqState = _ScheduleReqState.loaded;
       }
-
-      if (!mounted) return;
       setState(() {
         _fixedWorkers = results;
+        _loadFailed = false;
         // [LATE-RENEW-EFFECTIVE-DATE-POLICY]
         //   "다음 계약" 배너가 기간을 **다시 계산**하고 있었다. 만료 뒤
         //   연장은 시작일이 오늘이라 그 계산이 틀린 날짜를 말한다.
@@ -416,7 +459,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           }
         }
       }
-  }, errorTag: '고정근무자 로드', errorMessage: '고정근무자 목록을 불러올 수 없습니다');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -462,7 +505,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           child: isLoading
               ? const LoadingWidget(message: '고정근무자 로딩 중...')
               : _fixedWorkers.isEmpty
-                  ? _buildEmptyState(context)
+                  // [DU537] 읽지 못한 것과 없는 것은 다르다 — 빈 상태 문구는 조회에 성공한 0명에만 쓴다.
+                  ? (_loadFailed ? _buildLoadErrorState(context) : _buildEmptyState(context))
                   : _buildWorkerList(context),
         ),
 
@@ -495,7 +539,17 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       prefixIcon: Icons.business,
       onChanged: (value) {
         if (value != null && value != _selectedBusinessId) {
-          setState(() => _selectedBusinessId = value);
+          setState(() {
+            _selectedBusinessId = value;
+            // [DU539] 사업장에 묶인 표시자료는 선택을 바꾸는 순간 비운다 — 새 사업장 조회가 끝나기 전이나
+            //   실패한 뒤에 이전 사업장의 명단 · 통계 · 행동이 남지 않게(이 창의 표시자료만 · 원자료는 그대로).
+            _fixedWorkers = [];
+            _loadFailed = false;
+            _renewedApps = const {};
+            _waitingProposalOldAppIds = const {};
+            _pendingRequestsForDate = const [];
+            _scheduleReqState = _ScheduleReqState.notPermitted;
+          });
           SharedPreferences.getInstance().then(
             (prefs) => prefs.setString('alfit_last_business_id', value),
           );
@@ -933,32 +987,31 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         color: AppColors.grey50,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
-      child: Row(
+      // [DU538] 칩이 한 줄에 다 안 들어가면 칩 단위로 다음 줄에 둔다(이전 Row 는 오른쪽으로 넘쳤다). 줄 폭은 이전처럼 창 가득 · 칩 간격 같음.
+      width: double.infinity,
+      child: Wrap(
+        spacing: ResponsiveHelper.spacing(context, 8),
+        runSpacing: ResponsiveHelper.spacing(context, 8),
         children: [
-          _buildStatChip(context, '전체', _fixedWorkers.length, AppColors.longTermDark),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          _buildStatChip(context, '전체', _fixedWorkers.length, AppColors.textPrimary),
           // [R7-P1-2 DEVICE.1C] `정상`은 지금 일하고 있는 사람 수다.
           //   `근무중`이 그 뜻을 더 바로 말한다 — 같은 화면의 `계약 종료`와
           //   같은 축(현재 관계 상태)으로 읽힌다.
-          _buildStatChip(context, '근무중', activeCount, AppColors.success),
+          _buildStatChip(context, '근무중', activeCount, AppColors.textPrimary),
           // 끝난 관계도 세어 둔다. 현재 목록에서 빠지더라도 이 공고에
           //   누가 있었는지 찾을 수 있어야 한다.
           if (endedCount > 0) ...[
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            _buildStatChip(context, '계약 종료', endedCount, AppColors.grey500),
+            _buildStatChip(context, '계약 종료', endedCount, AppColors.textPrimary),
           ],
           if (expiredDecisionCount > 0) ...[
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             _buildStatChip(
-                context, '계약 확인', expiredDecisionCount, AppColors.error),
+                context, '계약 확인', expiredDecisionCount, AppColors.errorDark),
           ],
           if (pendingResignCount > 0) ...[
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            _buildStatChip(context, '퇴사대기', pendingResignCount, AppColors.warning),
+            _buildStatChip(context, '퇴사대기', pendingResignCount, AppColors.warningDark),
           ],
           if (terminationPendingCount > 0) ...[
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            _buildStatChip(context, '해지대기', terminationPendingCount, AppColors.error),
+            _buildStatChip(context, '해지대기', terminationPendingCount, AppColors.errorDark),
           ],
         ],
       ),
@@ -972,16 +1025,16 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         vertical: ResponsiveHelper.spacing(context, 6),
       ),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
+        border: Border.all(color: AppColors.border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             label,
-            style: ResponsiveHelper.smallStyle(context, color: color),
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           Container(
@@ -990,12 +1043,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               vertical: ResponsiveHelper.spacing(context, 2),
             ),
             decoration: BoxDecoration(
-              color: color,
+              color: AppColors.grey100,
               borderRadius: BorderRadius.circular(10),
             ),
             child: Text(
               '$count',
-              style: ResponsiveHelper.tinyStyle(context, color: Colors.white).copyWith(
+              style: ResponsiveHelper.tinyStyle(context, color: color).copyWith(
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -1029,6 +1082,32 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           ),
         ],
       ),
+    );
+  }
+
+  /// [DU537] 조회 실패 — 빈 상태 문구로 쓰지 않는다. 고정근무자가 있는지 확인하지 못했다(O002 · O003 조회 실패와 같은 아이콘 · 색 · 버튼).
+  ///   큰 글자(배율 1.3 초과)에서는 안내가 본문 칸보다 길다 — 안내는 위 칸에서 스크롤하고 다시 시도 버튼은 그 아래에 고정한다(O002 DU517 과 같은 배치).
+  Widget _buildLoadErrorState(BuildContext context) {
+    final big = MediaQuery.textScalerOf(context).scale(1) > 1.3;
+    final retry = TextButton(
+      onPressed: _loadFixedWorkers,
+      child: const Text('다시 시도'),
+    );
+    final info = AppEmptyState(
+      icon: Icons.error_outline,
+      iconColor: AppColors.error,
+      title: '고정근무자 목록을 불러오지 못했어요',
+      action: big ? null : retry,
+    );
+    if (!big) return info;
+    return Column(
+      children: [
+        Expanded(child: info),
+        Padding(
+          padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+          child: retry,
+        ),
+      ],
     );
   }
 
@@ -1272,17 +1351,18 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                             final diff = end.difference(today).inDays;
                             if (diff >= 0) daysLeft = diff;
                           }
-                          return Row(
+                          // [DU538] 기간과 D-day 칩이 한 줄에 안 들어가면 칩을 다음 줄에 둔다(이전 Row 는 넘쳤다).
+                          return Wrap(
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: ResponsiveHelper.spacing(context, 5),
+                            runSpacing: 2,
                             children: [
                               Text(
                                 '${FormatHelper.formatDateShort(effectiveStartDate)} ~ '
                                 '${effectiveEndDate != null ? FormatHelper.formatDateShort(effectiveEndDate) : '미정'}',
                                 style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
                               ),
-                              if (daysLeft != null) ...[
-                                SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-                                _buildDDayChip(context, daysLeft),
-                              ],
+                              if (daysLeft != null) _buildDDayChip(context, daysLeft),
                             ],
                           );
                         }),
@@ -1334,14 +1414,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       bgColor = AppColors.warningBg;
       textColor = AppColors.warningDark;
       icon = Icons.exit_to_app;
-      final requestedAt = app.resignRequestedAt;
-      final daysLeft = () {
-        if (requestedAt == null) return 0;
-        final t = FormatHelper.toKstDate(DateTime.now());
-        final r = FormatHelper.toKstDate(requestedAt);
-        return (3 - t.difference(r).inDays).clamp(0, 3);
-      }();
-      statusText = '퇴사 요청중 (${daysLeft > 0 ? '$daysLeft일 후 자동 승인' : '오늘 자동 승인'})';
+      // [D3-RETRO-EXCLUDE] 소급 요청은 자동 승인되지 않는다 — 일정은 서버와 같은 식으로 정한다.
+      final plan = ResignAutoApproval.of(
+        requestedAt: app.resignRequestedAt,
+        requestDate: app.resignRequestDate,
+        now: DateTime.now(),
+      );
+      statusText = '퇴사 요청중 (${plan.adminBannerText})';
     }
 
     return Container(
@@ -1373,6 +1452,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 계약 만료 임박 경고 배너
   Widget _buildExpiringWarningBanner(BuildContext context, int count) {
+    final label = '계약 만료 임박 $count명 (D-15 이내)';
     return Container(
       margin: EdgeInsets.fromLTRB(
         ResponsiveHelper.spacing(context, 16),
@@ -1389,8 +1469,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
       ),
-      child: Row(
-        children: [
+      // [DU538] 좁거나 글자가 크면 안내를 위에, 일괄 연장을 그 아래 오른쪽에 둔다(O002 · O003 띠와 같은 공용 배치). 넉넉하면 이전 한 줄 그대로.
+      child: AdaptiveActionRow(
+        minRowWidth: 260,
+        gap: ResponsiveHelper.spacing(context, 8),
+        leading: Row(children: [
           Icon(
             Icons.event_busy,
             color: AppColors.warningDark,
@@ -1399,16 +1482,18 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Expanded(
             child: Text(
-              '계약 만료 임박 $count명 (D-15 이내)',
+              TextLayout.keepWords(label),
+              semanticsLabel: label,
               style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)
                   .copyWith(fontWeight: FontWeight.w600),
             ),
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        ]),
+        actions: [
           TextButton(
             onPressed: isLoading ? null : _batchExtendExpiringWorkers,
             style: TextButton.styleFrom(
-              foregroundColor: AppColors.warningDark,
+              foregroundColor: AppColors.brand,
               padding: EdgeInsets.symmetric(
                 horizontal: ResponsiveHelper.spacing(context, 12),
                 vertical: ResponsiveHelper.spacing(context, 6),
@@ -1418,7 +1503,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             ),
             child: Text(
               '일괄 연장',
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.brand)
                   .copyWith(fontWeight: FontWeight.w700),
             ),
           ),
@@ -1492,7 +1577,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           '각 근무자에게 연장 알림이 발송됩니다.\n'
           '(계약서는 각 근무자 카드에서 개별 작성 가능)',
       confirmText: '일괄 연장',
-      confirmColor: AppColors.success,
+      // [DU309 §9.1] 연장 = 일반 진행 → 버튼 brand(기본값). 의미색은 머리 아이콘(success)에만.
       icon: Icons.autorenew,
       iconColor: AppColors.success,
     );
@@ -1539,21 +1624,21 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         vertical: ResponsiveHelper.spacing(context, 6),
       ),
       decoration: BoxDecoration(
-        color: AppColors.infoBg,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
+        border: Border.all(color: AppColors.border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.hourglass_empty,
               size: ResponsiveHelper.iconSize(context, 13),
-              color: AppColors.info),
+              color: AppColors.grey600),
           SizedBox(width: ResponsiveHelper.spacing(context, 5)),
           Flexible(
             child: Text('연장 응답 대기 — 근무자가 제안을 확인하고 있습니다',
                 style: ResponsiveHelper.tinyStyle(context,
-                    color: AppColors.info)),
+                    color: AppColors.textPrimary)),
           ),
         ],
       ),
@@ -1569,6 +1654,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     final todayOnly = FormatHelper.toKstDate(today);
     final endOnly = FormatHelper.toKstDate(endDate);
     final daysLeft = endOnly.difference(todayOnly).inDays;
+    final title = daysLeft < 0
+        ? '계약 만료 · 결정 필요 — ${-daysLeft}일 지남 (${FormatHelper.formatDateShort(endDate)})'
+        : '계약 만료 D-$daysLeft (${FormatHelper.formatDateShort(endDate)})';
 
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
@@ -1588,12 +1676,14 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             children: [
               Icon(Icons.event_note, size: ResponsiveHelper.iconSize(context, 14), color: AppColors.warningDark),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                daysLeft < 0
-                    ? '계약 만료 · 결정 필요 — ${-daysLeft}일 지남 (${FormatHelper.formatDateShort(endDate)})'
-                    : '계약 만료 D-$daysLeft (${FormatHelper.formatDateShort(endDate)})',
-                style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)
-                    .copyWith(fontWeight: FontWeight.w600),
+              // [DU538] 큰 글자에서 한 줄에 다 안 들어가면 낱말 단위로 줄을 바꾼다(이전에는 오른쪽으로 넘쳤다).
+              Expanded(
+                child: Text(
+                  TextLayout.keepWords(title),
+                  semanticsLabel: title,
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)
+                      .copyWith(fontWeight: FontWeight.w600),
+                ),
               ),
             ],
           ),
@@ -1605,8 +1695,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   context,
                   label: '연장',
                   icon: Icons.autorenew,
-                  bgColor: AppColors.successBg,
-                  textColor: AppColors.successDark,
+                  bgColor: AppColors.brand,
+                  textColor: Colors.white,
                   onTap: () => _showRenewalDecisionDialog(app, user, extend: true),
                 ),
               ),
@@ -1616,8 +1706,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   context,
                   label: '종료',
                   icon: Icons.stop_circle_outlined,
-                  bgColor: AppColors.errorBg,
-                  textColor: AppColors.error,
+                  bgColor: Colors.transparent,
+                  textColor: AppColors.textSecondary,
                   onTap: () => _showRenewalDecisionDialog(app, user, extend: false),
                 ),
               ),
@@ -1631,8 +1721,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 계약 갱신 결정 완료 배너 (연장됨 / 종료 예정)
   Widget _buildRenewalDecisionBanner(BuildContext context, ApplicationModel app) {
     final isExtend = app.renewalDecision == AppStatus.renewalExtend;
-    final color = isExtend ? AppColors.success : AppColors.error;
-    final bgColor = isExtend ? AppColors.successBg : AppColors.errorBg;
+    final color = isExtend ? AppColors.textPrimary : AppColors.textSecondary;
+    final bgColor = isExtend ? Colors.white : AppColors.grey100;
     final icon = isExtend ? Icons.autorenew : Icons.stop_circle_outlined;
 
     // [LATE-RENEW-EFFECTIVE-DATE-POLICY]
@@ -1669,12 +1759,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       decoration: BoxDecoration(
         color: bgColor,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
+        border: Border.all(color: AppColors.border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: ResponsiveHelper.iconSize(context, 13), color: color),
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 13), color: AppColors.grey600),
           SizedBox(width: ResponsiveHelper.spacing(context, 5)),
           Text(
             label,
@@ -1698,26 +1788,33 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         vertical: ResponsiveHelper.spacing(context, 7),
       ),
       decoration: BoxDecoration(
-        color: AppColors.infoBg,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.info.withValues(alpha: 0.35)),
+        border: Border.all(color: AppColors.border),
       ),
       child: Row(
         children: [
-          Icon(Icons.draw_outlined, size: ResponsiveHelper.iconSize(context, 14), color: AppColors.infoDark),
+          Icon(Icons.draw_outlined, size: ResponsiveHelper.iconSize(context, 14), color: AppColors.grey600),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '계약 처리 필요',
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark)
-                      .copyWith(fontWeight: FontWeight.w600),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: AppColors.warningBg,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '계약 처리 필요',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)
+                        .copyWith(fontWeight: FontWeight.w600),
+                  ),
                 ),
                 Text(
                   '계약서를 작성하거나 계약 진행 상태를 확인해 주세요.',
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.textPrimary),
                 ),
               ],
             ),
@@ -1730,14 +1827,16 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 남은 계약일수 D-day 배지
   Widget _buildDDayChip(BuildContext context, int daysLeft) {
     final Color color;
+    final Color bg;
+    final Color line;
     if (daysLeft <= 7) {
-      color = AppColors.error;
+      color = AppColors.errorDark; bg = AppColors.errorBg; line = AppColors.errorDark.withValues(alpha: 0.5);
     } else if (daysLeft <= 15) {
-      color = AppColors.warning;
+      color = AppColors.warningDark; bg = AppColors.warningBg; line = AppColors.warningDark.withValues(alpha: 0.5);
     } else if (daysLeft <= 30) {
-      color = AppColors.info;
+      color = AppColors.textSecondary; bg = AppColors.grey100; line = AppColors.border;
     } else {
-      color = AppColors.grey400;
+      color = AppColors.textSecondary; bg = AppColors.grey100; line = AppColors.border;
     }
     final label = daysLeft == 0 ? 'D-Day' : 'D-$daysLeft';
 
@@ -1747,9 +1846,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         vertical: 1,
       ),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+        color: bg,
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: color.withValues(alpha: 0.5)),
+        border: Border.all(color: line),
       ),
       child: Text(
         label,
@@ -1844,7 +1943,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         title: '계약 연장 제안',
         message: confirmMessage,
         confirmText: '연장 제안 보내기',
-        confirmColor: AppColors.success,
+        // [DU309 §9.1] 제안 보내기 = 일반 진행 → 버튼 brand(기본값). 의미색은 머리 아이콘에만.
         icon: Icons.autorenew,
         iconColor: AppColors.success,
       );
@@ -2811,7 +2910,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       title: '해지 요청 취소',
       message: '계약해지 요청을 취소하시겠습니까?',
       confirmText: '취소하기',
-      confirmColor: AppColors.warning,
+      // [DU309 §9.1] 해지 요청을 거두는 것(고용 유지) = 손실 아님 → 버튼·아이콘 brand(기본값). 이전 warning.
     );
 
     if (confirmed != true || !mounted) return;

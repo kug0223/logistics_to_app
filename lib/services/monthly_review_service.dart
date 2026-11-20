@@ -177,8 +177,9 @@ class MonthlyReviewService {
     required int reviewYear,
     required int reviewMonth,
     required int workDaysInMonth,
-    required int normalAttendanceDays,
-    required int lateDays,
+    // [REVIEW-WORKER-SUMMARY] null = 확인할 수 없음 — 저장값도 null(0 으로 추측하지 않는다).
+    required int? normalAttendanceDays,
+    required int? lateDays,
     required int rating,
     required bool wouldRehire,
     required List<String> positiveTags,
@@ -217,8 +218,8 @@ class MonthlyReviewService {
         reviewYear: reviewYear,
         reviewMonth: reviewMonth,
         workDaysInMonth: workDaysInMonth,
-        normalAttendanceDays: normalAttendanceDays,
-        lateDays: lateDays,
+        normalAttendanceDays: normalAttendanceDays ?? 0,
+        lateDays: lateDays ?? 0,
         rating: clampedRating,
         wouldRehire: wouldRehire,
         positiveTags: positiveTags,
@@ -279,6 +280,9 @@ class MonthlyReviewService {
         // [TS-FIX 2026-07-16] createdAt 서버타임스탬프 강제 — 법적 감사 기록 시각 위조 차단
         tx.set(docRef, {
           ...review.toMap(),
+          // 모르는 근태 수치는 0 이 아니라 null 로 남긴다(모델 기본값 0 을 덮는다).
+          if (normalAttendanceDays == null) 'normalAttendanceDays': null,
+          if (lateDays == null) 'lateDays': null,
           'createdAt': FieldValue.serverTimestamp(),
         });
         if (requestId != null) {
@@ -848,19 +852,33 @@ class MonthlyReviewService {
   // 설정 조회
   // ═══════════════════════════════════════════════════════════
 
+  /// [.63] 고른 태그 중 최신 설정 목록에 없는 것(작성 창을 연 사이 SA 가 지운 것).
+  ///   분류(좋았던 점/아쉬운 점)와 방향(관리자→근로자 / 근로자→사업장)별 목록으로만 본다 —
+  ///   다른 분류 목록에 같은 글자가 있어도 통과시키지 않는다.
+  static List<String> unavailableTags(ReviewTagsModel latest,
+      {required List<String> positive,
+      required List<String> improvement,
+      required bool business}) {
+    final pos = business ? latest.businessPositiveTags : latest.positiveTags;
+    final imp = business ? latest.businessImprovementTags : latest.improvementTags;
+    return [
+      ...positive.where((t) => !pos.contains(t)),
+      ...improvement.where((t) => !imp.contains(t)),
+    ];
+  }
+
+  /// 문서가 없으면 기본 목록, **읽기 실패는 던진다**.
+  ///
+  /// [.62] 실패도 기본 목록으로 돌려줬다 — SA 가 지운 태그가 작성 창에 다시 나타나
+  ///   그대로 저장될 수 있었다(리뷰는 태그를 글자로 저장한다). 호출자가 실패를 안내한다.
   Future<ReviewTagsModel> getReviewTags() async {
-    try {
-      final doc =
-          await _db.collection('settings').doc('review_tags').get();
-      // 문서 미존재 시 클라이언트에서 set() 금지 — settings 쓰기는 isSuperAdmin() 전용.
-      // 슈퍼어드민이 아닌 사용자가 set()을 시도하면 PERMISSION_DENIED 발생.
-      // 문서가 없으면 기본값을 반환하고, 초기 생성은 슈퍼어드민 설정 화면에서 수행.
-      if (!doc.exists) return ReviewTagsModel.defaults();
-      return ReviewTagsModel.fromFirestore(doc);
-    } catch (e) {
-      debugPrint('❌ 리뷰 태그 조회 실패: $e');
-      return ReviewTagsModel.defaults();
-    }
+    final doc =
+        await _db.collection('settings').doc('review_tags').get();
+    // 문서 미존재 시 클라이언트에서 set() 금지 — settings 쓰기는 isSuperAdmin() 전용.
+    // 슈퍼어드민이 아닌 사용자가 set()을 시도하면 PERMISSION_DENIED 발생.
+    // 문서가 없으면 기본값을 반환하고, 초기 생성은 슈퍼어드민 설정 화면에서 수행.
+    if (!doc.exists) return ReviewTagsModel.defaults();
+    return ReviewTagsModel.fromFirestore(doc);
   }
 
   Future<TrustSettingsModel> getTrustSettings() async {

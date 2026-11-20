@@ -18,7 +18,10 @@ import '../utils/toast_helper.dart';
 //   서비스 밖에 둔다.
 import '../utils/period_revision_notice.dart';
 import '../utils/global_loading_controller.dart';
+import '../utils/posting_partial_revoke.dart';
+import 'posting_quota_summary.dart';
 import '../models/core/business_work_type_model.dart';
+import 'work_type_guide_resolver.dart';
 import '../models/core/attendance_model.dart';
 import '../models/core/schedule_change_request_model.dart';
 import '../models/core/review_model.dart';
@@ -32,6 +35,7 @@ import '../utils/week_helper.dart';
 import '../utils/wage_calculator.dart';
 import '../utils/network_checker.dart';
 import '../utils/notification_retention.dart';
+import '../models/core/legal_readiness.dart' show LegalReadinessSignal;
 import '../widgets/dialogs/apply/document_access_consent.dart';
 
 // ═══════════════════════════════════════════════════════════
@@ -101,6 +105,14 @@ class BatchResult {
 //   E01/E02  캐시 stampede → Dart 단일 스레드로 실질 race 없음, 중복 조회는 안전
 //   A16~A25  optimistic update → 낙관적 잠금 미사용, 실패 시 UI 리프레시로 복구
 // ═══════════════════════════════════════════════════════════════════════════
+
+/// [DU1 후속21 §1.1] CF 응답 재수화의 공유 진입점 — 같은 구현([_cfHydrate])을 이 라이브러리 밖(격리 급여 일자 loader)에서 쓴다.
+///   새 decoder 가 아니다. 기존 라이브러리 안 호출부는 그대로 [_cfHydrate] 를 쓴다.
+Map<String, dynamic> cfHydrateResponse(Map<String, dynamic> m) => _cfHydrate(m);
+
+/// [DU1 candB] 시험 전용 — production 재수화([_cfHydrate])를 그대로 부른다(복제하지 않기 위해). 앱 코드는 쓰지 않는다.
+@visibleForTesting
+Map<String, dynamic> cfHydrateForTest(Map<String, dynamic> m) => cfHydrateResponse(m);
 
 /// CF onCall 응답의 {_seconds, _nanoseconds} 맵을 Firestore Timestamp로 재수화
 /// serializeFirestoreData(CF index.ts)가 직렬화한 형식을 되돌린다.
@@ -231,10 +243,24 @@ class FirestoreService {
   final Map<String, DateTime> _myApplicationsCacheTimestamps = {};
   static const Duration _myApplicationsCacheTTL = Duration(minutes: 1);
 
+  // [MY-APPS-INFLIGHT] 같은 uid 로 **지금 날아가는** 조회 하나를 공유한다(완료되면 지운다).
+  //   첫 진입에 홈·일자리·일정 탭이 같은 요청을 동시에 세 번 보냈다(캐시 미스끼리).
+  //   완료된 결과를 더 오래 두지 않는다 — 보관 규칙은 위 TTL 캐시 그대로다.
+  //   무효화하면 세대가 올라가, 그 전에 출발한 응답은 공유·캐시 저장 모두에서 빠진다.
+  final Map<String, Future<List<ApplicationModel>>> _myApplicationsInFlight = {};
+  final Map<String, int> _myApplicationsGeneration = {};
+
   // 월별 출근 기록 캐시 ("${uid}_${year}_${month}" → List<AttendanceModel>)
   final Map<String, List<AttendanceModel>> _myAttendanceCache = {};
   final Map<String, DateTime> _myAttendanceCacheTimestamps = {};
   static const Duration _myAttendanceCacheTTL = Duration(minutes: 2);
+
+  // [MY-ATT-INFLIGHT] 같은 "${uid}_${year}_${month}" 로 **지금 날아가는** 조회 하나를 공유한다.
+  //   첫 진입에 홈과 일정 탭(IndexedStack 으로 함께 만들어진다)이 같은 달을 동시에 두 번 보냈다
+  //   (위 TTL 캐시는 완료된 뒤에만 채워진다). 실패는 보관하지 않는다 — 끝나면 지우므로 재시도는 새 요청이다.
+  //   무효화(출퇴근 성공)하면 세대가 올라가, 그 전에 출발한 응답은 공유·캐시 저장 모두에서 빠진다.
+  final Map<String, Future<List<AttendanceModel>>> _myAttendanceInFlight = {};
+  final Map<String, int> _myAttendanceGeneration = {};
 
   // 확정 일정 날짜별 캐시 ("${uid}_${dateStr}" → List<ApplicationModel>)
   final Map<String, List<ApplicationModel>> _confirmedSchedulesCache = {};
@@ -299,12 +325,18 @@ class FirestoreService {
   void invalidateMyAttendanceCache(String uid) {
     _myAttendanceCache.removeWhere((k, _) => k.startsWith('${uid}_'));
     _myAttendanceCacheTimestamps.removeWhere((k, _) => k.startsWith('${uid}_'));
+    // [MY-ATT-INFLIGHT] 변경 전에 출발한 조회에 새 호출이 합류하지 않게 끊는다.
+    _myAttendanceInFlight.removeWhere((k, _) => k.startsWith('${uid}_'));
+    _myAttendanceGeneration[uid] = (_myAttendanceGeneration[uid] ?? 0) + 1;
   }
 
   /// 내 지원 목록 캐시 무효화 (지원·취소·확정 후 호출)
   void invalidateMyApplicationsCache(String uid) {
     _myApplicationsCache.remove(uid);
     _myApplicationsCacheTimestamps.remove(uid);
+    // [MY-APPS-INFLIGHT] 변경 전에 출발한 조회에 새 호출이 합류하지 않게 끊는다.
+    _myApplicationsInFlight.remove(uid);
+    _myApplicationsGeneration[uid] = (_myApplicationsGeneration[uid] ?? 0) + 1;
     // 확정 일정 캐시도 같이 무효화 — 지원 상태 변경 시 날짜별 캐시 오염 방지
     _confirmedSchedulesCache.removeWhere((k, _) => k.startsWith('${uid}_'));
     _confirmedSchedulesCacheTs.removeWhere((k, _) => k.startsWith('${uid}_'));
@@ -333,6 +365,9 @@ class FirestoreService {
     List<String> uids, {
     required String businessId,
     String? purpose,
+    // [PAYROLL-V3-NAME · O2] 조회 호출 자체가 실패한 uid 를 담아 돌려받을 곳(선택).
+    //   응답에 없는 사람(관계 없음·이름 없음)과 네트워크 실패를 호출부가 구분할 수 있게 한다.
+    Set<String>? failedUids,
   }) async {
     if (uids.isEmpty) return {};
 
@@ -376,6 +411,7 @@ class FirestoreService {
           });
         } catch (e) {
           debugPrint('❌ getUsersBatch CF 실패 (chunk $idx): $e');
+          failedUids?.addAll(chunk);
           return null;
         }
       }),
@@ -443,6 +479,12 @@ class FirestoreService {
   /// 자동 만료 처리가 남의 최신 수정을 덮어쓰는 것이 더 나쁘다.
   /// 최신 revision을 다시 읽어 강제로 덮어쓰지 않는다. canonical 만료 처리는
   /// 서버 스케줄러이고, 이 경로는 어디까지나 화면 상태를 따라가는 보조 쓰기다.
+  ///
+  /// [INVITE-CLOSURE-WRITER] 서버는 이 `{status: CLOSED}` 를 **그대로 쓰지 않는다**.
+  /// 기기 시계 판단은 요청일 뿐이고, 서버가 슬롯이 실제로 모두 닫혔는지 보고
+  /// 스케줄러와 같은 모양(closedReason `ALL_SLOTS_EXPIRED` + closedAt)으로만
+  /// 닫는다. 아직 열린 슬롯이 있으면 아무것도 쓰지 않는다(다음 스케줄러가 닫는다).
+  /// 사유 없는 CLOSED 는 초대 수명 판정이 영구 종료로 읽기 때문이다.
   Future<void> markTOAsExpired(
     String toId, {
     required int expectedEditRevision,
@@ -615,41 +657,8 @@ class FirestoreService {
       //   상태 전이가 일어나지 않기 때문이다(취소된 것이 아니다).
       //   판정식은 `ApplicationModel.occupiesSeatOn` 하나이고, 그 안의
       //   effectiveEnd 는 `srvLongTermEligibleOnDay` 와 같은 식이다.
-      final seatDay = DateTime.now();
-      const activeStatuses = {'PENDING', 'CONFIRMED', 'CONTRACT_PENDING'};
-      bool countsAsSeat(ApplicationModel a) =>
-          activeStatuses.contains(a.status) &&
-          !a.isStaffingReleased &&
-          a.occupiesSeatOn(seatDay);
-      final apps = slotId != null
-          ? allApps.where((a) => a.slotId == slotId && countsAsSeat(a)).toList()
-          : allApps.where(countsAsSeat).toList();
-      for (final app in apps) {
-        // [R7-PRE0] canonical key = wdId. WorkDetailData.canonicalId 와 같은 순서다.
-        //
-        //   예전에는 workDetailId 를 먼저 봤다. 그런데 소비부(카드)는
-        //   work.id(= workType_start_end 계산값)로 찾는다. 지원서의
-        //   workDetailId 는 문서형 ID 라 둘이 만나지 못했고, 확정자가 있는
-        //   근무가 업무 상세에서 `확정 0`으로 보였다. 같은 근무를 두고
-        //   공고 카드는 `확정 1`, 업무 상세는 `확정 0`이라고 말했다.
-        //
-        //   legacy 폴백(workDetailId → composite)은 그대로 둔다.
-        final canonical = app.wdId;
-        final legacyId = app.workDetailId;
-        final key = (canonical != null && canonical.isNotEmpty)
-            ? canonical
-            : (legacyId != null &&
-                    legacyId.isNotEmpty &&
-                    legacyId != app.selectedWorkType)
-                ? legacyId
-                : '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
-        workStats[key] ??= {'confirmed': 0, 'pending': 0};
-        if (AppStatus.confirmedStatuses.contains(app.status)) {
-          workStats[key]!['confirmed'] = (workStats[key]!['confirmed'] ?? 0) + 1;
-        } else {
-          workStats[key]!['pending'] = (workStats[key]!['pending'] ?? 0) + 1;
-        }
-      }
+      tallyWorkDetailSeats(workStats, allApps,
+          slotId: slotId, seatDay: DateTime.now());
     } catch (e) {
       debugPrint('⚠️ loadTOWorkDetails stats 조회 실패: $e');
       // [POSTING-V2-01B] 실패를 0으로 확정하지 않는다 — 소비자에게 전달한다
@@ -660,6 +669,59 @@ class FirestoreService {
       'workStats': workStats,
       'statsFailed': statsFailed,
     };
+  }
+
+  /// [E2-INVITED-SEAT] 좌석 집계 본체 — [loadTOWorkDetails] 가 쓰고, 테스트가
+  ///   네트워크 없이 **같은 코드**를 실행한다(식을 복제하지 않는다).
+  ///
+  ///   [countedStatuses] 는 기본값([AppStatus.seatCountedStatuses])만 운영에서
+  ///   쓴다. 인자는 수정 전 집합으로 같은 반례를 재현하기 위해서만 열어 둔다.
+  static void tallyWorkDetailSeats(
+    Map<String, Map<String, int>> workStats,
+    Iterable<ApplicationModel> allApps, {
+    String? slotId,
+    required DateTime seatDay,
+    Set<String>? countedStatuses,
+  }) {
+    // [E2-INVITED-SEAT] INVITED 도 `대기` 로 센다 — 서버 카운터(접힌 카드)와
+    //   같은 한 벌. 예전 집합 {PENDING, CONFIRMED, CONTRACT_PENDING} 은 초대를
+    //   빠뜨려 원장 pendingCount 1 인 업무가 펼치면 `대기 0` 이었다.
+    //   확정 계열이 아닌 것은 아래에서 pending 으로 한 번만 더해진다.
+    final activeStatuses =
+        countedStatuses ?? AppStatus.seatCountedStatuses.toSet();
+    bool countsAsSeat(ApplicationModel a) =>
+        activeStatuses.contains(a.status) &&
+        !a.isStaffingReleased &&
+        a.occupiesSeatOn(seatDay);
+    final apps = slotId != null
+        ? allApps.where((a) => a.slotId == slotId && countsAsSeat(a)).toList()
+        : allApps.where(countsAsSeat).toList();
+    for (final app in apps) {
+      // [R7-PRE0] canonical key = wdId. WorkDetailData.canonicalId 와 같은 순서다.
+      //
+      //   예전에는 workDetailId 를 먼저 봤다. 그런데 소비부(카드)는
+      //   work.id(= workType_start_end 계산값)로 찾는다. 지원서의
+      //   workDetailId 는 문서형 ID 라 둘이 만나지 못했고, 확정자가 있는
+      //   근무가 업무 상세에서 `확정 0`으로 보였다. 같은 근무를 두고
+      //   공고 카드는 `확정 1`, 업무 상세는 `확정 0`이라고 말했다.
+      //
+      //   legacy 폴백(workDetailId → composite)은 그대로 둔다.
+      final canonical = app.wdId;
+      final legacyId = app.workDetailId;
+      final key = (canonical != null && canonical.isNotEmpty)
+          ? canonical
+          : (legacyId != null &&
+                  legacyId.isNotEmpty &&
+                  legacyId != app.selectedWorkType)
+              ? legacyId
+              : '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+      workStats[key] ??= {'confirmed': 0, 'pending': 0};
+      if (AppStatus.confirmedStatuses.contains(app.status)) {
+        workStats[key]!['confirmed'] = (workStats[key]!['confirmed'] ?? 0) + 1;
+      } else {
+        workStats[key]!['pending'] = (workStats[key]!['pending'] ?? 0) + 1;
+      }
+    }
   }
 
   /// TO 목록 조회 — callableGetAdminTOs CF를 경유하여 server-side 교차검증
@@ -1409,6 +1471,14 @@ class FirestoreService {
   ///
   /// [R1.2.1] [purpose]를 지정하면 서버가 그 목적의 capability를 재검증한다.
   /// 지원 검토(`'applicantReview'`)는 canManageTo를 요구한다.
+  /// [HISTORY-CLOSEOUT.30] 시험 전용 — 이력 조회의 두 원격 호출을 바꿔 끼운다(production 은 null).
+  @visibleForTesting
+  static Future<List<Map<String, dynamic>>> Function(Map<String, dynamic> payload)?
+      debugWorkHistoryAppsReader;
+  @visibleForTesting
+  static Future<Map<String, dynamic>> Function(Map<String, dynamic> payload)?
+      debugWorkHistoryReviewsReader;
+
   Future<Map<String, dynamic>> getBusinessWorkHistory({
     required String userId,
     required String businessId,
@@ -1420,21 +1490,30 @@ class FirestoreService {
       // [CF-FIX] uid + businessId 다중 equality 쿼리 → PERMISSION_DENIED 우회
       // callableGetApplicationsByBiz (Admin SDK)로 교체
       // [PERF] applications + reviews 두 CF 호출 병렬화
-      final reviewCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetMonthlyReviewsForUser',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final appsFuture = fetchApplicationsByBizPaged({
+      final appsPayload = <String, dynamic>{
         'businessId': businessId,
         'uid': userId,
         if (purpose != null) 'purpose': purpose,
-      });
-      final reviewFuture = reviewCallable.call<Map<String, dynamic>>({
+      };
+      final reviewsPayload = <String, dynamic>{
         'targetUserId': userId,
         'businessId': businessId,
         'reviewType': 'ADMIN_TO_USER',
         'publishedOnly': true,
         'limit': 5,
-      });
+      };
+      final appsFuture = (debugWorkHistoryAppsReader ?? fetchApplicationsByBizPaged)(appsPayload);
+      final reviewFuture = debugWorkHistoryReviewsReader != null
+          ? debugWorkHistoryReviewsReader!(reviewsPayload)
+          : FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableGetMonthlyReviewsForUser',
+                  options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
+              .call<Map<String, dynamic>>(reviewsPayload)
+              .then((r) => r.data);
+      // [ADMIN-DOC-REVIEW-UX] appsFuture 가 먼저 실패하면 아래 await 에 닿지
+      //   않아 reviewFuture 의 오류가 **처리되지 않은 비동기 오류**로 샜다.
+      //   ignore() 는 핸들러만 붙인다 — 이어지는 await 은 여전히 오류를 받는다.
+      reviewFuture.ignore();
       final rawApps = (await appsFuture).whereType<Map>().toList();
       final reviewResult = await reviewFuture;
 
@@ -1457,7 +1536,7 @@ class FirestoreService {
           .where((a) => AppStatus.confirmedStatuses.contains(a.status))
           .toList()
           ..sort((a, b) => b.workDate.compareTo(a.workDate));
-      final rawReviewItems = (reviewResult.data['items'] as List? ?? []);
+      final rawReviewItems = (reviewResult['items'] as List? ?? []);
       final reviews = rawReviewItems
           .whereType<Map>()
           .map((m) {
@@ -1500,7 +1579,11 @@ class FirestoreService {
       };
     } catch (e) {
       debugPrint('❌ [getBusinessWorkHistory] 실패: $e');
+      // [HISTORY-CLOSEOUT.30] 실패는 '이력 0건'이 아니다 — 화면이 '이력 없음'으로 말하지 않게
+      //   권한 거부(denied)와 그 밖의 실패(failed)를 구분해 돌려준다.
+      final denied = e is FirebaseFunctionsException && e.code == 'permission-denied';
       return {
+        'error': denied ? 'denied' : 'failed',
         'workCount': 0,
         'lastWorkDate': null,
         'lastWorkType': null,

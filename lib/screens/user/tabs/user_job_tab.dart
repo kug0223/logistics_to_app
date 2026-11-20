@@ -77,12 +77,24 @@ class _UserJobTabState extends State<UserJobTab>
   bool _isLoading = true;
   bool _fetchInProgress = false;
 
+  /// [JOBS-LOST-REFRESH] 진행 중에 들어온 재조회 요청(검색·필터 변경 등). 버리지 않고
+  ///   진행 중 로드가 **성공으로** 끝난 직후 한 번만 다시 돈다(지원 내역도 새로 읽는다).
+  ///   여러 번 들어와도 플래그 하나라 마지막 필터로 한 번 수렴한다.
+  bool _reloadPending = false;
+
   /// [R8-P7.4] 목록을 **읽지 못했다**.
   ///
   /// 빈 목록이 "등록된 공고가 없습니다"가 되는 자리라서, 비어 있는 이유를
   /// 따로 들고 있어야 한다. 실패를 "공고 없음"으로 말하면 사용자는 앱이
   /// 정상이라고 믿은 채 지원 기회를 놓친다.
   bool _loadFailed = false;
+
+  /// [DU209 J15] 마지막 **전체조회가 성공으로 확정**됐다 — 필터 시트가 수·'없음'을
+  ///   말해도 되는 모집단인가. 전체조회 시작에 false, 성공 commit 에서 보류 재조회가
+  ///   없을 때만 true, 실패는 false 그대로다. `_loadFailed`(본문·머리말: 비어 있는데
+  ///   못 읽음)와 다르다 — 이전 목록이 남아 있으면 실패해도 `_loadFailed` 는 false 다.
+  ///   추가 페이지 실패는 이 값을 건드리지 않는다(이미 성공한 부분 모집단).
+  bool _populationSucceeded = false;
   bool _myApplicationsLoaded = false;
 
   // ── 초기화 ──────────────────────────────────────────────────────
@@ -162,13 +174,17 @@ class _UserJobTabState extends State<UserJobTab>
   // ── 데이터 로딩 ──────────────────────────────────────────────────
 
   Future<void> _loadAllTOs({bool forceRefresh = false}) async {
-    if (_fetchInProgress) return;
+    if (_fetchInProgress) {
+      _reloadPending = true;
+      return;
+    }
     _fetchInProgress = true;
     _generation++;
     setState(() {
       _isLoading = true;
       _lastToId = null;
       _hasMoreData = true;
+      _populationSucceeded = false;
       _allTOList = [];
       _workDetailsCache.clear();
       _slotsCache.clear();
@@ -227,12 +243,22 @@ class _UserJobTabState extends State<UserJobTab>
         _displayList = displayList;
         _isLoading = false;
         _loadFailed = false;
+        // [DU209 J15] 보류 재조회가 걸려 있으면 이 응답은 현재 조건의 성공이 아니다.
+        _populationSucceeded = !_reloadPending;
       });
       // [R7-P2-2 P22-L] 기준은 **화면에 남은 것**이다. 서버 페이지가 비지
       //   않았어도 날짜 같은 클라이언트 조건이 전부 걸러 냈으면 화면은
       //   비어 있고, 그때도 남은 페이지를 이어 읽어야 한다.
       //   (예전에는 서버 페이지가 빌 때만 이어 읽어, 홈에서 날짜를 골라
       //    들어온 사람이 첫 페이지에 그 날이 없으면 거기서 멈췄다.)
+      if (_reloadPending) {
+        // 진행 중에 들어온 요청 — 그 사이 지원 내역이 바뀌었을 수 있으니 새로 읽는다.
+        _reloadPending = false;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _loadAllTOs(forceRefresh: true);
+        });
+        return;
+      }
       if (displayList.isEmpty && hasMore) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _loadMoreTOs();
@@ -240,13 +266,21 @@ class _UserJobTabState extends State<UserJobTab>
       }
     } catch (e) {
       debugPrint('❌ TO 목록 로드 실패: $e');
+      // 실패면 보류 요청을 자동으로 다시 돌리지 않는다 — 실패 화면의 다시 시도가 현재 필터로 읽는다.
+      _reloadPending = false;
       if (!mounted) return;
       _fetchInProgress = false;
       setState(() {
         _isLoading = false;
-        // [R8-P7.4] 이전에 받아 둔 목록이 있으면 그대로 두고, 비어 있을 때만
-        //   빈 화면의 문장을 "없음"에서 "못 읽음"으로 바꾼다.
-        _loadFailed = _displayList.isEmpty;
+        // [DU210 C209-1] 첫 페이지를 읽지 못했으면 이전 표시 목록을 지운다 — 같은 조건
+        //   새로고침이더라도 그 목록은 현재 선택 조건의 성공 결과가 아니다. 기존 실패
+        //   머리말·본문·다시 시도로 간다(R8-P7.4 의 '이전 목록 유지'를 대체한다).
+        //   hasMore=false 는 읽을 cursor 가 없다는 뜻일 뿐 성공 0 이 아니다 — 성공
+        //   인증은 _populationSucceeded(false 그대로)가 맡는다. 추가 페이지 실패의
+        //   일부 목록 보존은 _loadMoreTOs 의 catch 그대로다.
+        _displayList = [];
+        _hasMoreData = false;
+        _loadFailed = true;
       });
       ToastHelper.showError('공고 목록을 불러오는데 실패했습니다.');
     }
@@ -471,6 +505,13 @@ class _UserJobTabState extends State<UserJobTab>
   }
 
   void _showAllFilters() {
+    // [DU209 J15] 시트를 여는 순간의 모집단·서버조건·성공/로딩·hasMore 를 함께 고정한다.
+    //   미리보기 수는 이 같은 자료에 로컬 선택만 적용한다(live 목록과 개방 시 hasMore 를
+    //   섞지 않는다). 모르는 결과는 null → 시트는 '적용하기'(활성)로 말한다.
+    final population = List<TOModel>.unmodifiable(_allTOList);
+    final serverFilter = _filter;
+    final populationKnown = _populationSucceeded && !_isLoading;
+    final hasMore = _hasMoreData;
     DialogHelper.showSheet(
       context,
       isScrollControlled: true,
@@ -478,12 +519,42 @@ class _UserJobTabState extends State<UserJobTab>
         initialFilter: _filter,
         availableCities: _availableCities,
         districtMap: _districtMap,
-        onApply: _onFilterChanged,
-        // 로컬 목록 기준 실시간 카운트 미리보기 (서버 재요청 없이 추정)
-        countOf: (f) => _computeDisplayList(_allTOList, withFilter: f).length,
-        hasMore: _hasMoreData,
+        onApply: _onSheetApply,
+        countOf: (f) {
+          // 로딩 중·성공 미확정(실패·보류)·서버조건이 다른 선택은 아직 묻지 않은 결과다.
+          if (!populationKnown || !_sameServerCondition(f, serverFilter)) {
+            return null;
+          }
+          final n = _computeDisplayList(population, withFilter: f).length;
+          // 읽을 페이지가 남은 부분 모집단의 0 은 '없음'이 아니다.
+          if (n == 0 && hasMore) return null;
+          return n;
+        },
+        hasMore: hasMore,
       ),
     );
+  }
+
+  /// [DU209 J15] 서버 재조회 조건 — `_onFilterChanged` 의 needsServerFetch 와 같은 집합
+  ///   (type·city·district·keyword·showFavoritesOnly). dateRange·sortBy 는 로컬 조건이다.
+  bool _sameServerCondition(TOFilterState a, TOFilterState b) =>
+      a.type == b.type &&
+      a.city == b.city &&
+      a.district == b.district &&
+      a.keyword == b.keyword &&
+      a.showFavoritesOnly == b.showFavoritesOnly;
+
+  /// [DU209 J15] 시트 적용 — 마지막 전체조회가 성공으로 확정되지 않았고(실패·보류)
+  ///   지금 읽는 중이 아니면, 고른 조건으로 첫 페이지부터 다시 읽는다(같은 조건의 초기
+  ///   실패도 포함). 그 밖에는 기존 `_onFilterChanged` 그대로다 — 진행 중 조회의
+  ///   보류/수렴, 같은 성공 조건의 재조회 0, 부분 0 의 이어읽기를 바꾸지 않는다.
+  void _onSheetApply(TOFilterState f) {
+    if (!_populationSucceeded && !_isLoading) {
+      _filter = f;
+      _loadAllTOs();
+      return;
+    }
+    _onFilterChanged(f);
   }
 
   Future<void> _pickDateRange() async {
@@ -503,27 +574,66 @@ class _UserJobTabState extends State<UserJobTab>
 
   // ── Build ─────────────────────────────────────────────────────────
 
+  /// [DU310 J13] 머리 제목 스타일(표시·높이 측정 공용).
+  static const TextStyle _titleStyle = TextStyle(
+    fontSize: 20,
+    fontWeight: FontWeight.w800,
+    color: AppColors.textPrimary,
+    letterSpacing: -0.5,
+  );
+
+  /// [DU310 r1 J13] AppBar 가 제목 위에 까는 바탕 글자 스타일 — SDK app_bar.dart:958–961 의
+  ///   `widget.titleTextStyle ?? appBarTheme.titleTextStyle ?? defaults.titleTextStyle`(M3 기본 = textTheme.titleLarge)과
+  ///   같은 순서다. 이 AppBar 는 titleTextStyle 을 지정하지 않으므로 앞 항은 없다. 앱 통합 테마는
+  ///   appBarTheme.titleTextStyle(role_theme.dart:55, NotoSansKR 20 bold)을 준다. :969 의 색 투명도는 높이와 무관하다.
+  TextStyle _titleBaseStyle(ThemeData theme) =>
+      theme.appBarTheme.titleTextStyle ?? theme.textTheme.titleLarge ?? const TextStyle();
+
+  /// [DU310 r1 J13] 머리 높이 — 1.0 기준 44 는 그대로 두고, 실제 제목 한 줄(아래 Text 와 같은 유효 스타일·
+  ///   사용자 글자 배율·굵게·locale·줄 높이 동작)이 44 안에 들어가지 않으면 줄 높이 + 위아래 4 로 늘린다.
+  ///   [scaler] 는 AppBar 바깥(build)의 실제 배율 — AppBar 가 제목에 거는 1.34 상한(app_bar.dart:45·:1073)을
+  ///   제목 Text 에 직접 넘겨 벗어나므로 측정도 같은 값을 쓴다(글자를 줄이거나 자르지 않는다).
+  double _titleBarHeight(BuildContext context, TextScaler scaler) {
+    // Text.build 와 같은 병합: AppBar 의 DefaultTextStyle(바탕) ← _titleStyle(inherit) ← boldText.
+    var style = _titleBaseStyle(Theme.of(context)).merge(_titleStyle);
+    if (MediaQuery.boldTextOf(context)) {
+      style = style.merge(const TextStyle(fontWeight: FontWeight.bold));
+    }
+    final tp = TextPainter(
+      text: TextSpan(text: '일자리', style: style),
+      textDirection: Directionality.of(context),
+      textScaler: scaler,
+      locale: Localizations.maybeLocaleOf(context),
+      // AppBar 의 DefaultTextStyle 은 textHeightBehavior 를 주지 않는다 → Text 는 DefaultTextHeightBehavior 를 쓴다.
+      textHeightBehavior: DefaultTextHeightBehavior.maybeOf(context),
+      maxLines: 1,
+    )..layout();
+    final need = tp.height + 8;
+    tp.dispose();
+    return need > 44 ? need : 44;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // [DU310 r1 J13] AppBar 바깥의 실제 사용자 배율(1.34 상한 적용 전).
+    final titleScaler = MediaQuery.textScalerOf(context);
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
-        toolbarHeight: 44,
+        toolbarHeight: _titleBarHeight(context, titleScaler),
         titleSpacing: 0,
-        title: const Padding(
-          padding: EdgeInsets.only(left: 16),
+        title: Padding(
+          padding: const EdgeInsets.only(left: 16),
           child: Text(
             '일자리',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-              color: AppColors.textPrimary,
-              letterSpacing: -0.5,
-            ),
+            style: _titleStyle,
+            // [DU310 r1 J13] AppBar 의 제목 배율 상한(1.34)을 벗어나 사용자 배율 그대로 그린다(SDK 주석의 opt-out 경로:
+            //   Text.textScaler 가 MediaQuery 보다 우선). 높이는 위 _titleBarHeight 가 같은 값으로 확보한다.
+            textScaler: titleScaler,
           ),
         ),
         bottom: PreferredSize(
@@ -533,7 +643,8 @@ class _UserJobTabState extends State<UserJobTab>
               TabBar(
                 controller: _tabController,
                 labelColor: theme.primaryColor,
-                unselectedLabelColor: AppColors.grey500,
+                // [DU310 J10] 미선택 탭 글자 grey500(흰 바탕 2.68:1) → textSecondary(5.92:1). 선택 brand·굵기 위계는 그대로.
+                unselectedLabelColor: AppColors.textSecondary,
                 labelStyle: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
@@ -640,15 +751,19 @@ class _UserJobTabState extends State<UserJobTab>
           ? '조건에 맞는 일자리 $countStr'
           : '${parts.join(' · ')} 일자리 $countStr';
     }
+    // [DU1 R6] 첫 페이지를 읽지 못했으면 머리말이 '0개'라고 말하지 않는다 — 아래 오류 본문(다시 시도)과 같은 사실.
+    //   정상 0개·확인된 일부(목록이 있는 뒤 추가 실패)는 그대로 둔다(_loadFailed 는 목록이 비었을 때만 참).
+    final shown = _loadFailed ? '일자리를 확인하지 못했어요' : label;
 
     return Container(
       width: double.infinity,
       color: AppColors.background,
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
       child: Text(
-        label,
+        shown,
+        // [DU1] 머리말 수치는 읽는 정보 — grey500(2.68:1) → textSecondary
         style: ResponsiveHelper.smallStyle(context,
-            color: AppColors.grey500),
+            color: AppColors.textSecondary),
       ),
     );
   }
@@ -659,8 +774,9 @@ class _UserJobTabState extends State<UserJobTab>
       child: Column(
         children: [
           // 검색바 행
+          // [DU310 J11] 아래 칩 줄의 receiver 가 48 로 커지면서 생기는 위아래 여유가 보이는 간격을 일부 대신한다 — 아래 8 → 4.
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 12, 8),
+            padding: const EdgeInsets.fromLTRB(16, 10, 12, 4),
             child: Row(
               children: [
                 Expanded(
@@ -706,10 +822,11 @@ class _UserJobTabState extends State<UserJobTab>
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      // [DU310 J11] 칩 receiver 48 의 아래 여유가 간격을 대신한다 — 아래 10 → 6.
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
       child: Row(
         children: [
-          // 즐겨찾기 — 하트 아이콘 단독 칩: 기본 Neutral, 활성 시 Red
+          // 즐겨찾기 — 하트 아이콘 칩: 기본 Neutral, 활성 시 다른 빠른 칩과 같은 brand 선택(DU310, 이전 Red)
           _favoriteIconChip(context, theme),
           const SizedBox(width: 8),
           _quickChip(
@@ -768,23 +885,45 @@ class _UserJobTabState extends State<UserJobTab>
     );
   }
 
+  /// [DU310 J11·J12] 칩 누름 영역 — 보이는 칩 모양·크기는 그대로 두고 receiver 만 최소 48×48
+  ///   (글자 확대로 칩이 더 크면 칩 크기). 버튼·선택 의미는 이 노드가 말한다(칩 글자는 그대로 읽힌다).
+  Widget _chipReceiver({
+    required Widget chip,
+    required VoidCallback onTap,
+    bool? selected,
+  }) {
+    return Semantics(
+      container: true,
+      button: true,
+      selected: selected,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          child: Align(widthFactor: 1, heightFactor: 1, child: chip),
+        ),
+      ),
+    );
+  }
+
   /// 즐겨찾기 칩 — 하트 아이콘 + "즐겨찾기" 텍스트
   /// 기본: Neutral 테두리, 비활성 아이콘
-  /// 활성: Red 테두리/아이콘 + 연한 Red 배경
+  /// 활성: [DU310 Standards §9.1·사용자 기준 "선택은 대표색"] 다른 빠른 칩(단기·장기)과 같은 brand 채움 + 흰 글자·채운 하트.
+  ///   이전 Red 테두리/글자/옅은 Red 바탕은 선택 상태를 위험색으로 칠했다.
   Widget _favoriteIconChip(BuildContext context, ThemeData theme) {
     final active = _filter.showFavoritesOnly;
-    return GestureDetector(
+    return _chipReceiver(
+      selected: active,
       onTap: () => _onFilterChanged(
           _filter.copyWith(showFavoritesOnly: !_filter.showFavoritesOnly)),
-      child: AnimatedContainer(
+      chip: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: active
-              ? AppColors.error.withValues(alpha: 0.08)
-              : Colors.white,
+          color: active ? theme.primaryColor : Colors.white,
           border: Border.all(
-            color: active ? AppColors.error : AppColors.grey300,
+            color: active ? theme.primaryColor : AppColors.grey300,
             width: active ? 1.2 : 1,
           ),
           borderRadius: BorderRadius.circular(20),
@@ -795,7 +934,8 @@ class _UserJobTabState extends State<UserJobTab>
             Icon(
               active ? Icons.favorite_rounded : Icons.favorite_border_rounded,
               size: 13,
-              color: active ? AppColors.error : AppColors.grey400,
+              // [DU310] 비활성 하트 grey400(1.88:1) → textSecondary
+              color: active ? Colors.white : AppColors.textSecondary,
             ),
             const SizedBox(width: 4),
             Text(
@@ -803,7 +943,7 @@ class _UserJobTabState extends State<UserJobTab>
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: active ? FontWeight.w600 : FontWeight.normal,
-                color: active ? AppColors.error : AppColors.grey700,
+                color: active ? Colors.white : AppColors.grey700,
               ),
             ),
           ],
@@ -819,6 +959,16 @@ class _UserJobTabState extends State<UserJobTab>
     required String label,
     required VoidCallback onClear,
   }) {
+    // [DU310 J12] 해제 X 의 receiver 가 아이콘 14 뿐이었다 — 이 칩의 유일한 행동이 해제이므로 칩 전체(최소 48)를
+    //   같은 onClear 로 누른다. 보이는 X·값·색은 그대로다.
+    return _chipReceiver(
+      selected: true,
+      onTap: onClear,
+      chip: _activeFilterChipFace(theme, label),
+    );
+  }
+
+  Widget _activeFilterChipFace(ThemeData theme, String label) {
     return Container(
       padding:
           const EdgeInsets.only(left: 13, right: 6, top: 6, bottom: 6),
@@ -840,10 +990,8 @@ class _UserJobTabState extends State<UserJobTab>
             ),
           ),
           const SizedBox(width: 4),
-          GestureDetector(
-            onTap: onClear,
-            child: Icon(Icons.close, size: 14, color: theme.primaryColor),
-          ),
+          // 해제 표시 — 누름은 칩 전체(_activeFilterChip)가 받는다.
+          Icon(Icons.close, size: 14, color: theme.primaryColor),
         ],
       ),
     );
@@ -872,9 +1020,11 @@ class _UserJobTabState extends State<UserJobTab>
     required VoidCallback onTap,
     IconData? icon,
   }) {
-    return GestureDetector(
+    // [DU310 J11] 보이는 칩은 그대로, receiver 만 최소 48×48(_chipReceiver).
+    return _chipReceiver(
+      selected: active,
       onTap: onTap,
-      child: AnimatedContainer(
+      chip: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         padding:
             const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
@@ -893,7 +1043,8 @@ class _UserJobTabState extends State<UserJobTab>
               Icon(
                 icon,
                 size: 12,
-                color: active ? Colors.white : AppColors.grey500,
+                // [DU310] 비활성 칩 아이콘 grey500(2.68:1) → textSecondary
+                color: active ? Colors.white : AppColors.textSecondary,
               ),
               const SizedBox(width: 4),
             ],
@@ -926,12 +1077,17 @@ class _UserJobTabState extends State<UserJobTab>
           child: InkWell(
             onTap: _showAllFilters,
             borderRadius: BorderRadius.circular(10),
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: Icon(
-                Icons.tune,
-                color: hasActive ? Colors.white : AppColors.grey600,
-                size: 22,
+            // [DU310 J11] 버튼 42×42 → 최소 48×48(옆 검색창 높이 48 과 같은 줄). 아이콘 22·색은 그대로.
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              child: Center(
+                widthFactor: 1,
+                heightFactor: 1,
+                child: Icon(
+                  Icons.tune,
+                  color: hasActive ? Colors.white : AppColors.grey600,
+                  size: 22,
+                ),
               ),
             ),
           ),
@@ -940,24 +1096,34 @@ class _UserJobTabState extends State<UserJobTab>
           Positioned(
             top: -5,
             right: -5,
-            child: Container(
-              width: 17,
-              height: 17,
-              decoration: const BoxDecoration(
-                color: AppColors.error,
-                shape: BoxShape.circle,
+            // [DU310 §12.2] 적용 개수는 오류가 아니다 — 빨간 원(error) 대신 흰 바탕·brand 테두리/숫자.
+            //   크기는 고정 17×17 대신 최소 17·숫자 자연 크기(큰 글씨에서 숫자가 원 밖으로 잘리지 않게).
+            // [DU310 r1] 장식 배지는 누름을 받지 않는다 — Stack 은 마지막 자식부터 hit 를 시험해 멈추므로(SDK stack.dart:693,
+            //   box.dart:3336) 버튼과 겹친 배지 아래 지점의 누름이 InkWell 에 가지 못했다(원본에도 있던 경로).
+            //   IgnorePointer 로 그 지점의 누름도 필터 버튼 하나로 간다. 버튼 밖으로 나온 배지 부분은 receiver 가 아니다.
+            child: IgnorePointer(
+              child: Container(
+              constraints: const BoxConstraints(minWidth: 17, minHeight: 17),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: theme.primaryColor, width: 1.5),
+                borderRadius: BorderRadius.circular(9),
               ),
               child: Center(
+                widthFactor: 1,
+                heightFactor: 1,
                 child: Text(
                   '$badgeCount',
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: theme.primaryColor,
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
                     height: 1,
                   ),
                 ),
               ),
+            ),
             ),
           ),
       ],
@@ -999,7 +1165,8 @@ class _UserJobTabState extends State<UserJobTab>
                   icon: const Icon(Icons.expand_more, size: 18),
                   label: const Text('더 많은 공고 보기'),
                   style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 44),
+                    // [DU310 J17] 최소 높이 44 → 48(실 receiver 기준). 테두리·색·문구는 그대로.
+                    minimumSize: const Size(double.infinity, 48),
                     side: const BorderSide(color: AppColors.grey300),
                     foregroundColor: AppColors.grey600,
                     shape: RoundedRectangleBorder(
@@ -1124,9 +1291,10 @@ class _JobFilterSheet extends StatefulWidget {
   final List<String> availableCities;
   final Map<String, List<String>> districtMap;
 
-  /// 현재 로컬 목록 기준 예상 결과 수 (필터 변경 시 실시간 업데이트)
-  /// null이면 "적용하기" 텍스트 사용
-  final int Function(TOFilterState)? countOf;
+  /// 시트를 연 순간 고정한 모집단 기준 예상 결과 수 (필터 변경 시 실시간 업데이트)
+  /// null이면 "적용하기" 텍스트 사용 — [DU209 J15] 모르는 결과(로딩·성공 미확정·
+  /// 서버조건 변경·읽을 페이지가 남은 0)도 null 이다. 0 은 알려진 '없음'뿐이다.
+  final int? Function(TOFilterState)? countOf;
 
   /// 서버에 아직 로드 안 된 데이터가 있을 때 true → 카운트에 "이상" 표시
   final bool hasMore;
@@ -1218,81 +1386,94 @@ class _JobFilterSheetState extends State<_JobFilterSheet> {
                   padding: EdgeInsets.symmetric(
                       horizontal: ResponsiveHelper.spacing(context, 8)),
                 ),
+                // [DU289 FS3] 초기화 글 grey500(2.68) → 보조색
                 child: Text('초기화',
                     style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.grey500)),
+                        color: AppColors.textSecondary)),
               ),
             ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
-          // ─ 즐겨찾기
-          _sectionLabel(context, '즐겨찾기'),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          _toggleItem(
-            context, theme,
-            label: '♥ 즐겨찾기만 보기',
-            isSelected: _local.showFavoritesOnly,
-            onTap: () => setState(() => _local = _local.copyWith(
-                showFavoritesOnly: !_local.showFavoritesOnly)),
+          // [DU289 FS6] 가운데 구역만 스크롤한다 — 큰 글자(320·2.0)에서 시트가 화면보다 길어 아래로 128px 넘치고
+          //   적용 버튼이 화면 밖으로 나갔다. 손잡이·제목·초기화와 적용 버튼은 고정이다.
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // ─ 즐겨찾기
+                  _sectionLabel(context, '즐겨찾기'),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                  _toggleItem(
+                    context, theme,
+                    label: '♥ 즐겨찾기만 보기',
+                    isSelected: _local.showFavoritesOnly,
+                    onTap: () => setState(() => _local = _local.copyWith(
+                        showFavoritesOnly: !_local.showFavoritesOnly)),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+                  // ─ 근무 유형
+                  _sectionLabel(context, '근무 유형'),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                  Row(children: [
+                    _typeChip(context, theme, null, '전체'),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    _typeChip(context, theme, 'flex', '단기'),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    _typeChip(context, theme, 'contract', '장기'),
+                  ]),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+                  // ─ 지역
+                  _sectionLabel(context, '지역'),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                  _rowSelector(
+                    context, theme,
+                    label: _local.city != null
+                        ? (_local.district != null
+                            ? '${_local.city} ${_local.district}'
+                            : _local.city!)
+                        : '전체 지역',
+                    isSet: _local.city != null,
+                    onTap: _pickRegion,
+                    onClear: _local.city != null
+                        ? () => setState(() => _local = _local.clearRegion())
+                        : null,
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+                  // ─ 날짜 범위
+                  _sectionLabel(context, '날짜 범위'),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                  _rowSelector(
+                    context, theme,
+                    label: _local.dateRange != null
+                        ? '${_fmt(_local.dateRange!.start)} ~ ${_fmt(_local.dateRange!.end)}'
+                        : '전체 날짜',
+                    isSet: _local.dateRange != null,
+                    onTap: _pickDateRange,
+                    onClear: _local.dateRange != null
+                        ? () => setState(
+                            () => _local = _local.copyWith(clearDateRange: true))
+                        : null,
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+                  // ─ 정렬
+                  _sectionLabel(context, '정렬'),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                  Row(children: [
+                    _sortChip(context, theme, 'createdAt', '최신순'),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    _sortChip(context, theme, 'date', '마감임박순'),
+                  ]),
+                ],
+              ),
+            ),
           ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-          // ─ 근무 유형
-          _sectionLabel(context, '근무 유형'),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          Row(children: [
-            _typeChip(context, theme, null, '전체'),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            _typeChip(context, theme, 'flex', '단기'),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            _typeChip(context, theme, 'contract', '장기'),
-          ]),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-          // ─ 지역
-          _sectionLabel(context, '지역'),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          _rowSelector(
-            context, theme,
-            label: _local.city != null
-                ? (_local.district != null
-                    ? '${_local.city} ${_local.district}'
-                    : _local.city!)
-                : '전체 지역',
-            isSet: _local.city != null,
-            onTap: _pickRegion,
-            onClear: _local.city != null
-                ? () => setState(() => _local = _local.clearRegion())
-                : null,
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-          // ─ 날짜 범위
-          _sectionLabel(context, '날짜 범위'),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          _rowSelector(
-            context, theme,
-            label: _local.dateRange != null
-                ? '${_fmt(_local.dateRange!.start)} ~ ${_fmt(_local.dateRange!.end)}'
-                : '전체 날짜',
-            isSet: _local.dateRange != null,
-            onTap: _pickDateRange,
-            onClear: _local.dateRange != null
-                ? () => setState(
-                    () => _local = _local.copyWith(clearDateRange: true))
-                : null,
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-          // ─ 정렬
-          _sectionLabel(context, '정렬'),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          Row(children: [
-            _sortChip(context, theme, 'createdAt', '최신순'),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            _sortChip(context, theme, 'date', '마감임박순'),
-          ]),
           SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
           // ─ 적용 — 로컬 목록 기준 결과 수 실시간 표시
@@ -1323,7 +1504,9 @@ class _JobFilterSheetState extends State<_JobFilterSheet> {
                   backgroundColor: theme.primaryColor,
                   foregroundColor: Colors.white,
                   disabledBackgroundColor: AppColors.grey200,
-                  disabledForegroundColor: AppColors.grey500,
+                  // [DU289 FS5] 비활성 글 grey500(#EEEEEE 위 2.31) → 보조색, 주 버튼 높이 52
+                  disabledForegroundColor: AppColors.textSecondary,
+                  minimumSize: const Size.fromHeight(52),
                   padding: EdgeInsets.symmetric(
                       vertical: ResponsiveHelper.spacing(context, 14)),
                   shape: RoundedRectangleBorder(
@@ -1334,7 +1517,7 @@ class _JobFilterSheetState extends State<_JobFilterSheet> {
                   label,
                   style: ResponsiveHelper.bodyStyle(context).copyWith(
                     fontWeight: FontWeight.bold,
-                    color: count == 0 ? AppColors.grey500 : Colors.white,
+                    color: count == 0 ? AppColors.textSecondary : Colors.white,
                   ),
                 ),
               ),
@@ -1345,11 +1528,13 @@ class _JobFilterSheetState extends State<_JobFilterSheet> {
     );
   }
 
+  // [DU289 FS1] 구역 제목 — 다른 시트(DU268·269·272)와 같은 16 bold 본문색(글자만).
   Widget _sectionLabel(BuildContext context, String label) => Text(
         label,
-        style: ResponsiveHelper.smallStyle(context).copyWith(
-          fontWeight: FontWeight.w600,
-          color: AppColors.grey600,
+        style: ResponsiveHelper.bodyStyle(context).copyWith(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: AppColors.textPrimary,
         ),
       );
 
@@ -1364,6 +1549,8 @@ class _JobFilterSheetState extends State<_JobFilterSheet> {
         onTap: onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
+          // [DU289 FS2] 터치 48(글은 세로 가운데), 비선택 글 grey600 → 보조색. 선택 모양(대표색 채움·흰 글)은 그대로.
+          constraints: const BoxConstraints(minHeight: 48),
           padding: EdgeInsets.symmetric(
             horizontal: ResponsiveHelper.spacing(context, 16),
             vertical: ResponsiveHelper.spacing(context, 9),
@@ -1374,13 +1561,20 @@ class _JobFilterSheetState extends State<_JobFilterSheet> {
                 color: isSelected ? theme.primaryColor : AppColors.grey300),
             borderRadius: BorderRadius.circular(20),
           ),
-          child: Text(
-            label,
-            style: ResponsiveHelper.smallStyle(context).copyWith(
-              color: isSelected ? Colors.white : AppColors.grey600,
-              fontWeight:
-                  isSelected ? FontWeight.w600 : FontWeight.normal,
-            ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  label,
+                  style: ResponsiveHelper.smallStyle(context).copyWith(
+                    color: isSelected ? Colors.white : AppColors.textSecondary,
+                    fontWeight:
+                        isSelected ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       );
@@ -1394,6 +1588,9 @@ class _JobFilterSheetState extends State<_JobFilterSheet> {
             _local = _local.copyWith(type: value, clearType: value == null)),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
+          // [DU289 FS2] 터치 48(글은 가운데), 비선택 글 grey600 → 보조색. 선택 모양은 그대로.
+          constraints: const BoxConstraints(minHeight: 48),
+          alignment: Alignment.center,
           padding: EdgeInsets.symmetric(
               vertical: ResponsiveHelper.spacing(context, 10)),
           decoration: BoxDecoration(
@@ -1407,7 +1604,7 @@ class _JobFilterSheetState extends State<_JobFilterSheet> {
             label,
             textAlign: TextAlign.center,
             style: ResponsiveHelper.smallStyle(context).copyWith(
-              color: isSelected ? Colors.white : AppColors.grey600,
+              color: isSelected ? Colors.white : AppColors.textSecondary,
               fontWeight:
                   isSelected ? FontWeight.w600 : FontWeight.normal,
             ),
@@ -1426,6 +1623,9 @@ class _JobFilterSheetState extends State<_JobFilterSheet> {
             setState(() => _local = _local.copyWith(sortBy: value)),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
+          // [DU289 FS2] 터치 48(글은 가운데), 비선택 글 grey600 → 보조색. 선택 모양은 그대로.
+          constraints: const BoxConstraints(minHeight: 48),
+          alignment: Alignment.center,
           padding: EdgeInsets.symmetric(
               vertical: ResponsiveHelper.spacing(context, 10)),
           decoration: BoxDecoration(
@@ -1439,7 +1639,7 @@ class _JobFilterSheetState extends State<_JobFilterSheet> {
             label,
             textAlign: TextAlign.center,
             style: ResponsiveHelper.smallStyle(context).copyWith(
-              color: isSelected ? Colors.white : AppColors.grey600,
+              color: isSelected ? Colors.white : AppColors.textSecondary,
               fontWeight:
                   isSelected ? FontWeight.w600 : FontWeight.normal,
             ),
@@ -1460,10 +1660,13 @@ class _JobFilterSheetState extends State<_JobFilterSheet> {
       InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
+        // [DU289 FS4] 행 최소 52. 빈 행 글 grey600(4.41) → 보조색, 꺾쇠 grey400(1.80) → textTertiary,
+        //   지우기 '×' 16×16 → 48×48 누름(IconButton, 보조색). 지우기는 행(선택기 열기)과 따로 눌린다.
         child: Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 14),
-            vertical: ResponsiveHelper.spacing(context, 12),
+          constraints: const BoxConstraints(minHeight: 52),
+          padding: EdgeInsets.only(
+            left: ResponsiveHelper.spacing(context, 14),
+            right: ResponsiveHelper.spacing(context, onClear != null ? 2 : 14),
           ),
           decoration: BoxDecoration(
             color: isSet
@@ -1479,24 +1682,32 @@ class _JobFilterSheetState extends State<_JobFilterSheet> {
           child: Row(
             children: [
               Expanded(
-                child: Text(
-                  label,
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    color: isSet ? theme.primaryColor : AppColors.grey600,
-                    fontWeight:
-                        isSet ? FontWeight.w600 : FontWeight.normal,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 12)),
+                  child: Text(
+                    label,
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      color: isSet ? theme.primaryColor : AppColors.textSecondary,
+                      fontWeight:
+                          isSet ? FontWeight.w600 : FontWeight.normal,
+                    ),
                   ),
                 ),
               ),
               if (onClear != null)
-                GestureDetector(
-                  onTap: onClear,
-                  child: const Icon(Icons.close,
-                      size: 16, color: AppColors.grey400),
+                IconButton(
+                  onPressed: onClear,
+                  tooltip: '지우기',
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 48, minHeight: 48),
+                  icon: const Icon(Icons.close,
+                      size: 18, color: AppColors.textSecondary),
                 )
               else
                 const Icon(Icons.chevron_right,
-                    size: 18, color: AppColors.grey400),
+                    size: 18, color: AppColors.textTertiary),
             ],
           ),
         ),

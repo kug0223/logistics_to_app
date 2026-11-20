@@ -1,3 +1,4 @@
+import 'support/visible_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -176,11 +177,11 @@ void main() {
     await _pump(tester, reads: _reads(error: Exception('network')));
 
     expect(tester.takeException(), isNull);
-    expect(find.text(_errorTitle), findsOneWidget);
-    expect(find.text('다시 시도'), findsOneWidget);
-    expect(find.text(_emptyTitle), findsNothing,
+    expect(findVisibleText(_errorTitle), findsOneWidget);
+    expect(findVisibleText('다시 시도'), findsOneWidget);
+    expect(findVisibleText(_emptyTitle), findsNothing,
         reason: '못 읽은 것을 "정산할 근무 없음" 으로 말하면 받을 돈을 포기한다');
-    expect(find.text(_emptyReason), findsNothing,
+    expect(findVisibleText(_emptyReason), findsNothing,
         reason: '이유까지 단정하면 더 나쁘다 — 조회 실패는 그 이유가 아니다');
   });
 
@@ -188,8 +189,8 @@ void main() {
       (tester) async {
     await _pump(tester, reads: _reads(atts: const []));
 
-    expect(find.text(_emptyTitle), findsOneWidget);
-    expect(find.text(_errorTitle), findsNothing);
+    expect(findVisibleText(_emptyTitle), findsOneWidget);
+    expect(findVisibleText(_errorTitle), findsNothing);
   });
 
   testWidgets('MMR-3 급여 확정된 근무가 있으면 후보로 나온다', (tester) async {
@@ -201,8 +202,8 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text(_emptyTitle), findsNothing);
-    expect(find.text(_errorTitle), findsNothing);
+    expect(findVisibleText(_emptyTitle), findsNothing);
+    expect(findVisibleText(_errorTitle), findsNothing);
     // 후보가 있으면 선택 바가 뜬다 — 목록이 실제로 만들어졌다는 뜻.
     expect(find.byType(AppBatchActionBar), findsOneWidget,
         reason: '정산 후보가 있으면 선택·요청 컨트롤이 있어야 한다');
@@ -217,7 +218,7 @@ void main() {
       ]),
     );
 
-    expect(find.text(_emptyTitle), findsOneWidget,
+    expect(findVisibleText(_emptyTitle), findsOneWidget,
         reason: '요청은 이 사업장의 근무에 대한 것이다');
   });
 
@@ -228,9 +229,9 @@ void main() {
     );
 
     // 승인 이후 절차가 남아 있음을 말한다 — 즉시 지급/송금 완료로 말하지 않는다.
-    expect(find.textContaining('관리자 승인 후'), findsWidgets);
-    expect(find.textContaining('입금 완료'), findsNothing);
-    expect(find.textContaining('송금 완료'), findsNothing);
+    expect(findVisibleTextContaining('관리자 승인 후'), findsWidgets);
+    expect(findVisibleTextContaining('입금 완료'), findsNothing);
+    expect(findVisibleTextContaining('송금 완료'), findsNothing);
   });
 
   for (final size in const [Size(320, 1600), Size(412, 1600)]) {
@@ -248,7 +249,7 @@ void main() {
         );
         expect(tester.takeException(), isNull);
         expect(find.byType(AppBatchActionBar), findsOneWidget);
-        expect(find.text('전체선택'), findsOneWidget);
+        expect(findVisibleText('전체선택'), findsOneWidget);
       });
     }
   }

@@ -279,8 +279,10 @@ void main() {
       final reg = _flat(_codeOf(_sliceOf(cfRaw,
           'export const callableRegisterTaxIdentity',
           'export const callableUpdateTaxIdentity')));
+      // [FULL13-REEVAL] 같은 값이면 성공 — 현재 신분증 근거가 있으면 재판정만 하고 끝난다.
       expect(reg, contains(
-          'if (cur.get("identifierFingerprint") === fingerprint) return "unchanged";'));
+          'if (cur.get("identifierFingerprint") === fingerprint) {'));
+      expect(reg, contains('return "unchanged"; }'));
       expect(reg, contains('throw new HttpsError("already-exists"'));
     });
 

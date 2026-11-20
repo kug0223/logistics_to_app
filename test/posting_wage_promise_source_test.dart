@@ -208,7 +208,9 @@ void main() {
         sites += 'findOrCreateContract('.allMatches(s).length;
         sites += 'buildPreviewContract('.allMatches(s).length;
       }
-      expect(sites, 13,
+      // [CONTRACT-DISPATCH.4 B3] 2026-10-25: 지원 검토 승인 → 기존 작성 흐름(contract_dispatch_flow)
+      //   이 findOrCreateContract 를 1회 더 부른다 — 같은 진입점이라 임금 overlay 가 그대로 적용된다. 13 → 14.
+      expect(sites, 14,
           reason: '호출부 수가 바뀌면 이 테스트를 다시 본다 — overlay는 진입점에 있으므로 안전하다');
     });
   });

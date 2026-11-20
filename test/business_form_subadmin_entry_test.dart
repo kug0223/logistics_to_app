@@ -14,6 +14,9 @@
 //
 //   나머지 네 진입구는 이미 막혀 있었다 — 여기서 함께 못 박아 한쪽만
 //   되돌아가는 것을 막는다.
+// [DU395 수리 1/3] 기존 import 두 줄(:23 · :24)의 depend_on_referenced_packages info — 같은 프로젝트 S014 시험과 같은 표기. 단언 0 변경.
+// ignore_for_file: depend_on_referenced_packages
+import 'support/visible_text.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -163,14 +166,14 @@ void main() {
       expect(tester.takeException(), isNull);
 
       // 할 수 없는 일을 권하지 않는다.
-      expect(find.text('사업장 등록하기'), findsNothing,
+      expect(findVisibleText('사업장 등록하기'), findsNothing,
           reason: '눌러도 서버가 거부한다 — 보여주면 안 된다');
-      expect(find.text('등록된 사업장이 없습니다'), findsNothing,
+      expect(findVisibleText('등록된 사업장이 없어요'), findsNothing,
           reason: '"등록하라" 는 뜻으로 읽힌다 — SubAdmin 은 등록 주체가 아니다');
 
       // 대신 **사실**을 말한다.
-      expect(find.text('배정된 사업장이 없습니다'), findsOneWidget);
-      expect(find.text('권한을 부여한 관리자에게 사업장 배정을 확인해 주세요'),
+      expect(findVisibleText('배정된 사업장이 없어요'), findsOneWidget);
+      expect(findVisibleText('권한을 부여한 관리자에게 사업장 배정을 확인해 주세요'),
           findsOneWidget);
     });
 
@@ -178,8 +181,8 @@ void main() {
         (tester) async {
       await _pumpList(tester, subAdmin: false);
       expect(tester.takeException(), isNull);
-      expect(find.text('등록된 사업장이 없습니다'), findsOneWidget);
-      expect(find.text('사업장 등록하기'), findsWidgets,
+      expect(findVisibleText('등록된 사업장이 없어요'), findsOneWidget);
+      expect(findVisibleText('사업장 등록하기'), findsWidgets,
           reason: '오너의 경로를 같이 막아 버리면 아무도 사업장을 만들 수 없다');
     });
 
@@ -188,8 +191,8 @@ void main() {
       await _pumpList(tester,
           subAdmin: true, size: const Size(320, 820), textScale: 2.0);
       expect(tester.takeException(), isNull);
-      expect(find.text('사업장 등록하기'), findsNothing);
-      expect(find.text('배정된 사업장이 없습니다'), findsOneWidget);
+      expect(findVisibleText('사업장 등록하기'), findsNothing);
+      expect(findVisibleText('배정된 사업장이 없어요'), findsOneWidget);
     });
   });
 
@@ -210,12 +213,12 @@ void main() {
           subAdmin: false, bizId: 'biz1', reads: _reads(throws: true));
       expect(tester.takeException(), isNull);
 
-      expect(find.text('사업장 목록을 불러오지 못했어요'), findsOneWidget);
-      expect(find.text('다시 시도'), findsWidgets,
+      expect(findVisibleText('사업장 목록을 불러오지 못했어요'), findsOneWidget);
+      expect(findVisibleText('다시 시도'), findsWidgets,
           reason: '실패는 막다른 길이 아니다 — 다시 시도할 수 있어야 한다');
       // 실패를 0개로 말하지 않는다.
-      expect(find.text('등록된 사업장이 없습니다'), findsNothing);
-      expect(find.text('배정된 사업장이 없습니다'), findsNothing);
+      expect(findVisibleText('등록된 사업장이 없어요'), findsNothing);
+      expect(findVisibleText('배정된 사업장이 없어요'), findsNothing);
     });
 
     testWidgets('SA-ERR-02 SubAdmin 의 조회 실패도 등록 CTA 를 띄우지 않는다',
@@ -224,10 +227,10 @@ void main() {
           subAdmin: true, bizId: 'biz1', reads: _reads(throws: true));
       expect(tester.takeException(), isNull);
 
-      expect(find.text('사업장 목록을 불러오지 못했어요'), findsOneWidget);
+      expect(findVisibleText('사업장 목록을 불러오지 못했어요'), findsOneWidget);
       // 실패 화면에도 '사업장 등록하기' 가 새지 않는다.
-      expect(find.text('사업장 등록하기'), findsNothing);
-      expect(find.text('배정된 사업장이 없습니다'), findsNothing,
+      expect(findVisibleText('사업장 등록하기'), findsNothing);
+      expect(findVisibleText('배정된 사업장이 없어요'), findsNothing,
           reason: '실패를 배정 0건으로 말하면 근로자·관리자가 잘못 판단한다');
     });
 
@@ -235,8 +238,8 @@ void main() {
       // 성공했고 결과가 0개다 (SUCCESS_ZERO).
       await _pumpList(tester, subAdmin: false);
       expect(tester.takeException(), isNull);
-      expect(find.text('등록된 사업장이 없습니다'), findsOneWidget);
-      expect(find.text('사업장 목록을 불러오지 못했어요'), findsNothing,
+      expect(findVisibleText('등록된 사업장이 없어요'), findsOneWidget);
+      expect(findVisibleText('사업장 목록을 불러오지 못했어요'), findsNothing,
           reason: '0개를 실패로 말하는 반대 방향 오류도 없어야 한다');
     });
 
@@ -283,7 +286,10 @@ void main() {
       expect(err, greaterThan(-1));
       expect(empty, greaterThan(-1));
       // body 분기에서 _loadFailed 가 _businesses.isEmpty 보다 앞이다.
-      final branch = s.indexOf('body: _isLoading');
+      // [H-3 E 추종] 본문은 Column[결과 띠?, Expanded(분기)] — 본문 Column 뒤 첫 분기 시작을 앵커로 쓴다(순서 단언 · 창 그대로).
+      final body = s.indexOf('body: Column(');
+      expect(body, greaterThan(-1));
+      final branch = s.indexOf('child: _isLoading', body);
       expect(branch, greaterThan(-1));
       final tail = s.substring(branch, branch + 420);
       expect(tail.indexOf('_loadFailed'),
@@ -317,8 +323,12 @@ void main() {
               'final itemCount = isSubAdmin ? _businesses.length : _businesses.length + 1;'),
           isTrue);
       // 수정/삭제 메뉴는 `!isSubAdmin` 안에 있다.
-      expect('if (!isSubAdmin)'.allMatches(s).length, greaterThanOrEqualTo(2),
-          reason: '수정·삭제 두 메뉴가 각각 막혀 있어야 한다');
+      // [BUSINESS-ARCHIVE] 삭제 메뉴는 운영 종료로 바뀌었고
+      //   `!isSubAdmin && 소유자 && 미종료` 조건 안에 있다.
+      expect('if (!isSubAdmin)'.allMatches(s).length, greaterThanOrEqualTo(1),
+          reason: '수정 메뉴가 막혀 있어야 한다');
+      expect(s.contains('if (!isSubAdmin &&'), isTrue,
+          reason: '운영 종료 메뉴도 SubAdmin 에게 막혀 있어야 한다');
     });
 
     test('SA-FORM-06 홈 STATE A 배너와 설정 타일이 막혀 있다', () {

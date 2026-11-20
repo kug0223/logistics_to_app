@@ -153,21 +153,29 @@ void main() {
   group('모집이 끝난 자리에는 수락으로도 들어갈 수 없다', () {
     final acc = _flat(_codeOf(_callableOf(raw, 'callableAcceptTOInvitation')));
 
+    // [INVITE-LIFECYCLE] 슬롯·업무 마감 판정은 동의·검토와 같은 함수
+    //   (srvInviteRecruitClosureBlock)로 옮겼다. 수동 마감·사유 없는 closed 는
+    //   계속 막고, 지원 마감 시각의 자동 마감만 이미 발송된 초대를 끝내지 않는다.
+    final closure = _flat(_codeOf(raw.substring(
+        raw.indexOf('function srvInviteRecruitClosureBlock('),
+        raw.indexOf('function srvInviteUnitProjection('))));
+
     test('날짜 마감을 트랜잭션 안에서 다시 본다', () {
-      expect(acc.contains('if (freshSlotData.isManualClosed === true || '
-          'freshSlotData.status === "closed")'), true,
+      expect(acc.contains('srvInviteRecruitClosureBlock( freshToData, '
+          'freshSlotData as Record<string, unknown>, acceptWdId)'), true,
           reason: '정원 guard는 이것을 못 잡는다 — 마감이어도 자리는 남아 있다');
-      expect(acc.contains('모집이 종료된 근무는 수락할 수 없습니다'), true);
+      expect(closure.contains('if (slotData["isManualClosed"] === true) return'), true);
+      expect(closure.contains('if (slotData["status"] === "closed")'), true);
     });
 
     test('업무 단위 마감도 본다', () {
-      expect(acc.contains('if (acceptWd && (acceptWd["isManualClosed"] === true || '
-          'acceptWd["closedAt"] != null))'), true);
+      expect(closure.contains('if (wd["isManualClosed"] === true) return'), true);
+      expect(closure.contains('wd["closedAt"] != null &&'), true);
     });
 
     test('검사가 자리 배정보다 앞선다', () {
-      final g = acc.indexOf('모집이 종료된 근무는 수락할 수 없습니다');
-      final c = acc.indexOf('confirmedCount');
+      final g = acc.indexOf('srvInviteRecruitClosureBlock( freshToData,');
+      final c = acc.indexOf('confirmedCount: admin.firestore.FieldValue.increment(1)');
       expect(g > 0 && g < c, true, reason: '쓰기 전에 걸러야 한다');
     });
 
@@ -241,7 +249,10 @@ void main() {
   group('수락 실패 이유가 근로자에게 그대로 전달된다', () {
     test('내 지원 목록', () {
       final s = _flat(_codeOf(_src('lib/screens/user/my_applications_screen.dart')));
-      expect(s.contains("ToastHelper.showError(e.message ?? '수락 중 오류가 발생했습니다.');"),
+      // [MW-52] 낱말 단위 줄바꿈(TextLayout.keepWords)은 글자를 바꾸지 않는다 — 서버 문장 그대로 전달은 같다.
+      expect(
+          s.contains("ToastHelper.showError(e.message ?? '수락 중 오류가 발생했습니다.');") ||
+              s.contains("ToastHelper.showError(TextLayout.keepWords(e.message ?? '수락 중 오류가 발생했습니다.'));"),
           true, reason: 'generic 문구로 덮으면 왜 안 되는지 알 수 없다');
     });
 

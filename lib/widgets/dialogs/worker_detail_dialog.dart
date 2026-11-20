@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/core/application_model.dart';
+import '../../models/core/attendance_model.dart';
 import '../../models/core/user_model.dart';
 import '../../models/core/user_region.dart';
 import '../../models/core/id_card_access_request_model.dart';
@@ -20,7 +21,9 @@ import 'contract_template_selector_dialog.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/work_detail_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../theme/app_colors.dart';
@@ -35,6 +38,18 @@ import '../../widgets/common/loading_widget.dart';
 import '../../services/applicant_document_review_service.dart';
 import '../../services/tax_identity_review_service.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+
+/// [UI-3] 상세 머리줄의 성별·나이 조각. 저장 계약('남성'·'여성')이 아닌 성별 값은
+///   추정하지 않고 뺀다. 나이는 생년월일로 계산된 1세 이상만 쓴다(판정 정책은 그대로).
+@visibleForTesting
+List<String> workerProfileFacts(UserModel user) {
+  final g = user.gender;
+  final age = user.age;
+  return [
+    if (g == '남성' || g == '여성') g!,
+    if (age != null && age > 0) '$age세',
+  ];
+}
 
 /// 공통 근무자/지원자 상세 다이얼로그
 /// 
@@ -96,7 +111,12 @@ class WorkerDetailDialog extends StatefulWidget {
 
 class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   final FirestoreService _firestoreService = FirestoreService();
-  bool _isLoading = true;
+  // [ADMIN-APPROVAL-PERMISSION] 두 뜻을 나눈다.
+  //   _auxLoading — 근무 이력·리뷰·계약 등 **부가 조회** 중(확정 조건이 아니다)
+  //   _isLoading  — 승인·거절·계약·취소 **처리 중**(이중 탭 방지)
+  //   예전에는 하나였다 — 그래서 부가 조회가 느리면 승인이 조용히 막혔다.
+  bool _auxLoading = true;
+  bool _isLoading = false;
   bool _hasChanges = false;  // ⭐ 변경사항 추적 플래그 추가
   // [PII-B4-R1] 주민번호 표시 토글 제거 — generic 화면에서 전체값을
   //   보여주지 않는다. 세무 대조는 전용 확인 시트에서 한다.
@@ -123,6 +143,27 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   // [R1.2] 지원자 서류 검토 상태 — 서버가 계산한 값을 그대로 담는다.
   ApplicantDocumentReview? _docReview;
   bool _docReviewLoading = false;
+  // [ADMIN-DOC-REVIEW-UX] 조회 실패(모름) — 아직 안 읽은 것과 구분한다.
+  bool _docReviewFailed = false;
+
+  // [ADMIN-APPROVAL-PERMISSION] 입력은 확정 권한·서류 조회·신분 확인뿐이다.
+  //   부가 조회(_auxLoading)는 확정 조건이 아니라 넣지 않는다.
+  ApprovalGate _approvalGateWith(PermissionCheck permission) => approvalGateOf(
+      loading: _docReviewLoading,
+      failed: _docReviewFailed,
+      review: _docReview,
+      permission: permission);
+
+  /// 확정 권한(서버 callableConfirmApplication 과 같은 규칙: 소유자·관리자 허용,
+  ///   서브관리자는 canManageTo). 네 상태 — 모름·오류를 허용으로 접지 않는다.
+  PermissionCheck _confirmPermission({bool listen = false}) {
+    final bizId = widget.application?.businessId ?? widget.businessId;
+    if (bizId == null || bizId.isEmpty) return PermissionCheck.unknown;
+    return Provider.of<UserProvider>(context, listen: listen)
+        .checkForBusiness(bizId, (p) => p.canManageTo);
+  }
+
+  ApprovalGate get _approvalGate => _approvalGateWith(_confirmPermission());
   bool? _hasAttendance;  // 출퇴근 기록 여부 (null=로딩중, true=있음, false=없음)
   bool? _hasWrittenReview;     // 리뷰 작성 여부 (null=미확인)
   EmploymentContractModel? _contract;
@@ -139,6 +180,13 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   }
 
   Future<void> _loadAdditionalData() async {
+    // [INVITE-PREACCEPT] 서류 검토 상태는 **다른 부가 정보와 무관하게** 먼저
+    //   시작한다. 예전에는 아래 Future.wait 가 끝난 뒤에만 불렀다 — 근무 이력
+    //   같은 무관한 조회 하나가 실패하면 서류 검토 영역이 아예 로드되지 않아,
+    //   관리자가 초대받은 사람의 서류에 닿을 수 없었다. 판정은 서버가 한다.
+    if (!widget.isConfirmed) {
+      unawaited(_loadApplicantDocumentReview());
+    }
 
     try {
       final userProvider = context.read<UserProvider>();
@@ -152,9 +200,13 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             ? _firestoreService.getBusinessWorkHistory(
                 businessId: businessId,
                 userId: widget.user.uid,
-                // [R1.2.1] 검토 단계 조회는 purpose-scoped — 서버가 canManageTo를
-                //   재검증한다. 확정자 화면은 기존 경로 그대로다.
-                purpose: widget.isConfirmed ? null : 'applicantReview')
+                // [R1.2.1] 검토 단계 조회는 purpose-scoped — 서버가 canManageTo를 재검증한다.
+                // [HISTORY-CLOSEOUT.30] 확정자 화면은 purpose 없이 불러 서버(R7-P1-2.3 목적 필수)가
+                //   invalid-argument 로 거절했다 → '이력 없음'으로 보였다. 확정자를 다루는 일은 서버 허용
+                //   목록의 workerOperation(canManageWorkers)이다. 권한은 서버가 그대로 판정한다.
+                purpose: widget.isConfirmed
+                    ? FirestoreService.purposeWorkerOperation
+                    : FirestoreService.purposeApplicantReview)
             : Future.value(null),
 
         // 1: 최근 리뷰 (monthly_reviews 컬렉션) — CF 경유 (callableGetReviewsForUser)
@@ -193,10 +245,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         Future<String?>.value(null),
       ]);
 
-      // [R1.2] 확정 전 지원자에게만 — 확정자는 기존 경로를 그대로 쓴다.
-      if (!widget.isConfirmed) {
-        unawaited(_loadApplicantDocumentReview());
-      }
+      // [R1.2] 확정 전 지원자의 서류 검토 로드는 위(함수 첫머리)로 옮겼다.
 
       _businessHistory = results[0] as Map<String, dynamic>?;
       _recentReviews = (results[1] as List).whereType<MonthlyReviewModel>().toList();
@@ -214,12 +263,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       //   확인 상태만 읽는다 — 이미지는 관리자가 누를 때 발급된다.
       if (widget.isConfirmed) unawaited(_loadTaxIdentityReview());
 
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => _auxLoading = false);
     } catch (e) {
       debugPrint('❌ 추가 데이터 로드 실패: $e');
       if (mounted) {
         setState(() {
-          _isLoading  = false;
+          _auxLoading = false;
           _loadFailed = true;
         });
         ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
@@ -232,8 +281,17 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   Future<void> _loadApplicantDocumentReview() async {
     final app = widget.application;
     final bizId = app?.businessId ?? widget.businessId;
-    if (app == null || bizId == null || bizId.isEmpty) return;
-    if (mounted) setState(() => _docReviewLoading = true);
+    if (app == null || bizId == null || bizId.isEmpty) {
+      // 읽을 수 없다 — 승인 가능 여부를 모른다.
+      if (mounted) setState(() => _docReviewFailed = true);
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _docReviewLoading = true;
+        _docReviewFailed = false;
+      });
+    }
     try {
       final r = await ApplicantDocumentReviewService.instance
           .load(applicationId: app.id, businessId: bizId);
@@ -246,7 +304,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       debugPrint('[R1.2] 서류 검토 상태 로드 실패: $e');
       if (!mounted) return;
       // 실패를 '서류 없음'으로 바꾸지 않는다 — null로 두고 화면이 그렇게 말한다.
-      setState(() => _docReviewLoading = false);
+      // [ADMIN-DOC-REVIEW-UX] 이전 성공값도 버린다 — 낡은 판정으로 승인을 열지 않는다.
+      setState(() {
+        _docReview = null;
+        _docReviewLoading = false;
+        _docReviewFailed = true;
+      });
     }
   }
 
@@ -318,11 +381,16 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       'WRONG_DOCUMENT': '다른 서류가 등록되어 있어요',
       'OTHER': '기타',
     };
+    // [UI-3] 320dp·글자 1.3 에서 시트가 81px 넘쳐 마지막 사유(`다른 서류…`·`기타`)가
+    //   잘렸다(기기 실측). 높이를 내용에 맞춰 키우고 넘치면 스크롤한다. 사유를 누르면
+    //   바로 요청이 가므로 맨 아래에 `취소` 를 둔다.
     final picked = await DialogHelper.showSheet<String>(
       context,
+      isScrollControlled: true,
       builder: (ctx) => SafeArea(
         top: false,
-        child: Column(
+        child: SingleChildScrollView(
+         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -345,8 +413,20 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   title: Text(e.value, style: ResponsiveHelper.bodyStyle(ctx)),
                   onTap: () => Navigator.pop(ctx, e.key),
                 )),
-            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text('취소',
+                      style: ResponsiveHelper.bodyStyle(ctx,
+                          color: AppColors.textSecondary)),
+                ),
+              ),
+            ),
           ],
+         ),
         ),
       ),
     );
@@ -516,8 +596,24 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             
             // 내용
             Flexible(
-              child: _isLoading
-                  ? const LoadingWidget()
+              child: (_auxLoading || _isLoading)
+                  // [INVITE-PREACCEPT] 확정 전 지원자는 **서류 확인을 먼저** 보여준다.
+                  //   서류 검토 상태는 부가 정보와 따로 로드되는데, 로딩 화면이
+                  //   그것까지 가리면 근무 이력 같은 느린 조회 하나 때문에
+                  //   관리자가 서류에 닿지 못한다. 로딩이 끝난 뒤 배치는 그대로다.
+                  ? (widget.isConfirmed
+                      ? const LoadingWidget()
+                      : SingleChildScrollView(
+                          padding: ResponsiveHelper.cardPadding(context),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildApplicantDocumentReviewSection(context),
+                              const SizedBox(
+                                  height: 80, child: LoadingWidget()),
+                            ],
+                          ),
+                        ))
                   : SingleChildScrollView(
                       padding: ResponsiveHelper.cardPadding(context),
                       child: Column(
@@ -621,14 +717,17 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   children: [
                     Row(
                       children: [
+                        // [COMMON-TEXT-LAYOUT.28] 식별 정보인 이름이 '남궁아리아…' 로 잘렸다 — 줄 수 제한 없이 다 보인다
+                        //   (기기 392dp·글자 2.0 에서 세 줄 제한도 '스티나합성근…' 로 잘렸다).
+                        //   띄어쓰기 없는 긴 이름은 가운데에서만 끊는다(마지막 한 음절만 남지 않게).
                         Flexible(
                           child: Text(
-                            widget.user.name,
+                            TextLayout.identity(widget.user.name),
+                            semanticsLabel: widget.user.name,
                             style: ResponsiveHelper.titleStyle(context).copyWith(
                               color: AppColors.textPrimary,
                               fontWeight: FontWeight.bold,
                             ),
-                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -653,10 +752,18 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                       ],
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                    Text(
-                      '${widget.user.gender ?? ''} · ${widget.user.age ?? '-'}세',
-                      style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary),
-                    ),
+                    // [UI-3] 저장값이 제품 용어('남성'·'여성')일 때만 성별을, 생년월일이
+                    //   있을 때만 나이를 쓴다. 없는 값을 `-세`·빈 구분점으로 만들지 않는다.
+                    Builder(builder: (context) {
+                      final facts = _profileFacts(widget.user);
+                      return Text(
+                        facts.isEmpty ? '성별·나이 정보 없음' : facts.join(' · '),
+                        style: ResponsiveHelper.bodyStyle(context,
+                            color: facts.isEmpty
+                                ? AppColors.grey500
+                                : AppColors.textSecondary),
+                      );
+                    }),
                   ],
                 ),
               ),
@@ -667,6 +774,20 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           
           // 연락처 + 전화 버튼
+          // [UI-3] 번호가 없으면 테두리 상자(전화 버튼처럼 보임) 대신 사실만 적는다.
+          if (widget.user.effectivePhone?.isNotEmpty != true)
+            Row(
+              children: [
+                Icon(Icons.phone_disabled_outlined,
+                    size: ResponsiveHelper.iconSize(context, 16),
+                    color: AppColors.grey400),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Text('연락처 정보 없음',
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.grey500)),
+              ],
+            )
+          else
           Container(
             padding: EdgeInsets.symmetric(
               horizontal: ResponsiveHelper.spacing(context, 12),
@@ -726,6 +847,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     );
   }
 
+  List<String> _profileFacts(UserModel user) => workerProfileFacts(user);
+
   Color _getStatusColor(String status) {
     switch (status) {
       case AppStatus.pending:
@@ -756,6 +879,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         return '취소됨';
       case AppStatus.autoCanceled:
         return '자동 취소됨';
+      // [INVITE-PREACCEPT] 초대받은 사람의 상세가 이제 열린다 — 원문 enum
+      //   (`INVITED`)을 그대로 보이지 않는다.
+      case AppStatus.invited:
+        return '초대 중';
+      case AppStatus.expired:
+        return '초대 만료';
       default:
         return status;
     }
@@ -782,10 +911,20 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           else if (widget.user.address != null)
             _buildInfoRow(context, '주소',
               '${widget.user.address}${widget.user.detailAddress != null ? ' ${widget.user.detailAddress}' : ''}'),
+          // [E2-DETAIL-KST] 사건 시각은 KST 로 그린다(기기 시간대 무관) — 날짜별
+          //   명단의 `MM/dd HH:mm 발송` 과 같은 시각이 나와야 한다.
+          //   초대는 지원이 아니다. 아직 응답하지 않은 초대는 `초대 발송` 으로 말한다.
           if (app != null)
             widget.isConfirmed && app.confirmedAt != null
-                ? _buildInfoRow(context, '확정일', DateFormat('yyyy.MM.dd HH:mm').format(app.confirmedAt!))
-                : _buildInfoRow(context, '지원일', DateFormat('yyyy.MM.dd HH:mm').format(app.appliedAt)),
+                ? _buildInfoRow(context, '확정일', FormatHelper.formatDateTimeFull(app.confirmedAt!))
+                : (app.status == AppStatus.invited && app.invitedAt != null)
+                    ? _buildInfoRow(context, '초대 발송', FormatHelper.formatDateTimeFull(app.invitedAt!))
+                    : _buildInfoRow(context, '지원일', FormatHelper.formatDateTimeFull(app.appliedAt)),
+          if (app != null &&
+              app.status == AppStatus.invited &&
+              app.effectiveInviteDeadline != null)
+            _buildInfoRow(context, '수락 기한',
+                FormatHelper.formatDateTimeFull(app.effectiveInviteDeadline!)),
           if (app != null)
             _buildInfoRow(context, '지원 업무', app.selectedWorkType),
           // 근무 시간 표시
@@ -1021,6 +1160,17 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     );
   }
 
+  /// '2026.10.29 · 분류' — 날짜·업무 중 있는 것만. 둘 다 없으면 '-'.
+  static String _lastWorkLabel(Map<String, dynamic> h) {
+    final d = h['lastWorkDate'];
+    final type = h['lastWorkType'] as String?;
+    final label = [
+      if (d is DateTime) FormatHelper.formatDateDot(d),
+      if (type != null && type.isNotEmpty) type,
+    ].join(' · ');
+    return label.isEmpty ? '-' : label;
+  }
+
   /// 우리 사업장 이력
   Widget _buildBusinessHistory(BuildContext context) {
     return _buildSection(
@@ -1028,12 +1178,20 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       title: '우리 사업장 이력',
       icon: Icons.business,
       // [R1.2] 조회 실패는 '이력 없음'이 아니다 — 모른다고 말한다.
-      child: _loadFailed
+      // [HISTORY-CLOSEOUT.30] 이력 조회만 실패해도(권한 거부·요청 실패) 따로 말한다 — 다른 영역은 그대로.
+      child: _loadFailed || _businessHistory?['error'] == 'failed'
           ? _buildHistoryNotice(
               context,
               icon: Icons.error_outline,
               color: AppColors.errorDark,
               message: '근무 이력을 확인하지 못했어요',
+            )
+          : _businessHistory?['error'] == 'denied'
+          ? _buildHistoryNotice(
+              context,
+              icon: Icons.lock_outline,
+              color: AppColors.grey600,
+              message: '근무 이력을 볼 권한이 없어요 (근무자 관리 권한 필요)',
             )
           : _businessHistory == null || (_businessHistory!['workCount'] ?? 0) == 0
           ? _buildHistoryNotice(
@@ -1045,9 +1203,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           : Column(
               children: [
                 _buildInfoRow(context, '근무 횟수', '${_businessHistory!['workCount']}회'),
-                _buildInfoRow(context, '최근 근무', _businessHistory!['lastWork'] ?? '-'),
-                if (_businessHistory!['avgRating'] != null && _businessHistory!['avgRating'] > 0)
-                  _buildInfoRow(context, '평균 평점', '${(_businessHistory!['avgRating'] as num).toDouble().toStringAsFixed(1)}점'),
+                // [HISTORY-CLOSEOUT.30] 서비스가 돌려주는 키는 lastWorkDate·lastWorkType·averageRating 이다
+                //   ('lastWork'·'avgRating' 을 읽어 최근 근무가 늘 '-', 평점이 늘 빠졌다).
+                _buildInfoRow(context, '최근 근무', _lastWorkLabel(_businessHistory!)),
+                if (_businessHistory!['averageRating'] is num && (_businessHistory!['averageRating'] as num) > 0)
+                  _buildInfoRow(context, '평균 평점', '${(_businessHistory!['averageRating'] as num).toDouble().toStringAsFixed(1)}점'),
               ],
             ),
     );
@@ -1185,12 +1345,29 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             )
           : r == null
               // 실패를 '서류 없음'으로 말하지 않는다.
-              ? Text('서류 상태를 불러오지 못했습니다. 다시 시도해주세요.',
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.grey600))
+              // [ADMIN-DOC-REVIEW-UX] 모르면 승인도 닫혀 있다 — 여기서 다시 읽게 한다.
+              ? Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: ResponsiveHelper.spacing(context, 8),
+                  children: [
+                    Text('서류 상태를 불러오지 못해 확정할 수 없어요.',
+                        style: ResponsiveHelper.smallStyle(context,
+                            color: AppColors.grey600)),
+                    TextButton(
+                      onPressed: _loadApplicantDocumentReview,
+                      child: Text('다시 불러오기',
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.info)),
+                    ),
+                  ],
+                )
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // [ADMIN-DOC-REVIEW-UX] 확정 조건을 **먼저** 말한다 — 하단
+                    //   `승인` 버튼이 따르는 바로 그 판정(matchingReadiness)이다.
+                    _approvalStatusBanner(context, r),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                     if (r.consentBlock != null) ...[
                       Container(
                         width: double.infinity,
@@ -1199,12 +1376,14 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                           color: AppColors.warningBg,
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Text(r.consentBlock!,
+                        child: Text(r.consentBlockLabel!,
                             style: ResponsiveHelper.smallStyle(context,
                                 color: AppColors.warningDark)),
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                    ] else if (!r.canReviewDocuments) ...[
+                    // [ADMIN-APPROVAL-PERMISSION] 확정이 막힌 경우엔 위 배너가 이미
+                    //   "누가 확인할 수 있는지"를 말한다 — 같은 문장을 두 번 쓰지 않는다.
+                    ] else if (!r.canReviewDocuments && r.matchingReady) ...[
                       Text('서류를 확인하려면 TO 관리와 급여 관리 권한이 모두 필요합니다.',
                           style: ResponsiveHelper.smallStyle(context,
                               color: AppColors.grey600)),
@@ -1217,25 +1396,77 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                       child: const Divider(height: 1, thickness: 0.5),
                     ),
                     _docRow(context, r, isId: false),
-                    // [PII-DOC-R1.5] 확정을 막는 사유만 경고로 말한다.
-                    //
-                    //   예전에는 신분증·통장 **둘 다** 사람이 확인해야 확정이
-                    //   됐고, 여기서 그 둘을 한 문장으로 알렸다. 이제 확정은
-                    //   신분 확인만 본다 — 급여계좌는 지급 단계의 문제이므로
-                    //   확정 버튼을 막는 사유로 표시하지 않는다.
-                    if (!r.matchingReady && r.matchingReason != null) ...[
-                      SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                      Text(r.matchingReason!,
-                          style: ResponsiveHelper.smallStyle(context,
-                              color: AppColors.warningDark)),
-                    ] else if (r.matchingReady && !r.okFor(isId: false)) ...[
-                      SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                      Text('급여정보는 지급 전까지 확인하면 됩니다. 확정은 지금 할 수 있어요.',
-                          style: ResponsiveHelper.smallStyle(context,
-                              color: AppColors.grey600)),
-                    ],
                   ],
                 ),
+    );
+  }
+
+  /// [ADMIN-DOC-REVIEW-UX] 확정 조건 요약 — 하단 `승인` 과 같은 판정.
+  ///
+  ///   [PII-DOC-R1.5] 확정은 신분 확인만 본다. 급여계좌는 지급 단계의
+  ///   문제이므로 확정을 막는 사유로 말하지 않는다.
+  Widget _approvalStatusBanner(BuildContext context, ApplicantDocumentReview r) {
+    // [E2-INVITE-NEXT-ACTION] 초대는 관리자가 확정하지 않는다 — 근로자가 수락한다.
+    //   직접 지원의 `확정할 수 있어요` 문장을 초대 상세에 쓰지 않는다.
+    final app = widget.application;
+    final bool isInvite = app != null && app.status == AppStatus.invited;
+    final deadline = isInvite ? app.effectiveInviteDeadline : null;
+    final inviteExpired = deadline != null && !DateTime.now().isBefore(deadline);
+    final ready = r.matchingReady && !inviteExpired;
+    final String text;
+    if (isInvite) {
+      text = r.inviteNextActionText(
+        expired: inviteExpired,
+        deadlineLabel:
+            deadline == null ? null : FormatHelper.formatDateTime(deadline),
+      );
+    } else if (ready) {
+      // [ADMIN-REJECT-PERMISSION] "확정할 수 있어요"는 확정 권한까지 있을 때만
+      //   말한다 — 하단 승인이 회색인데 배너만 가능하다고 하면 위계가 어긋난다.
+      final perm = _confirmPermission(listen: true);
+      final String idLine;
+      if (perm == PermissionCheck.allowed) {
+        idLine = r.matchedAutomatically
+            ? '신분증 정보가 자동 대조로 일치해 확정할 수 있어요.'
+            : '신분증 확인이 끝나 확정할 수 있어요.';
+      } else {
+        final idFact = r.matchedAutomatically
+            ? '신분증 정보가 자동 대조로 일치해요.'
+            : '신분증 확인은 끝났어요.';
+        final permLine = switch (perm) {
+          PermissionCheck.unknown => '확정 권한을 확인하고 있어요.',
+          PermissionCheck.error => '확정 권한을 확인하지 못했어요.',
+          _ => '확정은 TO 관리 권한이 있는 관리자가 할 수 있어요.',
+        };
+        idLine = '$idFact\n$permLine';
+      }
+      text = r.okFor(isId: false)
+          ? idLine
+          : '$idLine\n급여계좌는 지급 전까지 확인하면 돼요.';
+    } else {
+      text = r.approvalBlockText ?? '아직 확정할 수 없어요.';
+    }
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+      decoration: BoxDecoration(
+        color: ready ? AppColors.successBg : AppColors.warningBg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(ready ? Icons.check_circle_outline : Icons.info_outline,
+              size: ResponsiveHelper.iconSize(context, 16),
+              color: ready ? AppColors.successDark : AppColors.warningDark),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(text,
+                style: ResponsiveHelper.smallStyle(context,
+                    color: ready ? AppColors.successDark : AppColors.warningDark)),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1244,26 +1475,52 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     final has = isId ? r.hasIdCard : r.hasBankbook;
     final ok = r.okFor(isId: isId);
     final canAct = r.canReviewDocuments && r.consentBlock == null && has;
+    // 상태 글자색과 같은 판정 — 자동 대조 일치(낡지 않음)면 수동 확인은 선택이다.
+    final manualNeeded =
+        isId && !ok && !(r.matchedAutomatically && !r.idStale);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // [ADMIN-DOC-REVIEW-UX] 제목과 상태가 한 줄에 들어가지 않으면(좁은 폭·
+        //   큰 글자) 상태가 줄을 바꾼다 — 잘리지 않는다.
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
+              flex: 3,
               child: Text(isId ? '신분증' : '급여계좌 · 통장사본',
                   style: ResponsiveHelper.bodyStyle(context)
                       .copyWith(fontWeight: FontWeight.w600)),
             ),
-            Text(
-              has ? r.labelFor(isId: isId) : '미등록',
-              style: ResponsiveHelper.smallStyle(context,
-                  color: !has
-                      ? AppColors.grey500
-                      : (ok ? AppColors.successDark : AppColors.warningDark),
-                  fontWeight: FontWeight.w600),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            // 상태는 남은 폭의 2/5 까지 — Align 으로 그 칸의 오른쪽 끝에
+            //   붙인다(그냥 두면 상태가 행 가운데에 떠 있었다).
+            Flexible(
+              flex: 2,
+              child: Align(
+                alignment: Alignment.topRight,
+                child: Text(
+                  // [DOC-APP-CLOSEOUT.10] 응답에 등록 기록이 없으면 '미등록'이 아니라 모름이다.
+                  has ? r.labelFor(isId: isId) : (isId && !r.idPresenceKnown ? '확인 불가' : '미등록'),
+                  textAlign: TextAlign.end,
+                  style: ResponsiveHelper.smallStyle(context,
+                      // [ADMIN-APPROVAL-PERMISSION] 자동 대조 일치(`서류 정보 일치`)는
+                      //   확정을 허용하는 상태다 — 위 배너가 초록인데 여기만
+                      //   경고색이면 같은 사실을 두 색으로 말한다.
+                      color: !has
+                          ? AppColors.grey500
+                          : ((ok || (isId && r.matchedAutomatically && !r.idStale))
+                              ? AppColors.successDark
+                              : AppColors.warningDark),
+                      fontWeight: FontWeight.w600),
+                ),
+              ),
             ),
           ],
         ),
+        // 이 서류가 무엇에 쓰이는가 — 확정 조건인지, 지급 조건인지.
+        Text(isId ? '근무 확정 전에 확인' : '급여 지급 전까지 확인',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
         // 계좌 원문은 자격이 있을 때만 서버가 준다. 없으면 여기에도 없다.
         if (!isId && r.bankName != null) ...[
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -1273,30 +1530,58 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         ],
         if (canAct) ...[
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          Row(children: [
-            OutlinedButton(
-              onPressed: () => _viewApplicantDocument(isId: isId),
-              child: Text(isId ? '신분증 보기' : '통장사본 보기',
-                  style: ResponsiveHelper.smallStyle(context)),
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            if (!ok)
-              ElevatedButton(
-                onPressed: () => _reviewApplicantDocument(isId: isId, ok: true),
-                child: Text('확인 완료',
-                    style: ResponsiveHelper.smallStyle(context,
-                        color: Colors.white)),
-              ),
-            const Spacer(),
-            TextButton(
-              onPressed: () => _requestApplicantCorrection(isId: isId),
-              child: Text('다시 등록 요청',
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.errorFaded)),
-            ),
-          ]),
+          // [ADMIN-DOC-REVIEW-UX] Row + Spacer 는 360dp 에서 19·31px,
+          //   320dp 에서 55·67px 넘쳐 `다시 등록 요청` 이 잘렸다(기기 실측).
+          //   Wrap 은 자리가 모자라면 다음 줄로 보낸다 — 버튼이 사라지지 않는다.
+          // [UI-3] 화면의 주된 행동은 하단 `확정` 이다. 서류 행동 셋은 같은 높이·
+          //   모서리·테두리의 보조 행동으로 맞춘다(채움·그림자 반복 없음).
+          //   수동 확인이 **확정 전에 필요한** 신분증일 때만 `확인 완료` 를 브랜드
+          //   테두리로 드러낸다 — 자동 대조 일치·급여계좌는 선택 절차처럼 중립.
+          Wrap(
+            spacing: ResponsiveHelper.spacing(context, 8),
+            runSpacing: ResponsiveHelper.spacing(context, 8),
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _docAction(context, isId ? '신분증 보기' : '통장사본 보기',
+                  color: AppColors.textPrimary,
+                  onPressed: () => _viewApplicantDocument(isId: isId)),
+              if (!ok)
+                _docAction(context, '확인 완료',
+                    color: manualNeeded
+                        ? AppColors.brand
+                        : AppColors.textSecondary,
+                    required: manualNeeded,
+                    onPressed: () =>
+                        _reviewApplicantDocument(isId: isId, ok: true)),
+              _docAction(context, '다시 등록 요청',
+                  color: AppColors.errorDark,
+                  onPressed: () => _requestApplicantCorrection(isId: isId)),
+            ],
+          ),
         ],
       ],
+    );
+  }
+
+  /// [UI-3] 서류 행동 한 칸 — 셋 모두 같은 높이(36)·모서리(8)·테두리.
+  Widget _docAction(BuildContext context, String label,
+      {required Color color,
+      required VoidCallback onPressed,
+      bool required = false}) {
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: color,
+        minimumSize: const Size(0, 36),
+        padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12)),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        side: BorderSide(color: required ? AppColors.brand : AppColors.grey300),
+      ),
+      child: Text(label,
+          style: ResponsiveHelper.smallStyle(context, color: color).copyWith(
+              fontWeight: required ? FontWeight.w600 : FontWeight.w500)),
     );
   }
 
@@ -1715,9 +2000,13 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             Icon(icon, size: ResponsiveHelper.iconSize(context, 15), color: primary.withValues(alpha: 0.8)),
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-            Text(
-              title,
-              style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
+            // [ADMIN-DOC-REVIEW-UX] 큰 글자(2.0x)·좁은 폭에서 제목이 줄을
+            //   바꾼다 — Flexible 이 없어 320dp 에서 70px 넘쳤다.
+            Flexible(
+              child: Text(
+                title,
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
+              ),
             ),
           ],
         ),
@@ -1727,20 +2016,53 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     );
   }
 
+  /// [E2-DETAIL-NARROW] 라벨 칸 폭 — 가장 긴 라벨이 **지금 글자 배율로** 한 줄에
+  ///   들어가는 폭과 기본 80 중 큰 값.
+  ///
+  ///   80 고정이었다. 320dp × 1.3 에서 `거주 지/역`, `지원 업/무` 처럼 글자 단위로
+  ///   잘렸고, 411dp × 1.3 에서는 라벨이 칸을 꽉 채워 값과 붙었다. 모든 행이
+  ///   같은 폭을 써야 값의 시작선이 맞으므로 행마다 재지 않고 기준 라벨로 잰다.
+  ///   (이 화면 라벨은 모두 공백 포함 5자 이하다.)
+  double _infoLabelWidth(BuildContext context, TextStyle style) {
+    // Text 위젯은 DefaultTextStyle(테마 글꼴 등)에 style 을 합쳐 그린다 —
+    //   같은 스타일로 재야 잰 폭과 그린 폭이 같다.
+    final painter = TextPainter(
+      text: TextSpan(
+          text: '근무 시간',
+          style: DefaultTextStyle.of(context).style.merge(style)),
+      // 이 파일은 intl 을 import 해 `TextDirection` 이름이 겹친다 — 문맥 값을 쓴다.
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final measured = painter.width.ceilToDouble();
+    painter.dispose();
+    final base = ResponsiveHelper.spacing(context, 80);
+    // 아주 큰 배율(2.0)에서 라벨이 값의 자리를 다 먹지 않게 화면 폭의 35% 로
+    //   막는다. 그때는 라벨이 **단어 경계**(`근무`/`시간`)에서 줄을 바꾼다.
+    final cap = MediaQuery.sizeOf(context).width * 0.35;
+    final wanted = measured > base ? measured : base;
+    return wanted > cap ? cap : wanted;
+  }
+
   Widget _buildInfoRow(BuildContext context, String label, String value, {bool highlight = false}) {
     final theme = Theme.of(context);
+    final labelStyle =
+        ResponsiveHelper.bodyStyle(context, color: AppColors.grey500);
     return Padding(
       padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: ResponsiveHelper.spacing(context, 80),
+            width: _infoLabelWidth(context, labelStyle),
             child: Text(
               label,
-              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+              style: labelStyle,
             ),
           ),
+          // 라벨과 값 사이 간격 — 라벨이 칸을 다 써도 값과 붙지 않는다.
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Expanded(
             child: Text(
               value,
@@ -1774,23 +2096,27 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         borderRadius: BorderRadius.circular(10),
         child: Padding(
           padding: EdgeInsets.symmetric(vertical: verticalPadding, horizontal: 4),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 15, color: textColor),
-                const SizedBox(width: 5),
-                Text(
+          // [COMMON-TEXT-LAYOUT.28] 예전엔 FittedBox 로 줄였다 — 사용자가 키운 글자까지 되돌려 작아졌다.
+          //   글자는 그대로 두고, 한 줄에 다 안 들어가면 하단 바가 버튼을 쌓는다(_buildBottomButtons).
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 15, color: textColor),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
                   label,
+                  softWrap: false,
+                  overflow: TextOverflow.visible,
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
                     color: textColor,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1804,8 +2130,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                        false;
     final primary = Theme.of(context).primaryColor;
 
-    return AppModalFooter(
-      child: Row(
+    // [COMMON-TEXT-LAYOUT.28] 칸(버튼·안내)을 모은 뒤, 한 줄에 칸당 [_footerCellMinWidth] × 글자 배율이
+    //   들어가면 지금처럼 나란히, 아니면 칸마다 한 줄로 쌓는다(글자를 줄이지 않는다).
+    final cells = <({Widget child, int flex})>[];
+    final row = Row(
         children: [
           // 닫기 버튼 (항상)
           Expanded(
@@ -1820,27 +2148,44 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
           // 승인/거절 버튼 (대기중이고 showApprovalButtons가 true일 때만)
           // 블랙리스트 근무자는 승인 버튼 숨김 (지원 후 블랙리스트 등록된 경우 방어)
+          // [ADMIN-APPROVAL-PERMISSION] 확정 권한이 **확인된 거부**면 두 버튼 대신
+          //   이유를 말한다(감추는 것은 확인된 거부일 때뿐 — 모름·오류는 아래
+          //   게이트가 `확인 중`/회색으로 지킨다).
           if (isPending && widget.showApprovalButtons && widget.application != null &&
+              !widget.user.isBlacklisted &&
+              _confirmPermission(listen: true) == PermissionCheck.denied) ...[
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Expanded(
+              flex: 2,
+              child: Text(_noConfirmPermissionText,
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.grey600)),
+            ),
+          ] else if (isPending && widget.showApprovalButtons && widget.application != null &&
               !widget.user.isBlacklisted) ...[
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Expanded(
-              child: _buildDialogButton(
-                label: '거절',
-                icon: Icons.cancel_outlined,
-                bgColor: AppColors.errorBg,
-                textColor: AppColors.error,
-                onTap: () => _updateStatus(AppStatus.rejected),
-              ),
-            ),
+            Expanded(child: _buildRejectButton()),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            // [ADMIN-DOC-REVIEW-UX] 서버 확정 조건(신분 확인)을 **알 때만** 연다.
+            //   조회 중·조회 실패·확정 불가에서는 회색으로 두고 이유만 말한다
+            //   (같은 파일의 `확정취소` 와 같은 방식).
             Expanded(
-              child: _buildDialogButton(
-                label: '승인',
-                icon: Icons.check_circle_outline,
-                bgColor: AppColors.successBg,
-                textColor: AppColors.successDark,
-                onTap: () => _updateStatus(AppStatus.confirmed),
-              ),
+              child: Builder(builder: (context) {
+                final gate =
+                    _approvalGateWith(_confirmPermission(listen: true));
+                final open = gate == ApprovalGate.ready;
+                // [UI-APPLICANTS-AND-INVITATIONS.2] 채용 행동은 '확정'(인력 현황·지원 검토와 같은 말).
+                //   이 화면의 다음 일이므로 유일한 채움 버튼 — 열렸을 때만. 닫힘·확인 중은 회색 그대로.
+                return _buildDialogButton(
+                  label: gate == ApprovalGate.checking ? '확인 중' : '확정',
+                  icon: gate == ApprovalGate.checking
+                      ? Icons.hourglass_empty
+                      : Icons.check_circle_outline,
+                  bgColor: open ? AppColors.brand : AppColors.grey100,
+                  textColor: open ? Colors.white : AppColors.grey400,
+                  onTap: () => _onApproveTap(gate),
+                );
+              }),
             ),
           ] else if (isPending && widget.showApprovalButtons && widget.application != null &&
               widget.user.isBlacklisted) ...[
@@ -1870,13 +2215,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                     ),
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                  _buildDialogButton(
-                    label: '거절',
-                    icon: Icons.cancel_outlined,
-                    bgColor: AppColors.errorBg,
-                    textColor: AppColors.error,
-                    onTap: () => _updateStatus(AppStatus.rejected),
-                  ),
+                  _buildRejectButton(),
                 ],
               ),
             ),
@@ -1904,7 +2243,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
 
             // 장기 + 로딩 중
-            if (_isLoading && isLongTerm) ...[
+            if ((_auxLoading || _isLoading) && isLongTerm) ...[
               Expanded(
                 child: Container(
                   height: 44,
@@ -1947,8 +2286,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                     return _buildDialogButton(
                       label: '확정취소',
                       icon: Icons.cancel_outlined,
-                      bgColor: canCancel ? AppColors.errorBg : AppColors.grey100,
-                      textColor: canCancel ? AppColors.error : AppColors.grey400,
+                      bgColor: canCancel ? Colors.transparent : AppColors.grey100,
+                      textColor: canCancel ? AppColors.errorDark : AppColors.grey400,
                       onTap: () {
                         if (canCancel) {
                           _cancelConfirmation();
@@ -1963,9 +2302,31 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             ],
           ],
         ],
-      ),
+      );
+    for (final w in row.children) {
+      if (w is Expanded) cells.add((child: w.child, flex: w.flex));
+    }
+    return AppModalFooter(
+      child: LayoutBuilder(builder: (context, c) {
+        final fits = TextLayout.fits(context, c.maxWidth, _footerCellMinWidth * cells.length);
+        if (fits) return row;
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 쌓을 때는 다음 행동이 위, 닫기가 맨 아래.
+            for (var i = cells.length - 1; i >= 0; i--) ...[
+              cells[i].child,
+              if (i > 0) SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            ],
+          ],
+        );
+      }),
     );
   }
+
+  /// 하단 버튼 한 칸이 아이콘+이름을 한 줄로 담는 폭(글자 배율 1.0, 논리 px).
+  static const double _footerCellMinWidth = 88;
 
   /// 전화 걸기
   Future<void> _makePhoneCall(String? phone) async {
@@ -1982,12 +2343,80 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     }
   }
 
+  /// [ADMIN-DOC-REVIEW-UX] `승인` 탭 — 확정 조건을 모르거나 충족하지 않으면
+  ///   서버를 부르지 않고 이유를 말한다.
+  void _onApproveTap(ApprovalGate gate) {
+    // 같은 checking/unknown 이라도 원인이 권한인지 서류인지에 따라 말이 다르다.
+    final perm = _confirmPermission();
+    switch (gate) {
+      case ApprovalGate.ready:
+        _updateStatus(AppStatus.confirmed);
+      case ApprovalGate.denied:
+        ToastHelper.showWarning(_noConfirmPermissionText);
+      case ApprovalGate.checking:
+        ToastHelper.showInfo(perm == PermissionCheck.unknown
+            ? '확정 권한을 확인하고 있어요. 잠시만 기다려 주세요.'
+            : '서류 상태를 확인하고 있어요. 잠시만 기다려 주세요.');
+      case ApprovalGate.unknown:
+        ToastHelper.showWarning(perm == PermissionCheck.error
+            ? '확정 권한을 확인하지 못해 확정할 수 없어요. 잠시 후 다시 열어 주세요.'
+            : '서류 상태를 불러오지 못해 확정할 수 없어요. 서류 확인에서 다시 불러와 주세요.');
+      case ApprovalGate.blocked:
+        ToastHelper.showWarning(
+            _docReview?.approvalBlockText ?? '아직 확정할 수 없어요.');
+    }
+  }
+
+  /// [ADMIN-REJECT-PERMISSION] 거절도 서버(callableRejectApplication)는 확정과
+  ///   같은 권한(canManageTo)을 본다. 승인과 **같은 권한 상태**를 따른다 —
+  ///   모름·조회 실패에서 실행 가능한 빨간 버튼으로 두지 않는다.
+  Widget _buildRejectButton() {
+    final perm = _confirmPermission(listen: true);
+    final open = perm == PermissionCheck.allowed;
+    // [UI-APPLICANTS-AND-INVITATIONS.2] 위험 행동은 채움·연한 빨강 바탕 없이 글자로 — 확정과 경쟁하지 않게.
+    return _buildDialogButton(
+      label: '거절',
+      icon: Icons.cancel_outlined,
+      bgColor: open ? Colors.transparent : AppColors.grey100,
+      textColor: open ? AppColors.errorDark : AppColors.grey400,
+      onTap: () => _onRejectTap(perm),
+    );
+  }
+
+  void _onRejectTap(PermissionCheck perm) {
+    switch (perm) {
+      case PermissionCheck.allowed:
+        _updateStatus(AppStatus.rejected);
+      case PermissionCheck.denied:
+        ToastHelper.showWarning(_noConfirmPermissionText);
+      case PermissionCheck.unknown:
+        ToastHelper.showInfo('확정 권한을 확인하고 있어요. 잠시만 기다려 주세요.');
+      case PermissionCheck.error:
+        ToastHelper.showWarning('확정 권한을 확인하지 못해 거절할 수 없어요. 잠시 후 다시 열어 주세요.');
+    }
+  }
+
+  static const _noConfirmPermissionText =
+      '확정·거절은 TO 관리 권한이 있는 관리자만 할 수 있어요.';
+
   /// 상태 업데이트
   Future<void> _updateStatus(String newStatus) async {
     if (widget.application == null || _isLoading) return;
+    // [ADMIN-DOC-REVIEW-UX] 버튼이 열린 뒤 판정이 바뀌었을 수 있다(재조회 실패 등).
+    if (newStatus == AppStatus.confirmed &&
+        _approvalGate != ApprovalGate.ready) {
+      _onApproveTap(_approvalGate);
+      return;
+    }
+    // [ADMIN-APPROVAL-PERMISSION] 거절도 서버는 canManageTo 를 본다.
+    if (newStatus == AppStatus.rejected &&
+        _confirmPermission() != PermissionCheck.allowed) {
+      _onRejectTap(_confirmPermission());
+      return;
+    }
     setState(() => _isLoading = true);
 
-    final actionText = newStatus == AppStatus.confirmed ? '승인' : '거절';
+    final actionText = newStatus == AppStatus.confirmed ? '확정' : '거절';
     final adminUID = context.read<UserProvider>().currentUser?.uid;
     String? rejectReason;
 
@@ -1995,12 +2424,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       // 승인
       final confirm = await DialogHelper.showConfirm(
         context,
-        title: '지원자 승인',
-        message: '${widget.user.name}님을 승인하시겠습니까?',
-        confirmText: '승인',
-        confirmColor: AppColors.success,
+        title: '지원자 확정',
+        message: '${widget.user.name}님을 확정하시겠습니까?\n계약 대기 상태가 되고, 계약서를 보내 근무자가 동의해야 출근할 수 있어요.',
+        confirmText: '확정',
+        confirmColor: AppColors.brand,
         icon: Icons.check_circle,
-        iconColor: AppColors.success,
+        iconColor: AppColors.brand,
       );
 
       if (confirm != true || !mounted) {
@@ -2025,6 +2454,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     try {
       await _firestoreService.updateApplicationStatus(
         applicationId: widget.application!.id,
+        // [CONFIRM-BUSINESSID] 확정 CF 는 businessId 가 없으면 invalid-argument 로
+        //   거절한다. 지원서 자신의 사업장을 보낸다(거절 경로는 이 값을 쓰지 않는다).
+        businessId: widget.application!.businessId,
         status: newStatus,
         confirmedBy: newStatus == AppStatus.confirmed ? adminUID : null,
         rejectedBy: newStatus == AppStatus.rejected ? adminUID : null,
@@ -2040,7 +2472,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           if (!_canManageContract()) {
             final callback = widget.onStatusChanged; // pop 전에 캡처
             Navigator.pop(context);
-            ToastHelper.showSuccess('승인 처리되었습니다');
+            ToastHelper.showSuccess('확정되었습니다. 계약서를 보내야 근무자가 동의할 수 있어요.');
             callback?.call();
             return;
           }
@@ -2068,7 +2500,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     if (businessId == null) {
       final callback = widget.onStatusChanged; // pop 전에 캡처
       Navigator.pop(context);
-      ToastHelper.showSuccess('승인 처리되었습니다');
+      ToastHelper.showSuccess('확정되었습니다. 계약서를 보내야 근무자가 동의할 수 있어요.');
       callback?.call();
       return;
     }
@@ -2081,8 +2513,15 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       context,
       businessId: businessId,
     );
-    if (articles == null || !mounted) {
-      if (mounted) setState(() => _isLoading = false);
+    if (!mounted) return;
+    if (articles == null) {
+      // [UI-2] 이 함수는 확정이 서버에서 끝난 뒤에만 불린다. 템플릿만 닫았을 때
+      //   상세를 그대로 두면 '대기중'·확정 버튼이 남아 다시 누르게 된다 —
+      //   계약 권한 없음 경로와 같이 닫고 알리고 목록을 새로 읽는다.
+      final callback = widget.onStatusChanged; // pop 전에 캡처
+      Navigator.pop(context);
+      ToastHelper.showSuccess('확정되었습니다. 계약서를 보내야 근무자가 동의할 수 있어요.');
+      callback?.call();
       return;
     }
 
@@ -2110,20 +2549,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       return;
     }
 
-    WorkDetailData workDetail;
-    if (app.workDetailId?.isNotEmpty == true) {
-      workDetail = workDetails.firstWhere(
-        (w) => w.id == app.workDetailId || w.legacyId == app.workDetailId,
-        orElse: () => workDetails.firstWhere(
-          (w) => w.workType == app.selectedWorkType,
-          orElse: () => workDetails.first,
-        ),
-      );
-    } else {
-      workDetail = workDetails.firstWhere(
-        (w) => w.workType == app.selectedWorkType,
-        orElse: () => workDetails.first,
-      );
+    final workDetail = WorkDetailHelper.contractWorkDetailFor(app, workDetails);
+    if (workDetail == null) {
+      setState(() => _isLoading = false);
+      ToastHelper.showError('이 근무의 업무를 공고에서 찾지 못해 계약서를 만들지 못했어요.');
+      return;
     }
 
       final business = await _firestoreService.getBusinessById(businessId);
@@ -2132,7 +2562,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       if (business == null) {
         final callback = widget.onStatusChanged; // pop 전에 캡처
         Navigator.pop(context);
-        ToastHelper.showSuccess('승인 처리되었습니다');
+        ToastHelper.showSuccess('확정되었습니다. 계약서를 보내야 근무자가 동의할 수 있어요.');
         callback?.call();
         return;
       }
@@ -2177,7 +2607,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         // showSuccess가 아닌 showWarning으로 사용자에게 계약서 미생성 사실을 알림.
         final callback = widget.onStatusChanged; // pop 전에 캡처
         Navigator.pop(context);
-        ToastHelper.showWarning('승인은 완료됐지만 계약서 생성에 실패했습니다.\n계약서 탭에서 다시 시도해주세요.');
+        ToastHelper.showWarning('확정은 완료됐지만 계약서 생성에 실패했습니다.\n계약서 탭에서 다시 시도해주세요.');
         callback?.call();
       }
     } finally {
@@ -2193,7 +2623,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   /// 확정 취소 (CONFIRMED / CONTRACT_PENDING 모두 처리)
   Future<void> _cancelConfirmation() async {
     if (widget.application == null) return;
-    if (_isLoading) return; // 중복 실행 방어
+    // 확정자 기능 — 부가 조회(_hasAttendance 등)가 끝난 뒤에만(기존과 같다).
+    if (_auxLoading || _isLoading) return; // 중복 실행 방어
     // [BUG-FIX 2026-07-16] _isLoading 설정 누락 — _showCancelReasonPicker() await 중 재진입 가능
     setState(() => _isLoading = true);
 
@@ -2457,7 +2888,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
   /// 🆕 리뷰 작성 다이얼로그 열기
   Future<void> _openReviewDialog() async {
-    if (_isLoading) return;
+    if (_auxLoading || _isLoading) return;
     final app = widget.application;
     if (app == null || widget.businessId == null) return;
 
@@ -2527,6 +2958,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     // [P2-WF-ATT-01] canManageTo-only 경로: callableGetAdminAttendances → callableGetWorkerReviewSummary
     // raw attendance 없이 count aggregate만 반환 (GPS/체크인 시간 등 미포함)
     int workDaysInMonth = 0;
+    // [REVIEW-WORKER-SUMMARY] 정시·지각 — 모르면 null(작성창 `확인 불가`). 조회 실패도 모름이다.
+    int? onTimeDays;
+    int? lateDays;
     try {
       final yearMonthStr =
           '$reviewYear-${reviewMonth.toString().padLeft(2, '0')}';
@@ -2541,8 +2975,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         'workerId': widget.user.uid,
         'yearMonth': yearMonthStr,
       });
-      workDaysInMonth =
-          (cfResult.data['confirmedWorkDayCount'] as num? ?? 0).toInt();
+      // 서버 v2 는 목록·알림과 같은 실근무 기준(노쇼·결근 제외)으로 센다.
+      //   구 서버면 근무일만 오고 정시·지각은 모른다 — 근무일 전체를 정시로 추측하지 않는다.
+      final summary = AttendanceModel.parseWorkerReviewSummary(cfResult.data);
+      workDaysInMonth = summary.workDays;
+      onTimeDays = summary.onTime;
+      lateDays = summary.late;
     } catch (e) {
       debugPrint('❌ 근무일 조회 실패: $e');
     }
@@ -2559,8 +2997,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       reviewYear: reviewYear,
       reviewMonth: reviewMonth,
       workDaysInMonth: workDaysInMonth,
-      normalAttendanceDays: workDaysInMonth,
-      lateDays: 0,
+      normalAttendanceDays: onTimeDays,
+      lateDays: lateDays,
       requestId: reviewRequest?.id,
     );
 

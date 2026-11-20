@@ -109,7 +109,10 @@ void main() {
   final preview = _fn(raw, 'callableGetWithdrawBlockers');
   final helper = _helper(raw, 'srvCountOrphanMoneyObligations');
   final assertFn = _helper(raw, 'srvAssertAccountDeletionAllowed');
-  final deact = _fn(raw, 'onBusinessDeactivated');
+  // [ARCHIVE-CASCADE-PAGINATION] 비활성화 본문은 srvRunBusinessArchiveCascade(+대기 마감 helper)로 옮겨졌다.
+  final deact = _fn(raw, 'onBusinessDeactivated') +
+      _helper(raw, 'srvRunBusinessArchiveCascade') +
+      _helper(raw, 'srvRejectPendingByBusinessEnd');
 
   group('WBP-INV — preview blocker 의 canonical 술어', () {
     test('WBP-INV-01 UNPAID_WAGES = wageStatus calculated|confirmed', () {
@@ -288,9 +291,9 @@ void main() {
   group('WBP-COV — 자동 teardown 이 이미 끝내는 것', () {
     test('WBP-COV-01 활성 TO 세 상태를 CLOSED 로 끝낸다', () {
       // preview 의 CONFIRMED_WORKERS 가 세는 바로 그 세 상태다.
-      for (final st in ['"ACTIVE"', '"FULL"', '"SCHEDULED"']) {
-        expect(_flat(deact), contains('.where("status", "==", $st)'));
-      }
+      // [ARCHIVE-CASCADE-PAGINATION] 세 상태를 한 루프로 끝까지(id 페이지) 처리한다.
+      expect(_flat(deact), contains('for (const st of ["ACTIVE", "FULL", "SCHEDULED"]) {'));
+      expect(_flat(deact), contains('db.collection("tos").where("businessId", "==", businessId).where("status", "==", st),'));
       expect(_flat(deact), contains('status: "CLOSED"'));
       expect(_flat(deact), contains('closedReason: "BUSINESS_DEACTIVATED"'));
     });
@@ -300,8 +303,9 @@ void main() {
       expect(_flat(deact), contains('srvLifecycleCancelBulk('));
       expect(_flat(deact), contains('cancelReason: "BUSINESS_DEACTIVATED"'));
       // CLOSED TO 에 남은 잔여 CONFIRMED 도 businessId 전수로 처리한다.
-      expect(_flat(deact), contains(r'.where("businessId", "==", businessId) '
-          r'.where("status", "==", "CONFIRMED")'));
+      // [ARCHIVE-CASCADE-PAGINATION] 지원서 질의는 사업장 기준 하나, 확정 계열 두 상태를 끝까지.
+      expect(_flat(deact), contains('const apps = db.collection("applications").where("businessId", "==", businessId);'));
+      expect(_flat(deact), contains('for (const st of ["CONTRACT_PENDING", "CONFIRMED"]) {'));
     });
 
     test('WBP-COV-03 서명 전 계약은 voided 로 끝난다', () {
@@ -318,8 +322,9 @@ void main() {
       // preview 는 completed 를 세고 teardown 은 건드리지 않는다 — 이
       // 비대칭이 의도적이라는 근거가 소스에 적혀 있다.
       expect(raw, contains('근로기준법 제42조: 계약서 문서는 삭제 금지'));
-      // voided 전환은 batch 와 개별 fallback 두 경로뿐이다.
-      expect(_count(deact, 'status: "voided"'), 2);
+      // [ARCHIVE-CASCADE-PAGINATION] voided 전환은 건마다 한 경로뿐이다(batch+개별 fallback 을
+      //   건별 update + 실패 집계로 바꿨다 — fallback 이 실패를 삼키던 경로가 없어졌다).
+      expect(_count(deact, 'status: "voided"'), 1);
     });
 
     test('WBP-COV-05 **돈이 걸린 건은 보존된다** — 그래서 gate 가 필요하다', () {
@@ -428,7 +433,10 @@ void main() {
       expect(_flat(preview), contains(r'.filter((d) => !d.data()["deactivatedAt"])'));
       expect(_flat(helper), contains(
           '.where("adminIds", "array-contains", uid)'));
-      expect(_flat(helper), contains(r'.filter((d) => !d.data()["deactivatedAt"])'));
+      // [BUSINESS-ARCHIVE] 돈은 운영 종료 사업장까지 — 서버 helper 는 필터 없이,
+      //   preview 는 돈 쿼리만 전체 집합(moneyBizIds)으로 같은 범위를 본다.
+      expect(_flat(helper), isNot(contains(r'.filter((d) => !d.data()["deactivatedAt"])')));
+      expect(_flat(preview), contains('const moneyBizIds = bizSnap.docs.map((d) => d.id);'));
     });
 
     test('WBP-SET-02 preview 가 더 넓다 — 같은 code 를 두 번 올리지 않는다', () {

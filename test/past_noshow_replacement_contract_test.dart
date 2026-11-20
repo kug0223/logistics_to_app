@@ -101,22 +101,24 @@ void main() {
     test('미래 NO_SHOW를 만드는 writer가 없다 — 당일 한정의 근거', () {
       final src = _src(_fnsPath);
       final code = _codeOf(src);
-      // NO_SHOW를 쓰는 writer는 둘뿐이다.
-      expect('status: "NO_SHOW",'.allMatches(code).length, 2,
+      // NO_SHOW를 쓰는 writer: 관리자 수동 경로 2곳 + 자동 노쇼 1곳.
+      //   [NOSHOW-ATOMICITY 2026-10-27] 자동 노쇼는 예전에도 있었으나 정렬 공백 서식이라 이 문자열에 안 잡혔다.
+      //   단일 writer 로 모이며 표준 서식이 됐다 — 새 writer 가 아니다. 그 미래 차단은 아래 창·종료 단언이 고정한다.
+      expect('status: "NO_SHOW",'.allMatches(code).length, 3,
           reason: 'NO_SHOW writer가 늘면 미래 날짜 가능성을 다시 판단해야 한다');
       // 관리자 수동 경로는 미래 날짜를 skip한다.
       expect(_flat(code).contains('if (workDateMs > todayKSTStartMs) { skippedSet.add(resolvedId); return undefined; }'),
           true, reason: '[NS-02-FIX] 미래 NO_SHOW 선제 생성 차단이 사라졌다');
-      // 자동 경로는 어제만 훑는다.
-      //   [LONGTERM-DATE-ELIGIBILITY] 요일 계산이 공용 resolver로 올라가면서
-      //   지역 변수(yesterdayWeekday)는 사라졌다. 여기서 확인할 것은 요일
-      //   변수의 존재가 아니라 **훑는 창이 어제 하루**라는 사실이다.
-      expect(code.contains('.where("workDate", ">=", Timestamp.fromDate(yesterdayStartUTC))'),
-          true, reason: '단기 자동 노쇼가 어제 하루만 본다');
-      expect(code.contains('.where("workDate", "<",  Timestamp.fromDate(todayStartUTC))'),
+      // 자동 경로는 오늘 이전 근무일만 훑는다.
+      //   [NOSHOW-ATOMICITY 2026-10-27] 창이 어제·그제 두 근무일이 됐다(06:00 뒤에 끝나는 야간 근무를
+      //   다음 06:00 이 받기 위해). 그래도 오늘 이후 근무일은 훑지 않고, 약속한 종료 전에는 만들지 않는다.
+      expect(code.contains('const days: SrvNsDay[] = [2, 1].map((k) => {'), true, reason: '창은 그제·어제 두 근무일뿐');
+      expect(code.contains('.where("workDate", ">=", Timestamp.fromDate(windowStartUTC))'),
+          true, reason: '단기 자동 노쇼 창 시작 = 그제');
+      expect(code.contains('.where("workDate", "<", Timestamp.fromDate(todayStartUTC))'),
           true, reason: '오늘 이후는 훑지 않는다');
-      expect(code.contains('const nsDayDate = new Date(yesterdayStartUTC.getTime());'),
-          true, reason: '장기 자동 노쇼도 어제 날짜로만 판정한다');
+      expect(code.contains('if (now.toMillis() < end.endMs) return bump("NOT_ENDED");'),
+          true, reason: '약속한 종료 전에는 노쇼를 만들지 않는다');
     });
   });
 

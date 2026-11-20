@@ -1,10 +1,11 @@
 import '../../models/core/application_model.dart';
 import '../../models/core/business_model.dart';
-import '../../models/core/business_work_type_model.dart';
 import '../../models/core/slot_model.dart';
 import '../../models/core/to_model.dart';
 import '../../models/core/work_detail_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/tax_identity_service.dart';
+import '../../services/work_type_guide_resolver.dart';
 
 /// [R7-P2-2 후속 P22-D] 공고 상세가 **화면을 만들 때** 나가는 읽기 경계.
 ///
@@ -20,8 +21,10 @@ class JobPostingReads {
     required this.businessById,
     required this.slots,
     required this.myApplications,
-    required this.businessWorkTypes,
+    required this.workTypeCatalog,
     required this.applicationOnce,
+    this.taxStatus = TaxIdentityService.loadStatus,
+    this.now = DateTime.now,
   });
 
   final Future<({TOModel? to, bool failed})> Function(String toId) toOrFailure;
@@ -33,9 +36,17 @@ class JobPostingReads {
   final Future<List<SlotModel>> Function(String toId, {bool visibleOnly}) slots;
 
   final Future<List<ApplicationModel>> Function(String uid) myApplications;
-  final Future<List<BusinessWorkTypeModel>> Function(String businessId)
-      businessWorkTypes;
+  /// [WORKTYPE-IDENTITY] 업무 안내 원천 — 비활성 포함 전체. 새 공고 선택 목록이 아니다.
+  final Future<WorkTypeCatalog> Function(String businessId) workTypeCatalog;
   final Future<ApplicationModel?> Function(String applicationId) applicationOnce;
+
+  /// [R8-PERCEIVED.1] 지원 문턱의 세무 축 — 지원 버튼을 누르면 맨 먼저 이 값을 기다린다.
+  ///   읽기 경계에 두어 그 대기를 재현·측정할 수 있게 한다. 실패는 throw 하지 않고
+  ///   `TaxIdentityStatus.unknown()` 으로 돌아온다(서비스 계약 그대로).
+  final Future<TaxIdentityStatus> Function() taxStatus;
+
+  /// 먼저 받아 둔 세무 값의 나이를 재는 시계(테스트가 60초 경과를 만들 수 있게).
+  final DateTime Function() now;
 
   factory JobPostingReads.of([FirestoreService? service]) {
     final svc = service ?? FirestoreService();
@@ -46,7 +57,7 @@ class JobPostingReads {
       slots: (toId, {bool visibleOnly = true}) =>
           svc.getSlots(toId, visibleOnly: visibleOnly),
       myApplications: svc.getMyApplications,
-      businessWorkTypes: svc.getBusinessWorkTypes,
+      workTypeCatalog: svc.getBusinessWorkTypeCatalog,
       applicationOnce: svc.getApplicationOnce,
     );
   }

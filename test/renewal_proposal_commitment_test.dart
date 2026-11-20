@@ -35,6 +35,8 @@ const _rulesPath = 'firestore.rules';
 const _fixedWorkerPath =
     'lib/screens/business_admin/dialogs/fixed_worker_management_dialog.dart';
 const _expiringPath = 'lib/screens/business_admin/expiring_contracts_screen.dart';
+// [DU347] 계약 확인 필요 화면의 조회 경계(reads seam, 같은 폴더 *_reads.dart 패턴)
+const _expiringReadsPath = 'lib/screens/business_admin/expiring_contracts_reads.dart';
 const _workerHomePath = 'lib/screens/user/user_home_screen.dart';
 const _workerScreenPath = 'lib/screens/user/renewal_proposal_screen.dart';
 const _appSvcPath = 'lib/services/firestore/application_firestore.dart';
@@ -107,6 +109,7 @@ void main() {
   final rules = _src(_rulesPath);
   final fixedWorker = _codeOf(_src(_fixedWorkerPath));
   final expiring = _codeOf(_src(_expiringPath));
+  final expiringReads = _codeOf(_src(_expiringReadsPath));
   final workerHome = _codeOf(_src(_workerHomePath));
   final workerScreen = _codeOf(_src(_workerScreenPath));
   final appSvc = _codeOf(_src(_appSvcPath));
@@ -430,7 +433,12 @@ void main() {
 
     test('09-c 계약 확인 필요 화면도 같은 helper 를 쓴다', () {
       expect(expiring, contains('needsManagerRenewalAction(app, todayOnly, waiting)'));
-      expect(expiring, contains('getPendingRenewalProposals(bizId)'));
+      // [DU347 시험 추종] 대기 제안 조회가 reads 경계를 지난다 — 화면 → 주입 → 기본 실구현 → service 호출의 실제 연결을 본다.
+      //   화면은 사업장마다 경계로 대기 제안을 읽고 actionable 만 waiting 으로 쓴다(필터 그대로).
+      expect(expiring, contains('(await _reads.pendingRenewalProposals(bizId))'));
+      expect(expiring, contains('.where((p) => p.isActionableAt(today))'));
+      expect(expiring, contains('widget.reads ?? ExpiringContractsReads.of(_svc)'));
+      expect(expiringReads, contains('svc.getPendingRenewalProposals(businessId)'));
     });
 
     test('09-d 고정근무자도 같은 helper 를 쓴다', () {

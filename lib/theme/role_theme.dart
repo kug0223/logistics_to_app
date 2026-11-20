@@ -1,27 +1,35 @@
 // lib/theme/role_theme.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import 'app_colors.dart';
 
 /// 통합 앱 테마 (역할 무관 단일 색상 체계)
 ///
-/// Primary  : #1565C0 (Blue[800]) — 스플래시·로그인과 동일한 브랜드 기준색
-/// Secondary: #1E88E5 (Blue[600]) — 그라디언트 끝색, 밝은 강조
+/// Primary  : AppColors.brand #3859E8 (코발트) — [DU1] 사용자 선택 시안 방향
+/// Secondary: AppColors.brandDark #2A45C4 — 눌림·진한 강조
 class RoleTheme {
 
   // ─── 브랜드 색상 상수 ──────────────────────────────────────────
-  static const Color _primary   = Color(0xFF1565C0); // Blue[800]
-  static const Color _secondary = Color(0xFF1E88E5); // Blue[600]
+  static const Color _primary   = AppColors.brand;     // [DU1] #3859E8 코발트 (이전 #1565C0)
+  static const Color _secondary = AppColors.brandDark; // [DU1] 이전 #1E88E5
   static const Color _tertiary  = Color(0xFF90CAF9); // Blue[200]
-  static const Color _chipBg    = Color(0xFFE3F2FD); // Blue[50]
+  static const Color _chipBg    = AppColors.brandSurface; // [DU1] #EEF2FF
 
   // ═══════════════════════════════════════════════════════════
   // 통합 테마 (모든 역할 공통)
   // ═══════════════════════════════════════════════════════════
 
   static ThemeData get _unifiedTheme {
+    // [DU1] 공통 기준 v1 — 의미색 정본은 AppColors. 흰 헤더·낮은 경계, 평면 주 버튼, 반경 12, 번들 NotoSansKR.
+    //   AppBar 를 흰 배경으로 바꿨다: 이전에는 테마가 파란 배경이라 흰 배경 화면이 LightAppBarStyle 로
+    //   제목·아이콘 색을 덮어야 했다(그 보호 코드는 그대로 둔다 — 같은 값이 된다).
+    const fg = AppColors.textPrimary;
     return ThemeData(
       useMaterial3: true,
-      scaffoldBackgroundColor: const Color(0xFFF5F5F5),
+      fontFamily: 'NotoSansKR',
+      scaffoldBackgroundColor: AppColors.background,
 
       colorScheme: ColorScheme.fromSeed(
         seedColor: _primary,
@@ -29,47 +37,61 @@ class RoleTheme {
         secondary: _secondary,
         tertiary: _tertiary,
         surface: Colors.white,
-        error: const Color(0xFFD32F2F),
+        error: AppColors.errorDark,
         onPrimary: Colors.white,
         onSecondary: Colors.white,
-        onSurface: const Color(0xFF212121),
+        onSurface: fg,
         brightness: Brightness.light,
       ),
 
       appBarTheme: const AppBarTheme(
-        backgroundColor: _primary,
-        foregroundColor: Colors.white,
+        backgroundColor: Colors.white,
+        foregroundColor: fg,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
+        scrolledUnderElevation: 0,
         centerTitle: false,
+        systemOverlayStyle: SystemUiOverlayStyle.dark,
         titleTextStyle: TextStyle(
-          color: Colors.white,
+          fontFamily: 'NotoSansKR',
+          color: fg,
           fontSize: 20,
           fontWeight: FontWeight.bold,
         ),
-        iconTheme: IconThemeData(color: Colors.white),
+        iconTheme: IconThemeData(color: fg),
+        actionsIconTheme: IconThemeData(color: fg),
       ),
 
       floatingActionButtonTheme: const FloatingActionButtonThemeData(
         backgroundColor: _primary,
         foregroundColor: Colors.white,
-        elevation: 4,
+        elevation: 2,
       ),
 
       cardTheme: CardThemeData(
-        elevation: 2,
+        elevation: 0,
+        color: Colors.white,
+        surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppColors.borderLight),
         ),
       ),
 
       chipTheme: ChipThemeData(
         backgroundColor: _chipBg,
-        selectedColor: _secondary,
+        selectedColor: _chipBg,
+        // [DU260] Chip 은 테마 labelStyle 이 있으면 기본(앱 글꼴·14)을 버리고 이것만 쓴다(SDK chip.dart:
+        //   `chipTheme.labelStyle ?? defaults.labelStyle`). 글꼴 이름·크기가 없어 스타일 없는 칩과 글꼴 없는
+        //   자체 TextStyle 칩의 라벨이 앱 글꼴(NotoSansKR)이 아니었다(시험 캡처에서는 네모). 화면이 넘기는
+        //   labelStyle 은 이것 위에 merge 되므로 화면의 크기·색이 이긴다.
         labelStyle: const TextStyle(
+          fontFamily: 'NotoSansKR',
+          fontSize: 14,
           color: _primary,
           fontWeight: FontWeight.w600,
         ),
-        side: const BorderSide(color: _secondary),
+        side: const BorderSide(color: AppColors.border),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
         ),
@@ -79,11 +101,25 @@ class RoleTheme {
         style: ElevatedButton.styleFrom(
           backgroundColor: _primary,
           foregroundColor: Colors.white,
+          // 터치 최소 48dp — 높이는 글자 배율에 따라 늘어난다(고정 높이 아님)
+          minimumSize: const Size(64, 48),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          textStyle: const TextStyle(fontFamily: 'NotoSansKR', fontSize: 16, fontWeight: FontWeight.bold),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(12),
           ),
-          elevation: 2,
+          elevation: 0,
+        ),
+      ),
+
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: _primary,
+          minimumSize: const Size(64, 48),
+          side: const BorderSide(color: AppColors.border),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       ),
 
@@ -95,24 +131,31 @@ class RoleTheme {
 
       inputDecorationTheme: InputDecorationTheme(
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.border),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.border),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: _primary, width: 2),
         ),
         // 미입력 상태 레이블: 중립 회색 (파란색은 링크/선택 완료처럼 오독될 수 있음)
-        labelStyle: const TextStyle(color: Color(0xFF757575)),
+        labelStyle: const TextStyle(color: AppColors.textSecondary),
         // 포커스 또는 내용 있을 때 플로팅 레이블: 브랜드 블루 유지
         floatingLabelStyle: const TextStyle(color: _primary),
       ),
 
+      dividerTheme: const DividerThemeData(color: AppColors.borderLight, thickness: 1, space: 1),
+
       bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+        backgroundColor: Colors.white,
         selectedItemColor: _primary,
-        unselectedItemColor: Color(0xFF9E9E9E),
+        unselectedItemColor: AppColors.textTertiary,
         type: BottomNavigationBarType.fixed,
-        elevation: 8,
+        elevation: 0,
       ),
     );
   }

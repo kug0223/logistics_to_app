@@ -3,6 +3,8 @@ import 'core/work_detail_data.dart';
 
 /// 업무 상세 입력 데이터 클래스
 class WorkDetailInput {
+  /// [WORKTYPE-IDENTITY] 고른 업무유형 문서 id — 공고 근무가 이 id 로 최신 안내를 읽는다.
+  final String? workTypeId;
   final String? workType;
   final String workTypeIcon;
   final String workTypeColor;
@@ -38,6 +40,7 @@ class WorkDetailInput {
   final String? description;
 
   WorkDetailInput({
+    this.workTypeId,
     this.workType,
     this.workTypeIcon = 'work',
     this.workTypeColor = '#2196F3',
@@ -71,6 +74,7 @@ class WorkDetailInput {
     // [SAFETY] isValid == false 상태에서 호출하면 ! 연산자가 예외를 던짐 — 호출 전 반드시 isValid 확인
     assert(isValid, 'WorkDetailInput.toMap() called on invalid (null) state');
     return {
+      if (workTypeId != null) 'workTypeId': workTypeId,
       'workType': workType!,
       'workTypeIcon': workTypeIcon,
       'workTypeColor': workTypeColor,

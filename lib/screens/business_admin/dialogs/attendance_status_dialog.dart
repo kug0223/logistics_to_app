@@ -13,6 +13,8 @@
 import 'dart:async' show unawaited;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+// [DU305] 선택 직후 맞춤의 최소 이동 계산(getOffsetToReveal) — material/widgets 는 이 이름을 다시 내보내지 않는다.
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -31,6 +33,7 @@ import '../../../services/firestore_service.dart';
 // Utils
 import '../../../utils/person_label.dart';
 import '../../../utils/toast_helper.dart';
+import '../../../utils/text_layout.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/format_helper.dart';
@@ -59,10 +62,27 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/app_select_field.dart';
 // [R5.2] NO_SHOW 대체 인력 충원 recovery dialog
 import 'day_applicants_dialog.dart';
+// [ISG2-REFRESH] 좌석 반납 후 연 지원자 명단에서의 변경도 다른 화면에 알린다.
+import '../../../controllers/workforce_controller.dart';
 import 'attendance_reads.dart';
+// [REISSUE-RECOVERY] 계약 상태 조회 결과(모름/없음 구별) 타입.
+import '../../../services/contract_service.dart';
+
+/// [ROUNDING-PREVIEW.27] 근태 기준 적용 확인 창의 한 줄 — 근로자 · 근무 시간대 · 입력 시각 · 적용 시 시각.
+///   같은 사람이 같은 날 두 근무를 하면 이름만으로는 줄이 갈리지 않아 시간대를 함께 둔다.
+typedef RoundingPreviewRow = ({String name, String shift, String raw, String applied});
 
 /// 당일명단 다이얼로그 - 출퇴근 관리 기능 포함
 class AttendanceStatusDialog extends StatefulWidget {
+  /// [CONTRACT-DISPATCH-B2-APP] 서버가 출근 기록이 없어 건너뛴 행(notCheckedIn)을 결과 문구에 붙인다.
+  @visibleForTesting
+  static String checkoutFailureNote(Object? data) {
+    final failures = data is Map ? data['failures'] : null;
+    if (failures is! List) return '';
+    final n = failures.where((f) => f is Map && f['reason'] == 'notCheckedIn').length;
+    return n > 0 ? '\n출근 기록이 없어 건너뛴 근무 $n건' : '';
+  }
+
   final DateTime date;
   final List<String> businessIds;
   final String? initialBusinessId;
@@ -109,7 +129,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   Map<String, String> _businessNameMap = {};
   Map<String, BusinessWorkTypeModel> _workTypeMap = {};  // 업무유형 정보
   Map<String, dynamic> _workDetailTimeMap = {};  // 업무별 근무시간 (WorkDetail)
-  Map<String, String?> _contractStatusMap = {};  // 계약서 서명 상태
+  // 계약서 서명 상태. [REISSUE-RECOVERY] 조회 실패는 `unresolved` 로 분리된다 —
+  //   `계약미작성` 배지는 **없다고 확인된** 경우에만 띄운다.
+  ContractStatusBatch _contractStatusMap = const ContractStatusBatch();
 
   /// [CROSS-SLICE-1A] wdId → 그 모집 단위가 종료됐는가.
   ///
@@ -124,6 +146,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   String? _highlightedAppId; // [5B.2A] focused individual mode — 진입 시 해당 row 강조
   /// [5B.2B] focused row scroll — highlighted card에 부여, Scrollable.ensureVisible에 사용
   final GlobalKey _focusedCardKey = GlobalKey();
+
+  /// [DU305] 선택 직후 맞춤 대상 — 일괄 버튼 첫 줄(출근·퇴근 또는 4열 한 줄)과, 현재 탭에서 화면 순서상 첫 선택 근무자 카드.
+  final GlobalKey _batchStepRowKey = GlobalKey();
+  final GlobalKey _firstSelectedCardKey = GlobalKey();
+
+  /// [DU305] 현재 탭 목록을 만드는 동안에만 true — 그 탭에서 처음 만나는 선택 카드 하나에 [_firstSelectedCardKey] 를 준다.
+  ///   선택은 현재 탭에만 생기고(탭 전환 시 초기화), 한 근무는 한 탭에만 있으므로 키는 한 곳에만 붙는다.
+  bool _firstSelectedPending = false;
 
   // UI 상태
   bool _isLoading = true;
@@ -425,7 +455,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       final attendanceMap = step2Results[0] as Map<String, AttendanceModel>;
       final userMap = step2Results[1] as Map<String, UserModel>;
       final workDetailTimeMap = step2Results[2] as Map<String, dynamic>;
-      final contractStatusMap = step2Results[3] as Map<String, String?>;
+      final contractStatusMap = step2Results[3] as ContractStatusBatch;
 
       if (!mounted) return;
       setState(() {
@@ -610,6 +640,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     for (final e in cfItems) {
       final m = Map<String, dynamic>.from(e as Map);
       final id = m.remove('id') as String? ?? '';
+      // [ATTENDANCE-UNKNOWN-DEST.28] status 가 없는 근태를 fromMap 기본값('absent')으로 읽어 결근 →
+      //   '처리완료' 탭에 두었다. 통계는 같은 문서를 '근태 확인 필요'라 안내한다 — 같은 판정을 쓴다.
+      m['status'] = AttendanceModel.displayStatusOfRaw(m['status']);
       final attendance = AttendanceModel.tryFromMap(m, id);
       if (attendance == null) continue;
       // applicationIds에 포함된 근무자만 맵에 저장 (전날 기록이 오늘 명단에 섞이지 않도록 필터)
@@ -712,7 +745,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       }
     }
     // 탭에서 못 찾으면 — 이미 완료/제거된 상태. highlight만 유지.
+    // [STATS-TO-ATTENDANCE.27] 다른 근무로 옮기지 않고 이유를 한 번 말한다(재조회마다 반복하지 않는다).
+    if (!_focusMissReported) {
+      _focusMissReported = true;
+      ToastHelper.showWarning('선택한 근무를 이 날짜 명단에서 찾지 못했어요. 취소·삭제됐거나 명단에 없는 근무일 수 있어요');
+    }
   }
+
+  bool _focusMissReported = false;
 
   /// [5B.2B] _focusedCardKey를 통해 해당 row를 viewport에 보이게 scroll
   void _scrollToFocusedCard() {
@@ -1153,20 +1193,39 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     final adminConfirmedWorkers = _tabWorkers[2];
     final done = _tabWorkers[3];
 
-    return Column(
+    // [DU304] 고정 상단(탭·통계·일괄 액션)이 가용 높이를 다 쓰면 목록(TabBarView)이 0 이 된다
+    //   (B320·배율 2.0 실측: 가용 325.4, 상단 348.15–421.65 → 목록 0·넘침 22.75–96.25).
+    //   상단은 자연 높이가 상한 이하이면 지금처럼 고정으로 다 보이고, 넘칠 때만 상한 안에서 따로 스크롤된다.
+    //   목록은 남은 높이를 쓴다. 상한은 실제 가용 높이의 비율이라 화면 폭·배율 상수 분기가 아니다.
+    return LayoutBuilder(builder: (context, hostC) {
+      const topShare = 0.5;
+      final topMax = hostC.maxHeight.isFinite ? hostC.maxHeight * topShare : double.infinity;
+      return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // 탭 바 + 통계 + 액션바 — 스크롤 영역 밖 고정
-          Padding(
+          // 탭 바 + 통계 + 액션바 — 스크롤 영역 밖 고정(상한을 넘을 때만 그 안에서 스크롤)
+          ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: topMax),
+            child: SingleChildScrollView(
+            primary: false,
+            child: Padding(
             padding: EdgeInsets.fromLTRB(
                 padding.left, ResponsiveHelper.spacing(context, 6),
                 padding.right, 0),
             child: Column(
               children: [
                 // 탭 바 — 압축 라벨로 4개 탭 항상 표시 (360dp 오버플로우 없음)
-                TabBar(
+                // [COMMON-TEXT-LAYOUT.28] 글자가 크면 4개가 한 줄에 안 들어가 '확인 / 필요' 로 갈렸다 —
+                //   그때만 가로 스크롤(탭 이름은 한 줄).
+                LayoutBuilder(builder: (context, c) {
+                final tabsFit = TextLayout.tabsFit(context, c.maxWidth, 4);
+                return TabBar(
                   controller: _tabController,
-                  labelPadding: EdgeInsets.zero,
+                  isScrollable: !tabsFit,
+                  tabAlignment: tabsFit ? null : TabAlignment.start,
+                  labelPadding: tabsFit
+                      ? EdgeInsets.zero
+                      : EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 12)),
                   labelStyle: ResponsiveHelper.smallStyle(context, fontWeight: FontWeight.bold),
                   unselectedLabelStyle: ResponsiveHelper.smallStyle(context),
                   onTap: (index) {
@@ -1190,13 +1249,16 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                     Tab(child: AppTabLabel(label: '확인완료', count: adminConfirmedWorkers.length, badgeColor: AppColors.info)),
                     Tab(child: AppTabLabel(label: '처리완료', count: done.length, badgeColor: AppColors.grey500)),
                   ],
-                ),
+                );
+                }),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 _buildCompactStats(theme, _confirmedWorkers),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 _buildBatchActionBar(theme),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               ],
+            ),
+          ),
             ),
           ),
 
@@ -1215,6 +1277,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           ),
         ],
       );
+    });
   }
 
   /// 탭 라벨 위젯 (카운트 배지 포함)
@@ -1226,12 +1289,16 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         title: '해당 근무자가 없습니다',
       );
     }
+    // [DU305] 현재 탭이면 이 목록을 만드는 동안 첫 선택 카드 표시를 켠다(화면 순서 = 만드는 순서).
+    _firstSelectedPending = identical(tabWorkers, _tabWorkers[_currentTabIndex]);
+    final groups = _buildWorkTypeGroups(theme, workers: tabWorkers);
+    _firstSelectedPending = false;
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(padding.left, 0, padding.right, 0),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _buildWorkTypeGroups(theme, workers: tabWorkers),
+          groups,
         ],
       ),
     );
@@ -1255,17 +1322,47 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         mainAxisSize: MainAxisSize.min,
         children: [
           // 주요 4개 — Expanded로 균등 분배 (오버플로우 방지)
-          Row(
-            children: [
-              Expanded(child: _buildStatCell('확정',   stats['total']!,        AppColors.info)),
-              _buildStatDivider(),
-              Expanded(child: _buildStatCell('출근',   stats['checkedIn']!,    AppColors.success)),
-              _buildStatDivider(),
-              Expanded(child: _buildStatCell('미출근', stats['notCheckedIn']!, AppColors.warning)),
-              _buildStatDivider(),
-              Expanded(child: _buildStatCell('노쇼',   stats['noShow']!,       AppColors.error)),
-            ],
-          ),
+          // [DU305] 균등 칸에 모든 칸(건수 줄·이름 줄 중 넓은 쪽)이 한 줄로 들어가면 지금 그대로다.
+          //   안 들어가고(B320·배율 2.0 관측 '미출 / 근') 필요폭 합이 가용폭 이하이면, 칸마다 need + 남는 폭 균등분을
+          //   그대로 준다 — 반올림이 없어 모든 칸 폭 ≥ need(한 줄)다. 필요폭 합이 가용폭보다 크면 need 비율로 나누며,
+          //   이때는 한 줄을 보장하지 않는다(지금처럼 줄바꿈, 잘림·축소 없음).
+          //   글자 크기·문구·색·구분선·순서는 그대로다. 필요폭은 실제 렌더 위치의 유효 스타일로 잰다([_lineWidth]).
+          LayoutBuilder(builder: (lctx, c) {
+            // [UI-3] 확정·출근은 사실(기본 글자색), 미출근·노쇼는 양수일 때만
+            //   경고색 — 0은 평온한 회색(근무 탭 집계와 같은 규칙).
+            final cells = <(String, int, Color)>[
+              ('확정',   stats['total']!,        AppColors.textPrimary),
+              ('출근',   stats['checkedIn']!,    AppColors.textPrimary),
+              ('미출근', stats['notCheckedIn']!, AppColors.warningDark),
+              ('노쇼',   stats['noShow']!,       AppColors.errorDark),
+            ];
+            final dividerW = 1 + 2 * ResponsiveHelper.spacing(context, 4);
+            final avail = c.maxWidth - dividerW * (cells.length - 1);
+            final needs = [for (final cell in cells) _statCellNeed(lctx, cell.$1, cell.$2)];
+            if (needs.every((w) => w <= avail / cells.length)) {
+              return Row(
+                children: [
+                  for (var i = 0; i < cells.length; i++) ...[
+                    if (i > 0) _buildStatDivider(),
+                    Expanded(child: _buildStatCell(cells[i].$1, cells[i].$2, cells[i].$3)),
+                  ],
+                ],
+              );
+            }
+            final sumNeed = needs.fold<double>(0, (a, b) => a + b);
+            final slack = avail - sumNeed;
+            return Row(
+              children: [
+                for (var i = 0; i < cells.length; i++) ...[
+                  if (i > 0) _buildStatDivider(),
+                  SizedBox(
+                    width: slack >= 0 ? needs[i] + slack / cells.length : avail * needs[i] / sumNeed,
+                    child: _buildStatCell(cells[i].$1, cells[i].$2, cells[i].$3),
+                  ),
+                ],
+              ],
+            );
+          }),
           // 보조 통계 — 이상 있을 때만 두 번째 줄
           if (badges.isNotEmpty) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -1288,7 +1385,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           '$count건',
           style: ResponsiveHelper.smallStyle(context).copyWith(
             fontWeight: FontWeight.bold,
-            color: color,
+            color: count > 0 ? color : AppColors.grey500,
           ),
         ),
         Text(label, style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
@@ -1300,6 +1397,62 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     width: 1, height: 24, color: AppColors.grey200,
     margin: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 4)),
   );
+
+  /// [DU305] 통계 칸 하나가 줄바꿈 없이 필요한 폭 — 건수 줄과 이름 줄 중 넓은 쪽.
+  ///   [_buildStatCell] 과 같은 글자 스타일로 잰다(색은 폭과 무관).
+  double _statCellNeed(BuildContext c, String label, int count) {
+    final countW = _lineWidth(c, '$count건',
+        ResponsiveHelper.smallStyle(context).copyWith(fontWeight: FontWeight.bold));
+    final labelW = _lineWidth(c, label, ResponsiveHelper.tinyStyle(context));
+    return countW > labelW ? countW : labelW;
+  }
+
+  /// [DU305] 한 줄 필요폭 — `Text.build` 와 같은 유효 스타일로 잰다: inherit 이면 DefaultTextStyle 병합,
+  ///   `MediaQuery.boldTextOf` 이면 굵게, 그리고 TextScaler·locale·방향·textWidthBasis·textHeightBehavior.
+  ///   [c] 는 그 글자가 그려질 자리의 context(대화상자 Material 안)여야 한다.
+  ///   화면 폭·글자 배율 임계값으로 나누지 않는다([DU303] 시각 줄 판정과 같은 방식).
+  double _lineWidth(BuildContext c, String text, TextStyle style) {
+    final dts = DefaultTextStyle.of(c);
+    var effective = style.inherit ? dts.style.merge(style) : style;
+    if (MediaQuery.boldTextOf(c)) {
+      effective = effective.merge(const TextStyle(fontWeight: FontWeight.bold));
+    }
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: effective),
+      textDirection: Directionality.of(c),
+      textScaler: MediaQuery.textScalerOf(c),
+      locale: Localizations.maybeLocaleOf(c),
+      textWidthBasis: dts.textWidthBasis,
+      textHeightBehavior: dts.textHeightBehavior,
+      maxLines: 1,
+    )..layout();
+    final w = tp.maxIntrinsicWidth;
+    tp.dispose();
+    return w;
+  }
+
+  /// [DU305] 그룹 머리 아이콘 상자 안 글리프 폭 — `WorkTypeIcon.build` 의 세 경로를 그대로 따른다.
+  ///   업무 정보 없음·Material 아이콘 → Icon(size) 폭 = size. 아이콘 문자열 없음 → 이름 첫 글자 Text(굵게),
+  ///   이모지 → 그 문자열 Text — 둘 다 배율·굵게를 받으므로 [_lineWidth] 로 실측한다.
+  double _workTypeGlyphWidth(BuildContext c, BusinessWorkTypeModel? info, double size) {
+    if (info == null) return size;
+    if (info.icon.isEmpty) {
+      final first = info.name.isNotEmpty ? info.name.characters.first : '?';
+      return _lineWidth(c, first, TextStyle(fontSize: size, fontWeight: FontWeight.bold));
+    }
+    if (WorkTypeIcon.isEmoji(info.icon)) {
+      return _lineWidth(c, info.icon, TextStyle(fontSize: size));
+    }
+    return size;
+  }
+
+  /// [DU305] 시각 범위 표시 — 'A ~ B' 는 '~' 뒤에서만 줄을 바꾸고 각 시각 안에서는 끊지 않는다([TextLayout.range]).
+  ///   범위가 아니면(시각 하나·'시간 N종 — 행에서 확인' 등) 원문 그대로다. 화면 읽기는 호출부가 원문을 준다.
+  String _rangeDisplay(String s) {
+    final i = s.indexOf(' ~ ');
+    if (i <= 0 || s.indexOf(' ~ ', i + 3) >= 0) return s;
+    return TextLayout.range(s.substring(0, i), s.substring(i + 3));
+  }
 
   Widget _buildMiniDot(_StatChip c) {
     return Row(
@@ -1339,7 +1492,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       }
       // [GAP-ATT-RESET-ABSENT-01] statusAbsent(결근) 근로자는 checkIn이 없어도 리셋 대상
       // _showBatchResetDialog H-3 설계와 일치: att.checkIn != null || att.status == statusAbsent
-      if (att?.checkIn != null || att?.status == AttendanceModel.statusAbsent) resetCount++;
+      // [ATTENDANCE-UNKNOWN-DEST.28] status 없음은 예전엔 결근으로 읽혀 리셋 대상이었다 — 그대로 둔다.
+      if (att?.checkIn != null || att?.status == AttendanceModel.statusAbsent ||
+          att?.status == AttendanceModel.statusUnconfirmed) {
+        resetCount++;
+      }
     }
 
     // 탭별 조건부 칩
@@ -1493,28 +1650,40 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                     _buildActionChip(
                       label: '미출근 ${pendingList.length}건',
                       color: AppColors.warning,
-                      onTap: () => setState(() {
-                        _selectedIds.addAll(pendingList.map((a) => a.id));
-                        _selectAll = _selectedIds.length >= reviewWorkers.length;
-                      }),
+                      onTap: () {
+                        final grows = pendingList.any((a) => !_selectedIds.contains(a.id)); // [DU305] 선택이 늘 때만 맞춘다
+                        setState(() {
+                          _selectedIds.addAll(pendingList.map((a) => a.id));
+                          _selectAll = _selectedIds.length >= reviewWorkers.length;
+                        });
+                        if (grows) _revealAfterSelection(list: true);
+                      },
                     ),
                   if (lateList.isNotEmpty)
                     _buildActionChip(
                       label: '지각 ${lateList.length}건',
                       color: AppColors.error,
-                      onTap: () => setState(() {
-                        _selectedIds.addAll(lateList.map((a) => a.id));
-                        _selectAll = _selectedIds.length >= reviewWorkers.length;
-                      }),
+                      onTap: () {
+                        final grows = lateList.any((a) => !_selectedIds.contains(a.id)); // [DU305] 선택이 늘 때만 맞춘다
+                        setState(() {
+                          _selectedIds.addAll(lateList.map((a) => a.id));
+                          _selectAll = _selectedIds.length >= reviewWorkers.length;
+                        });
+                        if (grows) _revealAfterSelection(list: true);
+                      },
                     ),
                   if (missedList.isNotEmpty)
                     _buildActionChip(
                       label: '퇴근미기록 ${missedList.length}건',
-                      color: AppColors.purple,
-                      onTap: () => setState(() {
-                        _selectedIds.addAll(missedList.map((a) => a.id));
-                        _selectAll = _selectedIds.length >= reviewWorkers.length;
-                      }),
+                      color: AppColors.warningDark,
+                      onTap: () {
+                        final grows = missedList.any((a) => !_selectedIds.contains(a.id)); // [DU305] 선택이 늘 때만 맞춘다
+                        setState(() {
+                          _selectedIds.addAll(missedList.map((a) => a.id));
+                          _selectAll = _selectedIds.length >= reviewWorkers.length;
+                        });
+                        if (grows) _revealAfterSelection(list: true);
+                      },
                     ),
                 ],
               );
@@ -1538,37 +1707,49 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                 LayoutBuilder(builder: (_, constraints) {
                   final isNarrow = constraints.maxWidth < 380;
 
-                  final ci = Expanded(child: _buildActionButton(icon: Icons.login,   label: '출근',     color: AppColors.success, count: checkInCount,  onPressed: (checkInCount  > 0 && canManage && !isFutureDate) ? _showBatchCheckInDialog    : null));
-                  final ad = Expanded(child: _buildActionButton(icon: Icons.tune,    label: '시간 조정', color: AppColors.info,    count: adjustCount,   onPressed: (adjustCount   > 0 && canManage && !isFutureDate) ? _showBatchAdjustTimeDialog : null));
-                  final co = Expanded(child: _buildActionButton(icon: Icons.logout,  label: '퇴근',     color: AppColors.purple,  count: checkOutCount, onPressed: (checkOutCount > 0 && canManage && !isFutureDate) ? _showBatchCheckOutDialog   : null));
-                  final rs = Expanded(child: _buildActionButton(icon: Icons.refresh, label: '리셋',     color: AppColors.error,   count: resetCount,    onPressed: (resetCount    > 0 && canManage && !isFutureDate) ? _showBatchResetDialog     : null));
+                  // [UI-3] 네 행동을 색 네 가지로 같은 무게로 두지 않는다 —
+                  //   현재 단계(출근·퇴근)는 채움, 시간 조정은 테두리 보조, 리셋은
+                  //   테두리 + 빨간 글자로 맨 끝에 둔다(확인 창은 그대로).
+                  final ci = Expanded(child: _buildActionButton(icon: Icons.login,   label: '출근',     role: _BatchRole.step,        count: checkInCount,  onPressed: (checkInCount  > 0 && canManage && !isFutureDate) ? _showBatchCheckInDialog    : null));
+                  final ad = Expanded(child: _buildActionButton(icon: Icons.tune,    label: '시간 조정', role: _BatchRole.secondary,   count: adjustCount,   onPressed: (adjustCount   > 0 && canManage && !isFutureDate) ? _showBatchAdjustTimeDialog : null));
+                  final co = Expanded(child: _buildActionButton(icon: Icons.logout,  label: '퇴근',     role: _BatchRole.step,        count: checkOutCount, onPressed: (checkOutCount > 0 && canManage && !isFutureDate) ? _showBatchCheckOutDialog   : null));
+                  final rs = Expanded(child: _buildActionButton(icon: Icons.refresh, label: '리셋',     role: _BatchRole.destructive, count: resetCount,    onPressed: (resetCount    > 0 && canManage && !isFutureDate) ? _showBatchResetDialog     : null));
 
                   if (isNarrow) {
                     // 2×2 그리드: 각 버튼이 절반 폭을 차지해 '시간 조정' 완전 표시
+                    //   윗줄 = 단계 행동(출근·퇴근), 아랫줄 = 보조(시간 조정)·위험(리셋)
                     return Column(mainAxisSize: MainAxisSize.min, children: [
-                      Row(children: [
-                        ci,
-                        SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-                        ad,
-                      ]),
+                      // [DU305] 선택 직후 맞춤 대상 — 단계 행동(출근·퇴근) 줄
+                      KeyedSubtree(
+                        key: _batchStepRowKey,
+                        child: Row(children: [
+                          ci,
+                          SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+                          co,
+                        ]),
+                      ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 5)),
                       Row(children: [
-                        co,
+                        ad,
                         SizedBox(width: ResponsiveHelper.spacing(context, 5)),
                         rs,
                       ]),
                     ]);
                   }
                   // 4열 (태블릿): Flexible 안전망이 _buildActionButton 내부에 적용됨
-                  return Row(children: [
-                    ci,
-                    SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-                    ad,
-                    SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-                    co,
-                    SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-                    rs,
-                  ]);
+                  // [DU305] 선택 직후 맞춤 대상 — 네 행동이 한 줄
+                  return KeyedSubtree(
+                    key: _batchStepRowKey,
+                    child: Row(children: [
+                      ci,
+                      SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+                      co,
+                      SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+                      ad,
+                      SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+                      rs,
+                    ]),
+                  );
                 }),
                 if (isFutureDate) ...[
                   SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -1608,15 +1789,32 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   Widget _buildActionButton({
     required IconData icon,
     required String label,
-    required Color color,
+    required _BatchRole role,
     int count = 0,
     VoidCallback? onPressed,
   }) {
     final isEnabled = onPressed != null;
+    final color = switch (role) {
+      _BatchRole.step => Colors.white,
+      _BatchRole.secondary => AppColors.textPrimary,
+      _BatchRole.destructive => AppColors.errorDark,
+    };
+    final bg = !isEnabled
+        ? AppColors.grey100
+        : role == _BatchRole.step
+            ? AppColors.brand
+            : Colors.white;
+    final border = !isEnabled || role == _BatchRole.step
+        ? BorderSide.none
+        : BorderSide(
+            color: role == _BatchRole.destructive
+                ? AppColors.errorDark.withValues(alpha: 0.5)
+                : AppColors.grey300);
 
     return Material(
-      color: isEnabled ? color.withValues(alpha: 0.1) : AppColors.grey200,
-      borderRadius: BorderRadius.circular(8),
+      color: bg,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8), side: border),
       child: InkWell(
         onTap: onPressed,
         borderRadius: BorderRadius.circular(8),
@@ -1927,6 +2125,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                   _selectAll = tabSelectable.isNotEmpty &&
                       tabSelectable.every((a) => _selectedIds.contains(a.id));
                 });
+                // [DU305] 그룹을 선택했으면 처리 진입(일괄 버튼 첫 줄)만 맞춘다 — 목록은 사용자가 보고 있는 그 자리다.
+                if (!allSelected) _revealAfterSelection(list: false);
               },
               child: Container(
                 padding: EdgeInsets.symmetric(
@@ -1940,8 +2140,28 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                     topRight: Radius.circular(12),
                   ),
                 ),
-                child: Row(
-                  children: [
+                // [DU305] 출근·정렬 칩 열을 제목 오른쪽에 둘 때 시간 문구가 한 줄로 들어가면 지금 배치 그대로다.
+                //   안 들어가면(B320·배율 2.0 관측: 시간이 '22:30 / ~ / 23:30' 세 줄로 갈림) 두 칩을
+                //   제목·시간 아래 한 줄로 내린다 — 글자·문구·색·정보·탭 동작은 그대로, 배치만 바꾼다.
+                //   시간 범위는 '~' 뒤에서만 줄을 바꾼다([_rangeDisplay]). 폭 판정은 실제 렌더와 같은 유효 스타일로
+                //   잰 값이다([_lineWidth]·[_workTypeGlyphWidth]). 화면 폭·배율 임계값으로 나누지 않는다.
+                child: LayoutBuilder(builder: (lctx, hc) {
+                  final sm = _groupSortMode[groupKey] ?? 0;
+                  const labels = ['상태순', '배지순', '이름순'];
+                  const icons  = [Icons.swap_vert, Icons.filter_list, Icons.sort_by_alpha];
+                  final isActive = sm != 0;
+                  final badgeText = '출근 $checkedInCount/${workers.length - noShowCount}';
+                  final badgeStyle = ResponsiveHelper.tinyStyle(context, color: attendBadgeColor)
+                      .copyWith(fontWeight: FontWeight.bold);
+                  final sortStyle = ResponsiveHelper.tinyStyle(
+                    context,
+                    color: isActive ? theme.primaryColor : AppColors.grey500,
+                  ).copyWith(fontWeight: FontWeight.w600);
+                  final timeStyle = ResponsiveHelper.smallStyle(context, color: AppColors.grey600);
+                  final timeShown = _rangeDisplay(headerTime);
+                  final glyphSize = ResponsiveHelper.iconSize(context, 14);
+
+                  final lead = <Widget>[
                     // 파트 체크박스
                     AppCheckbox(value: allSelected),
                     SizedBox(width: ResponsiveHelper.spacing(context, 10)),
@@ -1956,107 +2176,129 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                           ? WorkTypeIcon.build(
                               workTypeInfo,
                               color: iconColor,
-                              size: ResponsiveHelper.iconSize(context, 14),
+                              size: glyphSize,
                             )
                           : Icon(
                               Icons.work_outline,
                               color: iconColor,
-                              size: ResponsiveHelper.iconSize(context, 14),
+                              size: glyphSize,
                             ),
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            headerTitle,
-                            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
+                  ];
+                  final titleCol = Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          headerTitle,
+                          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                            fontWeight: FontWeight.bold,
                           ),
-                          if (headerTime.isNotEmpty)
-                            Text(
-                              headerTime,
-                              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                            ),
+                        ),
+                        if (headerTime.isNotEmpty)
+                          Text(
+                            timeShown,
+                            semanticsLabel: headerTime,
+                            style: timeStyle,
+                          ),
+                      ],
+                    ),
+                  );
+                  // 출근 현황 배지
+                  final badge = Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 10),
+                      vertical: ResponsiveHelper.spacing(context, 5),
+                    ),
+                    decoration: BoxDecoration(
+                      color: attendBadgeColor.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: attendBadgeColor.withValues(alpha: 0.4)),
+                    ),
+                    child: Text(badgeText, style: badgeStyle),
+                  );
+                  // 정렬 토글 버튼 (탭마다 순환: 상태순→배지순→이름순)
+                  final sortToggle = GestureDetector(
+                    onTap: () => setState(() =>
+                        _groupSortMode[groupKey] = (sm + 1) % 3),
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 7),
+                        vertical: ResponsiveHelper.spacing(context, 4),
+                      ),
+                      decoration: BoxDecoration(
+                        color: isActive
+                            ? theme.primaryColor.withValues(alpha: 0.12)
+                            : Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isActive
+                              ? theme.primaryColor.withValues(alpha: 0.4)
+                              : AppColors.border,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            icons[sm],
+                            size: ResponsiveHelper.iconSize(context, 11),
+                            color: isActive ? theme.primaryColor : AppColors.grey500,
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                          Text(labels[sm], style: sortStyle),
                         ],
                       ),
                     ),
-                    // 출근현황 + 전체확인/취소 칩 + 정렬 토글
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
+                  );
+
+                  // 한 줄 판정: 앞부분(체크박스 Icon + 간격 + 아이콘 상자 + 간격) + 시간 한 줄 + 칩 열(넓은 칩) ≤ 머리 폭.
+                  //   칩 폭 = 좌우 padding + 테두리 1+1 + 내용. 가운데 열 폭은 Row 가 정확히 이 차이로 준다.
+                  final leadW = ResponsiveHelper.iconSize(context, 22) +
+                      ResponsiveHelper.spacing(context, 10) * 2 +
+                      ResponsiveHelper.spacing(context, 4) * 2 +
+                      _workTypeGlyphWidth(lctx, workTypeInfo, glyphSize);
+                  final badgeW = ResponsiveHelper.spacing(context, 10) * 2 + 2 +
+                      _lineWidth(lctx, badgeText, badgeStyle);
+                  final sortW = ResponsiveHelper.spacing(context, 7) * 2 + 2 +
+                      ResponsiveHelper.iconSize(context, 11) + ResponsiveHelper.spacing(context, 3) +
+                      _lineWidth(lctx, labels[sm], sortStyle);
+                  final chipsW = badgeW > sortW ? badgeW : sortW;
+                  final timeW = headerTime.isEmpty ? 0.0 : _lineWidth(lctx, timeShown, timeStyle);
+                  final rowFits = leadW + timeW + chipsW <= hc.maxWidth;
+
+                  if (rowFits) {
+                    return Row(
                       children: [
-                        // 출근 현황 배지
-                        Builder(builder: (ctx) {
-                          return Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: ResponsiveHelper.spacing(context, 10),
-                                vertical: ResponsiveHelper.spacing(context, 5),
-                              ),
-                              decoration: BoxDecoration(
-                                color: attendBadgeColor.withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(color: attendBadgeColor.withValues(alpha: 0.4)),
-                              ),
-                              child: Text(
-                                '출근 $checkedInCount/${workers.length - noShowCount}',
-                                style: ResponsiveHelper.tinyStyle(context, color: attendBadgeColor)
-                                    .copyWith(fontWeight: FontWeight.bold),
-                              ),
-                            );
-                        }),
-                        SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                        // 정렬 토글 버튼 (탭마다 순환: 상태순→배지순→이름순)
-                        Builder(builder: (ctx) {
-                          final sm = _groupSortMode[groupKey] ?? 0;
-                          const labels = ['상태순', '배지순', '이름순'];
-                          const icons  = [Icons.swap_vert, Icons.filter_list, Icons.sort_by_alpha];
-                          final isActive = sm != 0;
-                          return GestureDetector(
-                            onTap: () => setState(() =>
-                                _groupSortMode[groupKey] = (sm + 1) % 3),
-                            child: Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: ResponsiveHelper.spacing(context, 7),
-                                vertical: ResponsiveHelper.spacing(context, 4),
-                              ),
-                              decoration: BoxDecoration(
-                                color: isActive
-                                    ? theme.primaryColor.withValues(alpha: 0.12)
-                                    : Colors.white,
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: isActive
-                                      ? theme.primaryColor.withValues(alpha: 0.4)
-                                      : AppColors.border,
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    icons[sm],
-                                    size: ResponsiveHelper.iconSize(context, 11),
-                                    color: isActive ? theme.primaryColor : AppColors.grey500,
-                                  ),
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                                  Text(
-                                    labels[sm],
-                                    style: ResponsiveHelper.tinyStyle(
-                                      context,
-                                      color: isActive ? theme.primaryColor : AppColors.grey500,
-                                    ).copyWith(fontWeight: FontWeight.w600),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }),
+                        ...lead,
+                        titleCol,
+                        // 출근현황 + 전체확인/취소 칩 + 정렬 토글
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            badge,
+                            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                            sortToggle,
+                          ],
+                        ),
                       ],
-                    ),
-                  ],
-                ),
+                    );
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [...lead, titleCol]),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                      Wrap(
+                        spacing: ResponsiveHelper.spacing(context, 6),
+                        runSpacing: ResponsiveHelper.spacing(context, 4),
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [badge, sortToggle],
+                      ),
+                    ],
+                  );
+                }),
               ),
             );
           }),
@@ -2109,8 +2351,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     final displayName = _getDisplayName(app.uid);
     final genderAge = _getGenderAge(app.uid);
     final overdueCheckout = _isMissedCheckout(app);
+    // [DU305] 현재 탭에서 화면 순서상 첫 선택 카드 — 선택 직후 목록 맞춤 대상([_revealAfterSelection]).
+    final isFirstSelected = isSelected && _firstSelectedPending;
+    if (isFirstSelected) _firstSelectedPending = false;
 
-    return Container(
+    return KeyedSubtree(
+      key: isFirstSelected ? _firstSelectedCardKey : null,
+      child: Container(
       // [5B.2B] focused card에 GlobalKey 부여 → Scrollable.ensureVisible 대상
       key: isFocused ? _focusedCardKey : null,
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 6)),
@@ -2173,19 +2420,27 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 // 체크박스 — GestureDetector로 격리하여 카드 탭과 분리
+                // [DU305 후속 ①] 누름 영역을 최소 48×48 로(불투명). 체크 그림의 위치·크기는 그대로(왼쪽 padding 유지)이고,
+                //   늘어난 영역이 예전 뒤 간격(8s)을 대신하므로 그 간격은 뺀다. 카드 보기 탭은 이 영역 밖에서 그대로다.
                 GestureDetector(
                   onTap: () => _toggleSelection(app.id),
                   behavior: HitTestBehavior.opaque,
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: ResponsiveHelper.spacing(context, 8),
-                      vertical: ResponsiveHelper.spacing(context, 10),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      widthFactor: 1,
+                      heightFactor: 1,
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: ResponsiveHelper.spacing(context, 8),
+                          vertical: ResponsiveHelper.spacing(context, 10),
+                        ),
+                        child: AppCheckbox(value: isSelected),
+                      ),
                     ),
-                    child: AppCheckbox(value: isSelected),
                   ),
                 ),
-
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
 
                 // 정보
                 Expanded(
@@ -2216,24 +2471,28 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                             ),
                             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                           ],
-                          // 이름 — Flexible로 overflow 방지
-                          Flexible(
-                            child: Text(
-                              displayName,
-                              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                fontWeight: FontWeight.w600,
-                              ),
-                              overflow: TextOverflow.ellipsis,
+                          // [COMMON-TEXT-LAYOUT.28] 이름 + (인력번호·나이, 성별) 을 한 문단으로 — 이름은 말줄임하지 않는다.
+                          //   320dp·글자 1.3 에서 괄호가 폭을 먼저 차지해 이름이 '합성 …' 이 됐다.
+                          //   괄호는 한 덩어리로 다음 줄로 넘어간다.
+                          Expanded(
+                            child: Text.rich(
+                              TextSpan(children: [
+                                TextSpan(
+                                  text: TextLayout.identity(displayName),
+                                  semanticsLabel: displayName,
+                                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                if (genderAge.isNotEmpty)
+                                  TextSpan(
+                                    text: ' ${genderAge.replaceAll(' ', '\u00A0')}',
+                                    semanticsLabel: ' $genderAge',
+                                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                                  ),
+                              ]),
                             ),
                           ),
-                          // 성별/나이
-                          if (genderAge.isNotEmpty) ...[
-                            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                            Text(
-                              genderAge,
-                              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                            ),
-                          ],
                         ],
                       ),
 
@@ -2281,11 +2540,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                                     color: AppColors.grey500,
                                   ),
                                   SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                  // [DU305] 출퇴근 시각 범위를 말줄임으로 숨기지 않는다(Standards §3, B320·2.0 관측 '06:00 ···').
+                                  //   줄은 '~' 뒤에서만 바꾸고 시각 안에서는 끊지 않는다. 화면 읽기·검색은 원문이다.
                                   Flexible(
                                     child: Text(
-                                      timeText,
+                                      _rangeDisplay(timeText),
+                                      semanticsLabel: timeText,
                                       style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                                      overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
                                 ],
@@ -2316,6 +2577,25 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                         children: [
                           // 메인 상태 배지 (출근/퇴근/급여확정/최종확정 등)
                           _buildMainStatusBadge(statusInfo, theme),
+
+                          // [ATTENDANCE-UNKNOWN-DEST.28] 기록된 근태 상태가 없다 — 통계의 '근태 확인 필요'와 같은 말.
+                          //   위 배지는 출퇴근 시각으로 고른 것이라, 상태가 없다는 사실은 따로 둔다(추정하지 않는다).
+                          if (_attendanceMap[app.id]?.status == AttendanceModel.statusUnconfirmed)
+                            Container(
+                              key: ValueKey('att-unconfirmed-${app.id}'),
+                              padding: EdgeInsets.symmetric(
+                                horizontal: ResponsiveHelper.spacing(context, 5),
+                                vertical: ResponsiveHelper.spacing(context, 2),
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.purple.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text('근태 확인 필요',
+                                  softWrap: false,
+                                  style: ResponsiveHelper.tinyStyle(context,
+                                      color: AppColors.purple, fontWeight: FontWeight.w600)),
+                            ),
 
                           // 계약서 서명 상태 배지 (미작성·서명대기만 표시)
                           _buildContractBadge(app.id),
@@ -2384,6 +2664,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           ),
         ),
       ),
+    ),
     );
   }
 
@@ -2510,7 +2791,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     final bizId = _selectedBusinessId ??
         (widget.businessIds.isEmpty ? null : widget.businessIds.first);
     if (bizId == null) return;
-    await showDialog<bool>(
+    // [ISG2-REFRESH] 이 진입점은 결과를 버리고 있었다 — 여기서 확정·초대를
+    //   해도 공고 탭·Home 은 모르고 있었다(좌석 반납 직후라 바뀌는 쪽이다).
+    final changed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (_) => DayApplicantsDialog(
@@ -2519,15 +2802,27 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         businesses: widget.businesses ?? [],
       ),
     );
+    if (changed == true && mounted) {
+      WorkforceController.notifyDataChanged(
+        origin: AdminMutationOrigin.workforce,
+      );
+    }
   }
 
   /// 계약서 서명 상태 배지 — 미작성·서명대기만 표시, 완료는 생략
   Widget _buildContractBadge(String appId) {
-    final status = _contractStatusMap[appId];
+    final status = _contractStatusMap.statuses[appId];
     final IconData icon;
     final String label;
     final Color color;
-    if (status == null || status.isEmpty || status == 'voided') {
+    // [REISSUE-RECOVERY] `계약미작성` 은 "없다고 확인됐다"는 말이다.
+    //   조회하지 못한 것을 그렇게 적으면 있는 계약을 또 만들러 가고,
+    //   배지를 아예 지우면(이 화면은 완료 시 배지를 생략한다) 다 됐다고 읽힌다.
+    if (_contractStatusMap.isUnresolved(appId)) {
+      icon = Icons.help_outline;
+      label = '계약확인불가';
+      color = AppColors.grey600;
+    } else if (_contractStatusMap.isMissingContract(appId)) {
       icon = Icons.assignment_late_outlined;
       label = '계약미작성';
       color = AppColors.error;
@@ -2567,6 +2862,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   Widget _buildReconfirmBadge(ApplicationModel app) {
     final status = app.reconfirmStatus;
     if (status == null || status == 'declined') return const SizedBox.shrink();
+    // [RECONFIRM-ADMIN-BADGE] 응답 없이 출근해도 서버는 reconfirmStatus 를 바꾸지 않는다
+    //   (출퇴근 writer 는 이 필드를 쓰지 않는다) — 퇴근까지 끝난 지원서도 pending 이다.
+    //   출근 기록이 있으면 '미응답'은 더 이상 운영 신호가 아니므로 숨긴다.
+    //   판정은 이 화면이 이미 가진 그 지원서의 근태(_attendanceMap[app.id])로만 한다.
+    if (status == 'pending' && _attendanceMap[app.id]?.checkInAt != null) {
+      return const SizedBox.shrink();
+    }
 
     final IconData icon;
     final String label;
@@ -2799,24 +3101,30 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                    attendance?.wageStatus == AttendanceModel.wageTransferred ||
                    attendance?.status == AttendanceModel.statusNoShow;
     if (isDone) return const SizedBox.shrink();
+    // [UI-3] 글자 없는 빨간 X 는 삭제·리셋처럼 읽혔다 — 무엇을 하는지 이름으로 말한다.
+    //   확인 = 정산 준비 1차 확인(브랜드), 확인 취소 = 그 표시만 되돌림(중립 글자).
     final isAdminConfirmed = attendance?.adminConfirmed == true;
     if (isAdminConfirmed) {
-      return IconButton(
-        onPressed: () => _unconfirmWorker(app),
-        icon: Icon(Icons.close, color: AppColors.error, size: ResponsiveHelper.iconSize(context, 22)),
-        padding: EdgeInsets.zero,
-        constraints: const BoxConstraints(),
-        visualDensity: VisualDensity.compact,
-      );
+      return _rowTextAction('확인 취소', AppColors.textSecondary,
+          () => _unconfirmWorker(app));
     }
     final canConfirm = attendance?.checkIn != null && attendance?.checkOut != null;
     if (!canConfirm) return const SizedBox.shrink();
-    return IconButton(
-      onPressed: () => _confirmWorker(app),
-      icon: Icon(Icons.check_circle_outline, color: AppColors.success, size: ResponsiveHelper.iconSize(context, 22)),
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(),
-      visualDensity: VisualDensity.compact,
+    return _rowTextAction('확인', AppColors.brand, () => _confirmWorker(app));
+  }
+
+  Widget _rowTextAction(String label, Color color, VoidCallback onTap) {
+    return TextButton(
+      onPressed: _isLoading ? null : onTap,
+      style: TextButton.styleFrom(
+        foregroundColor: color,
+        padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 8)),
+        minimumSize: const Size(0, 36),
+      ),
+      child: Text(label,
+          style: ResponsiveHelper.smallStyle(context, color: color)
+              .copyWith(fontWeight: FontWeight.w600)),
     );
   }
 
@@ -2928,9 +3236,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                 icon: Icon(Icons.check_circle_outline, size: ResponsiveHelper.iconSize(context, 16)),
                 // [5B.2B] adminConfirmed action: "확인 N명" → "근태 확인 N명" (Application/급여 확정과 구분)
                 label: Text('근태 확인 ${confirmable.length}건'),
+                // [DU305] 행동색은 누른 결과를 말한다(Standards §9.1·§12.2) — 일반 확인 진행은 brand 채움.
+                //   확정 상태의 녹색은 상태 표시(처리현황·배지)에만 둔다.
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.success,
+                  backgroundColor: AppColors.brand,
                   foregroundColor: Colors.white,
+                  // [DU305 r3] 주 CTA 시각 높이 최소 52(Standards §82) — 테마 최소 48 위에 이 바만 올린다. 내용이 크면 그대로 늘어난다.
+                  minimumSize: const Size(64, 52),
                   padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   textStyle: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
@@ -2944,9 +3256,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                 onPressed: () => _batchGroupCancelConfirm(cancellable),
                 icon: Icon(Icons.undo_outlined, size: ResponsiveHelper.iconSize(context, 16)),
                 label: Text('취소 ${cancellable.length}건'),
+                // [DU305] 근태 확인 표시만 되돌린다(서버 confirmed:false, 급여 처리된 건은 대상 밖) — 손실·책임 행동이 아니므로
+                //   경고색이 아닌 보조 외곽선(일괄 바 보조 행동과 같은 textPrimary·grey300)으로 둔다.
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.warning,
-                  side: BorderSide(color: AppColors.warning.withValues(alpha: 0.6)),
+                  foregroundColor: AppColors.textPrimary,
+                  side: const BorderSide(color: AppColors.grey300),
+                  // [DU305 r3] 같은 바의 근태 확인과 높이를 맞춘다(두 버튼이 한 줄에 함께 설 때 어긋나지 않게).
+                  minimumSize: const Size(64, 52),
                   padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   textStyle: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
@@ -2972,7 +3288,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       message: '${confirmable.length}명의 근태를 확인 완료 처리합니까?',
       confirmText: '근태 확인',
       icon: Icons.check_circle_outline,
-      confirmColor: AppColors.success,
+      confirmColor: AppColors.brand, // [DU305] 일반 확인 진행 = brand(§9.1)
     );
     if (!ok || !mounted) return;
     setState(() => _isLoading = true);
@@ -3013,7 +3329,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       message: '${cancellable.length}명의 확인을 일괄 취소합니까?',
       confirmText: '취소 처리',
       icon: Icons.undo_outlined,
-      confirmColor: AppColors.warning,
+      confirmColor: AppColors.brand, // [DU305] 되돌릴 수 있는 확인 표시 해제 — 손실 행동이 아니므로 brand(§9.1)
     );
     if (!ok || !mounted) return;
     setState(() => _isLoading = true);
@@ -3046,6 +3362,83 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   }
 
   /// 하단 버튼 바
+  /// [DU305 후속 V7] footer 두 보조 행동(명단 출력·급여관리).
+  ///   큰 글자에서 아이콘이 버튼 왼쪽 테두리에 붙었다(안쪽 가로 여백 0). 안쪽 가로 여백을 4(4/8 그리드)로 둔다.
+  ///   두 버튼 모두 [아이콘 + 간격 + 한 줄 글자]가 실제 버튼 안쪽 폭에 들어가면 기존 가로 배치를 그대로 쓰고,
+  ///   하나라도 안 들어가면 둘 다 아이콘 위·글자 아래로 바꾼다(두 행동의 위계를 같게, 글자 축소·말줄임 0).
+  ///   판단은 실제 폭(LayoutBuilder)과 실제 글자 배율·버튼 글자 스타일(위젯 → 버튼 테마 → 기본값 순)로 한 줄 폭을 잰다.
+  Widget _buildFooterActions(BuildContext context, ThemeData theme) {
+    final enabled = _confirmedWorkers.isNotEmpty;
+    final wageAllowed = enabled &&
+        context.read<UserProvider>().checkCurrentBusiness((p) => p.canManageWage) == PermissionCheck.allowed;
+    final between = ResponsiveHelper.spacing(context, 12);
+    final iconSize = ResponsiveHelper.iconSize(context, 18);
+    final scaler = MediaQuery.textScalerOf(context);
+    final iconGap = scaler.scale(1) <= 1.0 ? 8.0 : 4.0;
+    const hPad = 4.0;
+    final printLabel = TextLayout.keepWords('명단 출력');
+    const wageLabel = '급여관리';
+    final labelStyle = OutlinedButtonTheme.of(context).style?.textStyle?.resolve(const <WidgetState>{}) ??
+        const OutlinedButton(onPressed: null, child: SizedBox.shrink()).defaultStyleOf(context).textStyle?.resolve(const <WidgetState>{}) ??
+        DefaultTextStyle.of(context).style;
+    double oneLine(String s) {
+      final tp = TextPainter(
+        text: TextSpan(text: s, style: labelStyle),
+        textDirection: Directionality.of(context),
+        textScaler: scaler,
+        locale: Localizations.maybeLocaleOf(context),
+        maxLines: 1,
+      )..layout();
+      final w = tp.width;
+      tp.dispose();
+      return w;
+    }
+
+    ButtonStyle style(Color fg, Color side) => OutlinedButton.styleFrom(
+          foregroundColor: fg,
+          side: BorderSide(color: side),
+          padding: EdgeInsets.symmetric(horizontal: hPad, vertical: ResponsiveHelper.spacing(context, 12)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        );
+
+    return LayoutBuilder(builder: (lctx, c) {
+      final inner = (c.maxWidth - between) / 2 - 2 * hPad;
+      final inRow = iconSize + iconGap + oneLine(printLabel) <= inner && iconSize + iconGap + oneLine(wageLabel) <= inner;
+      Widget body(IconData icon, Widget label) => inRow
+          ? Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(icon, size: iconSize),
+              SizedBox(width: iconGap),
+              Flexible(child: label),
+            ])
+          : Column(mainAxisSize: MainAxisSize.min, children: [
+              Icon(icon, size: iconSize),
+              const SizedBox(height: 4),
+              label,
+            ]);
+      return Row(
+        children: [
+          // 명단 출력 버튼 — [DU305] 줄은 낱말 사이에서만 바꾼다. 화면 읽기·검색·시험 기준은 원문 그대로다.
+          Expanded(
+            child: OutlinedButton(
+              onPressed: enabled ? _showPrintPreview : null,
+              style: style(enabled ? theme.primaryColor : AppColors.grey500, enabled ? theme.primaryColor : AppColors.grey300),
+              child: body(Icons.print_outlined, Text(printLabel, semanticsLabel: '명단 출력', textAlign: TextAlign.center)),
+            ),
+          ),
+          SizedBox(width: between),
+          // 급여관리 버튼 — OutlinedButton (보조 액션)
+          Expanded(
+            child: OutlinedButton(
+              onPressed: wageAllowed ? _showWageConfirmDialog : null,
+              style: style(enabled ? theme.primaryColor : AppColors.grey400, enabled ? theme.primaryColor : AppColors.grey300),
+              child: body(Icons.payments, const Text(wageLabel, textAlign: TextAlign.center)),
+            ),
+          ),
+        ],
+      );
+    });
+  }
+
   Widget _buildBottomBar(ThemeData theme) {
     return AppModalFooter(
       child: Builder(builder: (context) {
@@ -3081,60 +3474,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           ),
         ],
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-        // 기존 버튼들
-        Row(
-          children: [
-            // 명단 출력 버튼
-            Expanded(
-            child: OutlinedButton.icon(
-              onPressed: _confirmedWorkers.isNotEmpty ? _showPrintPreview : null,
-              icon: Icon(Icons.print_outlined, size: ResponsiveHelper.iconSize(context, 18)),
-              label: const Text('명단 출력'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _confirmedWorkers.isNotEmpty ? theme.primaryColor : AppColors.grey500,
-                side: BorderSide(
-                  color: _confirmedWorkers.isNotEmpty ? theme.primaryColor : AppColors.grey300,
-                ),
-                padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 12),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-
-          // 급여관리 버튼 — OutlinedButton (보조 액션)
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: _confirmedWorkers.isNotEmpty && context.read<UserProvider>().checkCurrentBusiness((p) => p.canManageWage) == PermissionCheck.allowed
-                  ? _showWageConfirmDialog
-                  : null,
-              icon: Icon(Icons.payments, size: ResponsiveHelper.iconSize(context, 18)),
-              label: const Text('급여관리'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _confirmedWorkers.isNotEmpty
-                    ? Theme.of(context).primaryColor
-                    : AppColors.grey400,
-                side: BorderSide(
-                  color: _confirmedWorkers.isNotEmpty
-                      ? Theme.of(context).primaryColor
-                      : AppColors.grey300,
-                ),
-                padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 12),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-            ],
-          ),
+        // 기존 버튼들 — [DU305 후속 V7] 배치·여백은 _buildFooterActions
+        _buildFooterActions(context, theme),
         ],
         );
       }),
@@ -3152,8 +3493,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     //   처리완료 인원과 중복 집계될 위험을 차단
     final confirmedTabCount = _tabWorkers[2].length;
 
-    return Row(
+    // [COMMON-TEXT-LAYOUT.28] 큰 글자에서 한 줄을 넘쳤다(9px) — 두 묶음으로 나눠, 모자라면
+    //   '· 확인완료 N건' 묶음이 통째로 다음 줄로 간다.
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      runSpacing: 2,
       children: [
+        Row(mainAxisSize: MainAxisSize.min, children: [
         if (isAllProcessed) ...[
           const Icon(Icons.check_circle, size: 14, color: AppColors.success),
           const SizedBox(width: 4),
@@ -3168,7 +3514,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             color: isAllProcessed ? AppColors.success : theme.primaryColor,
           ),
         ),
-        if (confirmedTabCount > 0) ...[
+        ]),
+        if (confirmedTabCount > 0)
+          Row(mainAxisSize: MainAxisSize.min, children: [
           const Text('  ·  ',
               style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
           Text(
@@ -3179,7 +3527,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               color: AppColors.info,
             ),
           ),
-        ],
+          ]),
       ],
     );
   }
@@ -3344,6 +3692,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
   /// 전체 선택/해제 — 검색 필터가 활성화된 경우 화면에 보이는 인원만 대상
   void _toggleSelectAll(bool value) {
+    final before = Set<String>.of(_selectedIds); // [DU305] 선택이 늘 때만 맞춘다
     setState(() {
       _selectAll = value;
       if (value) {
@@ -3365,6 +3714,52 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         _selectedIds.clear();
       }
     });
+    if (value && _selectedIds.any((id) => !before.contains(id))) _revealAfterSelection(list: true); // [DU305]
+  }
+
+  /// [DU305] 선택 직후 맞춤 — 상단이 넘쳐 따로 스크롤되는 상태(상단 창의 maxScrollExtent > 0)에서만 움직인다.
+  ///   상단이 다 보이는 배치(W BASE 등)에서는 아무것도 움직이지 않는다.
+  ///   1) 상단 창: 일괄 버튼 첫 줄(출근·퇴근, 선택 건수 포함)이 다 보이게 최소 거리로 맞춘다.
+  ///   2) [list] 이면 목록 창: 화면 순서상 첫 선택 카드의 위쪽 min(카드 높이, 창 높이) 구간이 다 보이게 최소 거리로 맞춘다.
+  ///   이미 다 보이면 그 창은 움직이지 않는다. 다음 frame(선택 확인 바·건수 줄이 반영된 배치)에서 잰다.
+  ///   선택·권한·근태 처리·서버 경로는 바꾸지 않는다 — 스크롤 위치만 바꾼다.
+  void _revealAfterSelection({required bool list}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _selectedIds.isEmpty) return;
+      final stepCtx = _batchStepRowKey.currentContext;
+      if (stepCtx == null) return;
+      final top = Scrollable.maybeOf(stepCtx)?.position;
+      if (top == null || !top.hasContentDimensions || top.maxScrollExtent <= 0) return;
+      _revealInScrollable(stepCtx);
+      if (list) {
+        final cardCtx = _firstSelectedCardKey.currentContext;
+        if (cardCtx != null) _revealInScrollable(cardCtx);
+      }
+    });
+  }
+
+  /// [DU305] [target] 의 위쪽 min(높이, 창 높이) 구간이 가장 가까운 스크롤 창 안에 다 보이게 최소 거리로 움직인다.
+  ///   아래에 있으면 그 구간 아래끝을 창 아래끝에, 위에 있으면 위끝을 창 위끝에 맞춘다. 이미 보이면 그대로다.
+  void _revealInScrollable(BuildContext target) {
+    final box = target.findRenderObject();
+    if (box is! RenderBox || !box.attached || !box.hasSize) return;
+    final pos = Scrollable.maybeOf(target)?.position;
+    final viewport = RenderAbstractViewport.maybeOf(box);
+    if (pos == null || viewport == null || !pos.hasContentDimensions) return;
+    final h = box.size.height < pos.viewportDimension ? box.size.height : pos.viewportDimension;
+    final rect = Rect.fromLTWH(0, 0, box.size.width, h);
+    final alignTop = viewport.getOffsetToReveal(box, 0.0, rect: rect).offset;
+    final alignBottom = viewport.getOffsetToReveal(box, 1.0, rect: rect).offset;
+    double? goal;
+    if (pos.pixels < alignBottom - 0.5) {
+      goal = alignBottom;
+    } else if (pos.pixels > alignTop + 0.5) {
+      goal = alignTop;
+    }
+    if (goal == null) return;
+    final clamped = goal.clamp(pos.minScrollExtent, pos.maxScrollExtent).toDouble();
+    if ((clamped - pos.pixels).abs() <= 0.5) return;
+    pos.animateTo(clamped, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
   }
 
   /// 상태 기반 스마트 선택
@@ -3491,7 +3886,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           if (att == null) return false;
           // H-3: statusAbsent(결근)도 리셋 대상에 포함 — checkIn이 없어도 처리
           return att.checkIn != null ||
-              att.status == AttendanceModel.statusAbsent;
+              att.status == AttendanceModel.statusAbsent ||
+              // [ATTENDANCE-UNKNOWN-DEST.28] status 없음도 예전처럼 리셋 대상
+              att.status == AttendanceModel.statusUnconfirmed;
         })
         .toList();
     if (targets.isEmpty) return;
@@ -3554,6 +3951,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
   /// 개별 선택/해제
   void _toggleSelection(String appId) {
+    // [DU305] 이 근무를 새로 선택하면 처리 진입(일괄 버튼 첫 줄)만 맞춘다 — 목록은 사용자가 보고 있는 그 자리다.
+    if (!_selectedIds.contains(appId)) _revealAfterSelection(list: false);
     setState(() {
       if (_selectedIds.contains(appId)) {
         _selectedIds.remove(appId);
@@ -3638,229 +4037,201 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     String? adjustCheckOut;
     bool dialogApplyRounding = false;
 
+    // [NDB-1 · DU-O001 디자인·브랜드 판정(11-18)] 직접 Dialog(M3 기본 연보라 면 · 독자 머리/구분선 · 높이 상한/본문 스크롤 없는 Column)를
+    //   공용 StyledDialog 로 옮긴다 — 흰 셸 · 공용 머리/부제(큰 글자 낱말 재배치) · 높이 상한 + 본문 스크롤 · 공용 취소/주행동(큰 글자 세로 전환).
+    //   안내 문장 · 대상 수 · 혼합 기준 경고 · 근태 기준 토글/미리보기 · 활성 조건 · 반환(true/false · 닫기 null = 미조정)은 그대로다.
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (ctx, setDialogState) => Dialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 340),
-            padding: ResponsiveHelper.cardPadding(ctx),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 헤더
-                Row(
-                  children: [
-                    Container(
-                      padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 10)),
-                      decoration: BoxDecoration(
-                        color: AppColors.info.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(Icons.tune, color: AppColors.info, size: ResponsiveHelper.iconSize(ctx, 24)),
+        builder: (ctx, setDialogState) => StyledDialog(
+          title: '일괄 시간 조정',
+          subtitle: '${targets.length}명 대상',
+          icon: Icons.tune,
+          headerColor: AppColors.brand,
+          showCloseButton: true,
+          maxWidth: 340,
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 안내 — 파랑 상자 대신 중립 본문 + 작은 공통 아이콘(문장 그대로)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: EdgeInsets.only(top: ResponsiveHelper.spacing(ctx, 1)),
+                    child: Icon(Icons.info_outline, color: AppColors.textSecondary, size: ResponsiveHelper.iconSize(ctx, 16)),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
+                  Expanded(
+                    child: Text(
+                      _adjustKeepWords('입력한 시간으로만 조정됩니다.\n비워두면 해당 시간은 변경되지 않습니다.'),
+                      semanticsLabel: '입력한 시간으로만 조정됩니다.\n비워두면 해당 시간은 변경되지 않습니다.',
+                      style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.textSecondary),
                     ),
-                    SizedBox(width: ResponsiveHelper.spacing(ctx, 12)),
-                    Expanded(
+                  ),
+                ],
+              ),
+
+              // [R7-PAYROLL-POLICY.4] 대상자마다 **약속된 기준이 다를 수
+              //   있다** — 지원 시점 기준이 지원서에 고정되기 때문이다.
+              //   사업장 현재 설정 하나로 안내하면 관리자가 착각한다.
+              if (_batchTargetsHaveMixedPolicy(targets)) ...[
+                SizedBox(height: ResponsiveHelper.spacing(ctx, 8)),
+                Text(
+                  _adjustKeepWords('대상자마다 적용되는 근태 기준이 다릅니다.\n'
+                      '각 근무에 약속된 기준으로 처리됩니다.'),
+                  semanticsLabel: '대상자마다 적용되는 근태 기준이 다릅니다.\n'
+                      '각 근무에 약속된 기준으로 처리됩니다.',
+                  style: ResponsiveHelper.tinyStyle(ctx,
+                      color: AppColors.warningDark),
+                ),
+              ],
+
+              // 반올림 정책 토글 (정책 설정된 사업장에서만 표시)
+              //   [NDB-1] 켜짐 강조 info(파랑) → 공통 선택 강조 brand · 꺼짐은 중립(흰 면 · 옅은 선 · M3 연보라 기본 트랙 대신 회색).
+              if (_attendanceRules != null) ...[
+                SizedBox(height: ResponsiveHelper.spacing(ctx, 10)),
+                InkWell(
+                  onTap: () => setDialogState(() => dialogApplyRounding = !dialogApplyRounding),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 48),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(ctx, 12),
+                      vertical: ResponsiveHelper.spacing(ctx, 6),
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: dialogApplyRounding ? AppColors.brand : AppColors.borderLight,
+                        width: dialogApplyRounding ? 1.5 : 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.auto_fix_high,
+                          size: ResponsiveHelper.iconSize(ctx, 16),
+                          color: dialogApplyRounding ? AppColors.brand : AppColors.textSecondary,
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
+                        Expanded(
+                          child: Text(
+                            // [R7-PAYROLL-POLICY.4] 적용되는 것은 **이 근무에
+                            //   약속된 기준**이다. 확정 뒤 설정을 바꾼
+                            //   사업장에서 '사업장 정책' 은 틀린 말이 된다.
+                            // [ROUNDING-PREVIEW.27] 짧게 — 확인 창 제목과 같은 말.
+                            _adjustKeepWords('근태 기준 적용'),
+                            semanticsLabel: '근태 기준 적용',
+                            style: ResponsiveHelper.smallStyle(ctx).copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                        Switch(
+                          value: dialogApplyRounding,
+                          onChanged: (v) => setDialogState(() => dialogApplyRounding = v),
+                          activeThumbColor: AppColors.surface,
+                          activeTrackColor: AppColors.brand,
+                          inactiveThumbColor: AppColors.grey500,
+                          inactiveTrackColor: AppColors.grey200,
+                          trackOutlineColor: WidgetStateProperty.resolveWith(
+                            (s) => s.contains(WidgetState.selected) ? AppColors.brand : AppColors.border,
+                          ),
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // [ROUNDING-PREVIEW.27] 켜면 무엇으로 기록되는지 조정 전에 보여 준다.
+                if (dialogApplyRounding && (adjustCheckIn != null || adjustCheckOut != null))
+                  Builder(builder: (_) {
+                    final rows = _adjustPreviews(targets, adjustCheckIn, adjustCheckOut);
+                    final changed = rows.where((r) => r.applied != r.raw).toList();
+                    return Padding(
+                      padding: EdgeInsets.only(top: ResponsiveHelper.spacing(ctx, 6)),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            '일괄 시간 조정',
-                            style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.bold),
-                          ),
-                          Text(
-                            '${targets.length}명 대상',
-                            style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey600),
-                          ),
+                          if (changed.isEmpty)
+                            Text(_adjustKeepWords('적용해도 입력한 시각 그대로예요'),
+                                semanticsLabel: '적용해도 입력한 시각 그대로예요',
+                                style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.textSecondary)),
+                          for (final r in changed.take(3))
+                            Text(_adjustKeepWords('${r.name} ${r.shift}: ${r.applied}'),
+                                semanticsLabel: '${r.name} ${r.shift}: ${r.applied}',
+                                style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.textPrimary)
+                                    .copyWith(fontWeight: FontWeight.w600)),
+                          if (changed.length > 3)
+                            Text(_adjustKeepWords('외 ${changed.length - 3}명도 바뀌어요'),
+                                semanticsLabel: '외 ${changed.length - 3}명도 바뀌어요',
+                                style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.textPrimary)),
+                          if (changed.isNotEmpty && rows.length > changed.length)
+                            Text(_adjustKeepWords('나머지 ${rows.length - changed.length}명은 입력한 시각 그대로예요'),
+                                semanticsLabel: '나머지 ${rows.length - changed.length}명은 입력한 시각 그대로예요',
+                                style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.textSecondary)),
                         ],
                       ),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(dialogContext, false),
-                      icon: Icon(Icons.close, color: AppColors.grey500, size: ResponsiveHelper.iconSize(ctx, 20)),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-                  ],
-                ),
-
-                SizedBox(height: ResponsiveHelper.spacing(ctx, 8)),
-                const Divider(color: AppColors.border),
-                SizedBox(height: ResponsiveHelper.spacing(ctx, 8)),
-
-                // 안내
-                Container(
-                  padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 10)),
-                  decoration: BoxDecoration(
-                    color: AppColors.infoBg,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: AppColors.infoLight),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.info_outline, color: AppColors.infoDark, size: ResponsiveHelper.iconSize(ctx, 16)),
-                      SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
-                      Expanded(
-                        child: Text(
-                          '입력한 시간으로만 조정됩니다.\n비워두면 해당 시간은 변경되지 않습니다.',
-                          style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.infoDark),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                // [R7-PAYROLL-POLICY.4] 대상자마다 **약속된 기준이 다를 수
-                //   있다** — 지원 시점 기준이 지원서에 고정되기 때문이다.
-                //   사업장 현재 설정 하나로 안내하면 관리자가 착각한다.
-                if (_batchTargetsHaveMixedPolicy(targets)) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(ctx, 8)),
-                  Text(
-                    '대상자마다 적용되는 근태 기준이 다릅니다.\n'
-                    '각 근무에 약속된 기준으로 처리됩니다.',
-                    style: ResponsiveHelper.tinyStyle(ctx,
-                        color: AppColors.warningDark),
-                  ),
-                ],
-
-                // 반올림 정책 토글 (정책 설정된 사업장에서만 표시)
-                if (_attendanceRules != null) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(ctx, 10)),
-                  InkWell(
-                    onTap: () => setDialogState(() => dialogApplyRounding = !dialogApplyRounding),
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: ResponsiveHelper.spacing(ctx, 12),
-                        vertical: ResponsiveHelper.spacing(ctx, 8),
-                      ),
-                      decoration: BoxDecoration(
-                        color: dialogApplyRounding
-                            ? AppColors.info.withValues(alpha: 0.07)
-                            : AppColors.grey50,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: dialogApplyRounding
-                              ? AppColors.info.withValues(alpha: 0.35)
-                              : AppColors.border,
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.auto_fix_high,
-                            size: ResponsiveHelper.iconSize(ctx, 16),
-                            color: dialogApplyRounding ? AppColors.info : AppColors.grey500,
-                          ),
-                          SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
-                          Expanded(
-                            child: Text(
-                              // [R7-PAYROLL-POLICY.4] 적용되는 것은 **이 근무에
-                              //   약속된 기준**이다. 확정 뒤 설정을 바꾼
-                              //   사업장에서 '사업장 정책' 은 틀린 말이 된다.
-                              '근태 기준 반올림 적용',
-                              style: ResponsiveHelper.smallStyle(ctx).copyWith(
-                                fontWeight: FontWeight.w600,
-                                color: dialogApplyRounding ? AppColors.infoDark : AppColors.grey700,
-                              ),
-                            ),
-                          ),
-                          Switch(
-                            value: dialogApplyRounding,
-                            onChanged: (v) => setDialogState(() => dialogApplyRounding = v),
-                            activeThumbColor: AppColors.info,
-                            activeTrackColor: AppColors.info.withValues(alpha: 0.4),
-                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-
-                SizedBox(height: ResponsiveHelper.spacing(ctx, 16)),
-
-                // 출근 시간 조정
-                _buildAdjustRow(
-                  icon: Icons.login,
-                  iconColor: AppColors.success,
-                  iconBgColor: AppColors.successBg,
-                  label: '출근 시간',
-                  value: adjustCheckIn,
-                  quickLabel: '예정($defaultCheckIn)',
-                  onQuickTap: () => setDialogState(() => adjustCheckIn = defaultCheckIn),
-                  onTap: () async {
-                    final t = await _showTimePickerDialog(
-                      title: '출근 시간 조정',
-                      initialTime: adjustCheckIn ?? defaultCheckIn,
                     );
-                    if (t != null) setDialogState(() => adjustCheckIn = t);
-                  },
-                  onClear: adjustCheckIn != null ? () => setDialogState(() => adjustCheckIn = null) : null,
-                ),
-
-                SizedBox(height: ResponsiveHelper.spacing(ctx, 10)),
-
-                // 퇴근 시간 조정
-                _buildAdjustRow(
-                  icon: Icons.logout,
-                  iconColor: AppColors.purple,
-                  iconBgColor: AppColors.purpleBg,
-                  label: '퇴근 시간',
-                  value: adjustCheckOut,
-                  quickLabel: '예정($defaultCheckOut)',
-                  onQuickTap: () => setDialogState(() => adjustCheckOut = defaultCheckOut),
-                  onTap: () async {
-                    final t = await _showTimePickerDialog(
-                      title: '퇴근 시간 조정',
-                      initialTime: adjustCheckOut ?? defaultCheckOut,
-                    );
-                    if (t != null) setDialogState(() => adjustCheckOut = t);
-                  },
-                  onClear: adjustCheckOut != null ? () => setDialogState(() => adjustCheckOut = null) : null,
-                ),
-
-                SizedBox(height: ResponsiveHelper.spacing(ctx, 20)),
-
-                // 버튼
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(dialogContext, false),
-                        style: OutlinedButton.styleFrom(
-                          padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(ctx, 14)),
-                          side: BorderSide(color: AppColors.grey300),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                        child: Text('취소', style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey600)),
-                      ),
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(ctx, 12)),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: (adjustCheckIn != null || adjustCheckOut != null)
-                            ? () => Navigator.pop(dialogContext, true)
-                            : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.info,
-                          foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(ctx, 14)),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                        child: Text(
-                          '조정하기',
-                          style: ResponsiveHelper.bodyStyle(ctx, color: Colors.white).copyWith(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                  }),
               ],
-            ),
+
+              SizedBox(height: ResponsiveHelper.spacing(ctx, 16)),
+
+              // 출근 시간 조정
+              _buildAdjustRow(
+                icon: Icons.login,
+                label: '출근 시간',
+                value: adjustCheckIn,
+                quickLabel: '예정($defaultCheckIn)',
+                onQuickTap: () => setDialogState(() => adjustCheckIn = defaultCheckIn),
+                onTap: () async {
+                  final t = await _showTimePickerDialog(
+                    title: '출근 시간 조정',
+                    initialTime: adjustCheckIn ?? defaultCheckIn,
+                  );
+                  if (t != null) setDialogState(() => adjustCheckIn = t);
+                },
+                onClear: adjustCheckIn != null ? () => setDialogState(() => adjustCheckIn = null) : null,
+              ),
+
+              SizedBox(height: ResponsiveHelper.spacing(ctx, 10)),
+
+              // 퇴근 시간 조정
+              _buildAdjustRow(
+                icon: Icons.logout,
+                label: '퇴근 시간',
+                value: adjustCheckOut,
+                quickLabel: '예정($defaultCheckOut)',
+                onQuickTap: () => setDialogState(() => adjustCheckOut = defaultCheckOut),
+                onTap: () async {
+                  final t = await _showTimePickerDialog(
+                    title: '퇴근 시간 조정',
+                    initialTime: adjustCheckOut ?? defaultCheckOut,
+                  );
+                  if (t != null) setDialogState(() => adjustCheckOut = t);
+                },
+                onClear: adjustCheckOut != null ? () => setDialogState(() => adjustCheckOut = null) : null,
+              ),
+            ],
           ),
+          actions: [
+            StyledDialogButton.cancel(
+              onPressed: () => Navigator.pop(dialogContext, false),
+            ),
+            // [DU505] 흰 글자 채움 brand(5.58) 유지 — 비활성은 공용 비활성(grey200 · textSecondary).
+            StyledDialogButton.primary(
+              text: '조정하기',
+              backgroundColor: AppColors.brand,
+              onPressed: (adjustCheckIn != null || adjustCheckOut != null)
+                  ? () => Navigator.pop(dialogContext, true)
+                  : null,
+            ),
+          ],
         ),
       ),
     );
@@ -3871,11 +4242,16 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     }
   }
 
+  /// [NDB-1] 일괄 시간 조정 창 글 — 줄('\n')마다 낱말 단위로 묶는다(큰 글자 음절 끊김 방지). 읽기 이름은 호출부가 원문으로 준다.
+  static String _adjustKeepWords(String s) => s.split('\n').map(TextLayout.keepWords).join('\n');
+
   /// 일괄 시간 조정 행 위젯
+  ///   [NDB-1 · DU-O001 판정] 출근 초록 · 퇴근 보라가 아이콘 · 행 면/선 · 시간 글자 · 예정 칩까지 번지던 것을 같은 중립 계열로 —
+  ///   출근/퇴근 구분은 라벨과 login/logout 아이콘. 값 있음 = 진한 시간 글자 + brand 선(공통 선택 강조) · 미설정 = 읽히는 보조 글자 + 옅은 선.
+  ///   라벨/값 줄과 조작(예정 · 직접) 줄을 나눠 좁은 폭 · 큰 글자에서 한 줄로 밀어 넣지 않는다(Wrap). 조작 · 지우기 터치 48.
+  ///   글자 축소 · 말줄임 · 배율 제한 없음. 콜백 · 값 · '필터 삭제' 읽기 이름은 그대로다.
   Widget _buildAdjustRow({
     required IconData icon,
-    required Color iconColor,
-    required Color iconBgColor,
     required String label,
     required String? value,
     required String quickLabel,
@@ -3883,86 +4259,110 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     required VoidCallback onTap,
     VoidCallback? onClear,
   }) {
-    return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-      decoration: BoxDecoration(
-        color: value != null ? iconColor.withValues(alpha: 0.06) : AppColors.grey100,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: value != null ? iconColor.withValues(alpha: 0.3) : AppColors.border,
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-            decoration: BoxDecoration(color: iconBgColor, borderRadius: BorderRadius.circular(8)),
-            child: Icon(icon, color: iconColor, size: ResponsiveHelper.iconSize(context, 18)),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600)),
-                Text(
-                  value ?? '미설정',
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: value != null ? iconColor : AppColors.grey400,
+    final has = value != null;
+    Widget action(String text, VoidCallback onPressed) => InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(8),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+            child: Align(
+              widthFactor: 1,
+              heightFactor: 1,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 12),
+                    vertical: ResponsiveHelper.spacing(context, 6),
+                  ),
+                  child: Text(
+                    _adjustKeepWords(text),
+                    semanticsLabel: text,
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.textPrimary).copyWith(fontWeight: FontWeight.w600),
                   ),
                 ),
-              ],
-            ),
-          ),
-          // 예정시간 퀵버튼
-          GestureDetector(
-            onTap: onQuickTap,
-            child: Container(
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 8),
-                vertical: ResponsiveHelper.spacing(context, 4),
-              ),
-              decoration: BoxDecoration(
-                color: iconColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                quickLabel,
-                style: ResponsiveHelper.tinyStyle(context, color: iconColor).copyWith(fontWeight: FontWeight.bold),
               ),
             ),
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          // 직접 입력
-          GestureDetector(
-            onTap: onTap,
-            child: Container(
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 8),
-                vertical: ResponsiveHelper.spacing(context, 4),
+        );
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 12),
+        ResponsiveHelper.spacing(context, 8),
+        ResponsiveHelper.spacing(context, 4),
+        ResponsiveHelper.spacing(context, 8),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: has ? AppColors.brand : AppColors.borderLight,
+          width: has ? 1.5 : 1,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                decoration: BoxDecoration(color: AppColors.grey100, borderRadius: BorderRadius.circular(8)),
+                child: Icon(icon, color: AppColors.textSecondary, size: ResponsiveHelper.iconSize(context, 18)),
               ),
-              decoration: BoxDecoration(
-                color: AppColors.grey200,
-                borderRadius: BorderRadius.circular(6),
+              SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _adjustKeepWords(label),
+                      semanticsLabel: label,
+                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary),
+                    ),
+                    Text(
+                      value ?? '미설정',
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        fontWeight: has ? FontWeight.w700 : FontWeight.w400,
+                        color: has ? AppColors.textPrimary : AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              child: Text(
-                '직접',
-                style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700).copyWith(fontWeight: FontWeight.bold),
-              ),
-            ),
+              if (onClear != null)
+                Semantics(
+                  button: true,
+                  label: '필터 삭제',
+                  child: GestureDetector(
+                    onTap: onClear,
+                    behavior: HitTestBehavior.opaque,
+                    child: SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: Center(
+                        child: Icon(Icons.close, color: AppColors.textSecondary, size: ResponsiveHelper.iconSize(context, 18)),
+                      ),
+                    ),
+                  ),
+                )
+              else
+                const SizedBox(height: 48),
+            ],
           ),
-          if (onClear != null) ...[
-            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-            Semantics(
-              button: true,
-              label: '필터 삭제',
-              child: GestureDetector(
-                onTap: onClear,
-                child: Icon(Icons.close, color: AppColors.grey400, size: ResponsiveHelper.iconSize(context, 16)),
-              ),
-            ),
-          ],
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Wrap(
+            spacing: ResponsiveHelper.spacing(context, 8),
+            children: [
+              action(quickLabel, onQuickTap),
+              action('직접', onTap),
+            ],
+          ),
         ],
       ),
     );
@@ -4172,7 +4572,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               .toList();
           final wouldChange = pendingApps.any((app) => _roundedCheckIn(app, time) != time);
           if (wouldChange) {
-            final choice = await _showRoundingPreviewDialog(rawTime: time, isCheckIn: true);
+            final choice = await _showRoundingPreviewDialog(
+                isCheckIn: true, rows: _checkInPreviews(pendingApps, time));
             if (!mounted) return;
             if (choice == null) return;
             applyRounding = choice;
@@ -4191,7 +4592,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             (groups[e.key] ?? []).any((app) => _roundedCheckIn(app, e.value) != e.value)
           );
           if (wouldChange) {
-            final choice = await _showRoundingPreviewDialog(isCheckIn: true);
+            final choice = await _showRoundingPreviewDialog(isCheckIn: true, rows: [
+              for (final e in groupTimes.entries)
+                ..._checkInPreviews(
+                    (groups[e.key] ?? const <ApplicationModel>[])
+                        .where((a) => _selectedIds.contains(a.id)),
+                    e.value),
+            ]);
             if (!mounted) return;
             if (choice == null) return;
             applyRounding = choice;
@@ -4261,7 +4668,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             return _roundedCheckOut(app, checkInDt, time) != time;
           });
           if (wouldChange) {
-            final choice = await _showRoundingPreviewDialog(rawTime: time, isCheckIn: false);
+            final choice = await _showRoundingPreviewDialog(
+                isCheckIn: false, rows: _checkOutPreviews(checkedInApps, time));
             if (!mounted) return;
             if (choice == null) return;
             applyRounding = choice;
@@ -4287,7 +4695,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             });
           });
           if (wouldChange) {
-            final choice = await _showRoundingPreviewDialog(isCheckIn: false);
+            final choice = await _showRoundingPreviewDialog(isCheckIn: false, rows: [
+              for (final e in groupTimes.entries)
+                ..._checkOutPreviews(
+                    (groups[e.key] ?? const <ApplicationModel>[])
+                        .where((a) => checkedInIds.contains(a.id)),
+                    e.value),
+            ]);
             if (!mounted) return;
             if (choice == null) return;
             applyRounding = choice;
@@ -4304,10 +4718,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     Map<String, List<ApplicationModel>> groups, {
     required bool isCheckIn,
   }) async {
-    final now = DateTime.now();
-    final roundedMin = (now.minute / 10).round() >= 6 ? 0 : (now.minute / 10).round() * 10;
-    final roundedHour = (now.minute / 10).round() >= 6 ? (now.hour + 1) % 24 : now.hour;
-    final nowStr = FormatHelper.formatHourMinute(roundedHour, roundedMin);
+    // [UI-4] 기본 시각은 KST 벽시계 — 기기 시간대의 시·분이 아니다(단일 파트 시트와 같은 함수).
+    final now = AttendanceQuickTimeSheet.roundedKstNow();
+    final nowStr = FormatHelper.formatHourMinute(now.hour, now.minute);
 
     final Map<String, String> selectedTimes = {};
     for (final entry in groups.entries) {
@@ -4321,7 +4734,26 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     final actionColor = isCheckIn ? AppColors.success : AppColors.purple;
     final actionLabel = isCheckIn ? '출근' : '퇴근';
     final actionIcon = isCheckIn ? Icons.login : Icons.logout;
+    // [DU303] 출근/퇴근 의미는 머리 아이콘에만 둔다(자식 시트와 같은 짝) — 출근 success 전경 → successDark, 퇴근 purple 그대로.
+    final actionIconColor = isCheckIn ? AppColors.successDark : AppColors.purple;
     final totalCount = groups.values.fold(0, (s, l) => s + l.length);
+
+    // [DU303 가2] 시각 줄 필요폭 — 실제 렌더와 같은 상속 스타일(DefaultTextStyle 병합)·TextScaler·locale·방향으로 잰다.
+    //   화면 폭·글자 배율 임계값으로 나누지 않는다. 비선형 배율도 TextPainter 가 그대로 받는다.
+    double textWidthIn(BuildContext c, String text, TextStyle style) {
+      final dts = DefaultTextStyle.of(c);
+      final tp = TextPainter(
+        text: TextSpan(text: text, style: style),
+        textDirection: Directionality.of(c),
+        textScaler: MediaQuery.textScalerOf(c),
+        locale: Localizations.maybeLocaleOf(c),
+        textWidthBasis: dts.textWidthBasis,
+        textHeightBehavior: dts.textHeightBehavior,
+      )..layout();
+      final w = tp.maxIntrinsicWidth;
+      tp.dispose();
+      return w;
+    }
 
     return showDialog<Map<String, String>>(
       context: context,
@@ -4329,6 +4761,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         builder: (ctx, setDialogState) {
           final theme = Theme.of(ctx);
           return Dialog(
+            // [DU308 Standards §12.2] 본문 배경을 명시한다 — 미지정이면 M3 기본(colorScheme.surfaceContainerHigh)의
+            //   옅은 보라 기운이 넓은 본문 전체에 깔렸다. 공용 확인창(StyledDialog)과 같은 흰 바탕.
+            backgroundColor: AppColors.surface,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
             child: ConstrainedBox(
               constraints: BoxConstraints(
@@ -4339,12 +4774,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   // ── 헤더 ──
+                  // [DU308 §12.2] 머리 전체 의미색 면(출근 success / 퇴근 purple α.10)을 걷는다 — 흰 바탕 그대로.
+                  //   출근/퇴근 의미는 아래 작은 아이콘 타일(α.15)과 제목 글자가 계속 말한다(자식 시트와 같은 짝).
                   Container(
                     padding: ResponsiveHelper.cardPadding(ctx),
-                    decoration: BoxDecoration(
-                      color: actionColor.withValues(alpha: 0.1),
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-                    ),
                     child: Row(
                       children: [
                         Container(
@@ -4353,7 +4786,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                             color: actionColor.withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Icon(actionIcon, color: actionColor,
+                          child: Icon(actionIcon, color: actionIconColor,
                               size: ResponsiveHelper.iconSize(ctx, 22)),
                         ),
                         SizedBox(width: ResponsiveHelper.spacing(ctx, 12)),
@@ -4361,13 +4794,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('파트별 일괄 $actionLabel',
+                              // [DU308 · 감사303 §4 BACKLOG] B320/2.0 의 `일괄 출 / 근` — 표시만 낱말 사이에서 줄바꿈(의미 이름 원문).
+                              Text(TextLayout.keepWords('파트별 일괄 $actionLabel'),
+                                  semanticsLabel: '파트별 일괄 $actionLabel',
                                   style: ResponsiveHelper.subtitleStyle(ctx)
                                       .copyWith(fontWeight: FontWeight.bold)),
                               // [R7-P1-3] 일괄 처리 대상은 근무 건이다 —
                               //   한 사람이 하루에 두 파트를 가질 수 있고,
                               //   workDetailId 가 없는 구 문서는 한 파트로 합쳐진다.
-                              Text('$totalCount건 선택 · ${groups.length}개 파트',
+                              // [DU308] 구분점 조각 사이에서만 줄바꿈(`3건 선택`·`2개 파트` 안을 끊지 않는다).
+                              Text(TextLayout.phrases('$totalCount건 선택 · ${groups.length}개 파트'),
+                                  semanticsLabel: '$totalCount건 선택 · ${groups.length}개 파트',
                                   style: ResponsiveHelper.smallStyle(ctx,
                                       color: AppColors.grey600)),
                             ],
@@ -4375,7 +4812,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                         ),
                         IconButton(
                           onPressed: () => Navigator.pop(dialogContext),
-                          icon: const Icon(Icons.close, color: AppColors.grey500),
+                          // [DU303] 닫기 누름 48×48·중립 보조색(자식 시트와 같음)
+                          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                          icon: const Icon(Icons.close, color: AppColors.textSecondary),
                           padding: EdgeInsets.zero,
                         ),
                       ],
@@ -4392,11 +4831,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                           // 현재 시간 전체 설정 버튼
                           OutlinedButton.icon(
                             onPressed: () {
-                              final n = DateTime.now();
-                              final rs = (n.minute / 10).round();
-                              final h = rs >= 6 ? (n.hour + 1) % 24 : n.hour;
-                              final m = rs >= 6 ? 0 : rs * 10;
-                              final t = FormatHelper.formatHourMinute(h, m);
+                              final n = AttendanceQuickTimeSheet.roundedKstNow();
+                              final t = FormatHelper.formatHourMinute(n.hour, n.minute);
                               setDialogState(() {
                                 for (final k in selectedTimes.keys.toList()) {
                                   selectedTimes[k] = t;
@@ -4406,7 +4842,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                             icon: Icon(Icons.access_time,
                                 size: ResponsiveHelper.iconSize(ctx, 16),
                                 color: AppColors.grey700),
-                            label: Text('현재 시간으로 전체 설정',
+                            // [DU308 · 감사303 §4 BACKLOG] `현재 시간으로 전 / 체 설정` — 낱말 사이에서만 줄바꿈(의미 이름 원문).
+                            label: Text(TextLayout.keepWords('현재 시간으로 전체 설정'),
+                                semanticsLabel: '현재 시간으로 전체 설정',
                                 style: ResponsiveHelper.smallStyle(ctx,
                                     color: AppColors.grey700)),
                             style: OutlinedButton.styleFrom(
@@ -4485,74 +4923,116 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                                   ),
                                   SizedBox(height: ResponsiveHelper.spacing(ctx, 10)),
                                   // 시간 표시 + 변경 버튼
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Container(
-                                          padding: EdgeInsets.symmetric(
-                                            horizontal: ResponsiveHelper.spacing(ctx, 14),
-                                            vertical: ResponsiveHelper.spacing(ctx, 10),
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: actionColor.withValues(alpha: 0.08),
-                                            borderRadius: BorderRadius.circular(10),
-                                            border: Border.all(
-                                                color: actionColor.withValues(alpha: 0.3)),
-                                          ),
-                                          child: Row(
-                                            children: [
-                                              Icon(Icons.check_circle_outline,
-                                                  size: ResponsiveHelper.iconSize(ctx, 15),
-                                                  color: actionColor),
-                                              SizedBox(width: ResponsiveHelper.spacing(ctx, 6)),
-                                              Text(
-                                                selectedTimes[groupKey] ?? '--:--',
-                                                style: ResponsiveHelper.bodyStyle(ctx).copyWith(
-                                                  color: actionColor,
-                                                  fontWeight: FontWeight.bold,
-                                                  letterSpacing: 1,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
+                                  // [DU303 가2] 실제 필요폭이 이 줄의 가용폭을 넘을 때만 세로로 놓는다:
+                                  //   위 전폭 시각 상자 → 기존 8 간격 → 끝쪽 정렬 변경(전폭으로 늘리지 않음).
+                                  //   들어가면 기존 Expanded(시각 상자) + 간격 + 변경 Row 그대로다.
+                                  LayoutBuilder(builder: (rowCtx, rowCons) {
+                                    final timeText = selectedTimes[groupKey] ?? '--:--';
+                                    final timeStyle = ResponsiveHelper.bodyStyle(ctx).copyWith(
+                                      color: AppColors.textPrimary,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 1,
+                                    );
+                                    final changeTextStyle = ResponsiveHelper.smallStyle(ctx,
+                                            color: AppColors.brand)
+                                        .copyWith(fontWeight: FontWeight.bold);
+                                    final boxPadH = ResponsiveHelper.spacing(ctx, 14);
+                                    final iconSize = ResponsiveHelper.iconSize(ctx, 15);
+                                    final iconGap = ResponsiveHelper.spacing(ctx, 6);
+                                    final rowGap = ResponsiveHelper.spacing(ctx, 8);
+                                    final changePadH = ResponsiveHelper.spacing(ctx, 14);
+                                    const changeMin = Size(64, 48);
+                                    // [DU303] 의미색 면·선 → 중립 단색 면 + 본문색 숫자(자식 시트와 같은 표현). 크기·반경 그대로
+                                    final timeBox = Container(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: boxPadH,
+                                        vertical: ResponsiveHelper.spacing(ctx, 10),
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.grey100,
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(color: AppColors.border),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.check_circle_outline,
+                                              size: iconSize,
+                                              color: AppColors.textSecondary),
+                                          SizedBox(width: iconGap),
+                                          Text(timeText, style: timeStyle),
+                                        ],
+                                      ),
+                                    );
+                                    final changeButton = OutlinedButton(
+                                      onPressed: () async {
+                                        final t = await AttendanceQuickTimeSheet.show(
+                                          context: ctx,
+                                          title:
+                                              '${firstApp.selectedWorkType} $actionLabel 시간',
+                                          scheduledTimes: (() {
+                                            final t = isCheckIn
+                                                ? WorkDetailHelper.effectiveStart(firstApp, _workDetailTimeMap)
+                                                : WorkDetailHelper.effectiveEnd(firstApp, _workDetailTimeMap);
+                                            return t.isNotEmpty ? [t] : null;
+                                          })(),
+                                          isCheckIn: isCheckIn,
+                                        );
+                                        if (t != null) {
+                                          setDialogState(() => selectedTimes[groupKey] = t);
+                                        }
+                                      },
+                                      // [DU303] 변경은 일반 진행 — brand 글자·외곽선, 누름 최소 64×48(테마 하한 유지)
+                                      style: OutlinedButton.styleFrom(
+                                        side: const BorderSide(color: AppColors.brand),
+                                        foregroundColor: AppColors.brand,
+                                        minimumSize: changeMin,
+                                        shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(10)),
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: changePadH,
+                                          vertical: ResponsiveHelper.spacing(ctx, 10),
                                         ),
                                       ),
-                                      SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
-                                      OutlinedButton(
-                                        onPressed: () async {
-                                          final t = await AttendanceQuickTimeSheet.show(
-                                            context: ctx,
-                                            title:
-                                                '${firstApp.selectedWorkType} $actionLabel 시간',
-                                            scheduledTimes: (() {
-                                              final t = isCheckIn
-                                                  ? WorkDetailHelper.effectiveStart(firstApp, _workDetailTimeMap)
-                                                  : WorkDetailHelper.effectiveEnd(firstApp, _workDetailTimeMap);
-                                              return t.isNotEmpty ? [t] : null;
-                                            })(),
-                                            isCheckIn: isCheckIn,
-                                          );
-                                          if (t != null) {
-                                            setDialogState(() => selectedTimes[groupKey] = t);
-                                          }
-                                        },
-                                        style: OutlinedButton.styleFrom(
-                                          side: BorderSide(color: actionColor.withValues(alpha: 0.5)),
-                                          foregroundColor: actionColor,
-                                          shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(10)),
-                                          padding: EdgeInsets.symmetric(
-                                            horizontal: ResponsiveHelper.spacing(ctx, 14),
-                                            vertical: ResponsiveHelper.spacing(ctx, 10),
-                                          ),
+                                      child: Text('변경', style: changeTextStyle),
+                                    );
+                                    // 필요폭: 상자(좌우 padding + 테두리 1×2 + 아이콘 + 간격 + 실제 시각 글자) + 줄 간격 + 변경 실제 폭.
+                                    //   변경 글자는 버튼이 까는 글자 스타일(로컬 → 테마 → SDK 기본 labelLarge)에 병합해 잰다.
+                                    //   변경 폭은 그 글자 + 좌우 padding(밀도 보정 포함)과 최소 폭(밀도 보정 포함) 중 큰 값이다.
+                                    final rowDts = DefaultTextStyle.of(rowCtx).style;
+                                    final timeW = textWidthIn(rowCtx, timeText, rowDts.merge(timeStyle));
+                                    final buttonBase = OutlinedButtonTheme.of(rowCtx).style?.textStyle?.resolve(const <WidgetState>{}) ??
+                                        Theme.of(rowCtx).textTheme.labelLarge ??
+                                        const TextStyle();
+                                    final changeW = textWidthIn(rowCtx, '변경', buttonBase.merge(changeTextStyle));
+                                    final density = Theme.of(rowCtx).visualDensity.baseSizeAdjustment;
+                                    final densityDx = density.dx > 0 ? density.dx : 0.0;
+                                    final contentW = changeW + changePadH * 2 + densityDx * 2;
+                                    final minW = changeMin.width + density.dx;
+                                    final buttonW = contentW > minW ? contentW : minW;
+                                    final boxNeed = boxPadH * 2 + 2 + iconSize + iconGap + timeW;
+                                    final fits = boxNeed + rowGap + buttonW <= rowCons.maxWidth;
+                                    if (fits) {
+                                      return Row(
+                                        children: [
+                                          Expanded(child: timeBox),
+                                          SizedBox(width: rowGap),
+                                          changeButton,
+                                        ],
+                                      );
+                                    }
+                                    return Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                                      children: [
+                                        timeBox,
+                                        SizedBox(height: rowGap),
+                                        Align(
+                                          alignment: AlignmentDirectional.centerEnd,
+                                          child: changeButton,
                                         ),
-                                        child: Text('변경',
-                                            style: ResponsiveHelper.smallStyle(ctx,
-                                                color: actionColor)
-                                                .copyWith(fontWeight: FontWeight.bold)),
-                                      ),
-                                    ],
-                                  ),
+                                      ],
+                                    );
+                                  }),
                                 ],
                               ),
                             );
@@ -4571,6 +5051,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                           child: OutlinedButton(
                             onPressed: () => Navigator.pop(dialogContext),
                             style: OutlinedButton.styleFrom(
+                              // [DU303] 취소 누름 최소 64×52(같은 줄 주 행동 높이)
+                              minimumSize: const Size(64, 52),
                               side: BorderSide(color: AppColors.grey300),
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12)),
@@ -4589,16 +5071,21 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                           child: ElevatedButton(
                             onPressed: () => Navigator.pop(
                                 dialogContext, Map<String, String>.from(selectedTimes)),
+                            // [DU303] 최종 처리는 일반 진행 — brand 면·흰 글(자식 확정과 같음), 주 행동 최소 64×52
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: actionColor,
+                              backgroundColor: AppColors.brand,
                               foregroundColor: Colors.white,
+                              minimumSize: const Size(64, 52),
                               elevation: 0,
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12)),
                               padding: EdgeInsets.symmetric(
                                   vertical: ResponsiveHelper.spacing(ctx, 14)),
                             ),
-                            child: Text('$actionLabel 처리 ($totalCount명)',
+                            // [DU308] 주 행동 이름도 낱말 사이에서만 줄바꿈(`처 / 리` 방지, 의미 이름 원문).
+                            child: Text(TextLayout.keepWords('$actionLabel 처리 ($totalCount명)'),
+                                semanticsLabel: '$actionLabel 처리 ($totalCount명)',
+                                textAlign: TextAlign.center,
                                 style: ResponsiveHelper.bodyStyle(ctx,
                                     color: Colors.white)
                                     .copyWith(fontWeight: FontWeight.bold)),
@@ -4729,12 +5216,87 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     ).rounded;
   }
 
-  /// 반올림 정책 적용 여부 선택 다이얼로그 — 정책 적용 시 true, 그대로 시 false, 취소 시 null
-  Future<bool?> _showRoundingPreviewDialog({String? rawTime, required bool isCheckIn}) {
+  /// [ROUNDING-PREVIEW.27] 확인 창에 보여 줄 근로자별 결과 — 실제 처리(`_process*`)와 **같은 함수**로 만든다.
+  /// 파트별 창 머리말과 같은 시간대(지원서의 근무 시간) — 비어 있으면 업무 정의의 시간.
+  String _previewShift(ApplicationModel app) {
+    final s = app.startTime.isNotEmpty ? app.startTime : WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+    final e = app.endTime.isNotEmpty ? app.endTime : WorkDetailHelper.effectiveEnd(app, _workDetailTimeMap);
+    return '$s~$e';
+  }
+
+  String _previewName(ApplicationModel app) {
+    final u = _userMap[app.uid];
+    final name = u?.name ?? '근무자';
+    final p = u?.personLabel;
+    return p == null ? name : '$name ($p)';
+  }
+
+  /// 출근 처리 대상(미출근)의 [time] → 기준 적용 결과.
+  List<RoundingPreviewRow> _checkInPreviews(Iterable<ApplicationModel> apps, String time) => [
+        for (final app in apps)
+          if (_getAttendanceStatus(app)['status'] == 'pending')
+            (name: _previewName(app), shift: _previewShift(app), raw: time, applied: _roundedCheckIn(app, time)),
+      ];
+
+  /// 퇴근 처리 대상의 [time] → 기준 적용 결과. 처리에서 건너뛰는 건(급여 확정·출근 기록 없음)은 빼고,
+  ///   출근 시각도 처리와 같은 식(`checkInAt ?? checkIn`)으로 잡는다.
+  List<RoundingPreviewRow> _checkOutPreviews(Iterable<ApplicationModel> apps, String time) => [
+        for (final app in apps)
+          if (_attendanceMap[app.id] case final att?
+              when att.checkIn != null &&
+                  att.wageStatus != AttendanceModel.wageConfirmed &&
+                  att.wageStatus != AttendanceModel.wageTransferred)
+            (
+              name: _previewName(app),
+              shift: _previewShift(app),
+              raw: time,
+              applied: _roundedCheckOut(app, att.checkInAt ?? _hmToDateTime(_kstDay, att.checkIn!), time),
+            ),
+      ];
+
+  /// 일괄 시간 조정의 기준 적용 결과 — `_processBatchAdjustTime` 과 같은 식(출근 먼저, 그 결과로 퇴근).
+  List<RoundingPreviewRow> _adjustPreviews(
+      List<ApplicationModel> targets, String? newIn, String? newOut) {
+    String span(String? i, String? o) => [
+          if (i != null) '출근 $i',
+          if (o != null) '퇴근 $o',
+        ].join(' · ');
+    return [
+      for (final app in targets)
+        if (_attendanceMap[app.id] case final att?
+            when att.wageStatus != AttendanceModel.wageConfirmed &&
+                att.wageStatus != AttendanceModel.wageTransferred)
+          () {
+            final rIn = newIn != null ? _roundedCheckIn(app, newIn) : null;
+            final effIn = rIn ?? att.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+            final inDt = rIn != null
+                ? _hmToDateTime(_kstDay, rIn)
+                : att.checkInAt ?? _hmToDateTime(_kstDay, effIn);
+            final rOut = newOut != null ? _roundedCheckOut(app, inDt, newOut) : null;
+            return (name: _previewName(app), shift: _previewShift(app), raw: span(newIn, newOut), applied: span(rIn, rOut));
+          }(),
+    ];
+  }
+
+  /// 근태 기준 적용 여부 선택 — 적용 시 true, 그대로 시 false, 취소 시 null.
+  ///
+  ///   [ROUNDING-PREVIEW.27] 예전 창은 "일부 근로자에게 다르게 적용될 수 있습니다" 만 말해서,
+  ///   적용을 눌러 처리가 끝난 뒤에야 몇 시로 기록됐는지 알 수 있었다. 이제 근로자별로
+  ///   `입력 → 적용 시` 를 먼저 보여 주고, 결과가 하나면 버튼에 그 시각을 적는다.
+  ///   기준은 이 근무에 약속된 근태 기준이다(설정 화면 '근태 및 급여 처리 기준') — '사업장 정책' 이라
+  ///   부르지 않는다(확정 뒤 설정이 바뀐 사업장에서 틀린 말이 된다).
+  Future<bool?> _showRoundingPreviewDialog({
+    required bool isCheckIn,
+    required List<RoundingPreviewRow> rows,
+  }) {
     final label = isCheckIn ? '출근' : '퇴근';
-    final message = rawTime != null
-        ? '입력한 $label 시간($rawTime)이 사업장 정책에 따라 일부 근로자에게 다르게 적용될 수 있습니다.'
-        : '각 파트별 $label 시간이 사업장 정책에 따라 일부 근로자에게 다르게 적용될 수 있습니다.';
+    final changed = rows.where((r) => r.applied != r.raw).toList();
+    final unchanged = rows.length - changed.length;
+    final raws = rows.map((r) => r.raw).toSet();
+    final applieds = rows.map((r) => r.applied).toSet();
+    const maxRows = 5;
+    final keepLabel = raws.length == 1 ? '${raws.first} 그대로' : '입력한 시각 그대로';
+    final applyLabel = applieds.length == 1 ? '${applieds.first}으로 기록' : '기준 적용';
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -4743,13 +5305,20 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           children: [
             Icon(Icons.auto_fix_high, color: AppColors.info, size: 20),
             SizedBox(width: 8),
-            Text('반올림 정책', style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.bold)),
+            Flexible(
+              child: Text('근태 기준 적용',
+                  style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.bold)),
+            ),
           ],
         ),
-        content: Column(
+        content: SingleChildScrollView(
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Text('이 근무의 근태 기준을 적용하면 $label 시각이 이렇게 기록돼요.',
+                style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey700)),
+            SizedBox(height: ResponsiveHelper.spacing(ctx, 10)),
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 10)),
               decoration: BoxDecoration(
@@ -4757,23 +5326,52 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: AppColors.infoLight),
               ),
-              child: Row(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.info_outline, color: AppColors.infoDark, size: 14),
-                  SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      message,
-                      style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.infoDark),
+                  for (final r in changed.take(maxRows))
+                    Padding(
+                      padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(ctx, 3)),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(r.name,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: ResponsiveHelper.smallStyle(ctx, color: AppColors.textPrimary)),
+                                Text(r.shift,
+                                    style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.grey500)),
+                              ],
+                            ),
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
+                          Text(r.raw,
+                              style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey500)),
+                          Icon(Icons.arrow_right_alt,
+                              size: ResponsiveHelper.iconSize(ctx, 16), color: AppColors.grey500),
+                          Text(r.applied,
+                              style: ResponsiveHelper.smallStyle(ctx, color: AppColors.infoDark)
+                                  .copyWith(fontWeight: FontWeight.w700)),
+                        ],
+                      ),
                     ),
-                  ),
+                  if (changed.length > maxRows)
+                    Text('외 ${changed.length - maxRows}명도 바뀌어요',
+                        style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.infoDark)),
+                  if (unchanged > 0)
+                    Padding(
+                      padding: EdgeInsets.only(top: ResponsiveHelper.spacing(ctx, 4)),
+                      child: Text('나머지 $unchanged명은 입력한 시각 그대로예요',
+                          style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.grey600)),
+                    ),
                 ],
               ),
             ),
-            SizedBox(height: ResponsiveHelper.spacing(ctx, 10)),
-            Text('정책을 적용하시겠습니까?', style: ResponsiveHelper.bodyStyle(ctx)),
           ],
+          ),
         ),
         actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         actions: [
@@ -4787,7 +5385,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                     side: BorderSide(color: AppColors.grey300),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
-                  child: Text('입력값 그대로', style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey600)),
+                  child: Text(keepLabel,
+                      textAlign: TextAlign.center,
+                      style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey600)),
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(ctx, 10)),
@@ -4801,7 +5401,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
                   child: Text(
-                    '정책 반올림 적용',
+                    applyLabel,
+                    textAlign: TextAlign.center,
                     style: ResponsiveHelper.bodyStyle(ctx, color: Colors.white).copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -4924,6 +5525,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     }
   }
 
+  static String _checkoutFailureNote(Object? data) =>
+      AttendanceStatusDialog.checkoutFailureNote(data);
+
   /// 일괄 퇴근 처리 — CF callableBatchCheckOut 경유
   Future<void> _processBatchCheckOut(String time, List<String> targetIds, {bool applyRounding = false}) async {
     if (_isLoading) return;
@@ -4931,6 +5535,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     try {
       final entries = <Map<String, dynamic>>[];
       int skipCount = 0;
+      int noCheckInCount = 0;
 
       for (var appId in targetIds) {
         final idx = _confirmedWorkers.indexWhere((a) => a.id == appId);
@@ -4944,8 +5549,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           skipCount++;
           continue;
         }
+        // [CONTRACT-DISPATCH-B2-APP] 출근 기록이 없으면 퇴근을 만들지 않는다 — 예정 시작으로 메우면
+        //   일하지 않은 사람에게 근무시간이 생긴다(서버도 notCheckedIn 으로 거절한다).
+        if (attendance.checkIn == null) {
+          noCheckInCount++;
+          continue;
+        }
 
-        final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+        final checkIn = attendance.checkIn!;
         final checkInDtForOut = attendance.checkInAt ?? _hmToDateTime(_kstDay, checkIn);
         final effectiveTime = applyRounding ? _roundedCheckOut(app, checkInDtForOut, time) : time;
         final minutes = AttendanceStatusHelper.workMinutes(checkIn, effectiveTime);
@@ -4969,6 +5580,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
       if (entries.isEmpty) {
         if (!mounted) return;
+        if (noCheckInCount > 0) ToastHelper.showWarning('출근 기록이 없는 근무 $noCheckInCount건은 퇴근을 처리할 수 없어요');
         if (skipCount > 0) ToastHelper.showWarning('$skipCount명은 처리 불가 (시간 역전 또는 16시간 초과)');
         return;
       }
@@ -4978,6 +5590,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               options: HttpsCallableOptions(timeout: const Duration(seconds: 60)))
           .call({'businessId': _selectedBusinessId, 'entries': entries});
 
+      if (noCheckInCount > 0 && mounted) {
+        ToastHelper.showWarning('출근 기록이 없는 근무 $noCheckInCount건은 퇴근을 처리하지 않았어요');
+      }
       final processed = result.data['processed'] as int? ?? 0;
       // [R5-R0.2 §8·§9] 서버가 분류한 실패 건수를 그대로 쓴다.
       //   클라이언트가 미리 센 skipCount는 "급여 확정/이체" 하나만 알고,
@@ -4987,9 +5602,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       if (!mounted) return;
       if (failed > 0) {
         // 전부 실패한 경우도 성공처럼 말하지 않는다.
-        ToastHelper.showWarning(processed > 0
-            ? '$processed명 퇴근 처리 · $failed명 처리하지 못했습니다'
-            : '$failed명 모두 처리하지 못했습니다');
+        ToastHelper.showWarning((processed > 0
+                ? '$processed명 퇴근 처리 · $failed명 처리하지 못했습니다'
+                : '$failed명 모두 처리하지 못했습니다') +
+            _checkoutFailureNote(result.data));
       } else if (processed > 0) {
         ToastHelper.showSuccess('$processed명 퇴근 처리 완료');
       }
@@ -5129,8 +5745,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           failMessages.add('$workerName: 급여 확정/이체 완료 건은 수정 불가');
           continue;
         }
+        // [CONTRACT-DISPATCH-B2-APP] 출근 기록 없음 — 예정 시작으로 메우지 않는다.
+        if (attendance.checkIn == null) {
+          failMessages.add('$workerName: 출근 기록이 없어 퇴근을 처리할 수 없어요');
+          continue;
+        }
 
-        final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+        final checkIn = attendance.checkIn!;
         final checkInDtForOut = attendance.checkInAt ?? _hmToDateTime(_kstDay, checkIn);
         final effectiveTime = applyRounding ? _roundedCheckOut(app, checkInDtForOut, time) : time;
         final minutes = AttendanceStatusHelper.workMinutes(checkIn, effectiveTime);
@@ -5164,9 +5785,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
         if (!mounted) return;
         if (failed > 0) {
-          ToastHelper.showWarning(processed > 0
-              ? '$processed명 퇴근 처리 · $failed명 처리하지 못했습니다'
-              : '$failed명 모두 처리하지 못했습니다');
+          ToastHelper.showWarning((processed > 0
+                  ? '$processed명 퇴근 처리 · $failed명 처리하지 못했습니다'
+                  : '$failed명 모두 처리하지 못했습니다') +
+              _checkoutFailureNote(result.data));
         } else if (processed > 0) {
           ToastHelper.showSuccess('$processed명 퇴근 처리 완료');
         }
@@ -5264,6 +5886,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 }
 
 /// 컴팩트 통계 칩 데이터 클래스 (내부용)
+/// [UI-3] 일괄 근태 행동의 역할 — 단계(출근·퇴근) / 보조(시간 조정) / 위험(리셋).
+enum _BatchRole { step, secondary, destructive }
+
 class _StatChip {
   final String label;
   final int count;

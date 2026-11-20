@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../utils/identity_identifier.dart';
+
 /// 외국인등록증 OCR 결과
 class ForeignIdOcrResult {
   /// 성명 (외국인등록증 기재 공식 이름, 정규화된 ASCII)
@@ -167,6 +169,34 @@ class ForeignIdOcrService {
   // ──────────────────────────────────────────────────────────────────────────
   // [Phase A.3/A.4] 외국인 이름 Latin diacritic 정규화
   // ──────────────────────────────────────────────────────────────────────────
+
+  /// [FULL13-REEVAL.3] 근로자가 **직접 입력한** 영문 이름 ↔ 같은 사진의 OCR 이름.
+  ///
+  ///   정규화는 기존 [normalizeForeignLatinName] 하나만 쓰고, 정규화 뒤 **완전 일치**만
+  ///   MATCHED 다. 이름 순서 바꿈·일부 토큰 생략·비슷한 이름은 일치가 아니다.
+  ///   - 입력이 비었다 → UNASSESSED (비교하지 않았다)
+  ///   - OCR 이 이름을 못 읽었다 → UNREADABLE
+  ///   - 다르다: 이름 영역(LATIN_REGION)에서 읽었으면 MISMATCH, 전체 OCR 보정값
+  ///     (FULL_OCR — 이미 "확인 필요"로 표시하는 낮은 신뢰)이면 UNREADABLE.
+  ///     못 읽은 것을 "다르다"고 말하지 않는다(국내 이름 판정과 같은 원칙).
+  ///   CLIENT_EVIDENCE 수준의 자기기입값 ↔ 서류 정보 대조일 뿐 신원 확인이 아니다.
+  static DocFieldOutcome compareTypedLegalName(
+      String typed, ForeignIdOcrResult? ocr) {
+    final t = normalizeForeignLatinName(typed);
+    if (t.isEmpty) return DocFieldOutcome.unassessed;
+    final o = ocr?.legalName;
+    if (ocr == null || ocr.legalNameFailed || o == null || o.trim().isEmpty) {
+      return DocFieldOutcome.unreadable;
+    }
+    if (normalizeForeignLatinName(o) == t) return DocFieldOutcome.matched;
+    // [DOC-RACE.6 · E] 이름 영역 OCR 은 'LATIN_REGION' 뿐 아니라
+    //   'LATIN_REGION_EXPECTED_LINES'·'LATIN_REGION_NAME_ANCHOR' 로도 온다.
+    //   기기 실측에서 합성 등록증의 출처는 EXPECTED_LINES 였고, 정확 비교였던 탓에
+    //   다른 이름이 MISMATCH 가 아니라 UNREADABLE(→ OCR_UNCERTAIN)로 떨어졌다.
+    return ocr.legalNameOcrSource.startsWith('LATIN_REGION')
+        ? DocFieldOutcome.mismatch
+        : DocFieldOutcome.unreadable;
+  }
 
   @visibleForTesting
   static String normalizeForeignLatinName(String raw) {

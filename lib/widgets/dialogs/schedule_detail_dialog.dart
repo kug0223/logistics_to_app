@@ -8,12 +8,15 @@ import '../../models/core/to_model.dart';
 import '../../models/core/work_detail_data.dart';
 import '../../models/core/insurance_rate_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/work_type_guide_resolver.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/image_helper.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../theme/app_colors.dart';
+import 'schedule_detail_reads.dart';
 import 'styled_dialog.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/tax_deduction_badge.dart';
@@ -33,14 +36,18 @@ import '../../widgets/work_type_icon.dart';
 class ScheduleDetailDialog extends StatefulWidget {
   final ApplicationModel application;
 
-  const ScheduleDetailDialog({super.key, required this.application});
+  /// 테스트 주입용. 생략하면 기존 FirestoreService 조회.
+  final ScheduleDetailReads? reads;
+
+  const ScheduleDetailDialog({super.key, required this.application, this.reads});
 
   @override
   State<ScheduleDetailDialog> createState() => _ScheduleDetailDialogState();
 }
 
 class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
-  final FirestoreService _firestoreService = FirestoreService();
+  late final ScheduleDetailReads _reads =
+      widget.reads ?? ScheduleDetailReads.of(FirestoreService());
   bool _isLoading = true;
   BusinessModel? _business;
   BusinessWorkTypeModel? _workType;
@@ -56,23 +63,26 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
   Future<void> _load() async {
     try {
       final results = await Future.wait([
-        _firestoreService.getBusinessById(widget.application.businessId),
-        _firestoreService.getTOByApplication(widget.application),
-        _firestoreService.getBusinessWorkTypes(widget.application.businessId),
+        _reads.businessById(widget.application.businessId),
+        _reads.toByApplication(widget.application),
+        _reads.workTypeCatalog(widget.application.businessId),
       ]);
       final biz = results[0] as BusinessModel?;
       final to  = results[1] as TOModel?;
-      final wts = results[2] as List<BusinessWorkTypeModel>;
-
-      BusinessWorkTypeModel? wt;
-      try {
-        wt = wts.firstWhere(
-          (w) => w.name == widget.application.selectedWorkType,
-          orElse: () => wts.isEmpty ? throw StateError('empty') : wts.first,
-        );
-      } catch (_) {}
+      final catalog = results[2] as WorkTypeCatalog;
 
       final wd = _resolveWorkDetail(to);
+      // [WORKTYPE-SCHEDULE-GUIDANCE · WORKTYPE-IDENTITY] 업무 안내는 이 근무가 고른 업무유형 문서의
+      //   최신본이다(공고 근무의 workTypeId). 이름으로 찾지 않고, 못 고르면 다른 업무로 대체하지
+      //   않는다(예전 `wts.first` 폴백은 다른 업무의 사진·주의사항을 이 근무의 것처럼 보였다).
+      //   업무명·임금·시간은 지원서 저장본이라 영향이 없다.
+      final wt = WorkTypeGuideResolver.resolve(
+        workTypeId: wd?.workTypeId,
+        workTypeName: widget.application.selectedWorkType,
+        catalog: catalog,
+        businessId: to?.businessId ?? widget.application.businessId,
+        postedAt: to?.storedCreatedAt,
+      );
       final app = widget.application;
       final nt = FormatHelper.calcNetWorkTime(
         app.startTime, app.endTime,
@@ -185,50 +195,77 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Drag handle
-          Container(
-            margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 12)),
-            width: ResponsiveHelper.spacing(context, 40),
-            height: 4,
-            decoration: BoxDecoration(
-              color: AppColors.grey300,
-              borderRadius: BorderRadius.circular(2),
+          // [DU256 v2] 위 막대(손잡이 + 닫기)만 고정한다. 머리글(배지·사업장명·업무명)은 본문과 함께 스크롤한다.
+          //   v1 은 머리글을 고정한 채 키웠다. 그래서 B320(2배)에서 머리글이 시트 높이의 약 60% 를 차지하고
+          //   본문 스크롤이 220px 만 남았다. 시안 일자리 상세도 위 막대만 고정이고 제목은 본문과 함께 움직인다.
+          _buildTopBar(context),
+          Flexible(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                ResponsiveHelper.spacing(context, 20),
+                0,
+                ResponsiveHelper.spacing(context, 20),
+                ResponsiveHelper.spacing(context, 32),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildHeader(context),
+                  if (_isLoading)
+                    const Padding(
+                      padding: EdgeInsets.all(40),
+                      child: LoadingWidget(),
+                    )
+                  else ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                    _buildWorkInfoSection(context),
+                    _Divider(),
+                    _buildLocationSection(context),
+                    if (_hasWorkGuide) ...[
+                      _Divider(),
+                      _buildWorkGuideSection(context),
+                    ],
+                    if (_confirmMessage.isNotEmpty) ...[
+                      _Divider(),
+                      _buildManagerNoteSection(context),
+                    ],
+                  ],
+                ],
+              ),
             ),
           ),
-          // Header
-          _buildHeader(context),
-          // Scrollable content
-          Flexible(
-            child: _isLoading
-                ? const Padding(
-                    padding: EdgeInsets.all(40),
-                    child: LoadingWidget(),
-                  )
-                : SingleChildScrollView(
-                    padding: EdgeInsets.fromLTRB(
-                      ResponsiveHelper.spacing(context, 20),
-                      0,
-                      ResponsiveHelper.spacing(context, 20),
-                      ResponsiveHelper.spacing(context, 32),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                        _buildWorkInfoSection(context),
-                        _Divider(),
-                        _buildLocationSection(context),
-                        if (_hasWorkGuide) ...[
-                          _Divider(),
-                          _buildWorkGuideSection(context),
-                        ],
-                        if (_confirmMessage.isNotEmpty) ...[
-                          _Divider(),
-                          _buildManagerNoteSection(context),
-                        ],
-                      ],
-                    ),
-                  ),
+        ],
+      ),
+    );
+  }
+
+  // ─── 위 막대(고정) ───────────────────────────────────────
+  /// [DU256 v2] 손잡이 + 닫기만 고정한다. 머리글은 본문과 함께 스크롤한다.
+  Widget _buildTopBar(BuildContext context) {
+    return SizedBox(
+      height: 48,
+      child: Stack(
+        children: [
+          Align(
+            alignment: Alignment.topCenter,
+            child: Container(
+              margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 12)),
+              width: ResponsiveHelper.spacing(context, 40),
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.grey300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 0,
+            right: ResponsiveHelper.spacing(context, 4),
+            child: IconButton(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.close),
+              color: AppColors.textSecondary, // [DU256] grey400(1.9) → 읽히는 중립 아이콘
+            ),
           ),
         ],
       ),
@@ -241,110 +278,101 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
     final si = _statusInfo;
     final isLong = app.isLongTermApplication;
 
+    // [DU256 v2] 머리글은 본문과 함께 스크롤한다(닫기는 고정 위 막대 _buildTopBar 로 옮겼다).
+    //   좌우 여백은 스크롤 패딩(20)이 준다. 아래 선은 그대로 둔다.
     return Container(
-      padding: EdgeInsets.fromLTRB(
-        ResponsiveHelper.spacing(context, 20),
-        ResponsiveHelper.spacing(context, 14),
-        ResponsiveHelper.spacing(context, 4),
-        ResponsiveHelper.spacing(context, 14),
+      width: double.infinity,
+      padding: EdgeInsets.only(
+        top: ResponsiveHelper.spacing(context, 4),
+        bottom: ResponsiveHelper.spacing(context, 14),
       ),
+      // [DU256] 하드코딩 #E8E9ED → 공용 grey200
       decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFFE8E9ED))),
+        border: Border(bottom: BorderSide(color: AppColors.grey200)),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 날짜 배지 + 상태 배지
-                Row(
-                  children: [
-                    // 날짜 배지
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: ResponsiveHelper.spacing(context, 8),
-                        vertical: ResponsiveHelper.spacing(context, 3),
-                      ),
-                      decoration: BoxDecoration(
-                        color: isLong ? AppColors.longTermBg : AppColors.shortTermBg,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        isLong
-                            ? (app.workDaysDisplay ?? '장기')
-                            : FormatHelper.formatDateCompact(app.workDate),
-                        style: ResponsiveHelper.tinyStyle(context,
-                            color: isLong
-                                ? AppColors.longTermDark
-                                : AppColors.shortTermDark,
-                            fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                    // 상태 배지
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: ResponsiveHelper.spacing(context, 8),
-                        vertical: ResponsiveHelper.spacing(context, 3),
-                      ),
-                      decoration: BoxDecoration(
-                        color: si.bg,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        si.label,
-                        style: ResponsiveHelper.tinyStyle(context,
-                            color: si.fg, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ],
+          // 날짜 배지 + 상태 배지
+          Row(
+            children: [
+              // 날짜 배지
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 8),
+                  vertical: ResponsiveHelper.spacing(context, 3),
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                // 사업장명
-                Text(
-                  app.businessName,
-                  style: ResponsiveHelper.subtitleStyle(context)
-                      .copyWith(fontWeight: FontWeight.bold),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                decoration: BoxDecoration(
+                  color: isLong ? AppColors.longTermBg : AppColors.shortTermBg,
+                  borderRadius: BorderRadius.circular(6),
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                // 업무명
-                Row(
-                  children: [
-                    if (app.workTypeIcon != null)
-                      WorkTypeIcon.buildWithBackground(
-                        iconString: app.workTypeIcon!,
-                        iconColor: app.workTypeColor ?? '#2196F3',
-                        backgroundColor: app.workTypeBackgroundColor ?? '#E3F2FD',
-                        size: 10,
-                        containerSize: 18,
-                      )
-                    else
-                      Icon(Icons.work_outline,
-                          size: ResponsiveHelper.iconSize(context, 14),
-                          color: AppColors.grey500),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                    Flexible(
-                      child: Text(
-                        app.selectedWorkType,
-                        style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)
-                            .copyWith(fontWeight: FontWeight.w600),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  isLong
+                      ? (app.workDaysDisplay ?? '장기')
+                      : FormatHelper.formatDateCompact(app.workDate),
+                  style: ResponsiveHelper.tinyStyle(context,
+                      color: isLong
+                          ? AppColors.longTermDark
+                          : AppColors.shortTermDark,
+                      fontWeight: FontWeight.bold),
                 ),
-              ],
-            ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              // 상태 배지
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 8),
+                  vertical: ResponsiveHelper.spacing(context, 3),
+                ),
+                decoration: BoxDecoration(
+                  color: si.bg,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  si.label,
+                  style: ResponsiveHelper.tinyStyle(context,
+                      color: si.fg, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
           ),
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close),
-            color: AppColors.grey400,
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          // 사업장명
+          // [DU256] 시트에서 가장 큰 글자(시안 일자리 상세의 사업장명 위계). 말줄임 없이 이름 단위로 줄을 바꾼다
+          //   — 식별 정보라 잘리면 어느 근무인지 모른다(보통 폭에서도 긴 이름이 잘렸다).
+          Text(
+            TextLayout.identity(app.businessName),
+            semanticsLabel: app.businessName,
+            style: ResponsiveHelper.titleStyle(context,
+                color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+          // 업무명
+          Row(
+            children: [
+              if (app.workTypeIcon != null)
+                WorkTypeIcon.buildWithBackground(
+                  iconString: app.workTypeIcon!,
+                  iconColor: app.workTypeColor ?? '#2196F3',
+                  backgroundColor: app.workTypeBackgroundColor ?? '#E3F2FD',
+                  size: 10,
+                  containerSize: 18,
+                )
+              else
+                Icon(Icons.work_outline,
+                    size: ResponsiveHelper.iconSize(context, 14),
+                    color: AppColors.grey500),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              Flexible(
+                // [DU256] 업무명 — 보조 글자색, 말줄임 없이 낱말 단위 줄바꿈.
+                child: Text(
+                  TextLayout.keepWords(app.selectedWorkType),
+                  semanticsLabel: app.selectedWorkType,
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary)
+                      .copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -377,16 +405,23 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
         _infoRow(
           context,
           '근무시간',
-          Row(
+          // [DU256] 줄바꿈 없는 Row 라 좁은 폭·큰 글자에서 오른쪽으로 넘쳤다(B320 72px, WSG 시험 글꼴 W360 44px).
+          //   Wrap — 한 줄에 다 들어가지 않으면 '· 예정 …' 이 다음 줄로 간다.
+          Wrap(
+            spacing: ResponsiveHelper.spacing(context, 6),
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text('${app.startTime} ~ ${app.endTime}', style: _valueStyle(context)),
-              if (_netTime.isNotEmpty) ...[
-                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              if (_netTime.isNotEmpty)
+                // [DEVICE-MISMATCH-FIX] 이 값은 예정 시작·종료에서 휴게를 뺀
+                //   **예정** 시간이다. 근태가 없는 근무에도 `실근무`라고 해서
+                //   실제로 일한 것처럼 읽혔다(DEV 실측 Zdn7).
+                // [DU256] grey500(2.68) → textSecondary
                 Text(
-                  '· 실근무 $_netTime',
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                  '· 예정 $_netTime',
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
                 ),
-              ],
             ],
           ),
         ),
@@ -441,9 +476,10 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
         _sectionTitle(context, '근무 장소'),
         SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-        // 사업장명
+        // 사업장명 — [DU256] 이름 단위 줄바꿈
         Text(
-          app.businessName,
+          TextLayout.identity(app.businessName),
+          semanticsLabel: app.businessName,
           style: ResponsiveHelper.bodyStyle(context)
               .copyWith(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
         ),
@@ -451,9 +487,11 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
         // 주소
         if (bizAddress != null && bizAddress.isNotEmpty) ...[
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          // [DU256] grey600 → textSecondary, 낱말 단위 줄바꿈
           Text(
-            bizAddress,
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+            TextLayout.keepWords(bizAddress),
+            semanticsLabel: bizAddress,
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary),
           ),
         ],
 
@@ -466,14 +504,10 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
               onPressed: () => _call(bizPhone),
               icon: const Icon(Icons.phone_outlined, size: 18),
               label: Text('전화하기  $bizPhone'),
+              // [DU256] 초록 덮어쓰기(흰 위 2.78) 제거 — 앱 테마 기본 테두리 버튼(브랜드 글자·border 선·높이 48·반경 12).
               style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.success,
-                side: const BorderSide(color: AppColors.success),
                 padding: EdgeInsets.symmetric(
                   vertical: ResponsiveHelper.spacing(context, 12),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
                 ),
               ),
             ),
@@ -490,36 +524,43 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
         // 찾아오는 길 (접혀 있음 → 탭 시 서브 시트)
         if (_hasTransportInfo) ...[
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          InkWell(
-            onTap: () => _showTransportSheet(context),
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              padding: EdgeInsets.symmetric(
-                vertical: ResponsiveHelper.spacing(context, 10),
-                horizontal: ResponsiveHelper.spacing(context, 12),
-              ),
-              decoration: BoxDecoration(
-                color: AppColors.grey50,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFE8E9ED)),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.directions_transit_outlined,
-                      size: ResponsiveHelper.iconSize(context, 16),
-                      color: AppColors.infoDark),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Expanded(
-                    child: Text(
-                      '찾아오는 길',
-                      style: ResponsiveHelper.bodyStyle(context, color: AppColors.infoDark)
-                          .copyWith(fontWeight: FontWeight.w600),
-                    ),
+          // [DU256] 시안의 정보 줄처럼 흰 면·grey200 선·반경 12, 중립 아이콘·본문색 글자.
+          //   Material 이라 눌림 표시가 면 위에 보인다. 터치 높이 48 이상(보통 폭에서 41 이었다).
+          Material(
+            color: AppColors.surface,
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: const BorderSide(color: AppColors.grey200),
+            ),
+            child: InkWell(
+              onTap: () => _showTransportSheet(context),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    vertical: ResponsiveHelper.spacing(context, 10),
+                    horizontal: ResponsiveHelper.spacing(context, 12),
                   ),
-                  Icon(Icons.chevron_right,
-                      size: ResponsiveHelper.iconSize(context, 18),
-                      color: AppColors.grey400),
-                ],
+                  child: Row(
+                    children: [
+                      Icon(Icons.directions_transit_outlined,
+                          size: ResponsiveHelper.iconSize(context, 16),
+                          color: AppColors.textSecondary),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      Expanded(
+                        child: Text(
+                          '찾아오는 길',
+                          style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary)
+                              .copyWith(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      Icon(Icons.chevron_right,
+                          size: ResponsiveHelper.iconSize(context, 18),
+                          color: AppColors.textTertiary),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -542,14 +583,18 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
   Widget _buildConvenienceChips(BuildContext context, BusinessModel biz) {
     final chips = <Widget>[];
     if (biz.parkingAvailable) {
-      chips.add(_chip(context, Icons.local_parking_outlined, '주차 가능', AppColors.info));
+      chips.add(_chip(context, Icons.local_parking_outlined, '주차 가능', AppColors.textSecondary));
     }
     final mealsProvided = biz.mealsProvided;
     if (mealsProvided != null && mealsProvided.isNotEmpty) {
       chips.add(_chip(context, Icons.restaurant_outlined,
-          '식사 ${mealsProvided.join("·")}', AppColors.success));
+          '식사 ${mealsProvided.join("·")}', AppColors.textSecondary));
     }
-    return Wrap(spacing: ResponsiveHelper.spacing(context, 8), children: chips);
+    // [DU256] 줄이 바뀌어도 칩이 붙지 않게 세로 간격
+    return Wrap(
+        spacing: ResponsiveHelper.spacing(context, 8),
+        runSpacing: ResponsiveHelper.spacing(context, 8),
+        children: chips);
   }
 
   Widget _chip(BuildContext context, IconData icon, String label, Color color) {
@@ -558,10 +603,11 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
         horizontal: ResponsiveHelper.spacing(context, 10),
         vertical: ResponsiveHelper.spacing(context, 5),
       ),
+      // [DU256] 알파 info/success(작은 글자 2.5~2.8) → 중립 칩(grey100 면·선 없음·textSecondary).
+      //   시안은 편의 정보를 중립으로 둔다.
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+        color: AppColors.grey100,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -651,9 +697,10 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
                     color: AppColors.grey500),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Expanded(
-                child: Text(
+                // [DU256] grey600 → textSecondary, 낱말 단위 줄바꿈
+                child: _wordsText(
                   wt!.oneLineIntro!,
-                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+                  ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary),
                 ),
               ),
             ],
@@ -705,15 +752,16 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // [DU256] 라벨 grey500(2.68) → textSecondary, 본문은 낱말 단위 줄바꿈
         Text(
           label,
-          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500,
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary,
               fontWeight: FontWeight.w600),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-        Text(
+        _wordsText(
           content,
-          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)
+          ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)
               .copyWith(height: 1.55),
         ),
       ],
@@ -741,9 +789,9 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
           ],
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-        Text(
+        _wordsText( // [DU256] 낱말 단위 줄바꿈
           content,
-          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)
+          ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)
               .copyWith(height: 1.55),
         ),
       ],
@@ -763,11 +811,11 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
           decoration: BoxDecoration(
             color: AppColors.grey50,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFFE8E9ED)),
+            border: Border.all(color: AppColors.grey200), // [DU256] 하드코딩 → grey200
           ),
-          child: Text(
+          child: _wordsText( // [DU256] 낱말 단위 줄바꿈
             _confirmMessage,
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)
+            ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)
                 .copyWith(height: 1.55),
           ),
         ),
@@ -790,36 +838,52 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
 
   // ─── 공통 위젯 ─────────────────────────────────────────
   Widget _sectionTitle(BuildContext context, String title) {
+    // [DU256] 섹션 제목 17 → 16 bold 본문색(S010·S045·S082·S040 과 같음). 짧은 고정 문구라 낱말 결합은 넣지 않는다.
     return Text(
       title,
       style: ResponsiveHelper.subtitleStyle(context)
-          .copyWith(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+          .copyWith(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
     );
   }
 
   /// 평탄한 Label / Value 행
+  ///   [DU256] 라벨 grey500(2.68) → textSecondary.
+  ///   글자 1.3배 이상이면 라벨 위·값 아래로 세운다(help_faq_management 와 같은 기준) —
+  ///   80 폭 라벨 열에서 '근무시간'·'근무일'이 음절로 끊겼다.
   Widget _infoRow(BuildContext context, String label, Widget value) {
+    final labelText = Text(
+      label,
+      style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+    );
+    final stacked = MediaQuery.textScalerOf(context).scale(10) >= 13;
     return Padding(
       padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: ResponsiveHelper.spacing(context, 80),
-            child: Text(
-              label,
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+      child: stacked
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                labelText,
+                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                value,
+              ],
+            )
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(width: ResponsiveHelper.spacing(context, 80), child: labelText),
+                Expanded(child: value),
+              ],
             ),
-          ),
-          Expanded(child: value),
-        ],
-      ),
     );
   }
 
   TextStyle _valueStyle(BuildContext context) =>
       ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary)
           .copyWith(fontWeight: FontWeight.w500);
+
+  /// [DU256] 낱말 단위로 줄을 바꾸는 본문(읽기 프로그램에는 원문을 준다).
+  Widget _wordsText(String s, TextStyle style) =>
+      Text(TextLayout.keepWords(s), semanticsLabel: s, style: style);
 
   Future<void> _call(String phone) async {
     final uri = Uri.parse('tel:$phone');
@@ -837,7 +901,7 @@ class _Divider extends StatelessWidget {
       padding: EdgeInsets.symmetric(
         vertical: ResponsiveHelper.spacing(context, 20),
       ),
-      child: const Divider(height: 1, color: Color(0xFFE8E9ED)),
+      child: const Divider(height: 1, color: AppColors.grey200), // [DU256] 하드코딩 → grey200
     );
   }
 }
@@ -881,7 +945,7 @@ class _TransportSheet extends StatelessWidget {
               children: [
                 Icon(Icons.directions_transit_outlined,
                     size: ResponsiveHelper.iconSize(context, 20),
-                    color: AppColors.infoDark),
+                    color: AppColors.textSecondary), // [DU256] 중립 아이콘
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Expanded(
                   child: Text(
@@ -893,12 +957,12 @@ class _TransportSheet extends StatelessWidget {
                 IconButton(
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.close),
-                  color: AppColors.grey400,
+                  color: AppColors.textSecondary, // [DU256] grey400(1.9) → 읽히는 중립 아이콘
                 ),
               ],
             ),
           ),
-          const Divider(height: 1, color: Color(0xFFE8E9ED)),
+          const Divider(height: 1, color: AppColors.grey200), // [DU256] 하드코딩 → grey200
           // Content
           Flexible(
             child: SingleChildScrollView(
@@ -915,12 +979,13 @@ class _TransportSheet extends StatelessWidget {
                   if (business.address.isNotEmpty) ...[
                     Text(
                       '주소',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.grey500, fontWeight: FontWeight.w600),
+                      style: ResponsiveHelper.smallStyle(context, // [DU256] grey500 → textSecondary
+                          color: AppColors.textSecondary, fontWeight: FontWeight.w600),
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                    Text(
-                      business.address,
+                    Text( // [DU256] 낱말 단위 줄바꿈
+                      TextLayout.keepWords(business.address),
+                      semanticsLabel: business.address,
                       style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 20)),
@@ -956,12 +1021,13 @@ class _TransportSheet extends StatelessWidget {
                   if (business.transportDescription?.isNotEmpty == true) ...[
                     Text(
                       '찾아오는 길 안내',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.grey500, fontWeight: FontWeight.w600),
+                      style: ResponsiveHelper.smallStyle(context, // [DU256] grey500 → textSecondary
+                          color: AppColors.textSecondary, fontWeight: FontWeight.w600),
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                    Text(
-                      business.transportDescription!,
+                    Text( // [DU256] 낱말 단위 줄바꿈
+                      TextLayout.keepWords(business.transportDescription!),
+                      semanticsLabel: business.transportDescription,
                       style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)
                           .copyWith(height: 1.55),
                     ),
@@ -976,18 +1042,20 @@ class _TransportSheet extends StatelessWidget {
                             ? Icons.check_circle_outline
                             : Icons.cancel_outlined,
                         size: ResponsiveHelper.iconSize(context, 16),
+                        // [DU256] success(2.78)·grey400 → successDark·textTertiary
                         color: business.parkingAvailable
-                            ? AppColors.success
-                            : AppColors.grey400,
+                            ? AppColors.successDark
+                            : AppColors.textTertiary,
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                       Text(
                         business.parkingAvailable ? '주차 가능' : '주차 불가',
                         style: ResponsiveHelper.bodyStyle(
                           context,
+                          // [DU256] success(2.78)·grey500 → successDark·textSecondary
                           color: business.parkingAvailable
-                              ? AppColors.success
-                              : AppColors.grey500,
+                              ? AppColors.successDark
+                              : AppColors.textSecondary,
                         ).copyWith(fontWeight: FontWeight.w500),
                       ),
                     ],

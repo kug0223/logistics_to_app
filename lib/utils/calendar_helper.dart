@@ -40,7 +40,9 @@ class CalendarHelper {
       if (!_passesFilter(app, selectedFilter)) continue;
 
       if (!app.isLongTermApplication) {
-        final key = _dateKey(app.workDate);
+        // [.82] workDate 는 KST 자정 instant 다 — 기기 시간대 성분으로 키를 만들면 GMT 기기에서
+        //   11/4 근무가 11/3 칸에 찍혔다(Pixel5 DEV 재현). 달력 셀은 달력일 성분이므로 KST 날짜로 맞춘다.
+        final key = _dateKey(FormatHelper.toKstDate(app.workDate));
         (index[key] ??= []).add(app);
       } else {
         // 장기: 계약 기간의 요일별로 날짜 전개
@@ -213,15 +215,20 @@ class CalendarHelper {
   /// 제외 대상:
   ///   · 이미 출근한 날 (checkIn 있음) — 그 금액은 확정수입 쪽에서 센다
   ///   · NO_SHOW / 결근으로 마감된 날 — 벌 돈이 0으로 확정됐다
+  ///   · [DEVICE-MISMATCH-FIX] [now]를 주면, 출근 기록 없이 예정 시간이 끝난
+  ///     단기 근무 — 자동 노쇼 처리(다음 날 06:00) 전이라도 벌 예정이 아니다.
+  ///     DEV 실측 Zdn7(10:00~11:00, 근태 없음)이 오후에도 예상수입에 있었다.
   static bool isScheduledIncome(
     ApplicationModel app,
-    List<AttendanceModel> attendances,
-  ) {
+    List<AttendanceModel> attendances, {
+    DateTime? now,
+  }) {
     for (final att in attendances) {
       if (att.applicationId != app.id) continue;
       if (att.checkInAt != null) return false;
       if (isNonEarning(att)) return false;
     }
+    if (now != null && app.hasShiftEndedAt(now)) return false;
     return true;
   }
 
@@ -233,13 +240,16 @@ class CalendarHelper {
     List<ApplicationModel> applications,
     DateTime focusedDay, {
     List<AttendanceModel> attendances = const [],
+    DateTime? now,
   }) {
     return applications
         .where((app) => AppStatus.confirmedStatuses.contains(app.status))
         .fold(0, (sum, app) {
           final daily = _dailyWage(app);
           if (!app.isLongTermApplication) {
-            return isScheduledIncome(app, attendances) ? sum + daily : sum;
+            return isScheduledIncome(app, attendances, now: now)
+                ? sum + daily
+                : sum;
           }
           // 장기는 날짜 단위로 뺀다 — 계약 전체가 아니라 결근한 그 날만이다.
           final workDaysCount = _workDaysInMonth(app, focusedDay);

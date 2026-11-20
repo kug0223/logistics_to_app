@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../utils/dialog_helper.dart';
 import '../utils/responsive_helper.dart';
+import '../utils/text_layout.dart';
 
 // ──────────────────────────────────────────────────────────────
 // 그룹 구조 정의
@@ -37,6 +38,7 @@ class AppSelectField<T> extends StatelessWidget {
     this.prefixIcon,
     this.showSearch,
     this.useRootNavigator = false,
+    this.wrapLabel = false,
   });
 
   final T? value;
@@ -65,6 +67,11 @@ class AppSelectField<T> extends StatelessWidget {
   /// Dialog의 Focus/Overlay 스택과 충돌하는 RenderErrorBox 크래시를 방지한다.
   final bool useRootNavigator;
 
+  /// [DU520 · DU521] true 면 선택된 값의 글을 낱말 단위로 줄을 넘겨 **두 줄까지** 보이고, 그래도 남으면 끝을 말줄임한다
+  ///   (DU520 은 줄 수 제한이 없어 320×640 · 2.0 에서 27자 이름이 5줄로 자라 본문을 밀어냈다). 전체 이름은 선택 목록과 읽는 이름에 있다.
+  ///   기본 false — 이전과 같은 한 줄 말줄임.
+  final bool wrapLabel;
+
   List<T> get _allItems =>
       groups != null ? groups!.expand((g) => g.items).toList() : items;
 
@@ -84,6 +91,7 @@ class AppSelectField<T> extends StatelessWidget {
         primaryColor: theme.primaryColor,
         showSearch: showSearch,
         searchHint: searchHint,
+        wrapLabel: wrapLabel,
       ),
     );
     if (result != null) onChanged(result);
@@ -92,7 +100,9 @@ class AppSelectField<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // [.61] 잠긴 칸도 선택된 칸처럼 파란 테두리·펼침 화살표를 그렸다 — 눌러도 열리지 않는데 열릴 것처럼 보였다.
     final hasValue = value != null;
+    final accent = hasValue && enabled;
 
     return Material(
       color: AppColors.grey50,
@@ -108,8 +118,8 @@ class AppSelectField<T> extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: hasValue ? theme.primaryColor : AppColors.grey300,
-              width: hasValue ? 2 : 1,
+              color: accent ? theme.primaryColor : AppColors.grey300,
+              width: accent ? 2 : 1,
             ),
           ),
           child: Row(
@@ -117,7 +127,7 @@ class AppSelectField<T> extends StatelessWidget {
               if (prefixIcon != null) ...[
                 Icon(
                   prefixIcon,
-                  color: hasValue ? theme.primaryColor : AppColors.grey400,
+                  color: accent ? theme.primaryColor : AppColors.grey400,
                   size: ResponsiveHelper.iconSize(context, 20),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -128,20 +138,28 @@ class AppSelectField<T> extends StatelessWidget {
               ],
               Expanded(
                 child: Text(
-                  hasValue ? labelOf(value as T) : hintText,
+                  hasValue
+                      ? (wrapLabel
+                          ? TextLayout.keepWords(labelOf(value as T))
+                          : labelOf(value as T))
+                      : hintText,
+                  semanticsLabel:
+                      hasValue && wrapLabel ? labelOf(value as T) : null,
                   style: hasValue
                       ? ResponsiveHelper.bodyStyle(context)
                           .copyWith(fontWeight: FontWeight.w600)
                       : ResponsiveHelper.bodyStyle(context)
                           .copyWith(color: AppColors.grey400),
+                  maxLines: wrapLabel ? 2 : null,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              Icon(
-                Icons.expand_more,
-                color: hasValue ? theme.primaryColor : AppColors.grey400,
-                size: ResponsiveHelper.iconSize(context, 20),
-              ),
+              if (enabled)
+                Icon(
+                  Icons.expand_more,
+                  color: accent ? theme.primaryColor : AppColors.grey400,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                ),
             ],
           ),
         ),
@@ -165,6 +183,7 @@ class _AppSelectSheet<T> extends StatefulWidget {
     this.leadingOf,
     this.showSearch,
     this.searchHint,
+    this.wrapLabel = false,
   });
 
   final String title;
@@ -176,6 +195,7 @@ class _AppSelectSheet<T> extends StatefulWidget {
   final Color primaryColor;
   final bool? showSearch;
   final String? searchHint;
+  final bool wrapLabel;
 
   @override
   State<_AppSelectSheet<T>> createState() => _AppSelectSheetState<T>();
@@ -431,40 +451,54 @@ class _AppSelectSheetState<T> extends State<_AppSelectSheet<T>> {
   Widget _buildRow(BuildContext context, T item) {
     final isSelected = item == widget.selected;
 
-    return InkWell(
-      onTap: () => Navigator.pop(context, item),
-      child: SizedBox(
-        height: _kRowHeight, // ← 56dp 고정
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: _kHPad),
-          // vertical padding 없음 — SizedBox가 높이를 결정
-          child: Row(
-            children: [
-              if (widget.leadingOf != null) ...[
-                widget.leadingOf!(item),
-                const SizedBox(width: 12),
-              ],
-              Expanded(
-                child: Text(
-                  widget.labelOf(item),
-                  style: TextStyle(
-                    fontSize: _kBankFontSize,
-                    fontWeight: FontWeight.w400, // 400 (Regular)
-                    color: isSelected
-                        ? widget.primaryColor
-                        : AppColors.grey900, // #212121
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              // 선택된 항목만 체크 표시 — chevron 없음
-              if (isSelected)
-                Icon(Icons.check_rounded,
-                    color: widget.primaryColor, size: 18),
-            ],
+    final label = widget.labelOf(item);
+    final row = Row(
+      children: [
+        if (widget.leadingOf != null) ...[
+          widget.leadingOf!(item),
+          const SizedBox(width: 12),
+        ],
+        Expanded(
+          child: Text(
+            widget.wrapLabel ? TextLayout.keepWords(label) : label,
+            semanticsLabel: widget.wrapLabel ? label : null,
+            style: TextStyle(
+              fontSize: _kBankFontSize,
+              fontWeight: FontWeight.w400, // 400 (Regular)
+              color: isSelected
+                  ? widget.primaryColor
+                  : AppColors.grey900, // #212121
+            ),
+            overflow: widget.wrapLabel ? null : TextOverflow.ellipsis,
           ),
         ),
-      ),
+        // 선택된 항목만 체크 표시 — chevron 없음
+        if (isSelected)
+          Icon(Icons.check_rounded, color: widget.primaryColor, size: 18),
+      ],
+    );
+
+    return InkWell(
+      onTap: () => Navigator.pop(context, item),
+      // [DU522] wrapLabel 이면 긴 이름을 낱말 단위로 줄을 넘겨 전부 보인다 — 행 높이는 글 줄 수만큼 자라고(최소는 그대로 52),
+      //   위아래 8 을 둔다. 선택 칸이 두 줄 + 말줄임이므로(DU521) 전체 이름은 이 목록에서 읽는다. 기본(false)은 이전과 같은 52 고정 · 한 줄 말줄임.
+      child: widget.wrapLabel
+          ? ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: _kRowHeight),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: _kHPad, vertical: 8),
+                child: row,
+              ),
+            )
+          : SizedBox(
+              height: _kRowHeight, // ← 56dp 고정
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: _kHPad),
+                // vertical padding 없음 — SizedBox가 높이를 결정
+                child: row,
+              ),
+            ),
     );
   }
 

@@ -7,7 +7,7 @@
  * 기본 모드: handshake ONLY. TO 생성 없음. capacity 변경 없음.
  *
  * ENV:
- *   ALFIT_SERVICE_ACCOUNT_PATH   — 서비스 계정 JSON 경로 (선택, 기본값: scripts/ 관례 경로)
+ *   ALFIT_SERVICE_ACCOUNT_PATH   — 서비스 계정 JSON 경로 (없으면 GOOGLE_APPLICATION_CREDENTIALS, 둘 다 없으면 중단)
  *   ALFIT_APP_CHECK_DEBUG_TOKEN  — Firebase Console에 등록된 App Check 디버그 시크릿 (필수)
  *
  * Usage:
@@ -62,12 +62,20 @@ async function main() {
   console.log("=".repeat(64));
 
   // ── A. 서비스 계정 경로 결정 ────────────────────────────────────────────
-  const saPath = process.env.ALFIT_SERVICE_ACCOUNT_PATH
-    || path.join(__dirname, "alfit-89567-firebase-adminsdk-fbsvc-d22e7faef3.json");
+  // [KEY-ROTATE 10-23] 코드 안의 기본 경로를 없앴다 — 실행 설정으로만 받는다.
+  //   둘 다 설정됐는데 다른 파일이면 어느 쪽도 고르지 않고 멈춘다 — 라이브러리가 ADC(GOOGLE_APPLICATION_CREDENTIALS)를
+  //   따로 집으면 다른 프로젝트 자격증명이 섞일 수 있다.
+  const envA = process.env.ALFIT_SERVICE_ACCOUNT_PATH;
+  const envG = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (envA && envG && path.resolve(envA) !== path.resolve(envG)) {
+    console.error("[FATAL] ALFIT_SERVICE_ACCOUNT_PATH 와 GOOGLE_APPLICATION_CREDENTIALS 가 서로 다른 파일을 가리킵니다. 하나만 지정하세요.");
+    process.exit(1);
+  }
+  const saPath = envA || envG;
 
-  if (!fs.existsSync(saPath)) {
-    console.error("[FATAL] 서비스 계정 파일을 찾을 수 없습니다:", saPath);
-    console.error("  ALFIT_SERVICE_ACCOUNT_PATH 환경변수로 올바른 경로를 지정하세요.");
+  if (!saPath || !fs.existsSync(saPath)) {
+    console.error("[FATAL] 서비스 계정 파일을 찾을 수 없습니다.");
+    console.error("  ALFIT_SERVICE_ACCOUNT_PATH 또는 GOOGLE_APPLICATION_CREDENTIALS 로 경로를 지정하세요.");
     process.exit(1);
   }
   console.log(`[SA] 서비스 계정 경로: ${saPath}`);

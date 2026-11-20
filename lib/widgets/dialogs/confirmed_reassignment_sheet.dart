@@ -18,6 +18,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import 'apply/document_access_consent.dart';
 
 /// 근로자 결정 결과.
@@ -71,6 +72,8 @@ class _DecisionSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final cur = proposal.current;
     final next = proposal.proposed;
+    // [DU270] 큰 글자(DU256 규칙) — 버튼을 세로로 쌓는다(반 폭에 '기존 조건 유지'가 들어가지 않는다)
+    final stacked = MediaQuery.textScalerOf(context).scale(10) >= 13;
 
     return SafeArea(
       top: false,
@@ -86,11 +89,10 @@ class _DecisionSheet extends StatelessWidget {
                   .copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 4),
-            Text(
+            _note(
+              context,
               '${proposal.businessName}에서 근무 조건 변경을 제안했습니다.\n'
               '선택하기 전까지 지금 확정된 근무는 그대로입니다.',
-              style: ResponsiveHelper.smallStyle(context,
-                  color: AppColors.grey600),
             ),
             const SizedBox(height: 16),
             _block(
@@ -104,7 +106,7 @@ class _DecisionSheet extends StatelessWidget {
             Center(
               child: Icon(Icons.arrow_downward,
                   size: ResponsiveHelper.iconSize(context, 20),
-                  color: AppColors.grey400),
+                  color: AppColors.textTertiary), // [DU270] grey400 1.88
             ),
             const SizedBox(height: 8),
             _block(
@@ -146,73 +148,32 @@ class _DecisionSheet extends StatelessWidget {
             //   **어디서 볼 수 있는지** 말한다. 지금 확정된 근무의 기준은 그
             //   근무의 근로계약서에 7개 항목으로 적혀 있다(같은 snapshot 이다).
             //   값을 위해 사업장 문서를 읽지 않는다.
-            Text(
+            _note(
+              context,
               '근태·급여 처리 기준은 지금 확정된 근무와 동일하게 유지됩니다.\n'
               '기준 내용은 해당 근무의 근로계약서에서 확인할 수 있습니다.',
-              style: ResponsiveHelper.smallStyle(context,
-                  color: AppColors.grey700),
             ),
             const SizedBox(height: 16),
-            Text(
+            _note(
+              context,
               '변경을 수락하면 지금 확정된 근무는 ‘다른 업무로 변경 확정’으로 '
               '정리되며, 취소·노쇼 불이익은 적용되지 않습니다.\n'
               '기존 조건을 유지하면 아무것도 바뀌지 않습니다.',
-              style: ResponsiveHelper.smallStyle(context,
-                  color: AppColors.grey600),
             ),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                    onPressed: () async {
-                      final ok = await ConfirmedReassignmentService.instance
-                          .decline(proposal.proposalId);
-                      if (!context.mounted) return;
-                      Navigator.pop(
-                          context,
-                          ok
-                              ? ReassignmentDecision.kept
-                              : ReassignmentDecision.dismissed);
-                    },
-                    child: const Text('기존 조건 유지'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.brand,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                    onPressed: () async {
-                      final ok = await ConfirmedReassignmentService.instance
-                          .accept(
-                        proposalId: proposal.proposalId,
-                        documentAccessConsentVersion:
-                            ConfirmedReassignmentSheet.consentVersion,
-                      );
-                      if (!context.mounted) return;
-                      Navigator.pop(
-                          context,
-                          ok
-                              ? ReassignmentDecision.changed
-                              : ReassignmentDecision.dismissed);
-                    },
-                    child: const Text('변경 수락',
-                        style: TextStyle(
-                            color: Colors.white, fontWeight: FontWeight.bold)),
-                  ),
-                ),
-              ],
-            ),
+            // [DU270] 보통 글자는 왼쪽 '기존 조건 유지'·오른쪽 '변경 수락', 큰 글자는 같은 순서로 위·아래.
+            if (stacked) ...[
+              SizedBox(width: double.infinity, child: _keepButton(context)),
+              const SizedBox(height: 10),
+              SizedBox(width: double.infinity, child: _changeButton(context)),
+            ] else
+              Row(
+                children: [
+                  Expanded(child: _keepButton(context)),
+                  const SizedBox(width: 10),
+                  Expanded(child: _changeButton(context)),
+                ],
+              ),
           ],
         ),
       ),
@@ -226,42 +187,44 @@ class _DecisionSheet extends StatelessWidget {
     required bool muted,
     required Set<String> changed,
   }) {
-    final fg = muted ? AppColors.grey600 : AppColors.grey800;
+    // [DU270] 현재 칸은 덜 강조하되 읽히게(grey100 위 grey500 2.46·grey600 4.23 → 바탕색 면 위 textSecondary 5.5),
+    //   제안 칸은 흰 면·대표색 2 선 유지, 값 본문색. 시안 카드 radius 16.
+    final fg = muted ? AppColors.textSecondary : AppColors.textPrimary;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: muted ? AppColors.grey100 : AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: muted ? Colors.transparent : AppColors.brand,
-          width: muted ? 0 : 2,
-        ),
+        color: muted ? AppColors.background : AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: muted ? null : Border.all(color: AppColors.brand, width: 2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title,
+          Text(TextLayout.keepWords(title),
+              semanticsLabel: title,
               style: ResponsiveHelper.smallStyle(context,
-                  color: muted ? AppColors.grey500 : AppColors.brand)),
+                  color: muted ? AppColors.textSecondary : AppColors.brand,
+                  fontWeight: FontWeight.w600)),
           const SizedBox(height: 6),
           if (promise == null)
-            Text('조건 정보를 불러오지 못했습니다.',
+            Text(TextLayout.keepWords('조건 정보를 불러오지 못했습니다.'),
+                semanticsLabel: '조건 정보를 불러오지 못했습니다.',
                 style: ResponsiveHelper.bodyStyle(context,
-                    color: AppColors.grey500))
+                    color: AppColors.textSecondary))
           else ...[
+            // [DU270] 값 표시만 줄바꿈 단위를 준다 — 업무명 identity, 시간 한 덩어리, 급여 낱말(화면 읽기는 원문)
             _row(context, '업무', promise.workType ?? '-',
+                shown: TextLayout.identity(promise.workType ?? '-'),
                 highlight: changed.contains('workType'), fg: fg),
             _row(context, '시간', promise.timeRange,
+                shown: TextLayout.unit(promise.timeRange),
                 highlight: changed.contains('time'), fg: fg),
             _row(
               context,
               '급여',
-              promise.wage == null
-                  ? '-'
-                  : '${FormatHelper.formatWage(promise.wage!)}'
-                      '${promise.wageType == 'hourly' ? ' (시급)' : ''}'
-                      '${promise.wageType == 'daily' ? ' (일급)' : ''}',
+              _wageText(promise),
+              shown: TextLayout.keepWords(_wageText(promise)),
               highlight: changed.contains('wage'),
               fg: fg,
             ),
@@ -271,40 +234,112 @@ class _DecisionSheet extends StatelessWidget {
     );
   }
 
+  static String _wageText(ReassignmentPromise p) => p.wage == null
+      ? '-'
+      : '${FormatHelper.formatWage(p.wage!)}'
+          '${p.wageType == 'hourly' ? ' (시급)' : ''}'
+          '${p.wageType == 'daily' ? ' (일급)' : ''}';
+
+  /// [DU270] 안내 문장 — grey600(4.61)·grey700 → textSecondary, 표시만 낱말 단위(semanticsLabel 원문).
+  Widget _note(BuildContext context, String s) => Text(
+        TextLayout.keepWords(s),
+        semanticsLabel: s,
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+      );
+
+  /// [DU270] 공용 OutlinedButton 테마(brand 글자·grey300 선·radius 12). 결정·서비스 호출은 그대로다.
+  ///   [r1] 나란한 '변경 수락'(Elevated 테마 16 bold·상하 14 → 51)과 높이·글자를 맞춘다(UI-1, 이전 48 vs 51).
+  Widget _keepButton(BuildContext context) => OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          textStyle: ResponsiveHelper.bodyStyle(context, fontWeight: FontWeight.bold)
+              .copyWith(fontSize: 16),
+        ),
+        onPressed: () async {
+          final ok = await ConfirmedReassignmentService.instance
+              .decline(proposal.proposalId);
+          if (!context.mounted) return;
+          Navigator.pop(
+              context,
+              ok
+                  ? ReassignmentDecision.kept
+                  : ReassignmentDecision.dismissed);
+        },
+        child: const Text('기존 조건 유지'),
+      );
+
+  /// [DU270] 공용 ElevatedButton 테마(brand·흰 글자·48·radius 12) — 직접 지정한 색·모양(값 같음)을 걷었다.
+  Widget _changeButton(BuildContext context) => ElevatedButton(
+        onPressed: () async {
+          final ok = await ConfirmedReassignmentService.instance
+              .accept(
+            proposalId: proposal.proposalId,
+            documentAccessConsentVersion:
+                ConfirmedReassignmentSheet.consentVersion,
+          );
+          if (!context.mounted) return;
+          Navigator.pop(
+              context,
+              ok
+                  ? ReassignmentDecision.changed
+                  : ReassignmentDecision.dismissed);
+        },
+        child: const Text('변경 수락'),
+      );
+
   Widget _row(BuildContext context, String label, String value,
-      {required bool highlight, required Color fg}) {
+      {required bool highlight, required Color fg, String? shown}) {
+    // [DU270] 이름 grey500(2.46~2.68) → textTertiary, '변경' 표시 brand 12% 면(4.71) → brandSurface 토큰·w600·radius 8
+    final labelText = Text(label,
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.textTertiary));
+    final valueText = Text(
+      shown ?? value,
+      semanticsLabel: value,
+      style: ResponsiveHelper.bodyStyle(context,
+              color: highlight ? AppColors.brand : fg)
+          .copyWith(
+              fontWeight:
+                  highlight ? FontWeight.bold : FontWeight.normal),
+    );
+    final mark = highlight
+        ? Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: AppColors.brandSurface,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text('변경',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.brand, fontWeight: FontWeight.w600)),
+          )
+        : null;
+    // [DU270] 큰 글자(DU256 규칙)에서는 이름·'변경'을 윗줄, 값을 아래 전체 폭에 둔다 — 폭 44 칸에서 '업/무'·'급/여',
+    //   값 칸에서 '포장 및 검/수'로 끊겼다.
+    if (MediaQuery.textScalerOf(context).scale(10) >= 13) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Flexible(child: labelText),
+                if (mark != null) ...[const SizedBox(width: 8), mark],
+              ],
+            ),
+            valueText,
+          ],
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 44,
-            child: Text(label,
-                style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.grey500)),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: ResponsiveHelper.bodyStyle(context,
-                      color: highlight ? AppColors.brand : fg)
-                  .copyWith(
-                      fontWeight:
-                          highlight ? FontWeight.bold : FontWeight.normal),
-            ),
-          ),
-          if (highlight)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: AppColors.brand.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text('변경',
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.brand)),
-            ),
+          SizedBox(width: 44, child: labelText),
+          Expanded(child: valueText),
+          if (mark != null) mark,
         ],
       ),
     );

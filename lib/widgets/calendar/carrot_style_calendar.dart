@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../theme/app_colors.dart';
 
 /// 🥕 당근마켓 스타일 월간 캘린더
@@ -164,22 +165,28 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
           ),
           
           // 현재 월 표시
-          GestureDetector(
-            onTap: _goToCurrentMonth,
-            child: Container(
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 16),
-                vertical: ResponsiveHelper.spacing(context, 8),
-              ),
-              decoration: BoxDecoration(
-                color: theme.primaryColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                FormatHelper.formatYearMonth(_focusedMonth),
-                style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: theme.primaryColor,
+          // [DU290 DP6] 큰 글자(320·2.0)에서 '‹ 년월 ›' 줄이 13px 넘쳤다 — 년월 알약이 남는 폭 안에서 줄바꿈한다.
+          Flexible(
+            child: GestureDetector(
+              onTap: _goToCurrentMonth,
+              child: Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 16),
+                  vertical: ResponsiveHelper.spacing(context, 8),
+                ),
+                decoration: BoxDecoration(
+                  color: theme.primaryColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  // [DU290 r2] 줄이 나뉘어도 숫자·단위(11|월) 사이에서 끊기지 않게 낱말 단위(읽기 이름은 원문)
+                  TextLayout.keepWords(FormatHelper.formatYearMonth(_focusedMonth)),
+                  semanticsLabel: FormatHelper.formatYearMonth(_focusedMonth),
+                  textAlign: TextAlign.center,
+                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: theme.primaryColor,
+                  ),
                 ),
               ),
             ),

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -161,16 +162,16 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('근무 가능일 2일 등록됨'), findsOneWidget);
-    expect(find.text(_promiseOn), findsNothing,
+    expect(findVisibleText(_promiseOn), findsNothing,
         reason: '초대 지역을 설정하지 않으면 후보 조회에 잡히지 않는다 — '
             '하지 않은 설정을 한 것처럼 확인해 주면 안 된다');
-    expect(find.text(_needRegion), findsOneWidget);
+    expect(findVisibleText(_needRegion), findsOneWidget);
     // 할 일을 말했으면 그 자리도 있어야 한다.
-    expect(find.text('초대 받을 지역'), findsOneWidget);
-    expect(find.text('설정하기'), findsOneWidget);
+    expect(findVisibleText('초대 받을 지역'), findsOneWidget);
+    expect(findVisibleText('설정하기'), findsOneWidget);
     // 저장한 날짜가 **아무 일도 안 한다**고 읽히면 안 된다 —
     //   초대와 무관한 공고 알림은 계속 온다(CF active consumer).
-    expect(find.textContaining('새 공고가 열리면 알림을 받아요'), findsWidgets);
+    expect(findVisibleTextContaining('새 공고가 열리면 알림을 받아요'), findsWidgets);
   });
 
   testWidgets('AIP-2 가능일 등록 + 초대 ON — 그때만 제안을 약속한다', (tester) async {
@@ -185,9 +186,9 @@ void main() {
       ),
     );
 
-    expect(find.text(_promiseOn), findsOneWidget);
-    expect(find.text(_needRegion), findsNothing);
-    expect(find.text('강남구'), findsWidgets);
+    expect(findVisibleText(_promiseOn), findsOneWidget);
+    expect(findVisibleText(_needRegion), findsNothing);
+    expect(findVisibleText('강남구'), findsWidgets);
   });
 
   testWidgets('AIP-3 초대 OFF — 제안이 오지 않는다고 말한다', (tester) async {
@@ -202,10 +203,10 @@ void main() {
       ),
     );
 
-    expect(find.text(_offCopy), findsOneWidget);
-    expect(find.text(_promiseOn), findsNothing);
-    expect(find.text('받지 않음'), findsOneWidget);
-    expect(find.textContaining('새 공고가 열리면 알림을 받아요'), findsWidgets,
+    expect(findVisibleText(_offCopy), findsOneWidget);
+    expect(findVisibleText(_promiseOn), findsNothing);
+    expect(findVisibleText('받지 않음'), findsOneWidget);
+    expect(findVisibleTextContaining('새 공고가 열리면 알림을 받아요'), findsWidgets,
         reason: 'OFF 라도 저장한 날짜는 공고 알림에 쓰인다 — 쓸모없다고 말하지 않는다');
   });
 
@@ -219,9 +220,9 @@ void main() {
       ),
     );
 
-    expect(find.text(_unknownCopy), findsOneWidget);
-    expect(find.text(_offCopy), findsNothing);
-    expect(find.text('확인하지 못함'), findsOneWidget);
+    expect(findVisibleText(_unknownCopy), findsOneWidget);
+    expect(findVisibleText(_offCopy), findsNothing);
+    expect(findVisibleText('확인하지 못함'), findsOneWidget);
   });
 
   testWidgets('AIP-5 가능일 0일 — 기능 안내는 그대로 둔다(양성 대조)',
@@ -231,7 +232,7 @@ void main() {
       reads: _reads(dates: const [], pref: const InviteRegionPreference()),
     );
 
-    expect(find.text(_promiseIntro), findsOneWidget);
+    expect(findVisibleText(_promiseIntro), findsOneWidget);
     expect(find.text('등록'), findsOneWidget);
   });
 
@@ -248,7 +249,7 @@ void main() {
     );
 
     // 가능일 배너는 '등록됨'을 말할 뿐 지원/확정을 말하지 않는다.
-    expect(find.textContaining('지원'), findsNothing,
+    expect(findVisibleTextContaining('지원'), findsNothing,
         reason: '날짜를 표시하는 행위가 지원이 아니다');
     expect(find.textContaining('확정됐'), findsNothing);
   });
@@ -261,13 +262,13 @@ void main() {
     );
 
     // 에디트 모드 진입 — 캘린더만 주고 나중에 정정하지 않는다.
-    await tester.tap(find.text('가능일'));
+    await tester.tap(find.text('가능일 설정'));
     for (var i = 0; i < 15; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
     expect(find.text('근무 가능일 선택'), findsOneWidget);
-    expect(find.textContaining('새 공고가 열리면 알림을 받아요'), findsWidgets,
+    expect(findVisibleTextContaining('새 공고가 열리면 알림을 받아요'), findsWidgets,
         reason: '왜 날짜를 고르는지 먼저 말한다');
     expect(find.textContaining("'초대 받을 지역'도 설정하세요"), findsWidgets,
         reason: '초대를 받으려면 무엇이 더 필요한지 먼저 말한다');
@@ -296,7 +297,7 @@ void main() {
     final before = loads;
 
     // '초대 받을 지역' 행 → 설정 화면 → 뒤로
-    await tester.tap(find.text('초대 받을 지역'));
+    await tester.tap(findVisibleText('초대 받을 지역'));
     for (var i = 0; i < 15; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
@@ -332,7 +333,7 @@ void main() {
           textScale: scale,
         );
         expect(tester.takeException(), isNull);
-        expect(find.text('초대 받을 지역'), findsOneWidget);
+        expect(findVisibleText('초대 받을 지역'), findsOneWidget);
       });
     }
   }

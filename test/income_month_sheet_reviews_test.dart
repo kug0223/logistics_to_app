@@ -1,3 +1,4 @@
+import 'support/visible_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -238,10 +239,10 @@ void main() {
     await _pumpIncome(tester, reads: _incomeReads(calls: calls));
 
     expect(tester.takeException(), isNull);
-    expect(find.text('$_curY년 $_curM월'), findsOneWidget);
+    expect(findVisibleText('$_curY년 $_curM월'), findsOneWidget);
     expect(calls.containsKey('$_curY-$_curM'), isTrue);
-    expect(find.textContaining('110,000'), findsWidgets);
-    expect(find.textContaining('220,000'), findsNothing);
+    expect(findVisibleTextContaining('110,000'), findsWidgets);
+    expect(findVisibleTextContaining('220,000'), findsNothing);
   });
 
   testWidgets('IMS-2 월 선택 시트를 **실제로 열어** 다른 달을 고르면 그 달이 된다',
@@ -250,27 +251,27 @@ void main() {
     await _pumpIncome(tester, reads: _incomeReads(calls: calls));
 
     // 상세 안의 월 버튼 탭 → 기간 선택 바텀시트
-    await tester.tap(find.text('$_curY년 $_curM월'));
+    await tester.tap(findVisibleText('$_curY년 $_curM월'));
     for (var i = 0; i < 15; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
     // 시트가 열렸는지 — 월 칩이 보인다
-    expect(find.text('$_prevM월'), findsWidgets,
+    expect(findVisibleText('$_prevM월'), findsWidgets,
         reason: '시트가 열리지 않으면 이 행동은 PASS 가 아니다');
 
-    await tester.tap(find.text('$_prevM월').last);
+    await tester.tap(findVisibleText('$_prevM월').last);
     for (var i = 0; i < 20; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
     // 라벨·조회 연월·금액이 **같은 달**을 가리킨다.
-    expect(find.text('$_prevY년 $_prevM월'), findsOneWidget,
+    expect(findVisibleText('$_prevY년 $_prevM월'), findsOneWidget,
         reason: '고른 달이 머리말이어야 한다');
     expect(calls.containsKey('$_prevY-$_prevM'), isTrue,
         reason: '고른 달로 원장을 다시 읽어야 한다');
-    expect(find.textContaining('220,000'), findsWidgets,
+    expect(findVisibleTextContaining('220,000'), findsWidgets,
         reason: '그 달의 금액이어야 한다');
-    expect(find.textContaining('110,000'), findsNothing,
+    expect(findVisibleTextContaining('110,000'), findsNothing,
         reason: '이전 달 금액이 남으면 다른 달을 보고 판단한다');
   });
 
@@ -279,7 +280,7 @@ void main() {
     final calls = <String, int>{};
     await _pumpIncome(tester, reads: _incomeReads(calls: calls));
 
-    await tester.tap(find.text('$_curY년 $_curM월'));
+    await tester.tap(findVisibleText('$_curY년 $_curM월'));
     for (var i = 0; i < 15; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
@@ -287,7 +288,7 @@ void main() {
     final futureM = _curM == 12 ? null : _curM + 1;
     if (futureM != null) {
       final before = Map<String, int>.from(calls);
-      await tester.tap(find.text('$futureM월').last, warnIfMissed: false);
+      await tester.tap(findVisibleText('$futureM월').last, warnIfMissed: false);
       for (var i = 0; i < 15; i++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
@@ -314,25 +315,25 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('강남 물류센터'), findsWidgets);
-    expect(find.text('역삼 편의점'), findsWidgets,
+    expect(findVisibleText('강남 물류센터'), findsWidgets);
+    expect(findVisibleText('역삼 편의점'), findsWidgets,
         reason: '두 사업장의 평가가 한 줄로 섞이면 안 된다');
-    expect(find.text('아직 받은 평가가 없습니다'), findsNothing);
+    expect(findVisibleText('아직 받은 평가가 없습니다'), findsNothing);
   });
 
   testWidgets('MRV-2 정말 없을 때만 "아직 받은 평가가 없습니다"', (tester) async {
     await _pumpReviews(tester, reads: _reviewReads(records: const []));
 
-    expect(find.text('아직 받은 평가가 없습니다'), findsOneWidget);
-    expect(find.text('리뷰를 불러오지 못했습니다'), findsNothing);
+    expect(findVisibleText('아직 받은 평가가 없습니다'), findsOneWidget);
+    expect(findVisibleText('리뷰를 불러오지 못했습니다'), findsNothing);
   });
 
   testWidgets('MRV-3 읽기 실패를 "평가 없음"으로 바꾸지 않는다', (tester) async {
     await _pumpReviews(tester, reads: _reviewReads(error: Exception('network')));
 
-    expect(find.text('리뷰를 불러오지 못했습니다'), findsOneWidget);
-    expect(find.text('다시 시도'), findsOneWidget);
-    expect(find.text('아직 받은 평가가 없습니다'), findsNothing);
+    expect(findVisibleText('리뷰를 불러오지 못했습니다'), findsOneWidget);
+    expect(findVisibleText('다시 시도'), findsOneWidget);
+    expect(findVisibleText('아직 받은 평가가 없습니다'), findsNothing);
   });
 
   testWidgets('MRV-4 320dp × 2.0 — 긴 사업장명·상태가 예외 없이 그려진다',
@@ -351,6 +352,6 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('서울특별시 강남구 테헤란로 물류센터 제2창고'), findsWidgets);
+    expect(findVisibleText('서울특별시 강남구 테헤란로 물류센터 제2창고'), findsWidgets);
   });
 }

@@ -224,7 +224,8 @@ void main() {
       //   보도록 좁혀졌다. 소유자만 보던 술어로는 같은 사용자의 신분증이
       //   통장사본으로 서명됐다(급여 권한만으로 ID-CONSENT 경계 우회).
       //   "서명 직전에 확인한다"는 계약은 그대로이고 더 강해졌다.
-      expect(idUrl, contains('srvIsOwnedStoragePath(storagePath, targetUserId)'));
+      // [DOC-LATE-DELETE.7 · C 갱신] 예전 단언: srvIsOwnedStoragePath(storagePath, targetUserId). 서명 직전 확인은 그대로, 신분증 모양까지.
+      expect(idUrl, contains('srvIsOwnedIdCardObjectPath(targetUserId, storagePath)'));
       expect(bankUrl,
           contains('srvResolveOwnedBankbookStoragePath(appUid, bbPointer)'));
       expect(bankUrl, isNot(contains('srvIsOwnedStoragePath(storagePath, appUid)')),

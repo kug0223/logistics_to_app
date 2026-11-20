@@ -48,7 +48,9 @@ class AttendanceReads {
     required String businessId,
   }) usersBatch;
 
-  final Future<Map<String, String?>> Function({
+  /// [REISSUE-RECOVERY] 조회 실패와 "계약 없음"을 나눠 받는다 —
+  ///   실패를 `계약미작성` 배지로 바꾸지 않기 위해서다.
+  final Future<ContractStatusBatch> Function({
     required List<String> appIds,
     required String businessId,
   }) contractStatus;

@@ -248,6 +248,15 @@ class AnnualStatsData {
   final int prevYearTotalWage;
   final int prevYearTotalWorkCount;
 
+  // [ADMIN-STATS-CLOSEOUT] 출근율·노쇼율의 분모 = 그해 근태 문서 수.
+  //   0 이면 계산 불가('-'), 아니면 0% 도 실제 값이다.
+  final int attendanceRecordCount;
+
+  // [UNKNOWN-ATTENDANCE] status 를 확인할 수 없는 근태 수(올해·전년). 분자(출근·노쇼)에 넣지 않는다.
+  //   0 보다 크면 출근율·노쇼율은 숫자 대신 '확인 필요'로 보인다 — 분모에서 조용히 빼지 않는다.
+  final int unconfirmedAttendanceCount;
+  final int prevUnconfirmedAttendanceCount;
+
   // 출근율 (연간 누적)
   final double attendanceRate;    // 정시 / 전체 %
   final double prevYearAttendanceRate;
@@ -289,6 +298,9 @@ class AnnualStatsData {
     required this.totalWorkerCount,
     required this.prevYearTotalWage,
     required this.prevYearTotalWorkCount,
+    this.attendanceRecordCount = 0,
+    this.unconfirmedAttendanceCount = 0,
+    this.prevUnconfirmedAttendanceCount = 0,
     required this.attendanceRate,
     required this.prevYearAttendanceRate,
     required this.rehireRate,
@@ -345,8 +357,17 @@ class WorkerMonthSummary {
   final int presentDays;
   final int lateDays;
   final int absentDays;
+  /// [ADMIN-MONTHLY-1] 출근했지만 퇴근이 확인되지 않은 건(missed_checkout) — 결근과 따로 센다.
+  final int missedCheckoutDays;
+  /// [UNKNOWN-ATTENDANCE] status 를 확인할 수 없는 건 — 결근이 아니라 '근태 확인 필요'.
+  final int unconfirmedDays;
   final int totalWage;
   final List<AttendanceModel> records;
+  /// [ADMIN-MONTHLY-1] 이 사업장의 인력번호(`P-002`). 동명이인을 화면에서 가르는 수단. 모르면 null.
+  final String? personNo;
+  /// [ADMIN-STATS-CLOSEOUT] 확정·이체된 근무가 하나라도 있는가. 금액 0 과 '미확정'을 가르는 근거다
+  ///   (노쇼 확정 0원은 확정이다 — 금액만 보고 미확정이라 하지 않는다).
+  final bool hasSettledWage;
   const WorkerMonthSummary({
     required this.userId,
     required this.userName,
@@ -354,8 +375,12 @@ class WorkerMonthSummary {
     required this.presentDays,
     required this.lateDays,
     required this.absentDays,
+    this.missedCheckoutDays = 0,
+    this.unconfirmedDays = 0,
     required this.totalWage,
     required this.records,
+    this.personNo,
+    this.hasSettledWage = false,
   });
 }
 
@@ -365,7 +390,13 @@ class MonthDetailData {
   final int presentCount;
   final int lateCount;
   final int absentCount;
+  /// [ADMIN-MONTHLY-1] 퇴근 미확인(missed_checkout) 건수 — 결근에 넣지 않는다.
+  final int missedCheckoutCount;
+  /// [UNKNOWN-ATTENDANCE] status 를 확인할 수 없는 건수 — 결근에 넣지 않고, 전체(분모)에서도 빼지 않는다.
+  final int unconfirmedCount;
   final int totalWage;
+  /// [ADMIN-STATS-CLOSEOUT] 확정·이체 근무 건수 — 총 인건비 0원이 '확정 0원'인지 '확정 없음'인지 가른다.
+  final int settledCount;
   final List<WorkerMonthSummary> workers;
   final double avgRating;
   final int rehireCount;
@@ -387,7 +418,10 @@ class MonthDetailData {
     required this.presentCount,
     required this.lateCount,
     required this.absentCount,
+    this.missedCheckoutCount = 0,
+    this.unconfirmedCount = 0,
     required this.totalWage,
+    this.settledCount = 0,
     required this.workers,
     required this.avgRating,
     required this.rehireCount,
@@ -400,10 +434,22 @@ class MonthDetailData {
     this.attendanceStatsState = AttendanceStatsState.available,
   });
 
-  int get totalAttendanceCount => presentCount + lateCount + absentCount;
+  int get totalAttendanceCount =>
+      presentCount + lateCount + absentCount + missedCheckoutCount + unconfirmedCount;
   double get attendanceRate => totalAttendanceCount == 0
       ? 0
       : presentCount / totalAttendanceCount * 100;
+}
+
+/// [STATS-TO-ATTENDANCE.27] 월 상세 근태 현황 칸 하나 — 집계와 내역 목록이 같은 분류를 쓴다.
+enum StatsAttendanceBucket { present, late, missedCheckout, absent, unconfirmed }
+
+/// [STATS-TO-ATTENDANCE.27] 통계가 센 원본 근태 문서와 사람 표시 정보.
+///   내역 목록이 이것을 조건으로 고른다 — 숫자와 목록이 같은 문서를 본다.
+class StatsAttendanceSnapshot {
+  final List<AttendanceModel> records;
+  final Map<String, UserInfo> userInfo;
+  const StatsAttendanceSnapshot({required this.records, required this.userInfo});
 }
 
 // ─── 출근 조회 결과 래퍼 ──────────────────────────────────────────
@@ -634,6 +680,9 @@ class AdminStatsService {
       totalWorkerCount: workerIds,
       prevYearTotalWage: prevYearWage,
       prevYearTotalWorkCount: prevYearAtt.where(isPaid).length,
+      attendanceRecordCount: thisYearAtt.length,
+      unconfirmedAttendanceCount: thisYearAtt.where(_isUnconfirmed).length,
+      prevUnconfirmedAttendanceCount: prevYearAtt.where(_isUnconfirmed).length,
       attendanceRate: attRate,
       prevYearAttendanceRate: prevAttRate,
       rehireRate: rehireRate,
@@ -699,6 +748,34 @@ class AdminStatsService {
 
     final infoMap = await _fetchUserInfoByRecords(attendance);
 
+    return buildMonthDetail(
+      year: year,
+      month: month,
+      attendance: attendance,
+      infoMap: infoMap,
+      avgRating: avgRating,
+      rehireCount: rehireCount,
+      noRehireCount: noRehireCount,
+      posTagFreq: posTagFreq,
+      reviewStatsState: reviewStatsState,
+      attendanceStatsState: attendanceStatsState,
+    );
+  }
+
+  /// [STATS-TO-ATTENDANCE.27] 월 상세 집계 — 조회와 분리해 시험이 같은 코드를 지나게 한다.
+  @visibleForTesting
+  static MonthDetailData buildMonthDetail({
+    required int year,
+    required int month,
+    required List<AttendanceModel> attendance,
+    required Map<String, UserInfo> infoMap,
+    double avgRating = 0.0,
+    int rehireCount = 0,
+    int noRehireCount = 0,
+    Map<String, int> posTagFreq = const {},
+    ReviewStatsState reviewStatsState = ReviewStatsState.noData,
+    AttendanceStatsState attendanceStatsState = AttendanceStatsState.available,
+  }) {
     // 중복 제거 — **같은 문서**가 두 번 들어온 경우만 거른다.
     //
     // 예전 키는 (userId, workDate)였다. 그런데 같은 날 같은 사업장에서 두 건을
@@ -724,20 +801,25 @@ class AdminStatsService {
 
     final workers = workerMap.entries.map((e) {
       final records = e.value;
-      int present = 0, late = 0, absent = 0, wage = 0;
+      int present = 0, late = 0, absent = 0, missed = 0, unconfirmed = 0, wage = 0;
+      var settled = false;
       for (final r in records) {
-        switch (r.status) {
-          case AttendanceModel.statusPresent:
-          case AttendanceModel.statusEarlyLeave:
+        switch (bucketOf(r)) {
+          case StatsAttendanceBucket.present:
             present++;
-          case AttendanceModel.statusLate:
+          case StatsAttendanceBucket.late:
             late++;
-          default:
+          case StatsAttendanceBucket.missedCheckout:
+            missed++;
+          case StatsAttendanceBucket.absent:
             absent++;
+          case StatsAttendanceBucket.unconfirmed:
+            unconfirmed++;
         }
         if (r.wageStatus == AttendanceModel.wageConfirmed ||
             r.wageStatus == AttendanceModel.wageTransferred) {
           wage += r.wageDetail?.effectiveNetWage ?? r.finalWage ?? 0;
+          settled = true;
         }
       }
       return WorkerMonthSummary(
@@ -753,27 +835,35 @@ class AdminStatsService {
         presentDays: present,
         lateDays: late,
         absentDays: absent,
+        missedCheckoutDays: missed,
+        unconfirmedDays: unconfirmed,
         totalWage: wage,
         records: records..sort((a, b) => a.workDate.compareTo(b.workDate)),
+        personNo: infoMap[e.key]?.personNo,
+        hasSettledWage: settled,
       );
     }).toList()
       ..sort((a, b) => b.totalDays.compareTo(a.totalDays));
 
     // 근태 합계 (직원별 집계와 동일 기준: dedupedAttendance + earlyLeave = present)
-    int tp = 0, tl = 0, ta = 0, tw = 0;
+    int tp = 0, tl = 0, ta = 0, tm = 0, tu = 0, tw = 0, ts = 0;
     for (final a in dedupedAttendance) {
-      switch (a.status) {
-        case AttendanceModel.statusPresent:
-        case AttendanceModel.statusEarlyLeave:
+      switch (bucketOf(a)) {
+        case StatsAttendanceBucket.present:
           tp++;
-        case AttendanceModel.statusLate:
+        case StatsAttendanceBucket.late:
           tl++;
-        default:
+        case StatsAttendanceBucket.missedCheckout:
+          tm++;
+        case StatsAttendanceBucket.absent:
           ta++;
+        case StatsAttendanceBucket.unconfirmed:
+          tu++;
       }
       if (a.wageStatus == AttendanceModel.wageConfirmed ||
           a.wageStatus == AttendanceModel.wageTransferred) {
         tw += a.wageDetail?.effectiveNetWage ?? a.finalWage ?? 0;
+        ts++;
       }
     }
 
@@ -783,7 +873,10 @@ class AdminStatsService {
       presentCount: tp,
       lateCount: tl,
       absentCount: ta,
+      missedCheckoutCount: tm,
+      unconfirmedCount: tu,
       totalWage: tw,
+      settledCount: ts,
       workers: workers,
       avgRating: avgRating,
       rehireCount: rehireCount,
@@ -854,6 +947,11 @@ class AdminStatsService {
       for (final e in rawItems) {
         final m = Map<String, dynamic>.from(e as Map);
         final docId = m.remove('id') as String? ?? '';
+        // [UNKNOWN-ATTENDANCE] fromMap 은 status 가 없으면 'absent' 로 채운다 — 통계에서는 그 기본값이
+        //   '결근'으로 세졌다(근태 초기화가 status 를 지운 문서). 파싱 전에 원본으로 판정해 따로 둔다.
+        if (!isKnownAttendanceStatus(m['status'])) {
+          m['status'] = AttendanceModel.statusUnconfirmed;
+        }
         final model = AttendanceModel.tryFromMap(m, docId);
         if (model == null) {
           throw StateError(
@@ -996,6 +1094,59 @@ class AdminStatsService {
 
   // ── 헬퍼 ─────────────────────────────────────────────────────
 
+  /// [UNKNOWN-ATTENDANCE] 판정은 모델 한 곳(`AttendanceModel.knownStatuses`) — 당일 근태 화면과 같다.
+  static const Set<String> knownAttendanceStatuses = AttendanceModel.knownStatuses;
+
+  @visibleForTesting
+  static bool isKnownAttendanceStatus(Object? raw) =>
+      AttendanceModel.displayStatusOfRaw(raw) != AttendanceModel.statusUnconfirmed;
+
+  static bool _isUnconfirmed(AttendanceModel r) =>
+      bucketOf(r) == StatsAttendanceBucket.unconfirmed;
+
+  /// [STATS-TO-ATTENDANCE.27] 월 상세의 칸 판정 — 집계·직원별 배지·내역 목록이 모두 이것 하나를 쓴다.
+  ///   조퇴는 정상(출근) 칸, 노쇼는 결근 칸. [ADMIN-MONTHLY-1] 미퇴근은 결근이 아니다.
+  ///   [UNKNOWN-ATTENDANCE] 결근은 명시된 status 만 — 확인할 수 없는 건은 따로 센다.
+  static StatsAttendanceBucket bucketOf(AttendanceModel r) {
+    switch (r.status) {
+      case AttendanceModel.statusPresent:
+      case AttendanceModel.statusEarlyLeave:
+        return StatsAttendanceBucket.present;
+      case AttendanceModel.statusLate:
+        return StatsAttendanceBucket.late;
+      case AttendanceModel.statusMissedCheckout:
+        return StatsAttendanceBucket.missedCheckout;
+      case AttendanceModel.statusAbsent:
+      case AttendanceModel.statusNoShow:
+        return StatsAttendanceBucket.absent;
+      default:
+        return StatsAttendanceBucket.unconfirmed;
+    }
+  }
+
+  /// [STATS-TO-ATTENDANCE.27] 통계와 **같은 조회**(같은 범위·같은 status 정규화·문서 id 중복 제거)로
+  ///   원본 근태와 사람 표시 정보를 읽는다. 내역 목록이 정정 뒤 다시 읽을 때 쓴다.
+  ///   [month] 가 null 이면 그해 전체. 읽지 못하면(부분 실패 포함) null — 0건으로 말하지 않는다.
+  Future<StatsAttendanceSnapshot?> getAttendanceSnapshot({
+    required List<String> businessIds,
+    String? filterBusinessId,
+    required int year,
+    int? month,
+  }) async {
+    final ids = filterBusinessId != null ? [filterBusinessId] : businessIds;
+    if (ids.isEmpty) return null;
+    final start = _kstBoundary(year, month ?? 1, 1);
+    final end = month == null
+        ? _kstBoundary(year + 1, 1, 1)
+        : _kstBoundary(year, month + 1, 1);
+    final res = await _fetchAttendanceSafe(ids, start, end);
+    if (res.state != AttendanceStatsState.available) return null;
+    final seen = <String>{};
+    final rows = res.rows.where((a) => seen.add(a.id)).toList();
+    final info = await _fetchUserInfoByRecords(rows);
+    return StatsAttendanceSnapshot(records: rows, userInfo: info);
+  }
+
   double _calcAttendanceRate(List<AttendanceModel> list) {
     if (list.isEmpty) return 0;
     // [MED-STAT] 출근율 = (정시출근 + 지각 + 조퇴) / 전체 — 지각·조퇴도 "출근"으로 집계
@@ -1004,7 +1155,9 @@ class AdminStatsService {
     final attended = list.where((r) =>
         r.status == AttendanceModel.statusPresent ||
         r.status == AttendanceModel.statusLate ||
-        r.status == AttendanceModel.statusEarlyLeave).length;
+        r.status == AttendanceModel.statusEarlyLeave ||
+        // [ADMIN-MONTHLY-1] 퇴근 미확인도 출근은 했다 — 근태 현황 다이얼로그와 같은 기준
+        r.status == AttendanceModel.statusMissedCheckout).length;
     return attended / list.length * 100;
   }
 

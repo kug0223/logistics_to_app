@@ -1,0 +1,573 @@
+{
+ "source": "core-invite-wd-20261026/run-U4 (MISSING-CHECKOUT.3 §6) — LOCAL 에뮬레이터 실제 writer: 정상 확정 m1 · 노쇼 m4(BatchSetNoShow 00083) · 미퇴근 m7(후보 스케줄러 a9ed6a22) · 출근 후 근태 초기화 m5(BatchReset 00078 → status 없음). live reader 00099·00101·00002 응답",
+ "biz": "biz_m_U4",
+ "reads": {
+  "att|owner|2026-09": {
+   "ok": true,
+   "data": {
+    "items": [],
+    "limitReached": false
+   }
+  },
+  "att|owner|2026-10": {
+   "ok": true,
+   "data": {
+    "items": [
+     {
+      "id": "to_m_U4_s_d1_JeOjEvQuxHTnkNjzHkaW_gpm_m7_U4_20261031",
+      "applicationId": "to_m_U4_s_d1_JeOjEvQuxHTnkNjzHkaW_gpm_m7_U4",
+      "userId": "gpm_m7_U4",
+      "businessId": "biz_m_U4",
+      "businessName": "[합성] 월간 사업장",
+      "workDate": {
+       "_seconds": 1793372400,
+       "_nanoseconds": 0
+      },
+      "yearMonth": "2026-10",
+      "workType": "분류",
+      "checkIn": {
+       "_seconds": 1793422800,
+       "_nanoseconds": 0
+      },
+      "originalCheckIn": {
+       "_seconds": 1793422500,
+       "_nanoseconds": 744000000
+      },
+      "checkInMethod": "gps",
+      "checkOut": null,
+      "isModified": false,
+      "modifyRequested": false,
+      "wageStatus": "pending",
+      "snapshotWage": 10320,
+      "snapshotWageType": "hourly",
+      "checkInLat": 37.5,
+      "checkInLng": 127.03,
+      "createdAt": {
+       "_seconds": 1793016686,
+       "_nanoseconds": 815000000
+      },
+      "checkInDistance": 0,
+      "status": "missed_checkout",
+      "updatedAt": {
+       "_seconds": 1793545500,
+       "_nanoseconds": 126000000
+      }
+     },
+     {
+      "id": "to_m_U4_s_d1_neltespiAs4pHJjHfsE9_gpm_m1_U4_20261031",
+      "applicationId": "to_m_U4_s_d1_neltespiAs4pHJjHfsE9_gpm_m1_U4",
+      "userId": "gpm_m1_U4",
+      "businessId": "biz_m_U4",
+      "businessName": "[합성] 월간 사업장",
+      "workDate": {
+       "_seconds": 1793372400,
+       "_nanoseconds": 0
+      },
+      "yearMonth": "2026-10",
+      "workType": "분류",
+      "checkIn": {
+       "_seconds": 1793404800,
+       "_nanoseconds": 0
+      },
+      "originalCheckIn": {
+       "_seconds": 1793404500,
+       "_nanoseconds": 761000000
+      },
+      "checkInMethod": "gps",
+      "status": "present",
+      "isModified": false,
+      "modifyRequested": false,
+      "snapshotWage": 10320,
+      "snapshotWageType": "hourly",
+      "checkInLat": 37.5,
+      "checkInLng": 127.03,
+      "createdAt": {
+       "_seconds": 1793016678,
+       "_nanoseconds": 419000000
+      },
+      "checkInDistance": 0,
+      "checkOutDistance": 0,
+      "checkOutLat": 37.5,
+      "checkOutLng": 127.03,
+      "workHours": 4,
+      "checkOutMethod": "gps",
+      "originalCheckOut": {
+       "_seconds": 1793419200,
+       "_nanoseconds": 758000000
+      },
+      "checkOut": {
+       "_seconds": 1793419200,
+       "_nanoseconds": 0
+      },
+      "finalWage": 41280,
+      "paymentDueDate": {
+       "_seconds": 1793458800,
+       "_nanoseconds": 0
+      },
+      "wageAccountSourceBankbookDocumentVersion": 1,
+      "wageAccountSnapshotVersion": 1,
+      "wageAccountBankName": "QA은행",
+      "wageDetail": {
+       "wageType": "hourly",
+       "baseWage": 10320,
+       "scheduledMinutes": 240,
+       "scheduledBreakMinutes": 0,
+       "actualMinutes": 240,
+       "breakMinutes": 0,
+       "workMinutes": 240,
+       "appliedScheduledBreakMinutes": 0,
+       "additionalBreakMinutes": 0,
+       "overtimeMinutes": 0,
+       "nightMinutes": 0,
+       "baseAmount": 41280,
+       "overtimeAmount": 0,
+       "nightAmount": 0,
+       "additionalAmount": 0,
+       "deductionAmount": 0,
+       "weeklyHolidayAmount": 0,
+       "totalAmount": 41280,
+       "nightAllowanceApplied": true,
+       "appliedMinimumWage": 10320,
+       "taxDeductionType": "none",
+       "netWage": 41280,
+       "calculatedBy": "gpm_own_U4",
+       "earlyArrivalAmount": 0,
+       "appliedSupplementWage": 10320,
+       "payScheduleType": "next_day",
+       "contractExcessMinutes": 0,
+       "premiumOvertimeMinutes": 0,
+       "calculatedAt": {
+        "_seconds": 1793016681,
+        "_nanoseconds": 695000000
+       },
+       "confirmedBy": "gpm_own_U4",
+       "confirmedAt": {
+        "_seconds": 1793419801,
+        "_nanoseconds": 69000000
+       }
+      },
+      "wageStatus": "confirmed",
+      "confirmedBy": "gpm_own_U4",
+      "wageAccountNumberEncrypted": "ENC-local",
+      "wageAccountHolder": "합성 김동명",
+      "wageAccountSourceBankAccountVersion": 1,
+      "wagePaymentReadinessSource": "AUTO_MATCH",
+      "wageAccountSnapshotAt": {
+       "_seconds": 1793016681,
+       "_nanoseconds": 923000000
+      },
+      "finalConfirmedAt": {
+       "_seconds": 1793016681,
+       "_nanoseconds": 923000000
+      },
+      "updatedAt": {
+       "_seconds": 1793016681,
+       "_nanoseconds": 923000000
+      }
+     },
+     {
+      "id": "to_m_U4_s_d1_neltespiAs4pHJjHfsE9_gpm_m4_U4_20261031",
+      "finalWage": 0,
+      "modifyRequested": false,
+      "workDate": {
+       "_seconds": 1793372400,
+       "_nanoseconds": 0
+      },
+      "isModified": false,
+      "yearMonth": "2026-10",
+      "businessId": "biz_m_U4",
+      "businessName": "[합성] 월간 사업장",
+      "wageStatus": "confirmed",
+      "workType": "분류",
+      "applicationId": "to_m_U4_s_d1_neltespiAs4pHJjHfsE9_gpm_m4_U4",
+      "userId": "gpm_m4_U4",
+      "status": "NO_SHOW",
+      "createdAt": {
+       "_seconds": 1793016688,
+       "_nanoseconds": 602000000
+      },
+      "updatedAt": {
+       "_seconds": 1793016688,
+       "_nanoseconds": 602000000
+      }
+     },
+     {
+      "id": "to_m_U4_s_d1_neltespiAs4pHJjHfsE9_gpm_m5_U4_20261031",
+      "applicationId": "to_m_U4_s_d1_neltespiAs4pHJjHfsE9_gpm_m5_U4",
+      "userId": "gpm_m5_U4",
+      "businessId": "biz_m_U4",
+      "businessName": "[합성] 월간 사업장",
+      "workDate": {
+       "_seconds": 1793372400,
+       "_nanoseconds": 0
+      },
+      "workType": "분류",
+      "originalCheckIn": {
+       "_seconds": 1793404560,
+       "_nanoseconds": 781000000
+      },
+      "checkInMethod": "gps",
+      "isModified": false,
+      "modifyRequested": false,
+      "wageStatus": "pending",
+      "snapshotWage": 10320,
+      "snapshotWageType": "hourly",
+      "checkInLat": 37.5,
+      "checkInLng": 127.03,
+      "createdAt": {
+       "_seconds": 1793016683,
+       "_nanoseconds": 433000000
+      },
+      "checkInDistance": 0,
+      "updatedAt": {
+       "_seconds": 1793016685,
+       "_nanoseconds": 292000000
+      }
+     }
+    ],
+    "limitReached": false
+   }
+  },
+  "att|owner|2026-11": {
+   "ok": true,
+   "data": {
+    "items": [],
+    "limitReached": false
+   }
+  },
+  "att|owner|2026-12": {
+   "ok": true,
+   "data": {
+    "items": [],
+    "limitReached": false
+   }
+  },
+  "att|owner|Y2026": {
+   "ok": true,
+   "data": {
+    "items": [
+     {
+      "id": "to_m_U4_s_d1_JeOjEvQuxHTnkNjzHkaW_gpm_m7_U4_20261031",
+      "applicationId": "to_m_U4_s_d1_JeOjEvQuxHTnkNjzHkaW_gpm_m7_U4",
+      "userId": "gpm_m7_U4",
+      "businessId": "biz_m_U4",
+      "businessName": "[합성] 월간 사업장",
+      "workDate": {
+       "_seconds": 1793372400,
+       "_nanoseconds": 0
+      },
+      "yearMonth": "2026-10",
+      "workType": "분류",
+      "checkIn": {
+       "_seconds": 1793422800,
+       "_nanoseconds": 0
+      },
+      "originalCheckIn": {
+       "_seconds": 1793422500,
+       "_nanoseconds": 744000000
+      },
+      "checkInMethod": "gps",
+      "checkOut": null,
+      "isModified": false,
+      "modifyRequested": false,
+      "wageStatus": "pending",
+      "snapshotWage": 10320,
+      "snapshotWageType": "hourly",
+      "checkInLat": 37.5,
+      "checkInLng": 127.03,
+      "createdAt": {
+       "_seconds": 1793016686,
+       "_nanoseconds": 815000000
+      },
+      "checkInDistance": 0,
+      "status": "missed_checkout",
+      "updatedAt": {
+       "_seconds": 1793545500,
+       "_nanoseconds": 126000000
+      }
+     },
+     {
+      "id": "to_m_U4_s_d1_neltespiAs4pHJjHfsE9_gpm_m1_U4_20261031",
+      "applicationId": "to_m_U4_s_d1_neltespiAs4pHJjHfsE9_gpm_m1_U4",
+      "userId": "gpm_m1_U4",
+      "businessId": "biz_m_U4",
+      "businessName": "[합성] 월간 사업장",
+      "workDate": {
+       "_seconds": 1793372400,
+       "_nanoseconds": 0
+      },
+      "yearMonth": "2026-10",
+      "workType": "분류",
+      "checkIn": {
+       "_seconds": 1793404800,
+       "_nanoseconds": 0
+      },
+      "originalCheckIn": {
+       "_seconds": 1793404500,
+       "_nanoseconds": 761000000
+      },
+      "checkInMethod": "gps",
+      "status": "present",
+      "isModified": false,
+      "modifyRequested": false,
+      "snapshotWage": 10320,
+      "snapshotWageType": "hourly",
+      "checkInLat": 37.5,
+      "checkInLng": 127.03,
+      "createdAt": {
+       "_seconds": 1793016678,
+       "_nanoseconds": 419000000
+      },
+      "checkInDistance": 0,
+      "checkOutDistance": 0,
+      "checkOutLat": 37.5,
+      "checkOutLng": 127.03,
+      "workHours": 4,
+      "checkOutMethod": "gps",
+      "originalCheckOut": {
+       "_seconds": 1793419200,
+       "_nanoseconds": 758000000
+      },
+      "checkOut": {
+       "_seconds": 1793419200,
+       "_nanoseconds": 0
+      },
+      "finalWage": 41280,
+      "paymentDueDate": {
+       "_seconds": 1793458800,
+       "_nanoseconds": 0
+      },
+      "wageAccountSourceBankbookDocumentVersion": 1,
+      "wageAccountSnapshotVersion": 1,
+      "wageAccountBankName": "QA은행",
+      "wageDetail": {
+       "wageType": "hourly",
+       "baseWage": 10320,
+       "scheduledMinutes": 240,
+       "scheduledBreakMinutes": 0,
+       "actualMinutes": 240,
+       "breakMinutes": 0,
+       "workMinutes": 240,
+       "appliedScheduledBreakMinutes": 0,
+       "additionalBreakMinutes": 0,
+       "overtimeMinutes": 0,
+       "nightMinutes": 0,
+       "baseAmount": 41280,
+       "overtimeAmount": 0,
+       "nightAmount": 0,
+       "additionalAmount": 0,
+       "deductionAmount": 0,
+       "weeklyHolidayAmount": 0,
+       "totalAmount": 41280,
+       "nightAllowanceApplied": true,
+       "appliedMinimumWage": 10320,
+       "taxDeductionType": "none",
+       "netWage": 41280,
+       "calculatedBy": "gpm_own_U4",
+       "earlyArrivalAmount": 0,
+       "appliedSupplementWage": 10320,
+       "payScheduleType": "next_day",
+       "contractExcessMinutes": 0,
+       "premiumOvertimeMinutes": 0,
+       "calculatedAt": {
+        "_seconds": 1793016681,
+        "_nanoseconds": 695000000
+       },
+       "confirmedBy": "gpm_own_U4",
+       "confirmedAt": {
+        "_seconds": 1793419801,
+        "_nanoseconds": 69000000
+       }
+      },
+      "wageStatus": "confirmed",
+      "confirmedBy": "gpm_own_U4",
+      "wageAccountNumberEncrypted": "ENC-local",
+      "wageAccountHolder": "합성 김동명",
+      "wageAccountSourceBankAccountVersion": 1,
+      "wagePaymentReadinessSource": "AUTO_MATCH",
+      "wageAccountSnapshotAt": {
+       "_seconds": 1793016681,
+       "_nanoseconds": 923000000
+      },
+      "finalConfirmedAt": {
+       "_seconds": 1793016681,
+       "_nanoseconds": 923000000
+      },
+      "updatedAt": {
+       "_seconds": 1793016681,
+       "_nanoseconds": 923000000
+      }
+     },
+     {
+      "id": "to_m_U4_s_d1_neltespiAs4pHJjHfsE9_gpm_m4_U4_20261031",
+      "finalWage": 0,
+      "modifyRequested": false,
+      "workDate": {
+       "_seconds": 1793372400,
+       "_nanoseconds": 0
+      },
+      "isModified": false,
+      "yearMonth": "2026-10",
+      "businessId": "biz_m_U4",
+      "businessName": "[합성] 월간 사업장",
+      "wageStatus": "confirmed",
+      "workType": "분류",
+      "applicationId": "to_m_U4_s_d1_neltespiAs4pHJjHfsE9_gpm_m4_U4",
+      "userId": "gpm_m4_U4",
+      "status": "NO_SHOW",
+      "createdAt": {
+       "_seconds": 1793016688,
+       "_nanoseconds": 602000000
+      },
+      "updatedAt": {
+       "_seconds": 1793016688,
+       "_nanoseconds": 602000000
+      }
+     },
+     {
+      "id": "to_m_U4_s_d1_neltespiAs4pHJjHfsE9_gpm_m5_U4_20261031",
+      "applicationId": "to_m_U4_s_d1_neltespiAs4pHJjHfsE9_gpm_m5_U4",
+      "userId": "gpm_m5_U4",
+      "businessId": "biz_m_U4",
+      "businessName": "[합성] 월간 사업장",
+      "workDate": {
+       "_seconds": 1793372400,
+       "_nanoseconds": 0
+      },
+      "workType": "분류",
+      "originalCheckIn": {
+       "_seconds": 1793404560,
+       "_nanoseconds": 781000000
+      },
+      "checkInMethod": "gps",
+      "isModified": false,
+      "modifyRequested": false,
+      "wageStatus": "pending",
+      "snapshotWage": 10320,
+      "snapshotWageType": "hourly",
+      "checkInLat": 37.5,
+      "checkInLng": 127.03,
+      "createdAt": {
+       "_seconds": 1793016683,
+       "_nanoseconds": 433000000
+      },
+      "checkInDistance": 0,
+      "updatedAt": {
+       "_seconds": 1793016685,
+       "_nanoseconds": 292000000
+      }
+     }
+    ],
+    "limitReached": false
+   }
+  },
+  "att|owner|Y2025": {
+   "ok": true,
+   "data": {
+    "items": [],
+    "limitReached": false
+   }
+  },
+  "users|owner": {
+   "ok": true,
+   "data": {
+    "users": {
+     "gpm_m1_U4": {
+      "role": "USER",
+      "name": "합성 김동명",
+      "accountStatus": "active",
+      "gender": "male",
+      "personNo": 1
+     },
+     "gpm_m4_U4": {
+      "role": "USER",
+      "name": "합성 최노쇼",
+      "accountStatus": "active",
+      "gender": "male",
+      "personNo": 2
+     },
+     "gpm_m5_U4": {
+      "role": "USER",
+      "name": "합성 정미퇴근",
+      "accountStatus": "active",
+      "gender": "male",
+      "personNo": 3
+     },
+     "gpm_m7_U4": {
+      "role": "USER",
+      "name": "합성 오출근중",
+      "accountStatus": "active",
+      "gender": "male",
+      "personNo": 4
+     }
+    }
+   }
+  },
+  "review|owner|Y2026": {
+   "ok": true,
+   "data": {
+    "reviewCount": 0,
+    "suppressed": false,
+    "ratingSum": 0,
+    "rehireYesCount": 0,
+    "rehireNoCount": 0,
+    "positiveTagCounts": {}
+   }
+  },
+  "review|owner|2026-10": {
+   "ok": true,
+   "data": {
+    "reviewCount": 0,
+    "suppressed": false,
+    "ratingSum": 0,
+    "rehireYesCount": 0,
+    "rehireNoCount": 0,
+    "positiveTagCounts": {}
+   }
+  },
+  "review|owner|Y2025": {
+   "ok": true,
+   "data": {
+    "reviewCount": 0,
+    "suppressed": false,
+    "ratingSum": 0,
+    "rehireYesCount": 0,
+    "rehireNoCount": 0,
+    "positiveTagCounts": {}
+   }
+  },
+  "review|owner|2026-09": {
+   "ok": true,
+   "data": {
+    "reviewCount": 0,
+    "suppressed": false,
+    "ratingSum": 0,
+    "rehireYesCount": 0,
+    "rehireNoCount": 0,
+    "positiveTagCounts": {}
+   }
+  },
+  "review|owner|2026-11": {
+   "ok": true,
+   "data": {
+    "reviewCount": 0,
+    "suppressed": false,
+    "ratingSum": 0,
+    "rehireYesCount": 0,
+    "rehireNoCount": 0,
+    "positiveTagCounts": {}
+   }
+  },
+  "review|owner|2026-12": {
+   "ok": true,
+   "data": {
+    "reviewCount": 0,
+    "suppressed": false,
+    "ratingSum": 0,
+    "rehireYesCount": 0,
+    "rehireNoCount": 0,
+    "positiveTagCounts": {}
+   }
+  }
+ }
+}

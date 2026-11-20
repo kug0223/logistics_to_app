@@ -20,6 +20,7 @@ import '../../../utils/posting_readiness_reason.dart';
 import 'package:provider/provider.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/text_layout.dart';
 import '../../../utils/dialog_helper.dart';
 
 // Widgets
@@ -90,6 +91,18 @@ class EditApplicationRelations {
     }
   }
 }
+
+/// [CREATE-ROLLBACK] 근무 날짜 등록이 끝났다고 확인되지 않아 예약 공개가 막힌 경우.
+///   준비 단계 문제가 아니다 — 기다려도 저절로 풀리지 않으므로 그 사실을 말한다.
+String? publishSlotBlockNotice(String? code) => switch (code) {
+      'SLOTS_INCOMPLETE' =>
+        '근무 날짜 등록이 끝나지 않아 예약 공개되지 않았어요\n'
+            '공고를 삭제한 뒤 다시 등록해 주세요',
+      'SLOTS_UNVERIFIED' =>
+        '근무 날짜가 모두 등록됐는지 확인할 수 없어 예약 공개되지 않았어요\n'
+            '날짜를 확인하거나 공고를 다시 등록해 주세요',
+      _ => null,
+    };
 
 class AdminEditTOScreen extends StatefulWidget {
   final TOModel to;
@@ -302,6 +315,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     final isExistingSlotEdit = widget.slot != null || widget.isBatchMode;
 
     setState(() { _isSaving = true; _hasChanges = false; });
+    // [POSTING-AUTH-43] 수정(updateTO)이 커밋된 뒤 공개만 실패하면 서버 editRevision 이 이미 올라 있다.
+    var updateCommitted = false;
+    // [POSTING-AUTH-44] 그 수정이 보낸 기준값 — 승인된 내 버전은 이 값 + 1 이다.
+    var sentEditRevision = _expectedEditRevision;
 
     try {
       if ((_publishMode != 'draft' || isExistingSlotEdit) &&
@@ -339,7 +356,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           'hoursBeforeStart': _hoursBeforeStart,
         };
         await _firestoreService.updateTO(widget.to.id, draftUpdates,
-            expectedEditRevision: widget.to.editRevision);
+            expectedEditRevision: _expectedEditRevision);
         if (mounted) {
           ToastHelper.showSuccess('미공개로 저장되었습니다');
           NavigationHelper.popWithChange(context);
@@ -440,8 +457,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         updates['applicationDeadline'] = null;
       }
 
+      sentEditRevision = _expectedEditRevision;
       await _firestoreService.updateTO(widget.to.id, updates,
-          expectedEditRevision: widget.to.editRevision);
+          expectedEditRevision: sentEditRevision);
+      updateCommitted = true;
 
       // [PUB-CF] 첫 공개: CF callablePublishTO (maxActiveTOs 서버 강제)
       if (shouldPublish) {
@@ -458,9 +477,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             final parts = e.toString().split(':');
             final limitStr = parts.length >= 2 ? parts.last : '4';
             if (mounted) ToastHelper.showError('진행 중인 공고가 $limitStr개를 초과할 수 없습니다');
+          } else if (e.code == 'permission-denied') {
+            // [POSTING-QUOTA-42] 권한 거절은 '잠시 후 다시 시도'가 아니다.
+            if (mounted) ToastHelper.showError('공고 관리 권한이 없습니다.\n공고 관리 권한이 있는 관리자에게 문의하세요.');
           } else {
             if (mounted) ToastHelper.showError('공개 전환에 실패했습니다. 잠시 후 다시 시도해주세요');
           }
+          _adoptCommittedRevision(sentEditRevision);
           if (mounted) setState(() { _isSaving = false; _hasChanges = true; });
           return;
         }
@@ -524,11 +547,32 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         }
         final msg = _cfErrorMessage(e) ?? '수정에 실패했습니다';
         ToastHelper.showError(msg);
-        setState(() => _hasChanges = true);
+        // [POSTING-AUTH-43/44] 수정은 커밋되고 공개만 실패했으면(한도 등) 내 수정이 승인된 버전을 기준으로 둔다.
+        if (updateCommitted) _adoptCommittedRevision(sentEditRevision);
+        if (mounted) setState(() => _hasChanges = true);
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
+  }
+
+  /// [POSTING-AUTH-43] 서버가 이미 받은 수정의 editRevision. null 이면 화면을 연 시점 값.
+  int? _serverEditRevision;
+
+  /// [POSTING-AUTH-43] 이 화면에서 서버 공고가 바뀌었는가(공개 실패라도 수정은 커밋됨) — 나갈 때 목록 새로고침.
+  bool _serverChanged = false;
+
+  int get _expectedEditRevision => _serverEditRevision ?? widget.to.editRevision;
+
+  /// [POSTING-AUTH-44] 수정 커밋 뒤 공개가 실패한 경우: 다음 저장의 기준을 **내 수정이 승인된 버전**으로 둔다.
+  ///   callableUpdateTO 는 editRevision 이 보낸 값과 같을 때만 저장하고 그 값 + 1 을 쓴다(STALE-EDIT 계약,
+  ///   일반 편집·재개 모두). 공개(callablePublishTO)는 editRevision 을 바꾸지 않는다.
+  ///   .43 은 여기서 서버의 **최신** 값을 읽었다 — 그 사이 다른 관리자가 고쳤으면 그 번호를 받아
+  ///   이 화면의 오래된 입력이 그 변경을 조용히 덮었다(.44 재현). 이제 그런 경우 다음 저장이
+  ///   '수정 내용 충돌'로 멈춘다. 쓰기는 다시 보내지 않는다.
+  void _adoptCommittedRevision(int sentEditRevision) {
+    _serverChanged = true;
+    _serverEditRevision = sentEditRevision + 1;
   }
 
   // ============================================================
@@ -1103,6 +1147,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       // [POSTING-V2-03G.1] 업무를 더하는 것만으로도 막히는 경우가 있다 —
       //   마스터 경로는 확정자가 있으면 근무 조건 변경 자체를 거부한다.
       final candidate = WorkDetailData(
+        workTypeId: result.workTypeId,
         workType: result.workType!,
         workTypeIcon: result.workTypeIcon,
         workTypeColor: result.workTypeColor,
@@ -1230,10 +1275,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   ///   `business.ownerId` 다. SubAdmin 은 그것을 스스로 해결할 수 없으므로
   ///   그 사람에게 "인감을 등록하세요" 라고 말하지 않는다 — 무엇이 모자란지만
   ///   알려 주고 해결은 사업장 관리자에게 넘긴다.
+
   List<Widget> _buildPublishBlockedNotice(BuildContext context) {
+    final slotNotice = publishSlotBlockNotice(widget.to.publishBlockedReason);
     final blocked =
         PostingNotReady.fromCode(widget.to.publishBlockedReason);
-    if (blocked == null) return const [];
+    if (blocked == null && slotNotice == null) return const [];
     // setup owner 인가 — SubAdmin 은 아니다.
     final canSetUp = !context.read<UserProvider>().isSubAdmin;
     return [
@@ -1252,7 +1299,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             Expanded(
               child: Text(
-                blocked.blockedNotice(canSetUp: canSetUp),
+                slotNotice ?? blocked!.blockedNotice(canSetUp: canSetUp),
                 style: ResponsiveHelper.smallStyle(context,
                     color: AppColors.warningDark),
               ),
@@ -1298,7 +1345,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           cancelText: '계속 수정',
           icon: Icons.exit_to_app_outlined,
         );
-        if (leave && mounted) nav.pop();
+        // [POSTING-AUTH-43] 공개는 실패했어도 수정이 커밋됐으면 목록이 새 버전을 읽게 한다.
+        if (leave && mounted) nav.pop(_serverChanged ? true : null);
       },
       // PATCH-4 (ADMIN-DESIGN-5): Scaffold → AppPageScaffold (메인 폼)
       child: AppPageScaffold(
@@ -1307,18 +1355,23 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           // [M1-FIX] 저장 진행 중에는 알림 화면 이동 차단
           _buildNotificationAction(disabled: _isSaving),
         ],
-        bottomNavigationBar: SafeArea(
-          top: false,
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              ResponsiveHelper.spacing(context, 16),
-              ResponsiveHelper.spacing(context, 8),
-              ResponsiveHelper.spacing(context, 16),
-              ResponsiveHelper.spacing(context, 12),
-            ),
-            child: TOActionButton.save(
-              onPressed: _isSaving ? null : _saveChanges,
-              isLoading: _isSaving,
+        // [DU1 구현58 C1 S031] Scaffold 는 키보드가 올라와도 bottomNavigationBar 를 올리지 않는다 — 제목 입력 중
+        //   '저장하기' 가 키보드(300) 뒤에 가려졌다(320·2.0 / 360·1.0 실측). create(구현54)와 같은 방식으로 키보드 높이만큼 올린다.
+        bottomNavigationBar: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                ResponsiveHelper.spacing(context, 16),
+                ResponsiveHelper.spacing(context, 8),
+                ResponsiveHelper.spacing(context, 16),
+                ResponsiveHelper.spacing(context, 12),
+              ),
+              child: TOActionButton.save(
+                onPressed: _isSaving ? null : _saveChanges,
+                isLoading: _isSaving,
+              ),
             ),
           ),
         ),
@@ -1360,10 +1413,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                   padding: EdgeInsets.only(
                       left: ResponsiveHelper.spacing(context, 4),
                       bottom: ResponsiveHelper.spacing(context, 4)),
+                  // [DU482] grey500(밝은 면 위 약 2.5) → textTertiary(보조 안내 · 기준 4.5 이상).
+                  // [DU483] 큰 글자에서 '공고 생 / 성 후'처럼 음절 사이에서 끊겼다 — 낱말 사이에서만 줄을 바꾼다. 읽기 도구에는 원문.
                   child: Text(
-                    '날짜·근무요일은 공고 생성 후 변경할 수 없습니다',
+                    TextLayout.keepWords('날짜·근무요일은 공고 생성 후 변경할 수 없습니다'),
+                    semanticsLabel: '날짜·근무요일은 공고 생성 후 변경할 수 없습니다',
                     style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.grey500),
+                        color: AppColors.textTertiary),
                   ),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -1518,10 +1574,20 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   /// FirebaseFunctionsException에서 사용자에게 표시할 메시지 추출.
   /// 안전한 코드('failed-precondition', 'invalid-argument', 'not-found')만 노출.
   String? _cfErrorMessage(Object e) {
+    // [POSTING-QUOTA-42] 한도·권한 거절을 '수정에 실패했습니다'로 뭉개지 않는다(재개·편집·공개 모두 서버가 판정).
+    //   한도는 CF 예외로도, 서비스가 바꾼 Exception('MAX_ACTIVE_TO_LIMIT:N')으로도 온다 — 같은 말을 한다.
+    final raw = e.toString();
+    if (raw.contains('MAX_ACTIVE_TO_LIMIT')) {
+      final limitStr = raw.split(':').last.trim();
+      return '진행 중인 공고가 $limitStr개를 초과할 수 없습니다';
+    }
     if (e is FirebaseFunctionsException) {
       const safeCodes = ['failed-precondition', 'invalid-argument', 'not-found'];
       if (safeCodes.contains(e.code) && (e.message?.isNotEmpty ?? false)) {
         return e.message;
+      }
+      if (e.code == 'permission-denied') {
+        return '공고 관리 권한이 없습니다.\n공고 관리 권한이 있는 관리자에게 문의하세요.';
       }
     }
     return null;
@@ -1656,7 +1722,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         'publishAt': visibleFrom.toUtc().millisecondsSinceEpoch,  // ms → CF가 Timestamp 변환
         'isPublished': false,
         'status': TOStatus.scheduled,
-      }, expectedEditRevision: widget.to.editRevision);
+      }, expectedEditRevision: _expectedEditRevision);
       if (mounted) ToastHelper.showInfo('미공개 → 예약공개 전환 ($m/$d $h:$min 공개 예정)');
     }
     return true;

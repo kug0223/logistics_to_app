@@ -23,6 +23,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_text_styles.dart';
+import '../utils/text_layout.dart';
 
 class SectionHeader extends StatelessWidget {
   final String title;
@@ -39,6 +40,11 @@ class SectionHeader extends StatelessWidget {
   /// ResponsiveHelper scale factor (기본 1.0)
   final double s;
 
+  /// [DU1 구현99 C99-2] 우측 액션의 **바깥 receiver 최소 크기**(opt-in).
+  ///   null(기본)이면 예전과 같다(세로 패딩 8*s — 실측 73.0×37.0). 값을 주면 그 크기 이상으로 넓히고 글자는 가운데에 둔다.
+  ///   소비처마다 실측 뒤 켠다 — 공용 기본값을 바꾸면 14개 화면 60곳의 머리 높이가 한꺼번에 바뀐다.
+  final double? minActionTarget;
+
   const SectionHeader({
     super.key,
     required this.title,
@@ -46,6 +52,7 @@ class SectionHeader extends StatelessWidget {
     this.actionText,
     this.onAction,
     this.s = 1.0,
+    this.minActionTarget,
   });
 
   @override
@@ -65,12 +72,13 @@ class SectionHeader extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(title, style: AppTextStyles.sectionTitle()),
+                      // [DU330] 낱말 단위(320·2.0 '근 / 무 내역' 해소), 원문은 낭독용
+                      Text(TextLayout.keepWords(title), semanticsLabel: title, style: AppTextStyles.sectionTitle()),
                       SizedBox(height: 2 * s),
                       Text(subtitle!, style: AppTextStyles.sectionSubtitle()),
                     ],
                   )
-                : Text(title, style: AppTextStyles.sectionTitle()),
+                : Text(TextLayout.keepWords(title), semanticsLabel: title, style: AppTextStyles.sectionTitle()), // [DU330]
           ),
           // 우측 액션
           if (actionText != null && onAction != null) ...[
@@ -87,13 +95,15 @@ class SectionHeader extends StatelessWidget {
               child: GestureDetector(
                 onTap: onAction,
                 behavior: HitTestBehavior.opaque,
-                child: Padding(
-                  // 터치 영역 확장 (최소 44×44 확보)
-                  padding:
-                      EdgeInsets.symmetric(vertical: 8 * s, horizontal: 4 * s),
-                  child: Text(
-                    actionText!,
-                    style: AppTextStyles.sectionAction(),
+                child: _minTarget(
+                  Padding(
+                    // 터치 영역 확장 (최소 44×44 확보)
+                    padding:
+                        EdgeInsets.symmetric(vertical: 8 * s, horizontal: 4 * s),
+                    child: Text(
+                      actionText!,
+                      style: AppTextStyles.sectionAction(),
+                    ),
                   ),
                 ),
               ),
@@ -102,5 +112,15 @@ class SectionHeader extends StatelessWidget {
         ],
       );
     });
+  }
+
+  /// opt-in 최소 receiver — 자식은 제 크기를 지키고(widthFactor/heightFactor 1) 그 바깥을 최소 크기까지 넓힌다.
+  Widget _minTarget(Widget child) {
+    final m = minActionTarget;
+    if (m == null) return child;
+    return ConstrainedBox(
+      constraints: BoxConstraints(minWidth: m, minHeight: m),
+      child: Align(widthFactor: 1.0, heightFactor: 1.0, child: child),
+    );
   }
 }

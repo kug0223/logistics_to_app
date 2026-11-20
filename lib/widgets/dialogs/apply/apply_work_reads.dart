@@ -28,6 +28,7 @@ class ApplyWorkReads {
     required this.conflictsForWorkDetails,
     required this.myApplicationsForTOFresh,
     required this.businessForPolicy,
+    this.confirmedForConflictCheck,
   });
 
   /// ① 이 TO 에 대한 **내** 지원서. key = toId + uid.
@@ -64,6 +65,12 @@ class ApplyWorkReads {
   ///   읽지 못하면 `null` — 모름이고, 사업장 기본값으로 메우지 않는다.
   final Future<BusinessModel?> Function(String businessId) businessForPolicy;
 
+  /// ⑥ [DU278] 장기공고 근무 기간 충돌 확인용 — 내 확정 지원 전부(CF 경유, uid 서버 검증). 읽기다.
+  ///
+  ///   선택 인자다. 주지 않은 주입처는 화면이 지금처럼 서비스 메서드를 직접 부른다(동작 같음).
+  ///   production 기본값(아래 of)은 같은 서비스 메서드다.
+  final Future<List<ApplicationModel>> Function()? confirmedForConflictCheck;
+
   factory ApplyWorkReads.of([
     FirestoreService? service,
     ScheduleConflictService? conflictService,
@@ -82,6 +89,7 @@ class ApplyWorkReads {
               workDate: workDate, workDetails: workDetails),
       myApplicationsForTOFresh: svc.getMyApplicationsForTOFresh,
       businessForPolicy: svc.getBusinessById,
+      confirmedForConflictCheck: svc.getMyConfirmedApplicationsForConflictCheck,
     );
   }
 }

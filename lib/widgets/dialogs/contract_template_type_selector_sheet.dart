@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/core/contract_template_model.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import 'styled_dialog.dart';
 
 /// 근무 형태(templateType) 선택 시트가 불린 목적.
@@ -112,22 +113,25 @@ class ContractTemplateTypeSelectorSheet extends StatelessWidget {
                   ),
                 ),
 
+                // [DU351] 제목 · 안내 낱말 단위(안내는 줄바꿈 보존), 안내 grey500(2.68) → textSecondary — O092(DU344)와 같은 규칙
                 Text(
-                  _heading,
+                  TextLayout.keepWords(_heading),
+                  semanticsLabel: _heading,
                   style: ResponsiveHelper.titleStyle(context)
                       .copyWith(fontWeight: FontWeight.bold),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                 Text(
-                  _subheading,
+                  TextLayout.phrases(_subheading),
+                  semanticsLabel: _subheading,
                   style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.grey500),
+                      color: AppColors.textSecondary),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
                 _TypeRow(
                   icon: Icons.calendar_today_outlined,
-                  iconColor: AppColors.info,
+                  iconColor: AppColors.infoDeep, // [DU351] info → infoDeep
                   bgColor: AppColors.infoBg,
                   title: ContractTemplateType.label(ContractTemplateType.daily),
                   subtitle: _typeSubtitle(ContractTemplateType.daily),
@@ -137,7 +141,7 @@ class ContractTemplateTypeSelectorSheet extends StatelessWidget {
                 SizedBox(height: ResponsiveHelper.spacing(context, 10)),
                 _TypeRow(
                   icon: Icons.date_range_outlined,
-                  iconColor: AppColors.success,
+                  iconColor: AppColors.successDark, // [DU351] success → successDark
                   bgColor: AppColors.successBg,
                   title: ContractTemplateType.label(ContractTemplateType.period),
                   subtitle: _typeSubtitle(ContractTemplateType.period),
@@ -153,7 +157,7 @@ class ContractTemplateTypeSelectorSheet extends StatelessWidget {
                     onPressed: () => Navigator.pop(context),
                     child: Text('취소',
                         style: ResponsiveHelper.bodyStyle(context,
-                            color: AppColors.grey500)),
+                            color: AppColors.textSecondary)), // [DU351] grey500 → textSecondary
                   ),
                 ),
               ],
@@ -213,20 +217,23 @@ class _TypeRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title,
+                    // [DU351] 제목 · 설명 낱말 단위, 설명 grey500 → textSecondary
+                    Text(TextLayout.keepWords(title),
+                        semanticsLabel: title,
                         style: ResponsiveHelper.bodyStyle(context)
                             .copyWith(fontWeight: FontWeight.w600)),
                     if (subtitle.isNotEmpty) ...[
                       SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                      Text(subtitle,
+                      Text(TextLayout.keepWords(subtitle),
+                          semanticsLabel: subtitle,
                           style: ResponsiveHelper.tinyStyle(context,
-                              color: AppColors.grey500)),
+                              color: AppColors.textSecondary)),
                     ],
                   ],
                 ),
               ),
               Icon(Icons.chevron_right,
-                  color: AppColors.grey400,
+                  color: AppColors.grey600, // [DU351] grey400 → grey600
                   size: ResponsiveHelper.iconSize(context, 20)),
             ],
           ),

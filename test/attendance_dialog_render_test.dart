@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -90,10 +91,10 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('당일명단'), findsOneWidget);
     // 조회 실패 → 에러 상태. '확정된 근무자가 없습니다' 를 쓰지 않는다.
-    expect(find.text('확정된 근무자가 없습니다'), findsNothing);
-    expect(find.textContaining('명단'), findsWidgets);
+    expect(findVisibleText('확정된 근무자가 없습니다'), findsNothing);
+    expect(findVisibleTextContaining('명단'), findsWidgets);
     // 명단을 모르는 상태에서 명단 전제 행동을 열지 않는다.
-    expect(find.text('명단 출력'), findsNothing);
+    expect(findVisibleText('명단 출력'), findsNothing);
   });
 
   testWidgets('ADR-2 320dp 좁은 폭에서도 overflow 가 없다', (tester) async {

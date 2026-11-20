@@ -5,6 +5,7 @@ import '../../models/core/employment_contract_model.dart';
 import '../../providers/user_provider.dart';
 import '../../screens/contract/contract_sign_screen.dart';
 import '../../screens/user/user_contracts_screen.dart';
+import '../../screens/user/user_tab_scope.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
 
@@ -32,6 +33,12 @@ class PendingContractBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // [CONTRACT-DISPATCH-B5] 화면 단위 배너(useSafeArea)는 근로자 셸 **안**에서는 그리지 않는다.
+    //   셸(UserRootScreen)이 하단 탭 위에 같은 배너를 이미 그린다 — 탭 안으로 push 된 출퇴근·
+    //   리뷰 등은 두 장이 겹쳐 보였다(DEVICE 10-25). 셸 밖(root navigator)에서는 그대로 그린다.
+    if (useSafeArea && UserTabScope.of(context) != null) {
+      return const SizedBox.shrink();
+    }
     // 가용성 체크 — Provider가 없는 트리에서도 안전하게 비표시.
     try {
       Provider.of<UserProvider>(context, listen: false);
@@ -39,6 +46,15 @@ class PendingContractBar extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
+    // [UI-4] 계약서 화면이 열려 있으면 내려간다 — 그 화면이 이미 이 배너의 목적지다.
+    return ValueListenableBuilder<int>(
+      valueListenable: ContractSignScreen.openCount,
+      builder: (_, open, child) => open > 0 ? const SizedBox.shrink() : child!,
+      child: _bar(context),
+    );
+  }
+
+  Widget _bar(BuildContext context) {
     return Selector<UserProvider,
         ({bool show, int count, EmploymentContractModel? nearest})>(
       selector: (_, p) => (

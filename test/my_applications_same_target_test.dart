@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -7,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:ALfit/models/core/attendance_model.dart';
 import 'package:ALfit/services/tax_identity_service.dart';
 import 'package:ALfit/models/core/application_model.dart';
 import 'package:ALfit/models/core/employment_contract_model.dart';
@@ -138,7 +140,13 @@ MyApplicationsReads _reads(
         return const <EmploymentContractModel>[];
       },
       autoExpirePending: (uid) async {},
+      monthlyAttendances: (
+              {required String userId,
+              required int year,
+              required int month}) async =>
+          const [],
       // [R7-PREDEVICE-DISCLOSURE-RENDER.1] 세무 축이 읽기 경계로 옮겨졌다.
+      reviewById: (key) async => null,
       taxStatus: () async => const TaxIdentityStatus.unknown(),
     );
 
@@ -284,7 +292,7 @@ void main() {
     await _pump(tester, reads: _reads(const [], pageError: Exception('network')));
 
     expect(tester.takeException(), isNull);
-    expect(find.textContaining('아직'), findsNothing,
+    expect(findVisibleTextContaining('아직'), findsNothing,
         reason: '못 읽은 것을 "아직 지원이 없다"로 바꾸지 않는다');
   });
 

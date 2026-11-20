@@ -23,6 +23,8 @@ import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/utils/format_helper.dart';
 import 'package:ALfit/screens/user/user_home_reads.dart';
+import 'support/checkin_contract_fixture.dart';
+import 'support/visible_text.dart';
 import 'package:ALfit/screens/user/attendance_check_screen.dart';
 import 'package:ALfit/screens/user/user_home_screen.dart';
 import 'package:ALfit/screens/user/my_applications_screen.dart';
@@ -110,6 +112,18 @@ class _UserProviderDouble extends UserProvider {
 // ── 오늘에서 파생한 날짜 ────────────────────────────────────────
 final DateTime _today = FormatHelper.toKstDate(DateTime.now());
 DateTime _day(int offset) => _today.add(Duration(days: offset));
+
+/// [DEVICE-MISMATCH-FIX] 화면 시계를 **오늘 KST 10:00** 으로 고정한다.
+///   예전에는 시계를 주입하지 않아 화면이 실제 시각을 썼다. 홈 Hero 가
+///   예정 시간이 끝난 미출근 근무에 `출근하기`를 권하지 않게 바뀐 뒤로,
+///   기본 단기 근무(09:00~18:00)가 **18시 이후 실행**에서는 끝난 근무가 되어
+///   이 파일의 `출근하기`·제목 기대가 실행 시각에 따라 갈렸다(10-20 18:02 실측 9건).
+///   이 파일이 뜻하는 상황은 '오늘 근무가 진행 중인 시간'이다.
+final DateTime _clock = () {
+  final k = DateTime.now().toUtc().add(const Duration(hours: 9));
+  return DateTime.utc(k.year, k.month, k.day, 10)
+      .subtract(const Duration(hours: 9));
+}();
 
 const _biz = 'biz1';
 
@@ -253,19 +267,33 @@ UserHomeReads _reads({
   var renewalCall = 0;
   var tosCall = 0;
   var corrCall = 0;
+  // [CONTRACT-DISPATCH-B4] 홈 CTA 는 계약 동의 판정을 함께 본다 — 이 시험의 전제: 오늘 근무 계약은 양측 서명 완료.
+  //   홈은 같은 Future.wait 에서 지원서를 계약보다 먼저 부른다 — 그 응답을 기다려 같은 근무의 계약을 만든다.
+  Future<List<ApplicationModel>>? lastApps;
+  Future<List<ApplicationModel>> appsFor() {
+    final i = appCall++;
+    if (applicationsByCall != null && i < applicationsByCall.length) {
+      return applicationsByCall[i];
+    }
+    if (applicationsError != null) {
+      return Future<List<ApplicationModel>>.error(applicationsError);
+    }
+    return Future<List<ApplicationModel>>.value(
+        applications ?? const <ApplicationModel>[]);
+  }
   return UserHomeReads(
     slotsForTO: (toId) async => const <SlotModel>[],
+    myContracts: (uid) async {
+      try {
+        return completedContractsFor(
+            await (lastApps ?? Future.value(const <ApplicationModel>[])));
+      } catch (_) {
+        return const [];
+      }
+    },
     myApplications: (uid) {
       if (calls != null) calls['apps'] = (calls['apps'] ?? 0) + 1;
-      final i = appCall++;
-      if (applicationsByCall != null && i < applicationsByCall.length) {
-        return applicationsByCall[i];
-      }
-      if (applicationsError != null) {
-        return Future<List<ApplicationModel>>.error(applicationsError);
-      }
-      return Future<List<ApplicationModel>>.value(
-          applications ?? const <ApplicationModel>[]);
+      return lastApps = appsFor();
     },
     myMonthlyAttendances: (
         {required String userId, required int year, required int month}) async {
@@ -340,7 +368,7 @@ Future<void> _pump(
           //   State 가 버려져 로드가 처음부터 다시 돈다.
           child: KeyedSubtree(key: isolationKey, child: child!),
         ),
-        home: UserHomeScreen(reads: reads),
+        home: UserHomeScreen(reads: reads, clock: () => _clock),
       ),
     ),
   );
@@ -403,7 +431,7 @@ Future<void> _pumpWithScope(
           pendingScheduleMonth: null,
           clearPendingScheduleMonth: () => log.calls.add('clearPendingScheduleMonth'),
           switchToScheduleNow: () => log.calls.add('switchToScheduleNow'),
-          child: UserHomeScreen(reads: reads),
+          child: UserHomeScreen(reads: reads, clock: () => _clock),
         ),
       ),
     ),
@@ -466,6 +494,62 @@ class _RouteLog extends NavigatorObserver {
   }
 }
 
+// ── [DU371] CP03(11-11) 문구 · 조판 추종 locator(소급 14 §2-1, 홈 lib 변경 0).
+//   행동 · 목적지 · 복귀 · 오류 ≠ 0 · 음성 단언은 그대로 두고, 찾는 대상만 현재 표면으로 바꾼다.
+//   UH079 '오늘의 근무' → '오늘의 약속'. 이 제목은 오늘 근무 Hero(State B)와 약속 0 카드(Q7)가 함께 쓴다(_buildPriorityCard).
+//     오늘 근무 Hero = 제목 '오늘의 약속' 1개 + 약속 0 문구 없음 · 없음 = 그 조합이 아님(다른 Hero · 약속 0 · 실패).
+//   카드 글(_taskCardRow 제목 · 부제)은 낱말 조판(WJ) 표시 + 원문 semanticsLabel(CP03 후속 C1).
+//     보이는 글자(정규화)가 원문 낭독과 같은 Text 만 찾는다 — 같은 문구의 다른 표면(오늘 Hero 진행 라벨 등)과 섞지 않는다.
+//   UH086 '언제 일하고 싶으세요?' 시각 삭제 → 날짜 띠 그룹 의미 '일할 날짜 선택'.
+Finder _promiseTitle() => findVisibleText('오늘의 약속');
+Finder _promiseEmpty() => find.text('오늘 확정된 근무가 없어요');
+bool _todayHeroShown() =>
+    _promiseTitle().evaluate().length == 1 && _promiseEmpty().evaluate().isEmpty;
+void _expectTodayHero(bool shown, {String? reason}) {
+  if (shown) {
+    expect(_promiseTitle(), findsOneWidget, reason: reason);
+    expect(_promiseEmpty(), findsNothing, reason: reason);
+  } else {
+    expect(_todayHeroShown(), isFalse, reason: reason);
+  }
+}
+
+Finder _cardLine(bool Function(String label) match) => find.byWidgetPredicate((w) =>
+    w is Text &&
+    w.semanticsLabel != null &&
+    match(w.semanticsLabel!) &&
+    visibleText(w.data ?? '') == w.semanticsLabel);
+Finder _checkoutCardTitle() => _cardLine((l) => l == '퇴근 기록이 필요해요');
+Finder _idRequestCardTitle() => _cardLine((l) => l.contains('신분증 열람을 요청했어요'));
+Finder _dateExplorerGroup() =>
+    find.byWidgetPredicate((w) => w is Semantics && w.properties.label == '일할 날짜 선택');
+
+/// UH148 '$totalCount개 모두보기 ›' → 머리 행동 '전체 보기'. 같은 글자가 '내 지원 현황' 머리에도 있어,
+///   추천 섹션 제목('추천 일자리' · '둘러볼 일자리')을 품은 가장 가까운 조상 묶음 안의 것만 찾는다.
+Finder _recSectionAllAction() => find.byElementPredicate((e) {
+      final w = e.widget;
+      if (w is! Text || w.data != '전체 보기') return false;
+      bool? ok;
+      e.visitAncestorElements((a) {
+        final titles = <String>{};
+        void walk(Element x) {
+          final xw = x.widget;
+          if (xw is Text) titles.add(visibleText(xw.data ?? ''));
+          x.visitChildren(walk);
+        }
+
+        a.visitChildren(walk);
+        final hasRec = titles.contains('추천 일자리') || titles.contains('둘러볼 일자리');
+        final hasOther = titles.contains('내 지원 현황');
+        if (hasRec || hasOther) {
+          ok = hasRec && !hasOther;
+          return false;
+        }
+        return true;
+      });
+      return ok ?? false;
+    });
+
 void main() {
   setUp(() {
     // 투어를 완료로 둔다 — 아니면 첫 프레임에 투어 화면이 덮는다.
@@ -493,14 +577,14 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('오늘의 근무'), findsOneWidget,
+    _expectTodayHero(true,
         reason: '장기 근무의 workDate 는 계약 시작일이라 '
             'toKstDate(workDate)==today 로는 오늘 일하는 사람이 누락됐다');
-    expect(find.text('오늘 10:00 출근이에요'), findsOneWidget);
-    expect(find.text('출근하기'), findsOneWidget);
+    expect(findVisibleText('오늘 10:00 출근이에요'), findsOneWidget); // [DU371] CP03 C1 Hero 제목 낱말 조판
+    expect(findVisibleText('출근하기'), findsOneWidget);
     // 날짜 탐색은 Priority Hero 와 **독립된 상시 섹션**이다(설계 주석 명시).
     // 둘이 동시에 보이는 것이 정상이므로 배타 조건으로 쓰지 않는다.
-    expect(find.text('언제 일하고 싶으세요?'), findsOneWidget);
+    expect(_dateExplorerGroup(), findsOneWidget); // [DU371] UH086 질문 시각 삭제 → 그룹 의미 '일할 날짜 선택'
   });
 
   testWidgets('UHR-2 수정 전 술어(workDate==today)는 같은 fixture 에서 Hero 를 잃는다',
@@ -515,7 +599,7 @@ void main() {
 
     // 그리고 화면은 수정 후 술어를 따른다.
     await _pump(tester, reads: _reads(applications: [app]));
-    expect(find.text('오늘의 근무'), findsOneWidget);
+    _expectTodayHero(true);
   });
 
   testWidgets('UHR-3 휴무일은 오늘 근무가 아니다 — 술어를 통째로 느슨하게 만들지 않았다',
@@ -532,7 +616,7 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('오늘의 근무'), findsNothing,
+    _expectTodayHero(false,
         reason: '휴무일에 출근 CTA 를 띄우면 없는 근무를 만들어낸다');
   });
 
@@ -542,8 +626,8 @@ void main() {
       reads: _reads(applications: [_shortTerm(workDate: _today)]),
     );
 
-    expect(find.text('오늘의 근무'), findsOneWidget);
-    expect(find.text('오늘 09:00 출근이에요'), findsOneWidget);
+    _expectTodayHero(true);
+    expect(findVisibleText('오늘 09:00 출근이에요'), findsOneWidget); // [DU371] CP03 C1 Hero 제목 낱말 조판
   });
 
   testWidgets('UHR-5 오늘 근무가 없고 새 확정이 있으면 새 확정 Hero', (tester) async {
@@ -558,16 +642,16 @@ void main() {
       ]),
     );
 
-    expect(find.text('새로운 소식'), findsOneWidget);
-    expect(find.text('오늘의 근무'), findsNothing);
+    expect(findVisibleText('새로 확정된 근무'), findsOneWidget);
+    _expectTodayHero(false);
   });
 
   testWidgets('UHR-6 아무것도 없으면 날짜 탐색 Hero', (tester) async {
     await _pump(tester, reads: _reads(applications: const []));
 
-    expect(find.text('언제 일하고 싶으세요?'), findsOneWidget);
-    expect(find.text('오늘의 근무'), findsNothing);
-    expect(find.text('새로운 소식'), findsNothing);
+    expect(_dateExplorerGroup(), findsOneWidget); // [DU371] UH086 질문 시각 삭제 → 그룹 의미 '일할 날짜 선택'
+    _expectTodayHero(false);
+    expect(findVisibleText('새로 확정된 근무'), findsNothing);
   });
 
   // ══════════════════════════════════════════════════════════
@@ -582,7 +666,7 @@ void main() {
 
     expect(find.text('지원 현황을 불러오지 못했어요'), findsOneWidget);
     // 실패한 섹션마다 재시도를 준다 — 한 곳만 있으면 나머지는 막힌 채로 남는다.
-    expect(find.text('다시 시도'), findsWidgets);
+    expect(findVisibleText('다시 시도'), findsWidgets);
     expect(find.text('아직 지원한 일자리가 없어요'), findsNothing,
         reason: '못 읽은 것을 "없다"로 바꾸면 사용자가 지원 기록을 잃었다고 믿는다');
   });
@@ -605,7 +689,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     // 한 칸이 실패해도 나머지 칸은 그대로 그린다
-    expect(find.text('오늘의 근무'), findsOneWidget);
+    _expectTodayHero(true);
     expect(find.text('지원 현황을 불러오지 못했어요'), findsNothing);
   });
 
@@ -636,7 +720,7 @@ void main() {
     for (var i = 0; i < 20; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
-    expect(find.text('오늘의 근무'), findsOneWidget);
+    _expectTodayHero(true);
   });
 
   testWidgets('UHR-11 계정이 바뀌면 이전 사용자의 응답을 앉히지 않는다', (tester) async {
@@ -659,7 +743,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
-    expect(find.text('오늘의 근무'), findsNothing,
+    _expectTodayHero(false,
         reason: '다른 사람의 확정 근무가 새 계정 홈에 앉으면 안 된다');
   });
 
@@ -677,7 +761,8 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('아직 이번 달 수입이 없어요'), findsNothing,
+    // [DU254] 홈은 이 문구를 keepWords 로 그린다(DU203) — 원문 find.text 는 늘 0개라 이 단언이 거짓 통과했다.
+    expect(findVisibleText('아직 표시할 수입 금액이 없어요'), findsNothing,
         reason: '못 읽은 달을 "번 돈이 없다"로 말하면 미지급을 놓친다');
     expect(find.text('확인 못함'), findsWidgets,
         reason: '근무 완료·예상 수입은 근태에서 나온다 — 모르면 모른다고 말한다');
@@ -687,7 +772,7 @@ void main() {
   testWidgets('UHR-13 정상 0원은 실패와 다른 화면이다', (tester) async {
     await _pump(tester, reads: _reads(applications: const []));
 
-    expect(find.text('아직 이번 달 수입이 없어요'), findsOneWidget);
+    expect(findVisibleText('아직 표시할 수입 금액이 없어요'), findsOneWidget); // [DU254] 보이는 글자 기준(DU203 keepWords)
     expect(find.text('확인 못함'), findsNothing);
   });
 
@@ -699,7 +784,7 @@ void main() {
       reads: _reads(applicationsError: Exception('network')),
     );
 
-    expect(find.text('계약해지 요청이 있는지 확인하지 못했어요'), findsOneWidget);
+    expect(find.text('계약해지 요청을 확인하지 못했어요'), findsOneWidget);
   });
 
   testWidgets('UHR-15 늦게 온 이전 로드의 연장 제안이 현재 화면을 덮지 않는다',
@@ -736,7 +821,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
-    expect(find.text('계약 연장 제안'), findsNothing,
+    expect(findVisibleText('계약 연장 제안'), findsNothing,
         reason: '이미 사라진 제안이 낡은 응답으로 되살아나면 안 된다');
   });
 
@@ -749,7 +834,7 @@ void main() {
       ),
     );
 
-    expect(find.text('계약 연장 제안'), findsOneWidget);
+    expect(findVisibleText('계약 연장 제안'), findsOneWidget);
     expect(find.text('확인하기'), findsOneWidget);
   });
 
@@ -763,8 +848,8 @@ void main() {
       reads: _reads(applications: [_shortTerm(workDate: _today)]),
     );
 
-    expect(find.text('오늘의 근무'), findsOneWidget);
-    await tester.tap(find.text('출근하기'));
+    _expectTodayHero(true);
+    await tester.tap(findVisibleText('출근하기'));
     for (var i = 0; i < 20; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
@@ -801,11 +886,11 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('퇴근 기록이 남았어요'), findsOneWidget,
+    expect(_checkoutCardTitle(), findsOneWidget,
         reason: '출근했고 퇴근이 남은 근무에 Home 진입점이 있어야 한다');
     expect(find.text('퇴근하기'), findsOneWidget);
     // 어제 근무를 "오늘 출근"으로 둔갑시키지 않는다.
-    expect(find.text('오늘의 근무'), findsNothing);
+    _expectTodayHero(false);
   });
 
   testWidgets('UHR-19 (A) 퇴근 CTA 는 실제로 출퇴근 화면을 연다', (tester) async {
@@ -855,7 +940,7 @@ void main() {
       ),
     );
 
-    expect(find.text('퇴근 기록이 남았어요'), findsNothing);
+    expect(_checkoutCardTitle(), findsNothing);
   });
 
   testWidgets('UHR-21 (C) 미출근·NO_SHOW·자동처리에는 퇴근 CTA 를 만들지 않는다',
@@ -902,7 +987,7 @@ void main() {
           attendances: [c.att],
         ),
       );
-      expect(find.text('퇴근 기록이 남았어요'),
+      expect(_checkoutCardTitle(),
           c.shows ? findsOneWidget : findsNothing,
           reason: c.why);
     }
@@ -919,7 +1004,7 @@ void main() {
       ),
     );
 
-    expect(find.text('퇴근 기록이 남았어요'), findsNothing);
+    expect(_checkoutCardTitle(), findsNothing);
   });
 
   testWidgets('UHR-23 (D) 어제 퇴근 + 오늘 근무는 **둘 다** 보인다', (tester) async {
@@ -934,11 +1019,11 @@ void main() {
       ),
     );
 
-    expect(find.text('퇴근 기록이 남았어요'), findsOneWidget);
+    expect(_checkoutCardTitle(), findsOneWidget);
     expect(find.text('퇴근하기'), findsOneWidget);
-    expect(find.text('오늘의 근무'), findsOneWidget,
+    _expectTodayHero(true,
         reason: '퇴근 카드가 오늘 근무를 가리면 안 된다');
-    expect(find.text('출근하기'), findsOneWidget);
+    expect(findVisibleText('출근하기'), findsOneWidget);
   });
 
   testWidgets('UHR-24 (E) 근태를 못 읽으면 "퇴근 남지 않음"으로 말하지 않는다',
@@ -952,7 +1037,7 @@ void main() {
     );
 
     expect(find.text('어제 근무의 퇴근 여부를 확인하지 못했어요'), findsOneWidget);
-    expect(find.text('퇴근 기록이 남았어요'), findsNothing,
+    expect(_checkoutCardTitle(), findsNothing,
         reason: '모르는 상태에서 퇴근 CTA 를 지어내지 않는다');
   });
 
@@ -966,7 +1051,7 @@ void main() {
       ),
     );
 
-    expect(find.text('퇴근 기록이 남았어요'), findsNothing,
+    expect(_checkoutCardTitle(), findsNothing,
         reason: '확정 여부를 확인할 수 없으면 거짓 CTA 를 만들지 않는다');
     expect(find.text('지원 현황을 불러오지 못했어요'), findsOneWidget);
   });
@@ -983,8 +1068,8 @@ void main() {
         ],
       ),
     );
-    expect(find.text('오늘의 근무'), findsOneWidget);
-    expect(find.text('퇴근 기록이 남았어요'), findsNothing,
+    _expectTodayHero(true);
+    expect(_checkoutCardTitle(), findsNothing,
         reason: '오늘 진행 중인 근무는 Hero 의 몫이다 — 두 번 말하지 않는다');
 
     // 자정 **후**: 같은 근무가 어제가 되면 퇴근 카드가 받는다.
@@ -995,7 +1080,7 @@ void main() {
         attendances: _ongoingYesterday(),
       ),
     );
-    expect(find.text('퇴근 기록이 남았어요'), findsOneWidget);
+    expect(_checkoutCardTitle(), findsOneWidget);
   });
 
   testWidgets('UHR-27 다른 사람의 근태 기록은 내 홈에 CTA 를 만들지 않는다',
@@ -1013,7 +1098,7 @@ void main() {
       ),
     );
 
-    expect(find.text('퇴근 기록이 남았어요'), findsNothing);
+    expect(_checkoutCardTitle(), findsNothing);
   });
 
   test('UHR-28 퇴근 술어의 어제는 **KST 근무일**이다 — 기기 시간대가 바꾸지 못한다', () {
@@ -1073,11 +1158,11 @@ void main() {
         );
 
         expect(tester.takeException(), isNull);
-        expect(find.text('오늘의 근무'), findsOneWidget);
-        expect(find.text('출근하기'), findsOneWidget);
-        expect(find.text('퇴근 기록이 남았어요'), findsOneWidget);
+        _expectTodayHero(true);
+        expect(findVisibleText('출근하기'), findsOneWidget);
+        expect(_checkoutCardTitle(), findsOneWidget);
         expect(find.text('퇴근하기'), findsOneWidget);
-        expect(find.text('지원 현황'), findsOneWidget);
+        expect(findVisibleText('내 지원 현황'), findsOneWidget); // [DU254] 섹션 제목 keepWords(DU194 C3) · [DU371] UH098
       });
     }
   }
@@ -1123,9 +1208,9 @@ void main() {
             confirmedAt: DateTime.now().subtract(const Duration(hours: 5))),
       ]),
     );
-    expect(find.text('새로운 소식'), findsOneWidget);
+    expect(findVisibleText('새로 확정된 근무'), findsOneWidget);
 
-    await tester.tap(find.text('새로운 소식'));
+    await tester.tap(find.text('근무 확인하기')); // [DU371] CP03 Q4 제목은 카드 밖 — 카드 전체 탭 대상의 주 행동 글자
     for (var i = 0; i < 12; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
@@ -1151,9 +1236,9 @@ void main() {
     );
 
     // 의미가 다른 두 요청을 한 카드로 합치지 않는다.
-    expect(find.textContaining('신분증 열람을 요청했어요'), findsOneWidget);
+    expect(_idRequestCardTitle(), findsOneWidget);
     expect(find.textContaining('계약해지를 요청했어요'), findsOneWidget);
-    expect(find.text('확인하고 승인 또는 거절해 주세요'), findsOneWidget);
+    expect(_cardLine((l) => l == '확인하고 승인 또는 거절해 주세요'), findsOneWidget); // [DU371] C1 부제 조판
     expect(find.text('확인하고 동의 또는 거절해 주세요'), findsOneWidget);
   });
 
@@ -1163,7 +1248,7 @@ void main() {
     await _pumpWithScope(tester,
         reads: _reads(applications: const []), log: log);
 
-    final cta = find.text('일정 ›');
+    final cta = find.text('일정 보기'); // [DU371] UH121
     expect(cta, findsOneWidget);
     await tester.tap(cta);
     await tester.pump(const Duration(milliseconds: 300));
@@ -1200,7 +1285,7 @@ void main() {
       ]),
     );
 
-    final banner = find.text('업무 초대가 1개 도착했어요!');
+    final banner = find.text('업무 초대가 1건 있어요'); // [DU371] UH039
     expect(banner, findsOneWidget);
     await tester.tap(banner);
     for (var i = 0; i < 12; i++) {
@@ -1232,8 +1317,8 @@ void main() {
     );
 
     // 3건 이상일 때만 서는 CTA 다.
-    final all = find.textContaining('모두보기');
-    expect(all, findsWidgets);
+    final all = _recSectionAllAction(); // [DU371] UH148 '전체 보기'(추천 머리 범위)
+    expect(all, findsOneWidget);
     await tester.tap(all.first);
     await tester.pump(const Duration(milliseconds: 300));
 
@@ -1265,7 +1350,7 @@ void main() {
     );
 
     // 신분증 카드 → 인박스
-    await tester.tap(find.textContaining('신분증 열람을 요청했어요'));
+    await tester.tap(_idRequestCardTitle());
     for (var i = 0; i < 12; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
@@ -1330,7 +1415,8 @@ void main() {
     );
 
     // 날짜 CTA 는 칩을 고르기 전에는 없다.
-    final dateCta = find.textContaining('${pick.month}월 ${pick.day}일 일자리');
+    // [DU254] CTA 글은 keepWords(DU194 C2) — 원문 textContaining 은 섹션 제목만 잡아 버튼 조상을 못 찾았다.
+    final dateCta = findVisibleTextContaining('${pick.month}월 ${pick.day}일 일자리');
     expect(dateCta, findsNothing);
 
     // 같은 숫자 Text 가 여러 개일 수 있다 — CTA 가 설 때까지 후보를 눌러 본다.
@@ -1493,7 +1579,7 @@ void main() {
             corrections: DocumentCorrectionSurface.failed));
 
     expect(find.text('서류 요청을 확인하지 못했어요'), findsOneWidget);
-    expect(find.text('요청이 없다는 뜻은 아닙니다.'), findsOneWidget);
+    expect(find.text('요청이 없다는 뜻은 아니에요'), findsOneWidget);
     expect(find.text('다시 시도'), findsWidgets);
 
     // 홈 전체를 오류 페이지로 바꾸지 않는다 — 지원 현황은 멀쩡하다.
@@ -1508,7 +1594,7 @@ void main() {
             corrections: DocumentCorrectionSurface.empty));
 
     expect(find.text('서류 요청을 확인하지 못했어요'), findsNothing);
-    expect(find.text('다시 시도'), findsNothing);
+    expect(findVisibleText('다시 시도'), findsNothing);
     expect(find.text('등록하기'), findsNothing);
   });
 
@@ -1577,6 +1663,7 @@ void main() {
     var corr = 0;
     final reads = UserHomeReads(
     slotsForTO: (toId) async => const <SlotModel>[],
+      myContracts: (uid) async => const [],
       myApplications: (uid) async => const <ApplicationModel>[],
       myMonthlyAttendances: (
               {required String userId,
@@ -1635,7 +1722,7 @@ void main() {
     expect(find.text('다시 시도'), findsWidgets);
 
     // 두 문구와 버튼이 모두 실제로 그려졌는지 — 폭 안에 들어왔는지 본다.
-    for (final f in ['서류 요청을 확인하지 못했어요', '요청이 없다는 뜻은 아닙니다.', '다시 시도']) {
+    for (final f in ['서류 요청을 확인하지 못했어요', '요청이 없다는 뜻은 아니에요', '다시 시도']) {
       final box = tester.getRect(find.text(f).first);
       expect(box.width, lessThanOrEqualTo(320),
           reason: '"$f" 가 320dp 밖으로 나갔다');
@@ -1722,6 +1809,7 @@ UserHomeReads _correctionOnlyReads(
         Future<DocumentCorrectionSurface> Function() corrections) =>
     UserHomeReads(
     slotsForTO: (toId) async => const <SlotModel>[],
+      myContracts: (uid) async => const [],
       myApplications: (uid) async => const <ApplicationModel>[],
       myMonthlyAttendances: (
               {required String userId,

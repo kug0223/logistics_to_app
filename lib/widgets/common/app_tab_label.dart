@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 
 /// 텍스트 + 카운트 배지로 구성된 탭 라벨 공통 위젯
@@ -42,40 +43,36 @@ class AppTabLabel extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // [R7-P1-3] 라벨도 좁은 폭에서 양보해야 한다.
-        //   배지는 Flexible + FittedBox 였지만 라벨은 고정이어서, 320dp·글자배율
-        //   1.3 에서 이 Row 가 4.9px 넘쳤다(탭 3개 동시, 실측). 배율을 끄거나
-        //   글자를 축소해 덮지 않고, 프로젝트 규칙대로 Row 안에서 양보시킨다.
-        //   숫자 배지는 그대로 보인다 — 눌러야 할 것이 가려지지 않는다.
+        // [DEVICE-MISMATCH-FIX] 탭 라벨은 **잘리지 않는다**.
+        //   예전에는 라벨과 배지를 둘 다 같은 flex 로 감싸, 탭 폭이 충분해도
+        //   라벨이 남은 폭의 절반까지만 받았다(배지가 다 쓰지 않은 몫이 라벨로
+        //   돌아오지 않는다). 그 위에 한 줄 + 말줄임이라 Pixel 5 실기에서
+        //   `미…`·`확인…`·`처리…`로 탭 이름이 사라졌다.
+        //   이제 배지는 자기 폭만 쓰고 라벨이 나머지를 모두 받는다. 그래도
+        //   자리가 모자라면(작은 폭·큰 글자 배율) 줄여 숨기지 않고 줄을 바꾼다.
         Flexible(
-          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          child: Text(label, softWrap: true, textAlign: TextAlign.center),
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-        // Flexible: 좁은 화면(320dp 등)에서 배지가 Row 범위를 초과하지 않도록 압축
-        Flexible(
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 3),
-              vertical: ResponsiveHelper.spacing(context, 2),
-            ),
-            decoration: BoxDecoration(
-              color: urgent
-                  ? AppColors.error
-                  : effectiveColor.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            // FittedBox: 배지 공간이 좁을 때 count 숫자를 스케일다운 (overflow 방지)
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                '$displayCount$countSuffix',
-                style: ResponsiveHelper.tinyStyle(
-                  context,
-                  color: urgent ? Colors.white : effectiveColor,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 3),
+            vertical: ResponsiveHelper.spacing(context, 2),
+          ),
+          decoration: BoxDecoration(
+            color: urgent
+                ? AppColors.error
+                : effectiveColor.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          // [UI-INTEGRATION.33] 대량 사업장 건수('8,230') — 천 단위 구분.
+          child: Text(
+            '${FormatHelper.formatNumber(displayCount)}$countSuffix',
+            style: ResponsiveHelper.tinyStyle(
+              context,
+              color: urgent ? Colors.white : effectiveColor,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ),

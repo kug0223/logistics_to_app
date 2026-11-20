@@ -48,6 +48,7 @@ import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/user/user_home_reads.dart';
 import 'package:ALfit/screens/user/user_home_screen.dart';
 import 'package:ALfit/models/core/user_region.dart';
+import 'support/checkin_contract_fixture.dart';
 import 'package:ALfit/services/payroll_correction_service.dart';
 
 class _FakeApp extends Fake
@@ -90,7 +91,7 @@ class _UserDouble extends UserProvider {
         passVerifiedAt: DateTime.now().subtract(const Duration(days: 30)),
       );
   @override
-  Future<void> refreshPendingContracts() async {}
+  Future<void> refreshPendingContracts({bool joinInFlight = false}) async {}
 }
 
 const _biz = 'biz1';
@@ -195,6 +196,8 @@ class _SlotReads {
           if (d == null) return const <SlotModel>[];
           return [_slot(toId: toId, date: d, closed: closedIds.contains(toId))];
         },
+        // [CONTRACT-DISPATCH-B4] 홈 CTA 는 계약 동의 판정을 함께 본다 — 이 시험의 전제: 오늘 근무 계약은 양측 서명 완료
+        myContracts: (uid) async => completedContractsFor(appsOverride?.call() ?? apps),
         myApplications: (uid) async => appsOverride?.call() ?? apps,
         myMonthlyAttendances: (
                 {required String userId,

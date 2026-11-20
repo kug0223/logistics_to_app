@@ -3,27 +3,45 @@
 // help_faqs 컬렉션 CRUD 서비스 (슈퍼관리자 전용 write)
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
 import '../models/core/help_faq_model.dart';
 
-class HelpFaqService {
-  final _col = FirebaseFirestore.instance.collection('help_faqs');
+/// [.65] 도움말 화면이 읽은 결과.
+///   configured = 이 역할의 FAQ 문서가 하나라도 있다(비활성 포함).
+///   문서가 아예 없을 때만 앱 내장 FAQ 를 쓴다 — 모두 비활성화한 상태를 내장 FAQ 로 되살리지 않는다.
+class HelpFaqLoad {
+  const HelpFaqLoad(this.items, {required this.configured});
+  final List<HelpFaqModel> items;
+  final bool configured;
+}
 
-  Future<List<HelpFaqModel>> getItems(String role) async {
-    try {
-      final snap = await _col
-          .where('role', isEqualTo: role)
-          .where('isActive', isEqualTo: true)
-          .orderBy('order')
-          .get();
-      return snap.docs
-          .map((d) => HelpFaqModel.tryFromMap(d.data(), d.id))
-          .whereType<HelpFaqModel>()
-          .toList();
-    } catch (e) {
-      debugPrint('[HelpFaqService] getItems 실패: $e');
-      return [];
-    }
+/// [.65] 편집 창을 연 뒤 다른 관리자가 같은 항목의 내용을 바꿨다.
+class HelpFaqChangedException implements Exception {}
+
+/// [.65] 편집하려는 항목이 이미 삭제됐다.
+class HelpFaqGoneException implements Exception {}
+
+class HelpFaqService {
+  // [.65] 지연 접근 — 시험에서 Firestore 없이 화면을 만들 수 있게.
+  CollectionReference<Map<String, dynamic>> get _col =>
+      FirebaseFirestore.instance.collection('help_faqs');
+
+  /// 도움말 화면용. **읽기 실패는 던진다**.
+  ///
+  /// [.65] 실패를 빈 목록으로 돌려줘 화면이 앱 내장 FAQ 를 현재 내용처럼 보였다
+  ///   (기기: 로그인 없이 읽기 거절 → 서버에 없는 내장 질문 표시).
+  Future<HelpFaqLoad> loadForReader(String role) async {
+    final snap = await _col
+        .where('role', isEqualTo: role)
+        .where('isActive', isEqualTo: true)
+        .orderBy('order')
+        .get();
+    final items = snap.docs
+        .map((d) => HelpFaqModel.tryFromMap(d.data(), d.id))
+        .whereType<HelpFaqModel>()
+        .toList();
+    if (items.isNotEmpty) return HelpFaqLoad(items, configured: true);
+    final any = await _col.where('role', isEqualTo: role).limit(1).get();
+    return HelpFaqLoad(const [], configured: any.docs.isNotEmpty);
   }
 
   // 슈퍼관리자용 — 비활성 항목 포함 전체 목록
@@ -43,8 +61,35 @@ class HelpFaqService {
     return ref.id;
   }
 
-  Future<void> updateItem(HelpFaqModel item) async {
-    await _col.doc(item.id).update(item.toMap());
+  /// [.65] 내용(분류·질문·답변·헤더 여부)만 바꾼다 — 열었을 때의 내용([expected])과 지금이 같을 때만.
+  ///   이전에는 열 때 받아 둔 항목 전체(order·isActive 포함)를 다시 써서, 그 사이 다른 관리자가
+  ///   바꾼 답변·활성 상태를 조용히 되돌렸다(기기 반례). 순서·활성은 각자의 동작이 쓴다.
+  Future<void> updateContent(HelpFaqModel edited,
+      {required HelpFaqModel expected}) async {
+    final ref = _col.doc(edited.id);
+    await FirebaseFirestore.instance.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      final data = snap.data();
+      if (!snap.exists || data == null) throw HelpFaqGoneException();
+      final cur = HelpFaqModel.fromMap(data, snap.id);
+      if (cur.category != expected.category ||
+          cur.question != expected.question ||
+          cur.answer != expected.answer ||
+          cur.isHeader != expected.isHeader) {
+        throw HelpFaqChangedException();
+      }
+      tx.update(ref, {
+        'category': edited.category,
+        'question': edited.question,
+        'answer': edited.answer,
+        'isHeader': edited.isHeader,
+      });
+    });
+  }
+
+  /// [.65] 활성 여부 하나만 쓴다(내용을 함께 쓰지 않는다). 없는 항목이면 실패한다.
+  Future<void> setActive(String id, bool isActive) async {
+    await _col.doc(id).update({'isActive': isActive});
   }
 
   Future<void> deleteItem(String id) async {

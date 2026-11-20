@@ -491,8 +491,9 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('10. NO_SHOW eligibility', () {
     // 장기 자동 노쇼 블록의 코드 앵커(주석이 아니다).
+    // [NOSHOW-ATOMICITY 2026-10-27] 창이 어제·그제 두 근무일이 되며 변수 이름이 windowStartUTC 로 바뀌었다.
     const noShowAnchor =
-        '.where("workEndDate", ">=", Timestamp.fromDate(yesterdayStartUTC))';
+        '.where("workEndDate", ">=", Timestamp.fromDate(windowStartUTC))';
 
     test('10-a 결근은 근무일에만 성립한다 — 공용 resolver가 판정한다', () {
       final seg = _after(cf, noShowAnchor, 1400);
@@ -513,7 +514,8 @@ void main() {
     });
 
     test('10-c 노쇼 기록도 목록에서 사라지지 않게 createdAt을 쓴다', () {
-      final seg = _after(cf, noShowAnchor, 2400);
+      // [NOSHOW-ATOMICITY] 새 문서는 단일 writer(srvAutoNoShowJudge)가 쓴다.
+      final seg = _after(cf, 'async function srvAutoNoShowJudge(', 5000);
       expect(seg.contains('createdAt: admin.firestore.FieldValue.serverTimestamp()'),
           true);
     });

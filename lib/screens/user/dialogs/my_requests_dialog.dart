@@ -15,6 +15,8 @@ import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
+import '../../../widgets/common/app_empty_state.dart';
+import '../../../utils/text_layout.dart';
 import '../../../theme/app_colors.dart';
 
 /// 통합 알림 아이템 타입
@@ -89,6 +91,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   bool _isLoading = true;
   bool _isProcessing = false;
 
+  /// [DU267] 읽기 실패 — 빈 목록과 구별한다(이전에는 실패해도 '알림이 없습니다'를 보였다).
+  bool _loadFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -98,7 +103,10 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   /// 모든 알림 로드 (3가지 타입 통합)
   Future<void> _loadAllNotifications() async {
     if (!mounted) return;
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _loadFailed = false;
+    });
 
     try {
       // 병렬 조회
@@ -176,7 +184,10 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     } catch (e) {
       debugPrint('❌ 알림 로드 실패: $e');
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading = false;
+          _loadFailed = true;
+        });
         ToastHelper.showError('알림을 불러오는데 실패했습니다.');
       }
     }
@@ -200,36 +211,49 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
           child: Column(
           children: [
             // 헤더
+            // [DU267] 아이콘 중립·제목 본문색·닫기 보조색. 건수는 단순 사실이라 경보색(error 위 흰 3.68) 대신
+            //   시안 '처리할 일' 건수처럼 대표색 옅은 면. 제목은 좁은 칸에서 줄어들 수 있게 Flexible.
             Row(
               children: [
                 Icon(
                   Icons.notifications,
                   size: ResponsiveHelper.iconSize(context, 28),
+                  color: AppColors.textSecondary,
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                Text(
-                  '내 알림',
-                  style: ResponsiveHelper.titleStyle(context),
-                ),
-                if (_allNotifications.isNotEmpty)
-                  Container(
-                    margin: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 8)),
-                    padding: EdgeInsets.symmetric(
-                      horizontal: ResponsiveHelper.spacing(context, 8),
-                      vertical: ResponsiveHelper.spacing(context, 2),
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.error,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '${_allNotifications.length}',
-                      style: ResponsiveHelper.tinyStyle(context, color: Colors.white),
-                    ),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          '내 알림',
+                          style: ResponsiveHelper.titleStyle(context, color: AppColors.textPrimary),
+                        ),
+                      ),
+                      if (_allNotifications.isNotEmpty)
+                        Container(
+                          margin: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 8)),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: ResponsiveHelper.spacing(context, 8),
+                            vertical: ResponsiveHelper.spacing(context, 2),
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.brandSurface,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '${_allNotifications.length}',
+                            semanticsLabel: '${_allNotifications.length}건',
+                            style: ResponsiveHelper.smallStyle(context,
+                                color: AppColors.brand, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                    ],
                   ),
-                const Spacer(),
+                ),
                 IconButton(
                   icon: const Icon(Icons.close),
+                  color: AppColors.textSecondary,
                   tooltip: '닫기',
                   onPressed: () => Navigator.pop(context),
                 ),
@@ -242,7 +266,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
             Expanded(
               child: _isLoading
                   ? const LoadingWidget(message: '알림 로딩 중...')
-                  : _allNotifications.isEmpty
+                  : _loadFailed
+                      ? _buildErrorState()
+                      : _allNotifications.isEmpty
                       ? _buildEmptyState()
                       : ListView.builder(
                           itemCount: _allNotifications.length,
@@ -259,25 +285,25 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   }
 
   /// 빈 상태
+  /// [DU267] 직접 그린 빈 상태(disabledColor 아이콘·bodySmall 글자) → 공용 AppEmptyState(DU248 값, 문구 같음)
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.notifications_none,
-            size: ResponsiveHelper.iconSize(context, 64),
-            color: Theme.of(context).disabledColor,
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          Text(
-            '알림이 없습니다',
-            style: ResponsiveHelper.subtitleStyle(
-              context,
-              color: Theme.of(context).textTheme.bodySmall?.color,
-            ),
-          ),
-        ],
+    return const AppEmptyState(
+      icon: Icons.notifications_none,
+      title: '알림이 없습니다',
+    );
+  }
+
+  /// [DU267] 읽기 실패 — 네 읽기 중 하나가 실패하면 전체가 실패한다(Future.wait). 이전에는 빈 상태로 보여
+  ///   처리할 요청이 없다고 말했다. 같은 읽기를 다시 부르는 '다시 시도'를 둔다(토스트는 그대로).
+  Widget _buildErrorState() {
+    return AppEmptyState(
+      icon: Icons.error_outline,
+      title: '알림을 불러오지 못했습니다',
+      subtitle: '잠시 후 다시 시도해 주세요',
+      subtitleColor: AppColors.textSecondary,
+      action: OutlinedButton(
+        onPressed: _loadAllNotifications,
+        child: const Text('다시 시도'),
       ),
     );
   }
@@ -301,60 +327,36 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   // ═══════════════════════════════════════════════════════════
 
   Widget _buildScheduleChangeCard(ScheduleChangeRequestModel request) {
+    // [DU267] 의미색은 아이콘용 진한 토큰(연한 원색은 옅은 면 위 3:1 미달 가능)
     IconData icon;
     Color iconColor;
 
     if (request.isLeaveRequest) {
       icon = Icons.beach_access;
-      iconColor = AppColors.warning;
+      iconColor = AppColors.warningDark;
     } else if (request.isNoWorkRequest) {
       icon = Icons.block;
-      iconColor = AppColors.error;
+      iconColor = AppColors.errorDark;
     } else {
       icon = Icons.add_circle;
-      iconColor = AppColors.success;
+      iconColor = AppColors.successDark;
     }
 
-    return Card(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: iconColor.withValues(alpha: 0.2),
-          child: Icon(icon, color: iconColor),
-        ),
-        title: Text(
-          request.requestTypeLabel,
-          style: ResponsiveHelper.bodyStyle(context).copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(FormatHelper.formatDateKorean(request.targetDate)),
-            if (request.reason != null)
-              Text(
-                request.reason!,
-                style: ResponsiveHelper.tinyStyle(
-                  context,
-                  color: Theme.of(context).textTheme.bodySmall?.color,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-            _buildStatusChip('대기중', AppColors.warning),
-          ],
-        ),
-        trailing: request.isApplicantRequest
-            ? IconButton(
-                icon: const Icon(Icons.close),
-                color: AppColors.error,
-                tooltip: '요청 취소',
-                onPressed: _isProcessing ? null : () => _cancelScheduleRequest(request),
-              )
-            : null,
-      ),
+    return _requestCard(
+      icon: icon,
+      tone: iconColor,
+      body: [
+        _cardTitle(request.requestTypeLabel),
+        _cardSubject(FormatHelper.formatDateKorean(request.targetDate)),
+        // [DU267] 사유는 이 대화에서만 보인다 — 1줄 말줄임을 없앤다(사용자가 쓴 글이라 원문 줄바꿈).
+        if (request.reason != null) _cardDetail(request.reason!, raw: true),
+        SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+        _buildStatusChip('대기중', AppColors.warningDark, AppColors.warningBg),
+      ],
+      // [DU267] 빨간 X 아이콘 → 글자 보조 행동(UI-1). 근무자 발신일 때만(기존 조건 그대로).
+      secondary: request.isApplicantRequest
+          ? _secondaryAction('요청 취소', () => _cancelScheduleRequest(request))
+          : null,
     );
   }
 
@@ -386,60 +388,20 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   // ═══════════════════════════════════════════════════════════
 
   Widget _buildIdCardRequestCard(IdCardAccessRequestModel request) {
-    return Card(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-      color: AppColors.infoBg,
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: AppColors.info.withValues(alpha: 0.2),
-          child: Icon(Icons.badge, color: AppColors.info),
-        ),
-        title: Text(
-          '신분증 열람 요청',
-          style: ResponsiveHelper.bodyStyle(context).copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(request.requesterBusinessName),
-            Text(
-              '요청자: ${request.requesterName}',
-              style: ResponsiveHelper.tinyStyle(
-                context,
-                color: Theme.of(context).textTheme.bodySmall?.color,
-              ),
-            ),
-            Text(
-              '사유: ${request.reasonText}',
-              style: ResponsiveHelper.tinyStyle(
-                context,
-                color: Theme.of(context).textTheme.bodySmall?.color,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-            _buildStatusChip('승인 대기', AppColors.info),
-          ],
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.close, color: AppColors.error),
-              onPressed: _isProcessing ? null : () => _handleIdCardReject(request),
-              tooltip: '거절',
-            ),
-            IconButton(
-              icon: const Icon(Icons.check, color: AppColors.success),
-              onPressed: _isProcessing ? null : () => _handleIdCardApprove(request),
-              tooltip: '승인',
-            ),
-          ],
-        ),
-      ),
+    return _requestCard(
+      icon: Icons.badge,
+      tone: AppColors.infoDark,
+      body: [
+        _cardTitle('신분증 열람 요청'),
+        _cardSubject(request.requesterBusinessName, name: true),
+        _cardDetail('요청자: ${request.requesterName}'),
+        _cardDetail('사유: ${request.reasonText}', raw: true),
+        SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+        _buildStatusChip('승인 대기', AppColors.infoDeep, AppColors.infoBg),
+      ],
+      // [DU267] 빨간 X·초록 체크 아이콘(글자 없음, 초록 2.78) → 거절(글자, 왼쪽)·승인(대표색 채움, 오른쪽)(UI-1)
+      secondary: _secondaryAction('거절', () => _handleIdCardReject(request)),
+      primary: _primaryAction('승인', () => _handleIdCardApprove(request)),
     );
   }
 
@@ -455,62 +417,24 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         ? 3 - DateTime.now().difference(requestedAt).inDays
         : 0;
 
-    return Card(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-      color: AppColors.warningBg,
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: AppColors.warning.withValues(alpha: 0.2),
-          child: Icon(Icons.warning_amber, color: AppColors.warning),
+    return _requestCard(
+      icon: Icons.warning_amber,
+      tone: AppColors.warningDark,
+      body: [
+        // [DU267] 제목 warningDark → 본문색(주의 의미는 아이콘·상태 배지가 맡는다). 사업장명 말줄임 제거.
+        _cardTitle('계약해지 요청'),
+        _cardSubject(app.businessName, name: true),
+        if (app.terminationReason != null)
+          _cardDetail('사유: ${app.terminationReason}', raw: true),
+        SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+        _buildStatusChip(
+          daysLeft > 0 ? '$daysLeft일 후 자동승인' : '오늘 자동승인',
+          AppColors.warningDark,
+          AppColors.warningBg,
         ),
-        title: Text(
-          '계약해지 요청',
-          style: ResponsiveHelper.bodyStyle(context).copyWith(
-            fontWeight: FontWeight.bold,
-            color: AppColors.warningDark,
-          ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(app.businessName, overflow: TextOverflow.ellipsis, maxLines: 1),
-            if (app.terminationReason != null)
-              Text(
-                '사유: ${app.terminationReason}',
-                style: ResponsiveHelper.tinyStyle(
-                  context,
-                  color: Theme.of(context).textTheme.bodySmall?.color,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-            Row(
-              children: [
-                _buildStatusChip(
-                  daysLeft > 0 ? '$daysLeft일 후 자동승인' : '오늘 자동승인',
-                  AppColors.warning,
-                ),
-              ],
-            ),
-          ],
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.close, color: AppColors.error),
-              onPressed: _isProcessing ? null : () => _handleTerminationReject(app),
-              tooltip: '거절',
-            ),
-            IconButton(
-              icon: const Icon(Icons.check, color: AppColors.success),
-              onPressed: _isProcessing ? null : () => _handleTerminationApprove(app),
-              tooltip: '승인',
-            ),
-          ],
-        ),
-      ),
+      ],
+      secondary: _secondaryAction('거절', () => _handleTerminationReject(app)),
+      primary: _primaryAction('승인', () => _handleTerminationApprove(app)),
     );
   }
 
@@ -520,62 +444,32 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
 
   Widget _buildInterimSettlementCard(InterimSettlementRequestModel req) {
     final isPending = req.isPending;
-    final color = isPending ? AppColors.warning : AppColors.teal;
+    // [DU267] 옅은 유형 바탕 제거 — 흰 카드 + 의미색 진한 토큰(아이콘)·토큰 쌍(배지). 사업장명 말줄임 제거.
+    final color = isPending ? AppColors.warningDark : AppColors.tealDark;
     final bgColor = isPending ? AppColors.warningBg : AppColors.tealBg;
     final icon = isPending ? Icons.hourglass_top : Icons.event_available;
     final statusLabel = isPending ? '승인 대기' : '승인됨 · 이체 대기';
+    final transferText = req.isApproved && req.scheduledTransferDate != null
+        ? '이체 예정일: ${DateFormat('MM월 dd일').format(req.scheduledTransferDate!)}'
+        : null;
 
-    return Card(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-      color: bgColor,
-      child: Padding(
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            CircleAvatar(
-              backgroundColor: color.withValues(alpha: 0.2),
-              child: Icon(icon, color: color),
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '중간정산 요청',
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                  Text(
-                    req.businessName,
-                    style: ResponsiveHelper.smallStyle(context,
-                        color: Theme.of(context).textTheme.bodySmall?.color),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Text(
-                    '${req.periodLabel}  ·  ${req.recordCount}일  ·  ${FormatHelper.formatWage(req.netAmount)}',
-                    style: ResponsiveHelper.tinyStyle(context,
-                        color: Theme.of(context).textTheme.bodySmall?.color),
-                  ),
-                  if (req.isApproved && req.scheduledTransferDate != null)
-                    Text(
-                      '이체 예정일: ${DateFormat('MM월 dd일').format(req.scheduledTransferDate!)}',
-                      style: ResponsiveHelper.tinyStyle(context,
-                              color: AppColors.tealDark)
-                          .copyWith(fontWeight: FontWeight.w600),
-                    ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                  _buildStatusChip(statusLabel, color),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+    return _requestCard(
+      icon: icon,
+      tone: color,
+      body: [
+        _cardTitle('중간정산 요청'),
+        _cardSubject(req.businessName, name: true),
+        _cardDetail('${req.periodLabel}  ·  ${req.recordCount}일  ·  ${FormatHelper.formatWage(req.netAmount)}'),
+        if (transferText != null)
+          Text(
+            TextLayout.keepWords(transferText),
+            semanticsLabel: transferText,
+            style: ResponsiveHelper.smallStyle(context,
+                color: AppColors.tealDark, fontWeight: FontWeight.w600),
+          ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+        _buildStatusChip(statusLabel, color, bgColor),
+      ],
     );
   }
 
@@ -583,25 +477,133 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   // 공통 위젯
   // ═══════════════════════════════════════════════════════════
 
-  Widget _buildStatusChip(String label, Color color) {
+  /// [DU267] 상태 배지 — 원색 20% 면 위 원색 tiny 글자(주황 약 2.x) → 의미 토큰 바탕·진한 글자,
+  ///   13 w600(Standards 배지 13~14)·작은 배지 radius 8. 낱말 단위 줄바꿈.
+  Widget _buildStatusChip(String label, Color fg, Color bg) {
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 8),
         vertical: ResponsiveHelper.spacing(context, 4),
       ),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.2),
-        borderRadius: BorderRadius.circular(12),
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
-        label,
-        style: ResponsiveHelper.tinyStyle(
+        TextLayout.keepWords(label),
+        semanticsLabel: label,
+        style: ResponsiveHelper.smallStyle(
           context,
-          color: color,
-        ).copyWith(fontWeight: FontWeight.bold),
+          color: fg,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
+
+  /// [DU267] 요청 카드 공통 틀 — 이 대화를 여는 알림 카드(DU242)와 같은 값: 흰 면·radius 16·grey200 테두리,
+  ///   의미색 진한 토큰 10% 면의 둥근 사각(radius 10) 아이콘 상자. 행동은 내용 아래 한 줄(UI-1):
+  ///   보조(거절·요청 취소)는 왼쪽 글자, 주 행동(승인)은 오른쪽 대표색 채움. 이전 ListTile trailing 은 좁은 칸에서 내용 폭을 줄였다.
+  Widget _requestCard({
+    required IconData icon,
+    required Color tone,
+    required List<Widget> body,
+    Widget? secondary,
+    Widget? primary,
+  }) {
+    return Container(
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.grey200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: ResponsiveHelper.spacing(context, 36),
+                height: ResponsiveHelper.spacing(context, 36),
+                decoration: BoxDecoration(
+                  color: tone.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: tone, size: ResponsiveHelper.iconSize(context, 18)),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: body,
+                ),
+              ),
+            ],
+          ),
+          if (secondary != null || primary != null) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            // 폭 전체 안에서 양끝 정렬 — Wrap 만 두면 내용 폭으로 줄어 두 버튼이 왼쪽에 붙는다(DU261 r1).
+            SizedBox(
+              width: double.infinity,
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                runSpacing: ResponsiveHelper.spacing(context, 4),
+                children: [
+                  if (secondary != null) secondary,
+                  if (primary != null) primary,
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// [DU267] 카드 제목 — 본문색 굵게, 낱말 단위 줄바꿈(화면 읽기는 원문).
+  Widget _cardTitle(String s) => Text(
+        TextLayout.keepWords(s),
+        semanticsLabel: s,
+        style: ResponsiveHelper.bodyStyle(context,
+            color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+      );
+
+  /// [DU267] 사업장·날짜 줄 — 본문색, 말줄임 없음. 사업장명은 식별 정보 단위로만 줄을 바꾼다.
+  Widget _cardSubject(String s, {bool name = false}) => Text(
+        name ? TextLayout.identity(s) : TextLayout.keepWords(s),
+        semanticsLabel: s,
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.textPrimary),
+      );
+
+  /// [DU267] 보조 줄(요청자·기간·사유) — textSecondary, 말줄임 없음.
+  ///   raw: 사유는 원문 그대로 줄바꿈한다(사용자가 쓴 긴 글을 낱말로 묶지 않는다).
+  Widget _cardDetail(String s, {bool raw = false}) => Text(
+        raw ? s : TextLayout.keepWords(s),
+        semanticsLabel: raw ? null : s,
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+      );
+
+  /// [DU267] 보조 행동(거절·요청 취소) — 테두리 없는 보조색 글자, 터치 48(UI-1). 처리 중 비활성(기존 그대로).
+  Widget _secondaryAction(String label, VoidCallback onPressed) => TextButton(
+        onPressed: _isProcessing ? null : onPressed,
+        // [DU267 r1] 글자 스타일은 버튼 textStyle 로 — Text 의 style 색(bodyStyle 기본 grey700)이 전경색·비활성색을 덮었다.
+        style: TextButton.styleFrom(
+          foregroundColor: AppColors.textSecondary,
+          minimumSize: const Size(48, 48),
+          textStyle: ResponsiveHelper.bodyStyle(context, fontWeight: FontWeight.w600),
+        ),
+        child: Text(label),
+      );
+
+  /// [DU267] 주 행동(승인) — 공용 ElevatedButton 테마(대표색·48). 처리 중 비활성(기존 그대로).
+  Widget _primaryAction(String label, VoidCallback onPressed) => ElevatedButton(
+        onPressed: _isProcessing ? null : onPressed,
+        child: Text(label),
+      );
 
   // ═══════════════════════════════════════════════════════════
   // 신분증 요청 액션 (이전 스케줄 승인/거절 함수는 USER 화면에서 제거됨)
@@ -622,9 +624,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
           '요청 사유: ${request.reasonText}\n\n'
           '승인 시 7일간 열람 가능합니다.',
       confirmText: '승인',
-      confirmColor: AppColors.success,
+      // [DU309 §9.1·§12.2] 열람 승인 = 일반 진행(7일 한정 동의, 손실 실행 아님) → 버튼 brand(이전 successDark 녹색 채움),
+      //   머리 아이콘의 예전 파랑(infoDark #1976D2)도 brand 로. 두 값 모두 기본값이라 지정하지 않는다.
       icon: Icons.badge,
-      iconColor: AppColors.info,
     );
 
     if (!confirmed || !mounted) return;
@@ -658,9 +660,10 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       hintText: '거절 사유 (선택)',
       maxLines: 2,
       confirmText: '거절',
-      confirmColor: AppColors.error,
+      // [DU267] error 위 흰 글자 3.68 → errorDark
+      confirmColor: AppColors.errorDark,
       icon: Icons.cancel,
-      iconColor: AppColors.error,
+      iconColor: AppColors.errorDark,
     );
 
     if (reason == null || !mounted) return;
@@ -701,9 +704,10 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
           '${app.terminationReason != null ? '\n\n해지 사유: ${app.terminationReason}' : ''}'
           '\n\n승인 시 즉시 계약이 해지됩니다.',
       confirmText: '승인 (해지)',
-      confirmColor: AppColors.error,
+      // [DU267] 되돌릴 수 없는 확정 순간의 위험색은 유지하고 읽히게(error 3.68 → errorDark)
+      confirmColor: AppColors.errorDark,
       icon: Icons.warning_amber,
-      iconColor: AppColors.warning,
+      iconColor: AppColors.warningDark,
     );
 
     if (!confirmed || !mounted) return;
@@ -737,9 +741,8 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       hintText: '거절 사유 (선택)',
       maxLines: 2,
       confirmText: '거절',
-      confirmColor: AppColors.info,
+      // [DU309] 해지 거절은 고용 유지: 버튼과 머리 아이콘은 기본 brand.
       icon: Icons.cancel,
-      iconColor: AppColors.error,
     );
 
     if (reason == null || !mounted) return;

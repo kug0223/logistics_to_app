@@ -1,3 +1,4 @@
+import 'support/visible_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -150,7 +151,7 @@ void main() {
   String headerText(WidgetTester tester) {
     final spans = <String>[];
     for (final w in tester.widgetList<RichText>(find.byType(RichText))) {
-      spans.add(w.text.toPlainText());
+      spans.add(visibleText(w.text.toPlainText()));
     }
     return spans.join(' | ');
   }

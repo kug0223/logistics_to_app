@@ -5,16 +5,34 @@ import 'package:flutter/material.dart';
 //   본문의 흰 카드는 flat 배경(grey100) 위에서 그대로 카드로 읽힌다.
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 import '../../utils/responsive_helper.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/wage_calculator.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
+
+/// [MW-52] 화면 값과 서버에서 불러온 값의 차이만 연도별 변경으로 만든다.
+///   expected = 서버에서 불러온 그 연도의 값(없었으면 null) — 서버가 현재 값과 비교해 다르면 충돌로 거절한다.
+List<Map<String, Object?>> minimumWageChanges(Map<int, int> server, Map<int, int> edited) {
+  final out = <Map<String, Object?>>[];
+  for (final e in edited.entries) {
+    if (server[e.key] != e.value) {
+      out.add({'year': e.key, 'op': 'set', 'wage': e.value, 'expected': server[e.key]});
+    }
+  }
+  for (final e in server.entries) {
+    if (!edited.containsKey(e.key)) out.add({'year': e.key, 'op': 'delete', 'expected': e.value});
+  }
+  out.sort((a, b) => (a['year'] as int).compareTo(b['year'] as int));
+  return out;
+}
 
 class MinimumWageSettingsScreen extends StatefulWidget {
   const MinimumWageSettingsScreen({super.key});
@@ -29,7 +47,11 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
 
   bool _isLoading = true;
   bool _isSaving = false;
+  // [SA-MINWAGE.51] 불러오기 실패 상태에서 저장하면 빈 표가 서버 값을 지운다(mergeFields 는 맵 전체를 바꾼다) — 저장을 막는다.
+  bool _loadFailed = false;
   Map<int, int> _wages = {};
+  // [MW-52] 서버에서 실제로 불러온 값(문서가 없으면 빈 표). 화면의 기본표와 구별한다 — 저장은 이 값과의 차이만 보낸다.
+  Map<int, int> _serverWages = {};
 
   @override
   void initState() {
@@ -45,25 +67,33 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _loadFailed = false;
+    });
     try {
       final doc = await _firestore.collection('settings').doc('wage_config').get();
       final raw = doc.data()?['minimumWages'];
-      if (raw is Map) {
-        _wages = {
+      // [MW-52] 양의 정수만 값으로 본다 — 손상된 값(문자열·소수)은 비어 있는 연도로 보이고, 서버도 '없음'과 같이 비교해 덮어쓸 수 있다.
+      _serverWages = {
+        if (raw is Map)
           for (final e in raw.entries)
-            int.tryParse(e.key.toString()) ?? 0: (e.value as num?)?.toInt() ?? 0
-        };
-        _wages.remove(0);
-      }
+            if (int.tryParse(e.key.toString()) != null && e.value is int && (e.value as int) > 0)
+              int.parse(e.key.toString()): e.value as int,
+      };
+      _wages = Map.of(_serverWages);
       if (_wages.isEmpty) {
         _wages = {
           2020: 8590, 2021: 8720, 2022: 9160, 2023: 9620,
           2024: 9860, 2025: 10030, 2026: 10320,
+          2027: 10700, // [.73] 고시 제2026-60호 — 서버 SETMW 공식표와 같은 값
         };
       }
     } catch (e) {
-      if (mounted) ToastHelper.showError('데이터 로드 실패: $e');
+      debugPrint('⚠️ 최저시급 설정 불러오기 실패: $e');
+      _wages = {};
+      _loadFailed = true;
+      if (mounted) ToastHelper.showError('최저시급 설정을 불러오지 못했습니다. 다시 열어 주세요. 이 상태에서는 저장할 수 없습니다.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -71,17 +101,32 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
 
   Future<void> _save() async {
     if (_isSaving) return;
+    if (_loadFailed) return;
+    final changes = minimumWageChanges(_serverWages, _wages);
+    if (changes.isEmpty) {
+      ToastHelper.showInfo('바뀐 내용이 없습니다.');
+      return;
+    }
     setState(() => _isSaving = true);
     try {
-      final data = {for (final e in _wages.entries) e.key.toString(): e.value};
-      await _firestore.collection('settings').doc('wage_config').set(
-        {'minimumWages': data},
-        SetOptions(merge: true),
-      );
+      // [MW-52] 연도별 변경만 서버가 검증·저장한다(양의 정수·법정 최저임금 이상·충돌 확인·감사 기록).
+      //   직접 쓰기는 규칙 후보가 막는다. 다른 연도·보험료율은 건드리지 않는다.
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableSetMinimumWages')
+          .call<Map<String, dynamic>>({'changes': changes});
       await WageCalculator.loadMinimumWages();
-      if (mounted) ToastHelper.showSuccess('저장되었습니다');
+      if (!mounted) return;
+      ToastHelper.showSuccess('저장되었습니다. 새 지원·초대부터 이 기준으로 판정합니다.');
+      await _load(); // 저장된 서버 값으로 다시 그린다
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('⚠️ 최저시급 저장 거절: ${e.code}');
+      if (!mounted) return;
+      // 서버 문장(법정 최저임금 미만·충돌·권한)을 그대로 보인다. 충돌이면 최신 값으로 다시 그린다.
+      ToastHelper.showError(TextLayout.keepWords(e.message ?? '저장하지 못했습니다.'));
+      if (e.code == 'aborted') await _load();
     } catch (e) {
-      if (mounted) ToastHelper.showError('저장 실패: $e');
+      debugPrint('⚠️ 최저시급 저장 실패: $e');
+      if (mounted) ToastHelper.showError('저장 결과를 확인하지 못했습니다. 화면을 다시 열어 확인해 주세요.');
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -114,7 +159,10 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
         icon: Icons.delete_outline,
         headerColor: AppColors.error,
         content: Text(
-          '$year년 최저시급을 삭제하시겠습니까?\n삭제하면 해당 연도는 직전 연도 값이 적용됩니다.',
+          // [MW-52] 삭제한 연도는 그 연도의 법정 내장값으로만 판정한다. 내장값이 없는 연도는 '확인 불가'가 되어 그 연도 근무의
+          //   새 공개·지원·확정이 막힌다(다른 연도 값으로 대신하지 않는다).
+          TextLayout.keepWords('$year년 최저시급을 삭제하시겠습니까?\n삭제하면 그 연도는 앱·서버에 내장된 법정 최저임금으로 판정합니다. '
+              '내장값이 없는 연도는 기준을 확인할 수 없어 그 연도 근무의 새 공고 공개·지원·확정이 막힙니다.'),
           style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey700),
         ),
         actions: [
@@ -142,7 +190,7 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: FilledButton.icon(
-              onPressed: _isSaving ? null : _save,
+              onPressed: (_isSaving || _loadFailed) ? null : _save,
               icon: _isSaving
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                   : const Icon(Icons.save, size: 18),

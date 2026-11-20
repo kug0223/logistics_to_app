@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
@@ -11,6 +13,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import 'contract_import_paste_screen.dart';
 import 'contract_template_edit_screen.dart';
@@ -18,6 +21,7 @@ import 'contract_template_preview_screen.dart';
 import '../../utils/navigation_helper.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/first_line_icon.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/loading_widget.dart';
@@ -27,7 +31,10 @@ import '../../widgets/dialogs/styled_dialog.dart';
 class ContractTemplateListScreen extends StatefulWidget {
   final String businessId;
 
-  const ContractTemplateListScreen({super.key, required this.businessId});
+  /// [DU344 seam] 템플릿 서비스 주입 지점(시험 · 표시 검증용). null 이면 ContractTemplateService() — 기존과 같다.
+  final ContractTemplateService? templateService;
+
+  const ContractTemplateListScreen({super.key, required this.businessId, this.templateService});
 
   @override
   State<ContractTemplateListScreen> createState() =>
@@ -36,7 +43,7 @@ class ContractTemplateListScreen extends StatefulWidget {
 
 class _ContractTemplateListScreenState
     extends State<ContractTemplateListScreen> {
-  final _service = ContractTemplateService();
+  late final ContractTemplateService _service = widget.templateService ?? ContractTemplateService();
   List<ContractTemplateModel> _templates = [];
   bool _loading = false; // initState → _load() 가드 통과를 위해 false 초기화
   bool _isDuplicating = false;
@@ -49,6 +56,10 @@ class _ContractTemplateListScreenState
   /// 조회 실패 시 0 유지(fail-closed) — 당겨서 새로고침으로 복구 가능.
   int _otherBusinessCount = 0;
   bool _isDeleting = false;
+
+  /// [DU353] 조회 실패를 '없음'으로 말하지 않는다(소급 감사 9 §2-1). 마지막 템플릿 조회가 실패했는가.
+  ///   보이는 목록이 없으면 실패 본문, 이전에 받은 목록이 있으면 목록을 두고 '새로 고치지 못함' 안내를 단다.
+  bool _loadFailed = false;
 
   @override
   void initState() {
@@ -84,10 +95,14 @@ class _ContractTemplateListScreenState
       setState(() {
         _templates = results[0] as List<ContractTemplateModel>;
         _otherBusinessCount = results[1] as int;
+        _loadFailed = false;
       });
     } catch (e) {
       debugPrint('❌ 템플릿 로드 실패: $e');
-      if (mounted) ToastHelper.showError('템플릿 목록을 불러오지 못했습니다');
+      if (mounted) {
+        setState(() => _loadFailed = true); // [DU353] 실패를 상태로 들고 있는다(목록 · 다른 사업장 수는 건드리지 않는다)
+        ToastHelper.showError('템플릿 목록을 불러오지 못했습니다');
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -300,16 +315,23 @@ class _ContractTemplateListScreenState
           ),
         ),
       ],
+      // [DU353] loading / 실패(보일 목록 없음) / 성공-빈 / 목록(+ 갱신 실패 안내) 을 나눈다.
       body: _loading
           ? const LoadingWidget()
-          : _templates.isEmpty
+          : (_loadFailed && _templates.isEmpty)
+              ? _buildLoadFailed(context)
+              : _templates.isEmpty
               ? _buildEmpty(context)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView.builder(
                     padding: ResponsiveHelper.listPadding(context),
-                    itemCount: _templates.length + 1,
+                    itemCount: _templates.length + 1 + (_loadFailed ? 1 : 0),
                     itemBuilder: (ctx, i) {
+                      if (_loadFailed) {
+                        if (i == 0) return _buildRefreshFailedNotice(context);
+                        i -= 1;
+                      }
                       if (i == _templates.length) {
                         return _buildAddButton(context);
                       }
@@ -323,6 +345,78 @@ class _ContractTemplateListScreenState
                     },
                   ),
                 ),
+    );
+  }
+
+  /// [DU353] 첫 조회 실패 — '등록된 템플릿이 없습니다'(완료처럼 말하는 빈 상태) 대신 실패 본문 · outlined 다시 시도.
+  ///   S006 계약 관리 목록 실패 본문(AppEmptyState · cloud_off · outlined 다시 시도)과 같은 모양이다.
+  Widget _buildLoadFailed(BuildContext context) {
+    return AppEmptyState(
+      icon: Icons.cloud_off_outlined,
+      title: '계약서 템플릿을 불러오지 못했습니다',
+      subtitle: '네트워크 상태를 확인한 뒤 다시 시도해 주세요.',
+      action: OutlinedButton.icon(
+        onPressed: () => unawaited(_load()),
+        icon: const Icon(Icons.refresh),
+        label: const Text('다시 시도'),
+      ),
+    );
+  }
+
+  /// [DU353] 이전에 받은 목록이 있는데 새로 고침이 실패했다 — 목록은 두되 최신이 아닐 수 있음을 알린다.
+  Widget _buildRefreshFailedNotice(BuildContext context) {
+    const message = '목록을 새로 고치지 못했어요. 보이는 내용은 이전 목록일 수 있어요.';
+    return Container(
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 12),
+        ResponsiveHelper.spacing(context, 10),
+        ResponsiveHelper.spacing(context, 4),
+        ResponsiveHelper.spacing(context, 2),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.warningBg,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // [r2] 글자 줄 오른쪽 안쪽 여백을 왼쪽(12)과 맞춘다 — 바깥 오른쪽 4 는 다시 시도 버튼 정렬용
+          Padding(
+            padding: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // [DU361] 큰 글자에서 아이콘이 첫 줄 맨 위에 붙었다 — 첫 줄 가운데로(크기 그대로)
+                FirstLineIcon(Icons.error_outline,
+                    size: ResponsiveHelper.iconSize(context, 16),
+                    color: AppColors.warningDark,
+                    textStyle: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Expanded(
+                  child: Text(
+                    TextLayout.keepWords(message),
+                    semanticsLabel: message,
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: () => unawaited(_load()),
+              icon: const Icon(Icons.refresh),
+              label: const Text('다시 시도'),
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.warningDark,
+                minimumSize: const Size(48, 48),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -350,6 +444,7 @@ class _ContractTemplateListScreenState
               ),
               borderRadius: BorderRadius.circular(16),
             ),
+            // [DU344] 320 · 2.0 에서 고정 Row 의 글자가 68px 넘쳤다 — 남은 폭 안에서 낱말 단위 줄바꿈 · 가운데
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -357,11 +452,15 @@ class _ContractTemplateListScreenState
                     color: theme.primaryColor,
                     size: ResponsiveHelper.iconSize(context, 24)),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                Text(
-                  '새 계약서 템플릿 추가',
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    color: theme.primaryColor,
-                    fontWeight: FontWeight.bold,
+                Flexible(
+                  child: Text(
+                    TextLayout.keepWords('새 계약서 템플릿 추가'),
+                    semanticsLabel: '새 계약서 템플릿 추가',
+                    textAlign: TextAlign.center,
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      color: theme.primaryColor,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ],
@@ -399,6 +498,7 @@ class _ContractTemplateListScreenState
                 ),
                 borderRadius: BorderRadius.circular(16),
               ),
+              // [DU344] 목록 끝 버튼과 같은 교정(68px 넘침 → 낱말 단위 줄바꿈 · 가운데)
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -408,11 +508,15 @@ class _ContractTemplateListScreenState
                     size: ResponsiveHelper.iconSize(context, 24),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Text(
-                    '새 계약서 템플릿 추가',
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      color: theme.primaryColor,
-                      fontWeight: FontWeight.bold,
+                  Flexible(
+                    child: Text(
+                      TextLayout.keepWords('새 계약서 템플릿 추가'),
+                      semanticsLabel: '새 계약서 템플릿 추가',
+                      textAlign: TextAlign.center,
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        color: theme.primaryColor,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ],
@@ -479,21 +583,24 @@ class _CreationMethodSheet extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  '새 템플릿 만들기',
+                  TextLayout.keepWords('새 템플릿 만들기'),
+                  semanticsLabel: '새 템플릿 만들기',
                   style: ResponsiveHelper.titleStyle(context)
                       .copyWith(fontWeight: FontWeight.bold),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                // [DU344] grey500(2.68) → textSecondary, 낱말 단위
                 Text(
-                  '시작 방법을 선택해 주세요.',
+                  TextLayout.keepWords('시작 방법을 선택해 주세요.'),
+                  semanticsLabel: '시작 방법을 선택해 주세요.',
                   style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.grey500),
+                      color: AppColors.textSecondary),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
                 _MethodTile(
                   icon: Icons.upload_file_outlined,
-                  iconColor: AppColors.info,
+                  iconColor: AppColors.infoDeep, // [DU344] info(infoBg 위 2.8) → infoDeep
                   bgColor: AppColors.infoBg,
                   title: '기존 계약서로 시작',
                   subtitle: '한글·Word·PDF에서 복사한 내용을 붙여넣어 조항으로 나눕니다',
@@ -503,7 +610,7 @@ class _CreationMethodSheet extends StatelessWidget {
 
                 _MethodTile(
                   icon: Icons.auto_awesome_outlined,
-                  iconColor: AppColors.success,
+                  iconColor: AppColors.successDark, // [DU344] success → successDark
                   bgColor: AppColors.successBg,
                   // [RB-02] '법령 기반' + '자동' 조합은 ALfit이 법적 적합성을
                   //   보증하는 인상을 준다. ALfit은 계약 내용을 대신 확정하거나
@@ -516,7 +623,7 @@ class _CreationMethodSheet extends StatelessWidget {
 
                 _MethodTile(
                   icon: Icons.note_add_outlined,
-                  iconColor: AppColors.grey500,
+                  iconColor: AppColors.grey600, // [DU344] grey500 → grey600
                   bgColor: AppColors.grey100,
                   title: '빈 템플릿으로 시작',
                   subtitle: '조항을 처음부터 직접 작성합니다',
@@ -528,7 +635,7 @@ class _CreationMethodSheet extends StatelessWidget {
                   SizedBox(height: ResponsiveHelper.spacing(context, 10)),
                   _MethodTile(
                     icon: Icons.business_outlined,
-                    iconColor: AppColors.warning,
+                    iconColor: AppColors.warningDark, // [DU344] warning → warningDark
                     bgColor: AppColors.warningBg,
                     title: '다른 사업장에서 가져오기',
                     subtitle: '내가 관리하는 다른 사업장의 템플릿을 복사합니다',
@@ -543,7 +650,7 @@ class _CreationMethodSheet extends StatelessWidget {
                     onPressed: () => Navigator.pop(context),
                     child: Text('취소',
                         style: ResponsiveHelper.bodyStyle(context,
-                            color: AppColors.grey500)),
+                            color: AppColors.textSecondary)), // [DU344] grey500 → textSecondary
                   ),
                 ),
               ],
@@ -603,22 +710,25 @@ class _MethodTile extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // [DU344] 제목 · 설명 낱말 단위, 설명 grey500(2.68) → textSecondary
                     Text(
-                      title,
+                      TextLayout.keepWords(title),
+                      semanticsLabel: title,
                       style: ResponsiveHelper.bodyStyle(context)
                           .copyWith(fontWeight: FontWeight.w600),
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                     Text(
-                      subtitle,
+                      TextLayout.keepWords(subtitle),
+                      semanticsLabel: subtitle,
                       style: ResponsiveHelper.tinyStyle(context,
-                          color: AppColors.grey500),
+                          color: AppColors.textSecondary),
                     ),
                   ],
                 ),
               ),
               Icon(Icons.chevron_right,
-                  color: AppColors.grey400,
+                  color: AppColors.grey600, // [DU344] grey400 → grey600
                   size: ResponsiveHelper.iconSize(context, 20)),
             ],
           ),
@@ -878,9 +988,10 @@ class _TemplateCard extends StatelessWidget {
 
   Color _typeColor(BuildContext context) {
     switch (template.templateType) {
-      case ContractTemplateType.daily:     return AppColors.info;
-      case ContractTemplateType.period:    return AppColors.success;
-      case ContractTemplateType.outsource: return AppColors.warning;
+      // [DU344] 유형 배지 글자 · 아이콘 — 연한 면 위 중간 톤(2.0~2.7) → 진한 짝(infoDeep · successDark · warningDark)
+      case ContractTemplateType.daily:     return AppColors.infoDeep;
+      case ContractTemplateType.period:    return AppColors.successDark;
+      case ContractTemplateType.outsource: return AppColors.warningDark;
       default: return Theme.of(context).primaryColor;
     }
   }
@@ -942,21 +1053,20 @@ class _TemplateCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              template.name,
-                              style: ResponsiveHelper.bodyStyle(context)
-                                  .copyWith(fontWeight: FontWeight.w700),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
+                      // [DU344] 양식 이름 — 말줄임('단기 일용 기본 …') 대신 낱말 단위 줄바꿈(어떤 양식인지가 사라지지 않게)
+                      Text(
+                        TextLayout.keepWords(template.name),
+                        semanticsLabel: template.name,
+                        style: ResponsiveHelper.bodyStyle(context)
+                            .copyWith(fontWeight: FontWeight.w700),
                       ),
                       SizedBox(
                           height: ResponsiveHelper.spacing(context, 4)),
-                      Row(
+                      // [DU344] 유형 배지 + 메타 — 고정 Row 의 말줄임(320 · 2.0 '조항 …') 대신 줄을 넘겨 다 보인다
+                      Wrap(
+                        spacing: ResponsiveHelper.spacing(context, 6),
+                        runSpacing: ResponsiveHelper.spacing(context, 4),
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           // 유형 배지
                           Container(
@@ -980,16 +1090,13 @@ class _TemplateCard extends StatelessWidget {
                               ),
                             ),
                           ),
-                          SizedBox(
-                              width: ResponsiveHelper.spacing(context, 6)),
-                          Flexible(
-                            child: Text(
-                              '조항 ${template.articles.length}개 · '
-                              '${_fmtDate(template.updatedAt ?? template.createdAt)}',
-                              style: ResponsiveHelper.tinyStyle(context,
-                                  color: AppColors.grey400),
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                          Text(
+                            TextLayout.phrases('조항 ${template.articles.length}개 · '
+                                '${_fmtDate(template.updatedAt ?? template.createdAt)}'),
+                            semanticsLabel: '조항 ${template.articles.length}개 · '
+                                '${_fmtDate(template.updatedAt ?? template.createdAt)}',
+                            style: ResponsiveHelper.tinyStyle(context,
+                                color: AppColors.textTertiary), // [DU344] grey400(1.88) → textTertiary
                           ),
                         ],
                       ),
@@ -1011,12 +1118,14 @@ class _TemplateCard extends StatelessWidget {
               ResponsiveHelper.spacing(context, 16),
               ResponsiveHelper.spacing(context, 12),
             ),
+            // [DU344] 조항 제목 요약 — grey500/grey400 → textSecondary/textTertiary, 낱말 단위(앞 2개 요약이라 2줄 제한은 그대로)
             child: Text(
-              _articleSummary(),
+              TextLayout.phrases(_articleSummary()),
+              semanticsLabel: _articleSummary(),
               style: ResponsiveHelper.tinyStyle(context,
                   color: template.articles.isEmpty
-                      ? AppColors.grey400
-                      : AppColors.grey500),
+                      ? AppColors.textTertiary
+                      : AppColors.textSecondary),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -1024,43 +1133,71 @@ class _TemplateCard extends StatelessWidget {
 
           // 액션 버튼 행
           const Divider(height: 1, color: AppColors.grey100),
-          Row(
-            children: [
+          // [5.11] legacy 분류는 복사로 증식시키지 않는다 —
+          //   신규 계약에 쓸 수 없는 템플릿을 복제할 제품적 가치가 없고,
+          //   복사 경로가 신규 생성 금지의 우회로가 된다.
+          //   편집·미리보기·삭제는 그대로 두어 기존 데이터 접근권을 지킨다.
+          // [DU344] 삭제 진입 색 errorMedium → grey600(위험색은 확인창에서만, 사용자 피드백 DU245). 순서 · 동작 그대로.
+          //   320 · 2.0 에서 4칸에 '미리보기' 가 안 들어가 '미리보 / 기' 로 갈렸다 — 실제 글자 배율로 가장 긴 이름을 재서
+          //   한 칸에 안 들어가면 두 칸씩 두 줄로 놓는다.
+          LayoutBuilder(builder: (ctx, cons) {
+            final actions = <_ActionBtn>[
               _ActionBtn(
                 icon: Icons.visibility_outlined,
                 label: '미리보기',
                 color: AppColors.grey600,
                 onTap: onPreview,
               ),
-              // [5.11] legacy 분류는 복사로 증식시키지 않는다 —
-              //   신규 계약에 쓸 수 없는 템플릿을 복제할 제품적 가치가 없고,
-              //   복사 경로가 신규 생성 금지의 우회로가 된다.
-              //   편집·미리보기·삭제는 그대로 두어 기존 데이터 접근권을 지킨다.
-              if (template.isSupportedForNewUse) ...[
-                _Vdivider(),
+              if (template.isSupportedForNewUse)
                 _ActionBtn(
                   icon: Icons.copy_outlined,
                   label: '복사',
                   color: AppColors.grey600,
                   onTap: onDuplicate,
                 ),
-              ],
-              _Vdivider(),
               _ActionBtn(
                 icon: Icons.edit_outlined,
                 label: '편집',
                 color: theme.primaryColor,
                 onTap: onEdit,
               ),
-              _Vdivider(),
               _ActionBtn(
                 icon: Icons.delete_outline,
                 label: '삭제',
-                color: AppColors.errorMedium,
+                color: AppColors.grey600,
                 onTap: onDelete,
               ),
-            ],
-          ),
+            ];
+            final labelStyle = DefaultTextStyle.of(ctx).style.merge(ResponsiveHelper.tinyStyle(ctx));
+            var widest = 0.0;
+            for (final a in actions) {
+              final tp = TextPainter(
+                text: TextSpan(text: a.label, style: labelStyle),
+                textDirection: Directionality.of(ctx),
+                textScaler: MediaQuery.textScalerOf(ctx),
+                maxLines: 1,
+              )..layout();
+              if (tp.width > widest) widest = tp.width;
+              tp.dispose();
+            }
+            final cellPad = ResponsiveHelper.spacing(ctx, 8) * 2;
+            final perRow = (!cons.hasBoundedWidth ||
+                    widest + cellPad <= cons.maxWidth / actions.length)
+                ? actions.length
+                : 2;
+            final rows = <Widget>[];
+            for (var i = 0; i < actions.length; i += perRow) {
+              final chunk = actions.sublist(i, (i + perRow).clamp(0, actions.length));
+              final cells = <Widget>[];
+              for (var k = 0; k < perRow; k++) {
+                if (k > 0) cells.add(_Vdivider());
+                cells.add(k < chunk.length ? chunk[k] : const Expanded(child: SizedBox()));
+              }
+              if (rows.isNotEmpty) rows.add(const Divider(height: 1, color: AppColors.grey100));
+              rows.add(Row(children: cells));
+            }
+            return Column(mainAxisSize: MainAxisSize.min, children: rows);
+          }),
         ],
       ),
     );

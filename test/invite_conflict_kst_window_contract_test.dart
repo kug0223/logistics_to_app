@@ -106,10 +106,24 @@ void main() {
 
     test('트랜잭션 안에서 같은 문서를 다시 본다', () {
       // [R7-P4.4E.11C.0C.0b] 계정 freeze fence 가 TX 의 첫 read 다. 중복 가드는 그 뒤에 그대로 있다.
-      expect(cf.contains('await db.runTransaction(async (invTx) => { '
-          'await srvAssertAccountNotFrozenInTx(invTx, targetUid, "근로자"); '
-          'const existing = await invTx.get(newAppRef);'), true,
+      // [INVITE-TERMINAL] freeze fence 뒤에 공고·슬롯 재검증(종료·단위 정원)이 들어왔다.
+      //   fence 가 첫 read 이고 같은 문서 재확인이 쓰기 전에 있다는 계약은 그대로다.
+      // [POSTING-AUTH-46] 계약은 "fence 가 **첫** read" 라는 위치가 아니라 다음 셋이다:
+      //   ① 계정 freeze fence 가 트랜잭션 **안**, 쓰기 전에 있다(사전검사만으로는 동시 호출이 둘 다 통과한다).
+      //   ② 같은 문서 재확인이 쓰기 전에 있다.
+      //   ③ [POSTING-AUTH-43] 초대 권한 판정도 같은 트랜잭션 안에 있다 — 그래서 fence 가 둘째 read 가 됐다.
+      //   권한 회수 보호의 실제 동작은 서버 경합 시험(.44 quota44 초대 회수, 45/0)이 보장한다.
+      //   트랜잭션 안 read 순서는 정합성에 영향이 없다(모든 read 가 write 앞이다).
+      final txAt = cf.indexOf('await db.runTransaction(async (invTx) => {');
+      expect(txAt, isNot(-1));
+      final setAt = cf.indexOf('invTx.set(newAppRef,', txAt);
+      final fenceAt = cf.indexOf('await srvAssertAccountNotFrozenInTx(invTx, targetUid, "근로자");', txAt);
+      final authAt = cf.indexOf('await srvAssertPostingAuthorityInTx(invTx, callerUid, businessId);', txAt);
+      final existingAt = cf.indexOf('const existing = await invTx.get(newAppRef);', txAt);
+      expect(fenceAt > txAt && fenceAt < setAt, true,
           reason: '비-트랜잭션 사전검사만으로는 동시 호출이 둘 다 통과한다');
+      expect(authAt > txAt && authAt < setAt, true, reason: '권한 판정이 쓰기와 같은 트랜잭션에 있어야 한다');
+      expect(existingAt > txAt && existingAt < setAt, true);
     });
 
     test('재초대가 허용되는 상태는 명시된 셋뿐이다', () {

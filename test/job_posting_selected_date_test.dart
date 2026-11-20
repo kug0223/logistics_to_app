@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -21,6 +22,7 @@ import 'package:ALfit/models/core/work_detail_model.dart';
 import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/common/job_posting_reads.dart';
+import 'package:ALfit/services/work_type_guide_resolver.dart';
 import 'package:ALfit/screens/common/job_posting_screen.dart';
 import 'package:ALfit/utils/format_helper.dart';
 
@@ -83,8 +85,27 @@ DateTime _kstInstant(int y, int mo, int d) =>
 DateTime _dev(DateTime instant, _Device dv) =>
     dv == _Device.kst ? instant.toLocal() : instant.toUtc();
 
-final _d1 = _kstInstant(2026, 10, 10);
-final _d2 = _kstInstant(2026, 10, 11);
+/// 오늘로부터 `days` 일 뒤의 **KST 자정** instant.
+DateTime _kstDayPlus(int days) {
+  final k = DateTime.now().toUtc()
+      .add(const Duration(hours: 9))
+      .add(Duration(days: days));
+  return _kstInstant(k.year, k.month, k.day);
+}
+
+// [시한부 fixture 정정] 예전에는 `2026-10-10`·`2026-10-11` 고정이었다.
+//   그 날이 지나는 순간 모집중 슬롯이 **마감된 공고**로 바뀌어 JPD-5 가
+//   깨졌다(2026-10-12 에 실제로 깨졌다). 이 파일이 묻는 것은 **연속한 두 날**의
+//   선택·전달·표시이므로 날짜 값 자체는 중요하지 않다. 항상 미래가 되게 센다.
+final _d1 = _kstDayPlus(2);
+final _d2 = _kstDayPlus(3);
+
+/// 상세 머리말이 쓰는 날짜 표현 — 단정도 fixture 에서 유도한다.
+///   하드코딩하면 날짜를 옮기는 순간 같이 깨진다(실제로 깨졌다).
+String _headline(DateTime instant) {
+  final k = instant.toUtc().add(const Duration(hours: 9));
+  return '${k.month}월 ${k.day}일';
+}
 
 WorkDetailData _wd({
   required String id,
@@ -170,7 +191,7 @@ JobPostingReads _reads({
         return slots;
       },
       myApplications: (uid) async => myApps,
-      businessWorkTypes: (id) async => const <BusinessWorkTypeModel>[],
+      workTypeCatalog: (id) async => WorkTypeCatalog.empty,
       applicationOnce: (id) async => null,
     );
 
@@ -245,7 +266,7 @@ void main() {
       );
 
       expect(tester.takeException(), isNull);
-      expect(find.textContaining('10월 11일'), findsWidgets,
+      expect(find.textContaining(_headline(_d2)), findsWidgets,
           reason: '$label 에서 고른 날짜가 상세의 머리말이어야 한다');
       expect(find.text('피킹'), findsWidgets,
           reason: '그 날짜 슬롯의 업무가 나와야 한다');
@@ -261,7 +282,7 @@ void main() {
         slotDate: FormatHelper.toKstDate(_d1),
       );
 
-      expect(find.textContaining('10월 10일'), findsWidgets);
+      expect(find.textContaining(_headline(_d1)), findsWidgets);
       expect(find.text('상하차'), findsWidgets);
       expect(find.text('피킹'), findsNothing);
     });
@@ -324,7 +345,7 @@ void main() {
     );
 
     expect(find.text('모집중'), findsWidgets);
-    expect(find.text('마감'), findsNothing);
+    expect(findVisibleText('마감'), findsNothing);
     expect(find.text('마감된 공고입니다'), findsNothing);
   });
 
@@ -345,8 +366,10 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('마감된 공고입니다'), findsWidgets,
+    // [INVITE-CAPACITY] FULL ≠ DONE — 자리가 찬 것은 모집 종료가 아니다(취소가 나오면 다시 열린다).
+    expect(find.text('모집 인원이 찼어요'), findsWidgets,
         reason: 'FULL 이면 지원 CTA 가 닫혀야 한다');
+    expect(find.text('마감된 공고입니다'), findsNothing);
   });
 
   testWidgets('JPD-7 FULL 이어도 **이미 확정된 내 약속**은 완료·취소로 보이지 않는다',
@@ -402,4 +425,22 @@ void main() {
       });
     }
   }
+  // [DU1-R2d] 일부 업무만 지원 마감이 지난 날 — 칩과 헤더가 같은 범위(전체 업무 수)를 말한다. 마감 판정은 그대로.
+  testWidgets('JPD-R2d 일부 만료 날짜 — 칩·헤더 모두 업무 2개', (tester) async {
+    WorkDetailData wd(String id, String type, {DateTime? deadline}) => WorkDetailData(
+          wdId: id, workType: type, workTypeIcon: 'box', workTypeColor: '#000000',
+          workTypeBackgroundColor: '#FFFFFF', wage: 12000, wageType: 'hourly', requiredCount: 2,
+          startTime: '09:00', endTime: '18:00', order: 0, applicationDeadline: deadline);
+    final slot = _slot(id: 's1', date: _d1, details: [
+      wd('w1', '피킹', deadline: DateTime.now().subtract(const Duration(hours: 1))), // 만료
+      wd('w2', '상하차'),
+    ]);
+    await _pump(tester, reads: _reads(slots: [slot]), slotDate: FormatHelper.toKstDate(_d1));
+    expect(tester.takeException(), isNull);
+    String plain(String s) => s.replaceAll('\u2060', '');
+    final texts = tester.widgetList<Text>(find.byType(Text)).map((t) => plain(t.data ?? '')).toList();
+    expect(texts.where((s) => s == '업무 2개').length, 1, reason: '날짜 칩 — 전체 업무 수');
+    expect(texts.any((s) => s.endsWith('· 업무 2개')), isTrue, reason: '날짜 헤더 — 같은 범위');
+    expect(texts.contains('업무 1개'), isFalse, reason: '칩이 마감 전 수(1)를 같은 이름으로 말하지 않는다');
+  });
 }

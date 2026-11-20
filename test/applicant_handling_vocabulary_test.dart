@@ -149,9 +149,19 @@ void main() {
     //
     //   WorkApplicantsDialog는 아직 초대를 다루지 않으므로 그대로 둔다.
     test('AHV-21 INVITED를 다루는 화면은 지원과 라벨을 분리한다', () {
-      // 초대를 다루지 않는 화면은 여전히 PENDING/CONFIRMED 두 갈래다.
-      expect(_source(_work).contains('AppStatus.invited'), false,
-          reason: '$_work 가 INVITED를 다루기 시작했다 — 라벨 재검토 필요');
+      // [E2-INVITED-SEAT · E1-W3] 업무별 창도 INVITED 를 다루기 시작했다
+      //   (초대 행 · 미확인 초대 재조회 판정). 요구된 대로 라벨을 재검토했고
+      //   Day 와 같은 원칙으로 합치지 않았다 — 지원(PENDING)과 초대(INVITED)를
+      //   따로 센다.
+      final work = _source(_work).replaceAll(RegExp(r'\s+'), ' ');
+      if (_source(_work).contains('AppStatus.invited')) {
+        expect(work.contains("_buildStatItem(context, '지원', pendingCount,"), true,
+            reason: '업무별 창의 지원 수가 사라졌다');
+        expect(work.contains("_buildStatItem(context, '초대', _invites.length,"), true,
+            reason: '초대를 다루면서 그것을 초대라고 부르지 않았다');
+        expect(work.contains("_buildSectionHeader( context, '초대', _invites.length, AppColors.infoDark)"), true,
+            reason: '초대 섹션 머리말');
+      }
 
       final day = _source(_day);
       if (!day.contains('AppStatus.invited')) return; // 아직 안 다루면 계약 없음

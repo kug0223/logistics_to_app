@@ -34,9 +34,11 @@ import '../../widgets/common/app_search_bar.dart';
 import '../../widgets/common/app_tab_label.dart';
 import '../../widgets/common/app_filter_chip.dart';
 import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/first_line_icon.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../../utils/business_picker_helper.dart';
 import '../../utils/navigation_helper.dart';
+import '../../utils/text_layout.dart';
 import '../common/notification_screen.dart';
 
 enum _DividerMarker { expired }
@@ -233,7 +235,8 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     if (businessId == null) {
       // BUSINESS_ADMIN N사업장: 피커로 선택 (캐시되지 않은 첫 번째 호출만)
       if (!mounted) return;
-      final picked = await BusinessPickerHelper.pick(context);
+      final picked =
+          await BusinessPickerHelper.pick(context, includeClosed: true);
       if (!mounted) return;
       if (picked == null) {
         setState(() => _isLoading = false);
@@ -370,6 +373,9 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final hasActiveFilter = _selectedMonth > 0;
+    // [DU430] 탭 셋이 한 줄에 안 들어가면(320@2.0: '미작성' 자연폭 71.8 > 칸 52.9 → 두 줄 · 탭 높이에 잘림, 진단 du430) 가로 스크롤로.
+    //   탭 이름은 줄이지 않고 한 줄 원문 그대로다. 출결 다이얼로그(COMMON-TEXT-LAYOUT.28) · 급여 대시보드(UI-INTEGRATION.33)와 같은 판정이다.
+    final tabsFit = TextLayout.tabsFit(context, MediaQuery.sizeOf(context).width, 3);
 
     return AppPageScaffold(
       title: hasActiveFilter
@@ -400,10 +406,15 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       // [DESIGN-PATCH-4] TabBar → AppPageScaffold.bottom (기존 body Container 제거)
       bottom: TabBar(
         controller: _tabController,
+        isScrollable: !tabsFit,
+        tabAlignment: tabsFit ? null : TabAlignment.start,
+        labelPadding: tabsFit
+            ? null
+            : EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 12)),
         indicatorColor: theme.primaryColor,
         indicatorWeight: 3,
         labelColor: theme.primaryColor,
-        unselectedLabelColor: AppColors.grey400,
+        unselectedLabelColor: AppColors.textSecondary, // [DU429] grey400(1.88:1) → DU242 · DU342 탭과 같은 보조 글자
         dividerColor: AppColors.grey100,
         labelStyle: ResponsiveHelper.smallStyle(context,
             fontWeight: FontWeight.w600),
@@ -430,9 +441,11 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                 )
               : Column(
                   children: [
+                    // [DU431] 320@2.0 에서 '근무자 이름…' 으로 잘리던 안내를 두 줄까지 낱말 사이에서 바꿔 전문을 보인다(문구 그대로).
                     AppSearchBar(
                       controller: _searchCtrl,
                       hintText: '근무자 이름으로 검색',
+                      hintMaxLines: 2,
                     ),
                     _buildMonthFilter(),
                     Expanded(
@@ -681,7 +694,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                     child: Text(
                       '기한 만료',
                       style: ResponsiveHelper.tinyStyle(
-                          context, color: AppColors.grey400),
+                          context, color: AppColors.textTertiary),
                     ),
                   ),
                   const Expanded(child: Divider()),
@@ -705,10 +718,12 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     final displayName = req.workerName.isNotEmpty
         ? req.workerName
         : (_resolvedWorkerNames[req.workerId] ?? '근무자');
+    // [DU430] '임박!' 은 마감 글과 따로 항목이다(아래 Wrap) — 장식 '·' 없이.
+    final deadlineText = isExpired ? '기한 만료' : '마감 ${_formatDate(req.deadline)}';
 
-    return Opacity(
-      opacity: isExpired ? 0.5 : 1.0,
-      child: Container(
+    // [DU429] 만료 카드를 Opacity(0.5)로 흐리게 하던 것을 뺐다 — 글자가 통째로 반투명이라 약 1.5:1 이었다.
+    //   만료는 '기한 만료' 글 · 아이콘 · 그림자 없음 · 작성 버튼 없음 · 낮은 강조 글자(textTertiary)로 구분한다.
+    return Container(
         margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
         decoration: BoxDecoration(
           color: AppColors.surface,
@@ -747,13 +762,13 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                         style: ResponsiveHelper.bodyStyle(context).copyWith(
                           fontWeight: FontWeight.bold,
                           color: isExpired
-                              ? AppColors.grey400
+                              ? AppColors.textTertiary
                               : theme.primaryColor,
                         ),
                       )
                     : Icon(Icons.person,
                         size: ResponsiveHelper.iconSize(context, 18),
-                        color: isExpired ? AppColors.grey400 : theme.primaryColor),
+                        color: isExpired ? AppColors.textTertiary : theme.primaryColor),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               Expanded(
@@ -761,54 +776,69 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      displayName,
+                      TextLayout.identity(displayName),
+                      semanticsLabel: displayName,
                       style: ResponsiveHelper.bodyStyle(context).copyWith(
                         fontWeight: FontWeight.bold,
-                        color: isExpired ? AppColors.grey500 : null,
+                        color: isExpired ? AppColors.textTertiary : null,
                       ),
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 3)),
                     // 기간 + 마감일을 한 줄로 합쳐 카드 높이 절감
-                    Row(
+                    // [TEXT-LAYOUT-CONSUMER.29] 들어가면 한 줄, 모자라면 마감 묶음이 통째로 다음 줄.
+                    //   기기 320dp·1.0 에서 '마감 2026.11…' 로 날짜가 잘렸고 큰 글자에서 '2026년 / 10월' 로 갈렸다.
+                    Wrap(
+                      spacing: ResponsiveHelper.spacing(context, 10),
+                      runSpacing: ResponsiveHelper.spacing(context, 2),
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Expanded(
-                          child: Text(
-                            req.periodText,
-                            style: ResponsiveHelper.smallStyle(
-                                context, color: AppColors.grey500),
-                          ),
+                        Text(
+                          TextLayout.keepWords(req.periodText),
+                          semanticsLabel: req.periodText,
+                          style: ResponsiveHelper.smallStyle(
+                              context, color: AppColors.textSecondary),
                         ),
-                        Icon(
+                        // [DU440] 320@2.0 에서 마감 글이 '마감' / 날짜 두 줄이 되면 아이콘이 두 줄 가운데에 떠 어느 줄 표시인지 흐렸다.
+                        //   공용 FirstLineIcon 으로 첫 줄 가운데에 둔다(크기는 그대로 — DU361 규칙: 배율로 아이콘을 키우지 않음).
+                        Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        FirstLineIcon(
                           isExpired
                               ? Icons.event_busy
                               : isDeadlineSoon
                                   ? Icons.alarm
                                   : Icons.schedule,
                           size: ResponsiveHelper.iconSize(context, 12),
+                          textStyle: ResponsiveHelper.tinyStyle(context),
                           color: isExpired
-                              ? AppColors.grey400
+                              ? AppColors.textTertiary
                               : isDeadlineSoon
                                   ? AppColors.error
-                                  : AppColors.grey500,
+                                  : AppColors.textSecondary,
                         ),
                         SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                        // [DU429 · DU430] 마감 글이 칸보다 길면(320@2.0) '마감' / 날짜 사이 공백에서만 줄을 바꾼다 — softWrap:false 는 넘쳤다.
+                        //   날짜 단독 122.4 ≤ 마감 칸 135.0(진단 du430)이라 날짜는 한 덩어리로 읽힌다.
                         Flexible(
                           child: Text(
-                            isExpired
-                                ? '기한 만료'
-                                : '마감 ${_formatDate(req.deadline)}'
-                                    '${isDeadlineSoon ? ' · 임박!' : ''}',
+                            TextLayout.keepWords(deadlineText),
+                            semanticsLabel: deadlineText,
                             style: ResponsiveHelper.tinyStyle(
                               context,
                               color: isExpired
-                                  ? AppColors.grey400
+                                  ? AppColors.textTertiary
                                   : isDeadlineSoon
-                                      ? AppColors.error
-                                      : AppColors.grey500,
+                                      ? AppColors.errorDark
+                                      : AppColors.textSecondary,
                             ),
-                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
+                        ]),
+                        // [DU430] '임박!' 따로 항목 — 320@2.0 에서 '· 임박!' 이 줄 첫머리에 오던 것을 없앴다(감사108 F108-1).
+                        if (isDeadlineSoon)
+                          Text(
+                            '임박!',
+                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.errorDark),
+                          ),
                       ],
                     ),
                   ],
@@ -818,8 +848,9 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                 ElevatedButton(
                   onPressed: () => _openReviewFromRequest(req),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        isDeadlineSoon ? AppColors.error : theme.primaryColor,
+                    // [DU429] 임박이어도 주 버튼은 브랜드 채움이다(흰 글자 / error 는 3.68:1 · 빨강은 확인 순간에만).
+                    //   임박은 카드 빨간 테두리 · 알람 아이콘 · '임박!' errorDark 글자가 알린다.
+                    backgroundColor: theme.primaryColor,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8)),
@@ -839,7 +870,6 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
             ],
           ),
         ),
-      ),
     );
   }
 
@@ -860,6 +890,8 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     String? workerGender;
     int? workerAge;
     int workDaysInMonth = 0;
+    int onTimeDays = 0;
+    int lateDays = 0;
 
     final yearMonthStr =
         '${req.reviewYear}-${req.reviewMonth.toString().padLeft(2, '0')}';
@@ -885,8 +917,12 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       ]);
 
       final usersResult = results[0] as HttpsCallableResult<Map<String, dynamic>>;
-      final users = usersResult.data['users'] as Map<String, dynamic>? ?? {};
-      final workerData = users[req.workerId] as Map<String, dynamic>?;
+      // 플러그인은 최상위만 Map<String, dynamic> 으로 바꾼다 — 안쪽은
+      //   Map<Object?, Object?> 이므로 cast 로 감싼다(직접 캐스팅은 TypeError).
+      final users =
+          (usersResult.data['users'] as Map?)?.cast<String, dynamic>() ?? {};
+      final workerData =
+          (users[req.workerId] as Map?)?.cast<String, dynamic>();
       if (workerData != null) {
         workerGender = workerData['gender'] as String?;
         final birthDateRaw = workerData['birthDate'];
@@ -904,13 +940,13 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       //   wageStatus를 confirmed로 쓰므로(0원 마감), 오지 않은 날이 근무일로
       //   집계되고 있었다. 리뷰 작성자에게 보이는 `이번 달 N일 근무`가
       //   실제보다 많아지는 경로다.
-      workDaysInMonth = cfItems.where((e) {
-        final m = e as Map;
-        return AttendanceModel.isActualFinalizedWork(
-          m['status'] as String?,
-          m['wageStatus'] as String?,
-        );
-      }).length;
+      // [REVIEW-ABSENCE-METRIC] 정시·지각도 같은 실근무 확정 행에서 센다 —
+      //   넘기지 않으면 작성창이 `근무일 − 0 − 0` 을 결근으로 그렸다.
+      final summary =
+          AttendanceModel.reviewAttendanceSummary(cfItems.whereType<Map>());
+      workDaysInMonth = summary.workDays;
+      onTimeDays = summary.onTime;
+      lateDays = summary.late;
     } catch (e) {
       debugPrint('❌ 리뷰 요청 정보 로드 실패: $e');
       if (mounted) ToastHelper.showError('추가 정보를 불러오는 데 실패했습니다');
@@ -931,6 +967,8 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       reviewYear: req.reviewYear,
       reviewMonth: req.reviewMonth,
       workDaysInMonth: workDaysInMonth,
+      normalAttendanceDays: onTimeDays,
+      lateDays: lateDays,
       requestId: req.id,
     );
 

@@ -8,6 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
+import '../../models/settings/trust_settings_model.dart';
+import '../../widgets/common/app_empty_state.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
@@ -18,8 +21,22 @@ import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/app_tab_label.dart';
 
 /// 리뷰 태그 관리 화면
+///
+/// [.62] 리뷰는 태그를 **글자 그대로** 저장한다(`monthly_reviews.positiveTags` 등).
+///   그래서 여기서 지우거나 새로 넣어도 이미 쓴 리뷰의 태그는 바뀌지 않는다.
+///   - 읽기 실패: 기본 목록을 현재 설정처럼 보여 주고, 그 상태로 추가·삭제하면
+///     문서 전체를 기본값 ± 1개로 덮었다 → 실패 화면을 보이고 쓰기를 막는다.
+///   - 저장: 화면이 들고 있던 네 목록 전체를 `set()` 했다 → 다른 SA 가 그 사이
+///     넣은 태그가 사라졌다 → 태그 한 개만 arrayUnion/arrayRemove 한다.
+///   - 저장 실패: 오류를 삼켜 되돌림이 돌지 않았다(화면 ≠ 저장값) → 서버 값을 다시 읽는다.
 class ReviewTagsSettingsScreen extends StatefulWidget {
-  const ReviewTagsSettingsScreen({super.key});
+  const ReviewTagsSettingsScreen({super.key, this.load, this.mutate});
+
+  /// 시험용 — 문서 읽기(없으면 null). production 은 null → Firestore.
+  final Future<Map<String, dynamic>?> Function()? load;
+
+  /// 시험용 — 태그 한 개 추가/삭제. production 은 null → Firestore.
+  final Future<void> Function(String field, String tag, {required bool add})? mutate;
 
   @override
   State<ReviewTagsSettingsScreen> createState() => _ReviewTagsSettingsScreenState();
@@ -27,11 +44,29 @@ class ReviewTagsSettingsScreen extends StatefulWidget {
 
 class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen> 
     with SingleTickerProviderStateMixin {
-  final _firestore = FirebaseFirestore.instance;
+  FirebaseFirestore get _firestore => FirebaseFirestore.instance;
   late TabController _tabController;
   
   bool _isLoading = true;
   bool _isSaving = false;
+  Object? _loadError;
+
+  static const _fields = {
+    'positive': 'positiveTags',
+    'improvement': 'improvementTags',
+    'businessPositive': 'businessPositiveTags',
+    'businessImprovement': 'businessImprovementTags',
+  };
+
+  DocumentReference<Map<String, dynamic>> get _doc =>
+      _firestore.collection('settings').doc('review_tags');
+
+  List<String> _listOf(String type) => switch (type) {
+        'positive' => _positiveTags,
+        'improvement' => _improvementTags,
+        'businessPositive' => _businessPositiveTags,
+        _ => _businessImprovementTags,
+      };
 
   // 태그 목록
   List<String> _positiveTags = [];
@@ -59,27 +94,40 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
     super.dispose();
   }
 
+  Future<Map<String, dynamic>?> _read() async {
+    if (widget.load != null) return widget.load!();
+    final doc = await _doc.get();
+    return doc.exists ? doc.data() : null;
+  }
+
+  void _apply(Map<String, dynamic> data) {
+    _positiveTags = List<String>.from(data['positiveTags'] ?? []);
+    _improvementTags = List<String>.from(data['improvementTags'] ?? []);
+    _businessPositiveTags = List<String>.from(data['businessPositiveTags'] ?? []);
+    _businessImprovementTags = List<String>.from(data['businessImprovementTags'] ?? []);
+  }
+
   Future<void> _loadTags() async {
+    if (mounted) setState(() { _isLoading = true; _loadError = null; });
     try {
-      final doc = await _firestore.collection('settings').doc('review_tags').get();
-      
-      if (doc.exists) {
-        final data = doc.data()!;
-        _positiveTags = List<String>.from(data['positiveTags'] ?? []);
-        _improvementTags = List<String>.from(data['improvementTags'] ?? []);
-        _businessPositiveTags = List<String>.from(data['businessPositiveTags'] ?? []);
-        _businessImprovementTags = List<String>.from(data['businessImprovementTags'] ?? []);
-      } else {
-        // 기본값 설정
-        _setDefaultTags();
-        // mounted 체크 필수: await 이후 위젯 dispose 시 Firestore 쓰기 방지
-        if (!mounted) return;
-        await _saveTags(showToast: false); // [BUG-수정] 초기화 경로에서 Toast 오발화 방지
+      var data = await _read();
+      if (data == null) {
+        // 문서가 없으면 기본 목록으로 한 번 만든다. 이미 누가 만들었으면 덮지 않는다.
+        final defaults = ReviewTagsModel.defaults().toMap();
+        if (widget.load == null) {
+          await _firestore.runTransaction((tx) async {
+            if ((await tx.get(_doc)).exists) return;
+            tx.set(_doc, {...defaults, 'updatedAt': FieldValue.serverTimestamp()});
+          });
+          data = await _read() ?? defaults;
+        } else {
+          data = defaults;
+        }
       }
+      _apply(data);
     } catch (e) {
       debugPrint('❌ 태그 로드 실패: $e');
-      _setDefaultTags();
-      if (mounted) ToastHelper.showError('태그 설정을 불러오는 데 실패했습니다');
+      _loadError = e;
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -87,120 +135,74 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
     }
   }
 
-  void _setDefaultTags() {
-    _positiveTags = ['시간 준수', '성실함', '작업 속도', '소통 원활', '꼼꼼함', '체력 좋음', '협조적', '빠른 습득'];
-    _improvementTags = ['지각/조퇴', '무단 이탈', '작업 미숙', '소통 부족', '태도 불량', '집중력'];
-    _businessPositiveTags = ['급여 정확', '친절한 관리자', '시설 청결', '업무 설명 명확', '휴게시간 준수', '교통 편리'];
-    _businessImprovementTags = ['업무 과중', '소통 부족', '시설 불편', '대기 시간 김', '안전 문제'];
+  /// 태그 한 개만 바꾼다 — 다른 SA 가 그 사이 바꾼 태그를 덮지 않는다.
+  Future<void> _mutate(String type, String tag, {required bool add}) async {
+    final field = _fields[type]!;
+    if (widget.mutate != null) return widget.mutate!(field, tag, add: add);
+    await _doc.update({
+      field: add ? FieldValue.arrayUnion([tag]) : FieldValue.arrayRemove([tag]),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
   }
 
-  Future<void> _saveTags({bool showToast = true}) async { // [BUG-수정] 초기화 경로에서 Toast 오발화 방지용 파라미터
+  /// 저장 뒤(성공·실패 모두) 서버 값으로 화면을 맞춘다.
+  Future<void> _refresh() async {
     try {
-      await _firestore.collection('settings').doc('review_tags').set({
-        'positiveTags': _positiveTags,
-        'improvementTags': _improvementTags,
-        'businessPositiveTags': _businessPositiveTags,
-        'businessImprovementTags': _businessImprovementTags,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      if (showToast && mounted) ToastHelper.showSuccess('태그가 저장되었습니다');
+      final data = await _read();
+      if (data != null && mounted) setState(() => _apply(data));
     } catch (e) {
-      debugPrint('❌ 태그 저장 실패: $e');
-      if (mounted) ToastHelper.showError('저장에 실패했습니다');
+      debugPrint('❌ 태그 다시 읽기 실패: $e');
     }
   }
 
   Future<void> _addTag(String type) async {
-    if (_isSaving) return;
+    if (_isSaving || _loadError != null) return;
     // [FC-TAG-01 OWNERSHIP FIX] _TagInputDialog(StatefulWidget)이 ctrl을
     // 직접 소유하고 State.dispose()에서 해제한다.
-    // addPostFrameCallback dispose 패턴 제거.
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const _TagInputDialog(title: '태그 추가'),
+    );
+    if (result == null || result.isEmpty || !mounted) return;
+    if (_listOf(type).contains(result)) {
+      ToastHelper.showError('이미 있는 태그입니다');
+      return;
+    }
+    setState(() => _isSaving = true);
     try {
-      final result = await showDialog<String>(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const _TagInputDialog(title: '태그 추가'),
-      );
-
-      if (result != null && result.isNotEmpty) {
-        if (!mounted) return;
-        setState(() {
-          _isSaving = true;
-          switch (type) {
-            case 'positive':
-              if (!_positiveTags.contains(result)) _positiveTags.add(result);
-              break;
-            case 'improvement':
-              if (!_improvementTags.contains(result)) _improvementTags.add(result);
-              break;
-            case 'businessPositive':
-              if (!_businessPositiveTags.contains(result)) _businessPositiveTags.add(result);
-              break;
-            case 'businessImprovement':
-              if (!_businessImprovementTags.contains(result)) _businessImprovementTags.add(result);
-              break;
-          }
-        });
-        if (!mounted) return;
-        try {
-          await _saveTags();
-        } catch (e) {
-          // 저장 실패 시 optimistic update 롤백
-          if (mounted) {
-            setState(() {
-              switch (type) {
-                case 'positive': _positiveTags.remove(result); break;
-                case 'improvement': _improvementTags.remove(result); break;
-                case 'businessPositive': _businessPositiveTags.remove(result); break;
-                case 'businessImprovement': _businessImprovementTags.remove(result); break;
-              }
-            });
-          }
-          rethrow;
-        }
-      }
+      await _mutate(type, result, add: true);
+      if (mounted) ToastHelper.showSuccess('태그가 저장되었습니다');
     } catch (e) {
       debugPrint('❌ 태그 추가 실패: $e');
-      if (mounted) ToastHelper.showError('태그 추가 중 오류가 발생했습니다');
+      if (mounted) ToastHelper.showError('저장하지 못했습니다. 저장된 목록을 다시 불러왔습니다');
     } finally {
+      await _refresh();
       if (mounted) setState(() => _isSaving = false);
-      // controller.dispose() 제거 — _TagInputDialog.State가 직접 처리
     }
   }
 
   Future<void> _removeTag(String type, String tag) async {
-    if (_isSaving) return;
+    if (_isSaving || _loadError != null) return;
     final confirmed = await DialogHelper.showConfirm(
       context,
       title: '태그 삭제',
-      message: '"$tag" 태그를 삭제하시겠습니까?',
+      message: TextLayout.keepWords('"$tag" 태그를 삭제하시겠습니까?\n'
+          '새 리뷰에서 더 이상 고를 수 없습니다. 이미 작성된 리뷰에는 이 태그가 그대로 남습니다.'),
       confirmText: '삭제',
     );
 
     if (!confirmed || !mounted) return;
 
-    setState(() {
-      _isSaving = true;
-      switch (type) {
-        case 'positive':
-          _positiveTags.remove(tag);
-          break;
-        case 'improvement':
-          _improvementTags.remove(tag);
-          break;
-        case 'businessPositive':
-          _businessPositiveTags.remove(tag);
-          break;
-        case 'businessImprovement':
-          _businessImprovementTags.remove(tag);
-          break;
-      }
-    });
+    setState(() => _isSaving = true);
     try {
-      if (!mounted) return;
-      await _saveTags();
+      await _mutate(type, tag, add: false);
+      if (mounted) ToastHelper.showSuccess('태그를 삭제했습니다');
+    } catch (e) {
+      debugPrint('❌ 태그 삭제 실패: $e');
+      if (mounted) ToastHelper.showError('삭제하지 못했습니다. 저장된 목록을 다시 불러왔습니다');
     } finally {
+      await _refresh();
       if (mounted) setState(() => _isSaving = false);
     }
   }
@@ -208,14 +210,19 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // [DU506] 큰 글자 · 좁은 폭(B 320@2.0)에서 고정 두 탭 이름이 '지원자 평' · '사업장 평'으로 잘렸다 — 한 줄에 안 들어가면 가로 스크롤(DU495 · DU497 과 같은 판정).
+    //   perTab 110 = '사업장 평가' 글자 + 좌우 여백(DU497 '관리자 FAQ' 와 같다).
+    final tabsFit = TextLayout.tabsFit(context, MediaQuery.sizeOf(context).width, 2, perTab: 110);
     return AppPageScaffold(
       title: '리뷰 태그 관리',
       bottom: TabBar(
         controller: _tabController,
+        isScrollable: !tabsFit,
+        tabAlignment: tabsFit ? null : TabAlignment.start,
         indicatorColor: theme.primaryColor,
         indicatorWeight: 2.5,
         labelColor: theme.primaryColor,
-        unselectedLabelColor: AppColors.grey500,
+        unselectedLabelColor: AppColors.textSecondary, // [DU494] grey500(2.68) → 보조 글자색(DU242 · DU429 와 같다)
         dividerColor: Colors.transparent,
         tabs: const [
           Tab(child: AppTabLabel(label: '지원자 평가')),
@@ -224,6 +231,13 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
       ),
       body: _isLoading
           ? const LoadingWidget()
+          : _loadError != null
+          ? AppEmptyState(
+              icon: Icons.cloud_off_outlined,
+              title: '리뷰 태그를 불러오지 못했습니다',
+              subtitle: '현재 설정을 모르는 상태라 추가·삭제를 막았습니다.',
+              action: TextButton(onPressed: _loadTags, child: const Text('다시 시도')),
+            )
           : TabBarView(
               controller: _tabController,
               children: [
@@ -344,15 +358,18 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '$title (${tags.length}개)',
+                        TextLayout.keepWords('$title (${tags.length}개)'),
+                        // [DU494] 구역 색 제목(구역 색 10% 면 위 2.0–2.5) → 섹션 제목 규칙(본문색 bold · DU490). 구역 색은 아이콘 · 면이 말한다.
                         style: ResponsiveHelper.subtitleStyle(context).copyWith(
                           fontWeight: FontWeight.bold,
-                          color: color,
+                          color: AppColors.textPrimary,
                         ),
                       ),
+                      // [.62] 392·2.0 에서 '부/여하는' 으로 음절이 끊겼다.
                       Text(
-                        subtitle,
-                        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                        TextLayout.keepWords(subtitle),
+                        // [DU494] grey600(구역 색 10% 면 위 4.2–4.3) → 보조 글자색.
+                        style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
                       ),
                     ],
                   ),
@@ -362,7 +379,8 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
                   onPressed: () => _addTag(type),
                   icon: Icon(
                     Icons.add_circle_outline,
-                    color: color,
+                    // [DU494] 조작 아이콘 — 구역 색 10% 면 위 구역 색 2.0–2.5(3:1 미달) → 진한 짝.
+                    color: _tagInk(color),
                     size: ResponsiveHelper.iconSize(context, 24),
                   ),
                   tooltip: '태그 추가',
@@ -380,7 +398,8 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
                       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
                       child: Text(
                         '등록된 태그가 없습니다',
-                        style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey400),
+                        // [DU494] grey400(1.88) → 보조 글자색.
+                        style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary),
                       ),
                     ),
                   )
@@ -419,15 +438,15 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Flexible 필수: 30자 이상 긴 태그명 시 Wrap 내 칩 overflow 방지
+          // Flexible 필수: 긴 태그명은 칩 안에서 줄을 바꾼다(말줄임 없음 — 이름 전체가 보여야 지울지 판단한다).
           Flexible(
             child: Text(
-              tag,
+              TextLayout.keepWords(tag),
+              // [DU494] 구역 색 10% 면 위 구역 색 글자 → 진한 짝(면 · 테두리는 구역 색 그대로).
               style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: color,
+                color: _tagInk(color),
                 fontWeight: FontWeight.w500,
               ),
-              overflow: TextOverflow.ellipsis,
             ),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
@@ -439,7 +458,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
               child: Icon(
                 Icons.close,
                 size: ResponsiveHelper.iconSize(context, 16),
-                color: color,
+                color: _tagInk(color), // [DU494] 삭제 조작 아이콘 — 진한 짝(3:1 이상)
               ),
             ),
           ),
@@ -447,6 +466,13 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
       ),
     );
   }
+}
+
+/// [DU494] 구역 색 옅은 면 위 글자 · 조작 아이콘 — 진한 짝(StatusBadge 짝 · DU425–427 · DU491).
+Color _tagInk(Color c) {
+  if (c == AppColors.success) return AppColors.successDark;
+  if (c == AppColors.warning) return AppColors.warningDark;
+  return c;
 }
 
 /// 태그 입력 다이얼로그

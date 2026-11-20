@@ -36,8 +36,11 @@ import '../../services/fcm_service.dart';
 import '../../models/core/contract_template_model.dart';
 import '../../services/business_posting_readiness.dart';
 import '../../services/firestore_service.dart';
+import '../../services/posting_quota_summary.dart';
+import '../../widgets/admin/posting_quota_summary_bar.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/common_widgets.dart';
 import '../../utils/admin_business_scope_label.dart';
 import '../../utils/admin_tab_switcher.dart';
 import '../../utils/navigation_helper.dart';
@@ -85,6 +88,10 @@ class _JobsRootScreenState extends State<JobsRootScreen>
 
   /// [POSTING-V2-03A.1] 알림이 지정한 공고 — WorkforceListView에 1회성으로 전달.
   String? _targetToId;
+  /// [SA-AUDIT.49] 준비 상태를 물을 때 읽은 사업장이 모두 운영 중지·종료인가(null = 모름).
+  ///   그때는 '준비가 끝나지 않았어요'가 아니라 운영 중지를 말한다 — 준비 단계는 관리자가 풀 수 없다.
+  String? _closedTitle;
+
   /// [R7-P4.4E.3B.2] 권한이 허용으로 확인된 뒤 준비 상태를 **한 번** 묻는다.
   bool _readinessRequested = false;
 
@@ -98,6 +105,8 @@ class _JobsRootScreenState extends State<JobsRootScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _controller.load(context);
+      // [POSTING-QUOTA-45] 이미 읽혀 있던 공유 controller 면 읽기 끝 신호가 오지 않는다.
+      if (!_controller.isLoading) _ensureQuota();
       // [R7-P4.4E.3B.2] 준비 상태 조회는 **권한이 허용으로 확인된 뒤** build
       //   에서 건다. 공고를 관리할 수 없는 사람 때문에 고용주 날인 조회를
       //   부르지 않기 위해서다(초기엔 권한이 아직 모름일 수 있다).
@@ -130,6 +139,43 @@ class _JobsRootScreenState extends State<JobsRootScreen>
     // Cross-tab invalidation: Workforce 탭에서 지원/근태 변경 → 이 controller도 갱신
     _lastSeenRevision = WorkforceController.dataRevision.value;
     WorkforceController.dataRevision.addListener(_onDataRevisionChanged);
+
+    _controller.addListener(_onControllerChanged);
+  }
+
+  /// [POSTING-QUOTA-45] 목록을 다시 읽기 **시작할 때** 한도 요약도 함께 읽는다.
+  ///
+  ///   등록·공개·종료·삭제·FCM·복귀는 모두 목록 다시 읽기로 이어진다. 변경은 그 전에 이미
+  ///   서버에 커밋됐으므로 목록을 기다리지 않고 나란히 묻는다(끝난 뒤에 붙이면 응답이 늦을 때
+  ///   대기가 두 배였다 — 기기에서 연결 시간 초과 2분 + 2분).
+  ///   서브관리자는 이번 읽기에서 범위가 바뀔 수 있어 끝날 때 한 번 더 맞춘다(같은 집합이면 묻지 않는다).
+  ///   탭을 오가기만 하면 목록을 다시 읽지 않으므로 요약도 다시 묻지 않는다.
+  bool _wasLoading = false;
+  void _onControllerChanged() {
+    final loading = _controller.isLoading;
+    if (!_wasLoading && loading) _ensureQuota(force: true);
+    if (_wasLoading && !loading) _ensureQuota();
+    _wasLoading = loading;
+  }
+
+  /// 한도 요약을 물을 사업장. 서브관리자는 공고 권한이 확인된 배정만(목록 범위와 같다),
+  ///   아직 그 범위를 모르면 묻지 않는다. SUPER_ADMIN 은 전체 사업장을 보므로 묻지 않는다.
+  List<String> _quotaBusinessIds(UserProvider up) {
+    final user = up.currentUser;
+    if (user == null || user.isSuperAdmin) return const [];
+    if (up.isSubAdmin) return _controller.requestedScope ?? const [];
+    return user.managedBusinessIds;
+  }
+
+  void _ensureQuota({bool force = false}) {
+    if (!mounted) return;
+    final up = context.read<UserProvider>();
+    final uid = up.currentUser?.uid;
+    if (uid == null) {
+      PostingQuotaStore.reset();
+      return;
+    }
+    unawaited(PostingQuotaStore.ensure(uid: uid, businessIds: _quotaBusinessIds(up), force: force));
   }
 
   void _onDataRevisionChanged() {
@@ -156,6 +202,7 @@ class _JobsRootScreenState extends State<JobsRootScreen>
     //   standalone 인스턴스가 Shell의 등록을 지우지 않게 한다.
     AdminTabSwitcher.instance.unregisterJobsTargetHandler(_onJobsTarget);
     WorkforceController.dataRevision.removeListener(_onDataRevisionChanged);
+    _controller.removeListener(_onControllerChanged);
     FCMService().removeAdminRefreshListener(_fcmRefreshCallback);
     WidgetsBinding.instance.removeObserver(this);
     if (_ownsController) _controller.dispose();
@@ -231,6 +278,20 @@ class _JobsRootScreenState extends State<JobsRootScreen>
         return result.readiness;
       },
     );
+    // [SA-AUDIT.49] 준비가 덜 됐다고 나올 때만 사업장 상태를 따로 본다 — 저장소는 홈이 먼저 채웠을 수
+    //   있어 위 resolve 가 불리지 않는다. 모두 운영 중지·종료면 준비 단계 대신 그 사실을 말한다.
+    final snap = FirstPostingReadinessStore.current.value;
+    if (!mounted || !snap.isResolved || (snap.value?.allReady ?? true)) return;
+    try {
+      final businesses = await reads.businessesByIds(ids);
+      final allClosed = businesses.isNotEmpty && businesses.every((b) => b.isDeactivated);
+      final title = !allClosed
+          ? null
+          : (businesses.every((b) => b.isClosedByOwner) ? '운영을 종료한 사업장이에요' : '운영이 중지된 사업장이에요');
+      if (mounted && title != _closedTitle) setState(() => _closedTitle = title);
+    } catch (e) {
+      debugPrint('⚠️ 사업장 운영 상태 확인 실패 — 준비 안내를 그대로 둔다: $e');
+    }
   }
 
   @override
@@ -298,17 +359,27 @@ class _JobsRootScreenState extends State<JobsRootScreen>
               final r = snap.isResolved ? snap.value : null;
               final setupRequired = r != null && !r.allReady;
               final unknown = !snap.isResolved;
+              // [DU231 F4] 큰 글자·낮은 화면에서는 범위·한도 요약을 고정 머리에서 빼 목록 맨 앞 카드로 옮긴다.
+              //   준비 미완료·모름 화면에는 목록이 없으므로 지금처럼 머리에 둔다.
+              final infoScrolls = !setupRequired && !unknown && _jobsInfoScrolls(ctx);
               return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // 헤더: 제목 + 필터 + 공고등록 + scope chip
               // Consumer<WorkforceController>가 내부에서 context를 해석 — provider scope 안
-              _buildHeader(ctx, s, setupRequired || unknown),
+              _buildHeader(ctx, s, setupRequired || unknown, infoInHeader: !infoScrolls),
               Expanded(
                 child: unknown
                     ? _JobsReadinessUnknownView(snapshot: snap, scale: s)
                     : (setupRequired
-                        ? _JobsSetupRequiredView(
+                        ? (_closedTitle != null
+                            ? AppEmptyState(
+                                icon: Icons.storefront_outlined,
+                                title: _closedTitle!,
+                                subtitle: '새 공고를 등록할 수 없어요.',
+                                subtitleColor: AppColors.textSecondary, // [DU231 F7]
+                              )
+                            : _JobsSetupRequiredView(
                             readiness: r,
                             scale: s,
                             // [R7-ONBOARDING.1] 하위관리자는 홈으로 보내지
@@ -318,8 +389,11 @@ class _JobsRootScreenState extends State<JobsRootScreen>
                                 .currentUser
                                 ?.isSubAdmin ==
                                 true,
-                          )
-                        : WorkforceListView(targetToId: _targetToId)),
+                          ))
+                        : WorkforceListView(
+                            targetToId: _targetToId,
+                            summaryHeader: infoScrolls ? _buildSummaryCard(ctx, s) : null,
+                          )),
               ),
                 ],
               );
@@ -338,7 +412,7 @@ class _JobsRootScreenState extends State<JobsRootScreen>
   ///   context 로 select 를 하면 그 element 는 지금 build 중이 아니라서
   ///   provider 가 assert 로 막는다(실기기에서 공고 탭이 빨간 화면이 됐다).
   ///   구독 자체는 그대로 유지한다 — 권한이 회수되면 버튼이 사라져야 한다.
-  Widget _buildHeader(BuildContext context, double s, bool setupRequired) {
+  Widget _buildHeader(BuildContext context, double s, bool setupRequired, {bool infoInHeader = true}) {
     return Container(
       color: Colors.white,
       padding: EdgeInsets.fromLTRB(20 * s, 12 * s, 12 * s, 10 * s),
@@ -412,6 +486,15 @@ class _JobsRootScreenState extends State<JobsRootScreen>
                 ),
             ],
           ),
+          if (infoInHeader) ..._headerInfo(context, s, setupRequired),
+        ],
+      ),
+    );
+  }
+
+  /// [DU231 F4] 머리의 범위·한도 요약 — 머리([_buildHeader])와 목록 맨 앞 카드([_buildSummaryCard])가 같은 것을 쓴다.
+  List<Widget> _headerInfo(BuildContext context, double s, bool setupRequired) {
+    return [
           // 사업장 scope chip — items 0건·로딩 완료 후에도 표시 (knownBusinessNames 캐시 사용)
           //
           // [POSTING-V2-03P.1] isLoading 가드를 두지 않는다. scope label은
@@ -452,7 +535,41 @@ class _JobsRootScreenState extends State<JobsRootScreen>
               );
             },
           ),
-        ],
+          // [POSTING-QUOTA-45] 한도 요약 — 준비가 끝나 등록 버튼이 있는 상태에서만.
+          if (!setupRequired)
+            Consumer<WorkforceController>(
+              builder: (ctx, controller, _) => ValueListenableBuilder<PostingQuotaSnapshot>(
+                valueListenable: PostingQuotaStore.current,
+                builder: (ctx, snap, _) {
+                  final up = ctx.read<UserProvider>();
+                  final names = <String, String>{
+                    ...up.subAdminBusinessNames,
+                    for (final g in controller.items)
+                      if (g.businessId.isNotEmpty) g.businessId: g.businessName,
+                  };
+                  // 다른 계정의 값은 그리지 않는다(로그아웃 뒤 첫 프레임 등).
+                  final mine = snap.key.startsWith('${up.currentUser?.uid}|');
+                  return PostingQuotaSummaryBar(
+                    snapshot: mine ? snap : const PostingQuotaSnapshot.idle(),
+                    selectedBusinessId: controller.selectedBusinessId,
+                    businessNameOf: (id) => names[id] ?? '사업장',
+                    onRetry: () => _ensureQuota(force: true),
+                    onShowActivePostings: controller.requestShowActiveTab,
+                  );
+                },
+              ),
+            ),
+    ];
+  }
+
+  /// [DU231 F4] 큰 글자·낮은 화면에서 목록 맨 앞에 두는 요약 카드 — 내용·문구·순서는 머리와 같다(흰 바탕 유지).
+  Widget _buildSummaryCard(BuildContext context, double s) {
+    return Container(
+      decoration: CommonWidgets.compactCardDecoration(),
+      padding: EdgeInsets.fromLTRB(14 * s, 4 * s, 4 * s, 10 * s),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: _headerInfo(context, s, false),
       ),
     );
   }
@@ -471,7 +588,12 @@ class _JobsRootScreenState extends State<JobsRootScreen>
       isSuperAdmin: user?.isSuperAdmin ?? false,
       isSubAdmin: up.isSubAdmin,
       managedBusinessIds: user?.managedBusinessIds ?? const [],
-      subAdminBusinessIds: user?.subAdminBusinessIds ?? const [],
+      // [SUBADMIN-SCOPE.40] 서브관리자의 공고 범위는 배정 전체가 아니라 공고 권한이
+      //   확인된 배정이다. 목록이 A만 담는데 '담당 사업장 2곳'이라 말하지 않는다.
+      //   아직 요청 전이면 배정으로 말한다(기존과 같다).
+      subAdminBusinessIds: (up.isSubAdmin ? controller.requestedScope : null) ??
+          user?.subAdminBusinessIds ??
+          const [],
       subAdminBusinessNames: up.subAdminBusinessNames,
       loadedBusinessNames: controller.items.isNotEmpty
           ? controller.items.map((g) => g.businessName).toList()
@@ -501,31 +623,38 @@ class _JobsFilterButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Stack(
+    // [DU231 F1·F2] 누르는 자리(InkWell)는 배율로 줄지 않는 48×48 이상이다. 그림(옅은 바탕·아이콘)은 그대로
+    //   가운데에 두고 그 둘레까지 받는다. 개수 배지는 표시 전용이라 터치를 막지 않는다 — 배지 위를 눌러도 이 버튼이다.
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          child: Center(
+            child: Stack(
       clipBehavior: Clip.none,
       children: [
-        Material(
-          color: hasFilters
-              ? theme.primaryColor.withValues(alpha: 0.08)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
-          child: InkWell(
-            onTap: onTap,
+        Ink(
+          decoration: BoxDecoration(
+            color: hasFilters
+                ? theme.primaryColor.withValues(alpha: 0.08)
+                : Colors.transparent,
             borderRadius: BorderRadius.circular(10),
-            child: Padding(
-              padding: EdgeInsets.all(8 * scale),
-              child: Icon(
-                Icons.filter_list_rounded,
-                color: hasFilters ? theme.primaryColor : AppColors.grey600,
-                size: 22 * scale,
-              ),
-            ),
+          ),
+          padding: EdgeInsets.all(8 * scale),
+          child: Icon(
+            Icons.filter_list_rounded,
+            color: hasFilters ? theme.primaryColor : AppColors.grey600,
+            size: 22 * scale,
           ),
         ),
         if (hasFilters)
           Positioned(
             right: 3,
             top: 3,
+            child: IgnorePointer(
             child: Container(
               padding: const EdgeInsets.all(2),
               decoration: BoxDecoration(
@@ -546,8 +675,13 @@ class _JobsFilterButton extends StatelessWidget {
                 ),
               ),
             ),
+            ),
           ),
       ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -564,20 +698,29 @@ class _JobsCreateButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // [DU231 F1] 누르는 자리는 48×48 이상(배율로 줄지 않는다). 대표색 사각형·흰 + 그림 크기는 그대로다.
     return Tooltip(
       message: '공고 등록',
       child: Material(
-        color: theme.primaryColor,
-        borderRadius: BorderRadius.circular(10),
+        type: MaterialType.transparency,
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(10),
-          child: Padding(
-            padding: EdgeInsets.all(8 * scale),
-            child: Icon(
-              Icons.add_rounded,
-              color: Colors.white,
-              size: 20 * scale,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            child: Center(
+              child: Ink(
+                decoration: BoxDecoration(
+                  color: theme.primaryColor,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: EdgeInsets.all(8 * scale),
+                child: Icon(
+                  Icons.add_rounded,
+                  color: Colors.white,
+                  size: 20 * scale,
+                ),
+              ),
             ),
           ),
         ),
@@ -675,8 +818,11 @@ class _JobsSetupRequiredView extends StatelessWidget {
               FilledButton(
                 onPressed: () =>
                     AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.homeTab),
+                // [DU231 F9] 작은 흰 글자가 info(#2196F3) 위에서 3.12:1 이었다 — 대표색(brand, 흰 글자 5.58:1)으로.
+                //   준비 아이콘 색·목적지(홈)·하위관리자에게 버튼을 두지 않는 규칙은 그대로다.
                 style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.info,
+                  backgroundColor: AppColors.brand,
+                  foregroundColor: Colors.white,
                   padding:
                       EdgeInsets.symmetric(horizontal: 22 * s, vertical: 12 * s),
                   shape: RoundedRectangleBorder(
@@ -757,6 +903,14 @@ class _JobsReadinessUnknownView extends StatelessWidget {
   }
 }
 
+/// [DU231 F4] 머리의 범위·한도 요약을 목록과 함께 스크롤할 만큼 화면이 낮은가(글자 배율 기준).
+///   화면 높이 ÷ 글자 배율 < 520 — 배율 1.0 에서 약 170 인 고정 머리·탭이 화면의 1/3 을 넘기 시작하는 구간이다.
+///   글자를 줄이거나 요약을 빼지 않고 자리만 옮긴다. 360×780·배율 1.0 은 780 이라 지금 배치 그대로다.
+bool _jobsInfoScrolls(BuildContext context) {
+  final k = MediaQuery.textScalerOf(context).scale(14) / 14;
+  return MediaQuery.sizeOf(context).height / k < 520;
+}
+
 /// 화면 폭에 따른 배율 — 권한 surface 도 같은 규칙을 쓴다.
 ///   State 안에만 두면 다른 위젯이 같은 값을 쓸 수 없어 규칙이 갈린다.
 double _jobsScale(BuildContext context) {
@@ -820,6 +974,7 @@ class _JobsPermissionSurface extends StatelessWidget {
                 icon: icon,
                 title: title,
                 subtitle: subtitle,
+                subtitleColor: AppColors.textSecondary, // [DU231 F7]
               ),
             ),
           ],

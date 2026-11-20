@@ -4,6 +4,7 @@ import '../models/core/attendance_model.dart';
 import '../models/core/insurance_rate_model.dart';
 import '../models/core/wage_detail_model.dart';
 import 'insurance_rate_service.dart';
+import '../utils/format_helper.dart';
 
 /// 5종 공제 계산 서비스
 ///
@@ -19,6 +20,10 @@ import 'insurance_rate_service.dart';
 ///                       8일 소급은 RetroactiveDeductionService에서 처리
 ///   four_insurance_fixed → 총액 × (국민연금 + 건강보험 + 장기요양 + 고용보험)
 class TaxDeductionService {
+  /// [.60] 보험료율 연도 = 근무일의 **KST 연도**(서버 srvWorkDateParts 와 같다).
+  ///   근무일(KST 자정 instant)의 `.year` 는 기기 시간대 기준이라, GMT 기기에서 KST 1월 1일 근무가 전년도 요율로 계산됐다.
+  static int kstWorkYear(DateTime workInstant) => FormatHelper.toKstDate(workInstant).year;
+
   /// 공제 계산 적용 — WageDetailModel에 공제 필드·netWage 채워서 반환
   ///
   /// [base]: WageCalculator.calculate()가 반환한 원본 모델
@@ -57,6 +62,76 @@ class TaxDeductionService {
           taxDeductionType: InsuranceRateModel.typeNone,
           netWage: gross,
         );
+    }
+  }
+
+  /// [.82 F1] 급여 정정(추가수당·추가공제·휴게) 미리보기 — 서버 callableUpdateWageDetail 과 같은 규칙.
+  ///   사용자 결정(2026-11-04): 추가수당·추가공제 모두 **세전**. 공제 기준 = 새 총액.
+  ///   - 새 총액이 저장 총액과 같으면 저장 공제를 그대로 둔다(메모만 수정 — 요율 시점이 돈을 바꾸지 않는다).
+  ///   - 바뀌면 **저장된 공제 유형**으로 다시 계산한다. daily_auto_8 은 계산 확정 때 정해진 순번을
+  ///     저장 항목에서 읽어 고정한다(소급 > 0 → 8일차, 연금·건강·장기요양 > 0 → 9일차 이후, 그 외 1~7일차).
+  ///     8일차 소급분은 이전 근무일 몫이라 그대로 둔다.
+  ///   저장 뒤에는 서버가 돌려준 값이 이긴다 — 이 값은 화면 미리보기일 뿐이다.
+  static WageDetailModel recomputeForAdjustment({
+    required WageDetailModel stored,
+    required WageDetailModel edited,
+    required int workYear,
+    bool calculatedAdjustment = true,
+  }) {
+    // [.82-4] daily_auto_8 은 금액을 정정하지 않는다(메모만) — 서버 callableUpdateWageDetail 도 D8_AMOUNT_LOCKED 로 거절한다.
+    //   순번은 계산 확정 때 '그 달 계산된 다른 날짜 수'로 정해지고 8일차 소급분은 앞 근무 총액에 묶여 있어,
+    //   하루 정정으로 맞출 수 없다(82_audit_04 D8-CALCULATION-ORDER-CANCEL·D8-RETROACTIVE-DEPENDENCY).
+    //   [.82-5] 이 잠금은 **계산된 급여의 정정**에만 적용한다(calculatedAdjustment). 미확정(pending) 창은 계산 확정 전 미리보기이고
+    //   저장은 서버 계산 확정(CWX)이 다시 계산한다 — 입력을 버리면 관리자가 넣은 추가수당·공제·휴게가 확정에 빠진다.
+    if (stored.taxDeductionType == InsuranceRateModel.typeDailyAuto8 && calculatedAdjustment) {
+      return stored.copyWith(memo: edited.memo);
+    }
+    final gross = edited.totalAmount;
+    if (gross == stored.totalAmount) {
+      return edited.copyWith(
+        taxDeductionType: stored.taxDeductionType,
+        nationalPensionDeduction: stored.nationalPensionDeduction,
+        healthInsuranceDeduction: stored.healthInsuranceDeduction,
+        ltcInsuranceDeduction: stored.ltcInsuranceDeduction,
+        employmentInsuranceDeduction: stored.employmentInsuranceDeduction,
+        incomeTaxDeduction: stored.incomeTaxDeduction,
+        retroactiveDeduction: stored.retroactiveDeduction,
+        netWage: gross - stored.totalInsuranceDeduction,
+      );
+    }
+    final rates = InsuranceRateService.getRates(workYear);
+    final zeroed = edited.copyWith(
+      taxDeductionType: stored.taxDeductionType,
+      nationalPensionDeduction: 0, healthInsuranceDeduction: 0, ltcInsuranceDeduction: 0,
+      employmentInsuranceDeduction: 0, incomeTaxDeduction: 0, retroactiveDeduction: 0,
+    );
+    final type = stored.taxDeductionType;
+    if (type == InsuranceRateModel.typeDailyAuto8) {
+      // 미확정 미리보기 — 순번은 이 창이 연 미리보기(stored = 계산 화면이 그 달 근무 수로 만든 값)의 공제 항목에서 읽는다.
+      //   저장값이 아니므로 0원 왕복으로 근거가 사라지는 경로(82_audit_03 F1a)가 없다. 실제 금액은 CWX 가 정한다.
+      final day8 = stored.retroactiveDeduction > 0;
+      final day9 = !day8 && (stored.nationalPensionDeduction > 0 ||
+          stored.healthInsuranceDeduction > 0 || stored.ltcInsuranceDeduction > 0);
+      if (!day8 && !day9) return _applyEmploymentAndIncomeTax(zeroed, rates, gross);
+      final four = _applyFourInsurance(zeroed, rates, gross);
+      final tax = _applyDailyWorker(zeroed, rates, gross).incomeTaxDeduction;
+      final retro = day8 ? stored.retroactiveDeduction : 0;
+      return four.copyWith(
+        taxDeductionType: InsuranceRateModel.typeDailyAuto8,
+        incomeTaxDeduction: tax,
+        retroactiveDeduction: retro,
+        netWage: four.netWage - tax - retro,
+      );
+    }
+    switch (type) {
+      case InsuranceRateModel.typeFreelancer33:
+        return _applyFreelancer33(zeroed, rates, gross);
+      case InsuranceRateModel.typeDailyWorker:
+        return _applyDailyWorker(zeroed, rates, gross);
+      case InsuranceRateModel.typeFourInsuranceFixed:
+        return _applyFourInsurance(zeroed, rates, gross);
+      default:
+        return zeroed.copyWith(netWage: gross);
     }
   }
 

@@ -5,23 +5,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/app_text_styles.dart';
 
 /// 🎨 앱 전체에서 사용하는 공통 위젯 모음
 /// 디자인 일관성을 위해 이 위젯들을 사용하세요!
 class CommonWidgets {
   
   /// 📦 기본 카드 스타일
+  /// [DU1] 반경 16 · 얇은 경계 · 그림자 0 (공통 기준 v1 — 낮은 그림자와 얇은 구분선)
   static BoxDecoration cardDecoration({Color? color}) {
     return BoxDecoration(
       color: color ?? AppColors.surface,
-      borderRadius: BorderRadius.circular(20),
-      boxShadow: [
-        BoxShadow(
-          color: AppColors.grey500.withValues(alpha: 0.1),
-          blurRadius: 10,
-          offset: const Offset(0, 4),
-        ),
-      ],
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: AppColors.borderLight),
     );
   }
 
@@ -32,16 +28,8 @@ class CommonWidgets {
     return BoxDecoration(
       color: color ?? AppColors.surface,
       borderRadius: BorderRadius.circular(12),
-      border: borderOnly ? Border.all(color: AppColors.grey200) : null,
-      boxShadow: borderOnly
-          ? null
-          : [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 4,
-                offset: const Offset(0, 1),
-              ),
-            ],
+      // [DU1] 그림자 대신 얇은 경계로 통일 — borderOnly 는 호환을 위해 남긴다(결과가 같다)
+      border: Border.all(color: AppColors.borderLight),
     );
   }
   
@@ -79,31 +67,15 @@ class CommonWidgets {
     bool isLoading = false,
     IconData? icon,
   }) {
-    final theme = Theme.of(context);
     final isDisabled = !isLoading && onPressed == null;
 
+    // [DU1] 평면 brand 단색 · 그림자 0 · 최소 높이 52(글자 배율이 크면 늘어난다)
     return Container(
       width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 52),
       decoration: BoxDecoration(
-        gradient: isDisabled
-            ? null
-            : LinearGradient(
-                colors: [
-                  theme.primaryColor,
-                  theme.primaryColor.withValues(alpha: 0.8),
-                ],
-              ),
-        color: isDisabled ? AppColors.grey200 : null,
+        color: isDisabled ? AppColors.grey200 : AppColors.brand,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: isDisabled
-            ? null
-            : [
-                BoxShadow(
-                  color: theme.primaryColor.withValues(alpha: 0.4),
-                  blurRadius: 8,
-                  offset: const Offset(0, 4),
-                ),
-              ],
       ),
       child: Material(
         color: Colors.transparent,
@@ -166,13 +138,15 @@ class CommonWidgets {
     Color? color,
     IconData? icon,
   }) {
-    final theme = Theme.of(context);
-    final buttonColor = color ?? theme.primaryColor;
-    
+    final buttonColor = color ?? AppColors.brand;
+
+    // [DU1] 보조 행동 — 얇은 중립 경계 + 색 글자(주 행동보다 낮은 강조), 최소 높이 52
     return Container(
       width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 52),
       decoration: BoxDecoration(
-        border: Border.all(color: buttonColor, width: 2),
+        color: AppColors.surface,
+        border: Border.all(color: AppColors.border),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Material(
@@ -254,7 +228,7 @@ class CommonWidgets {
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
+        hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.textTertiary), // [DU350] grey400(1.88) → textTertiary(DU326 로그인 · DU342 검색창과 같다)
         prefixIcon: icon != null
             ? Icon(icon,
                 color: theme.primaryColor,
@@ -291,28 +265,21 @@ class CommonWidgets {
   }
   
   /// 📌 섹션 헤더
+  ///
+  /// [DU1 P96 · 구현97] 같은 수준의 섹션 제목은 내용 표면 **밖**에, 반복 색 타일 없이
+  ///   섹션 글자 위계(AppTextStyles.sectionTitle 20/bold — 지원자 홈 섹션 제목과 같은 토큰)로 쓴다.
+  ///   예전에는 제목마다 브랜드 옅은 면 타일 아이콘을 붙였다 — 같은 장식이 화면마다 5~7번 반복돼
+  ///   제목보다 타일이 먼저 보였다(감사96 §4).
+  ///   [icon] 은 기존 소비처 호환을 위해 받지만 **그리지 않는다**(제목만으로 의미가 충분한 장식).
+  ///   주의·행 의미 아이콘은 소비처의 내용 안에서 유지한다. [trailing] 은 제목 오른쪽 보조 행동(예: 사진 `추가`).
   static Widget sectionHeader({
     required BuildContext context,
     required String title,
-    required IconData icon,
+    IconData? icon,
+    Widget? trailing,
   }) {
-    final theme = Theme.of(context);
-    
     return Row(
       children: [
-        Container(
-          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-          decoration: BoxDecoration(
-            color: theme.primaryColor.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            icon,
-            size: ResponsiveHelper.iconSize(context, 20),
-            color: theme.primaryColor,
-          ),
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
         // [R7-PREDEVICE-STABILIZATION.1] 제목이 자리를 양보한다.
         //
         //   예전에는 맨 Text 였다. Row 는 자식에게 무한 폭을 주므로 제목이
@@ -326,15 +293,17 @@ class CommonWidgets {
         Expanded(
           child: Text(
             title,
-            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-            ),
+            style: AppTextStyles.sectionTitle(),
           ),
         ),
+        if (trailing != null) ...[
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          trailing,
+        ],
       ],
     );
   }
-  
+
   /// 💡 안내 카드
   static Widget infoCard({
     required BuildContext context,

@@ -59,10 +59,17 @@ void main() {
   group('CN2-1 — 확정취소 알림을 서버가 쓴다', () {
     test('CN2-10 취소 CF 가 커밋 뒤에 보낸다', () {
       expect(_flat(cancelCf), contains('await srvNotifyConfirmationCanceled({ applicationId,'));
-      final txAt = cancelCf.indexOf('runTransaction');
+      // [SIM-RECONFIRM-DECLINE-ALIGN] 도메인 커밋(트랜잭션)은 공용 core 안에 있다 —
+      //   core 를 await 한 **뒤**에 알린다.
+      final txAt = cancelCf.indexOf('await srvCancelConfirmedApplicationCore(');
       final notifyAt = cancelCf.indexOf('await srvNotifyConfirmationCanceled(');
       expect(txAt, greaterThan(-1));
       expect(txAt, lessThan(notifyAt), reason: '도메인 커밋 이후에만');
+      final core = _codeOf(_sliceOf(fn,
+          'async function srvCancelConfirmedApplicationCore(p: {',
+          'export const callableRespondToReconfirm = onCall('));
+      expect(core, contains('runTransaction'));
+      expect(core, isNot(contains('srvNotify')), reason: 'core 는 알리지 않는다 — 호출자가 커밋 뒤에');
     });
 
     test('CN2-11 관리자 취소 → 근무자 본인', () {

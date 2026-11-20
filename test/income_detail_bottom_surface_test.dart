@@ -17,6 +17,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -348,7 +349,7 @@ void main() {
     await pumpScreen(t, size: const Size(360, 800), failing: true);
     // 모르는 것을 없는 것으로 바꾸지 않는다 — 문구는 그대로 실패를 말한다.
     expect(find.text('근무 내역을 불러오지 못했어요'), findsOneWidget);
-    expect(find.text('아직 이번 달 수입이 없어요'), findsNothing);
+    expect(findVisibleText('아직 이번 달 수입이 없어요'), findsNothing);
     expect(surfaceBottom(t), closeTo(navTop(t), 0.5));
     expect(t.takeException(), isNull);
   });

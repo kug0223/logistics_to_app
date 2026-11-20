@@ -268,7 +268,8 @@ void main() {
     });
 
     test('S-4 숫자를 눌렀을 때 선택 월·사업장 범위가 함께 간다', () {
-      final i = st.indexOf('void _openMonthDetail(');
+      // [STATS-TO-ATTENDANCE.27] 정정 뒤 갱신을 기다리려고 Future<void> 가 됐다 — 이름으로 찾는다.
+      final i = st.indexOf('_openMonthDetail(int month)');
       expect(i, greaterThan(-1));
       final body = st.substring(i, i + 700);
       for (final arg in const [
@@ -305,9 +306,13 @@ void main() {
 
     test('D-3 중립 회색은 상태·행동 의미가 없어 그대로 둔다', () {
       // 개수 자체는 결함 근거가 아니다 — 판정을 기록으로 남긴다.
-      for (final hex in const ['0xFF1F2937', '0xFF111827', '0xFFE5E7EB', '0xFF9CA3AF']) {
+      // [DU1 구현89 S038] 0xFF9CA3AF 는 '미등록' 상태 글자·chevron 에 쓰였고 실제 PNG 대비 2.54:1(작은 글자 4.5 미달)이라
+      //   AppColors.textSecondary 로 바꿨다 — 읽어야 하는 상태 글자는 '의미 없는 중립 회색' 판정 대상이 아니었다.
+      //   나머지 세 값의 판정(유지)은 그대로 검사한다.
+      for (final hex in const ['0xFF1F2937', '0xFF111827', '0xFFE5E7EB']) {
         expect(d.contains(hex), isTrue, reason: '$hex 는 이번 판정에서 유지');
       }
+      expect(d.contains('0xFF9CA3AF'), isFalse, reason: '미등록 상태 글자는 읽기 대비 토큰으로 바뀌었다(구현89)');
     });
   });
 }

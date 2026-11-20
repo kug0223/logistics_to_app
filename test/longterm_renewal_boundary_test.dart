@@ -454,7 +454,7 @@ void main() {
 
     test('05B-f 자동 노쇼도 같은 resolver 를 쓴다', () {
       final ns = _after(
-          cf, '.where("workEndDate", ">=", Timestamp.fromDate(yesterdayStartUTC))', 1400);
+          cf, '.where("workEndDate", ">=", Timestamp.fromDate(windowStartUTC))', 1400); // [NOSHOW-ATOMICITY] 두 근무일 창
       expect(ns.contains('srvLongTermEligibleOnDay('), true);
     });
   });

@@ -33,7 +33,25 @@ class DayStaffingRow {
   ///   DEV 실측(9/28·9/30): raw 8건 중 6건이 종료 → 본문 2건.
   ///   머리말·요약이 raw 를 세면 `공고 8개` 라고 하면서 본문에는 2개만 보인다.
   ///   그래서 이 술어를 이름으로 두고, 세는 쪽과 그리는 쪽이 같이 쓴다.
-  bool get seedsGroup => !isClosed;
+  bool get seedsGroup => !isClosed || inviteOpen;
+
+  /// [INVITE-TERMINAL] 지금 이 단위에 **새 초대**를 보낼 수 있는가 — 서버가 읽은
+  /// 시각 기준(근무 시작 전 · 초대 효력 종료 아님 · 단위 자리 있음).
+  ///
+  /// 공개 지원이 자동 마감된 단위도 true 일 수 있다 — 관리자의 비공개 인력
+  /// 제안은 근무 시작 전까지 열려 있다. 화면 힌트일 뿐이고 서버가 초대를 만들 때
+  /// 다시 판정한다. 구버전 서버(필드 없음)는 false — 예전처럼 마감 단위에 초대를
+  /// 권하지 않는다.
+  final bool inviteOpen;
+
+  /// [INVITE-CLOSURE-PROJECTION] 이 단위에 **이미 발송된 초대**가 끝났는가.
+  ///
+  ///   [isClosed] 는 공개 모집이 끝났다는 사실이고, 이것은 초대의 효력이다.
+  ///   공개 지원 접수만 자동으로 끝난 단위는 isClosed=true · inviteEnded=false —
+  ///   초대는 기한까지 수락될 수 있다(서버 수락 tx 와 같은 판정).
+  ///   서버가 이 필드를 주지 않으면(구버전) [isClosed] 를 따른다 — 그때는
+  ///   서버도 종료된 단위의 수락을 거절했다.
+  final bool inviteEnded;
 
   /// 일자별 인력 현황 머리말의 범위 문구.
   ///
@@ -110,10 +128,12 @@ class DayStaffingRow {
     required this.confirmedCount,
     required this.pendingCount,
     this.isClosed = false,
+    bool? inviteEnded,
+    this.inviteOpen = false,
     this.isLongTerm = false,
     this.workEndDate,
     this.workDays = const [],
-  });
+  }) : inviteEnded = inviteEnded ?? isClosed;
 
   /// canonical shortage — 서버 staffing readiness와 같은 식.
   /// 초과 확정이 다른 모집 단위의 부족을 상쇄하지 않도록 음수는 0으로 막는다.
@@ -174,6 +194,10 @@ class DayStaffingRow {
       confirmedCount: n('confirmedCount'),
       pendingCount: n('pendingCount'),
       isClosed: m['isClosed'] == true,
+      inviteEnded: m.containsKey('inviteEnded')
+          ? m['inviteEnded'] == true
+          : null,
+      inviteOpen: m['inviteOpen'] == true,
       isLongTerm: isLongTerm,
       workEndDate: (m['workEndDateMs'] as num?) == null
           ? null

@@ -397,8 +397,11 @@ void main() {
         'lib/widgets/dialogs/apply/apply_confirm_dialog.dart',
       ]) {
         final s = _read(p);
+        // [.29-A1] 공고·초대·계약·PDF 는 '근태 인정 기준' 공용 생성(attendanceRuleGuide)을 쓴다.
         final usesShared = s.contains('attendancePolicyLines(') ||
-            s.contains('attendancePolicyGroups(');
+            s.contains('attendancePolicyGroups(') ||
+            s.contains('attendanceRuleGuide(');
+        expect(s.contains("AttendanceRuleItem('"), isFalse, reason: '$p 가 기준 항목을 직접 만든다');
         expect(usesShared, isTrue, reason: '$p 가 공용 목록을 쓰지 않는다');
         // 자기 라벨 목록을 만들지 않는다.
         expect(s.contains("AttendancePolicyLine('"), isFalse,

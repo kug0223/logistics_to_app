@@ -175,8 +175,9 @@ void main() {
       expect(confAt, lessThan(reqAt));
     });
 
-    test('02-c 슬롯 writer가 여전히 increment로 소유한다', () {
-      expect(cf, contains('totalRequired: admin.firestore.FieldValue.increment(totalNewRequired)'));
+    test('02-c 슬롯 writer가 여전히 서버에서 소유한다(마지막 청크의 원장 재계산 절대값)', () {
+      // [ARCHIVE-FLEX-PARTIAL] increment 는 부분 저장 뒤 재시도에서 실제보다 적게 남았다(802 → 402).
+      expect(cf, contains('totalRequired: committedReq + freshReq,'));
     });
 
     test('02-d 슬롯 편집 delta 경로는 건드리지 않았다', () {
@@ -225,7 +226,11 @@ void main() {
     });
 
     test('04-b 슬롯 생성 실패 시 TO까지 롤백한다', () {
-      expect(writer, contains('await toRef.delete();'));
+      // [INVITE-DELETE-GUARD] 롤백은 공식 삭제 writer(callableDeleteTO, soft delete)로
+      //   한다 — 클라이언트 직접 삭제(rules)는 지원서 관계 검사를 우회하는 통로라 닫았다.
+      expect(writer, contains("httpsCallable('callableDeleteTO'"));
+      expect(writer.contains('await toRef.delete();'), isFalse);
+      expect(writer.contains('cleanupBatch.delete('), isFalse);
     });
 
     test('04-c 슬롯이 wdId를 생성하고 counts 키로 쓴다 (R0.1 계약)', () {
@@ -289,8 +294,9 @@ void main() {
   // 06. [R1.1] createFlexSlots idempotency
   // ═══════════════════════════════════════════════════════════════
   group('[R1.1-06] 재호출 안전성', () {
+    // [INVITE-DELETE-GUARD] 본문은 실패 시 서버 롤백 래퍼 안의 srvCreateFlexSlotsBody 로 옮겨졌다.
     final flexSlots = _codeOf(_sliceOf(
-        cf, 'export const callableCreateFlexSlots = onCall(', '\n);'));
+        cf, 'async function srvCreateFlexSlotsBody(', '\n}\n'));
 
     test('06-a 기존 날짜를 미리 읽는다', () {
       expect(flexSlots, contains('toRef.collection("slots").select("date").get()'));
@@ -312,10 +318,12 @@ void main() {
     });
 
     test('06-d 날짜가 슬롯의 자연 키다 — auto-id 중복 방지', () {
-      // ref는 여전히 auto-id지만 날짜 가드가 중복 생성을 막는다
-      expect(flexSlots, contains('toRef.collection("slots").doc()'));
+      // [ARCHIVE-FLEX-PARTIAL] 이제 id 자체가 날짜다 — 기존 auto-id 슬롯은 날짜 가드가, 동시 실행은
+      //   결정적 id + 청크 트랜잭션의 존재 확인이 막는다.
+      const ref = r'toRef.collection("slots").doc(`d${dateStr.replace(/-/g, "")}`)';
+      expect(flexSlots, contains(ref));
       final guardAt = flexSlots.indexOf('existingDateMs.has(');
-      final refAt = flexSlots.indexOf('toRef.collection("slots").doc()');
+      final refAt = flexSlots.indexOf(ref);
       expect(guardAt, lessThan(refAt));
     });
 

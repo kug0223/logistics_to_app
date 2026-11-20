@@ -25,6 +25,11 @@ Map<String, dynamic> _sanitizeForCF(Map<String, dynamic> data) {
   });
 }
 
+/// [POSTING-QUOTA-45] 서버가 한도로 거절했다 — 공고 탭 한도 요약이 낡았을 수 있으니 다시 읽는다.
+void _refreshQuotaOnLimit(Object e) {
+  if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) unawaited(PostingQuotaStore.refreshLast());
+}
+
 extension TOFirestore on FirestoreService {
 
   // ───────────────────────────────────────────────────────
@@ -514,7 +519,6 @@ extension TOFirestore on FirestoreService {
           .httpsCallable('callableCreateTO')
           .call({'toData': _sanitizeForCF(initialData)});
       final toId = cfResult.data['toId'] as String;
-      final toRef = _firestore.collection('tos').doc(toId);
       debugPrint('✅ [TO] 공고 생성: $toId');
 
       // flex: slots 생성 — [TZ-FIX] callableCreateFlexSlots CF에서 KST 기준 서버 계산
@@ -534,29 +538,34 @@ extension TOFirestore on FirestoreService {
             publishTime: publishTime,
           );
         } catch (e) {
-          debugPrint('⚠️ [TO] 슬롯 생성 실패 — 부분 슬롯 및 TO 롤백: $toId');
-          // 부분 커밋된 슬롯 정리 (배치 분할 커밋 중 실패 시 고아 슬롯 방지)
+          // [CREATE-ROLLBACK] 응답이 **불명확**하면(시간 초과·연결 끊김) 서버는 이미
+          //   성공했을 수 있다. 지우기 전에 같은 공고를 서버에서 다시 읽는다 —
+          //   슬롯 생성의 마지막 커밋만 totalSlots 를 올리므로 totalSlots > 0 이면
+          //   생성이 끝난 것이다. 그때는 지우지 않고 성공으로 이어 간다(삭제 호출까지
+          //   시간 초과되면 완성 공고가 남고 사용자가 다시 만들어 중복이 생긴다).
+          //   확인하지 못하면 이전처럼 롤백한다 — 모르는 것을 성공으로 보지 않는다.
+          if (await _flexSlotsCompletedOnServer(toId, e)) {
+            debugPrint('ℹ️ [TO] 슬롯 생성 응답 불명확 — 서버 확인 결과 완료: $toId');
+          } else {
+          debugPrint('⚠️ [TO] 슬롯 생성 실패 — 공고 롤백: $toId');
+          // [INVITE-DELETE-GUARD] 롤백도 **공식 삭제 writer** 로 한다.
+          //   이전에는 부분 슬롯과 TO 문서를 클라이언트가 직접 지웠다. 그 권한
+          //   (rules 의 tos·slots delete)이 지원서 관계 검사를 우회하는 통로라
+          //   닫았다. callableDeleteTO 는 관계가 0 인지 확인하고(방금 만든
+          //   미공개 공고이므로 0) soft delete 한다 — 공고 목록·지원·초대 어디서도
+          //   보이지 않고, 공고 한도 키도 지운다. 부분 슬롯은 그 아래 남지만
+          //   삭제된 공고의 슬롯은 어떤 reader 도 노출하지 않는다.
+          //   롤백 실패가 원래 오류를 가리지 않게 원래 오류를 다시 던진다.
           try {
-            final partialSlots = await toRef.collection('slots').get();
-            if (partialSlots.docs.isNotEmpty) {
-              var cleanupBatch = _firestore.batch();
-              int cleanupCount = 0;
-              for (final s in partialSlots.docs) {
-                cleanupBatch.delete(s.reference);
-                cleanupCount++;
-                if (cleanupCount >= 499) {
-                  await cleanupBatch.commit();
-                  cleanupBatch = _firestore.batch();
-                  cleanupCount = 0;
-                }
-              }
-              if (cleanupCount > 0) await cleanupBatch.commit();
-            }
-          } catch (cleanupError) {
-            debugPrint('❌ 부분 슬롯 정리 실패 (수동 삭제 필요): $cleanupError');
+            await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                .httpsCallable('callableDeleteTO',
+                    options: HttpsCallableOptions(timeout: const Duration(seconds: 20)))
+                .call<Map<String, dynamic>>({'toId': toId});
+          } catch (rollbackError) {
+            debugPrint('❌ 공고 롤백 실패 (미공개 상태로 남음): $rollbackError');
           }
-          await toRef.delete();
           rethrow;
+          }
         }
 
         // 슬롯 생성 완료 후 callablePublishTO로 ACTIVE 전환
@@ -586,6 +595,7 @@ extension TOFirestore on FirestoreService {
       return toId;
     } catch (e) {
       debugPrint('❌ [TO] 공고 생성 실패: $e');
+      _refreshQuotaOnLimit(e);
       rethrow; // MAX_ACTIVE_TO_LIMIT 등 CF 예외가 화면 catch 블록까지 전파되도록
     } finally {
       GlobalLoadingController.hide();
@@ -594,6 +604,39 @@ extension TOFirestore on FirestoreService {
 
   /// 관리자의 전체 사업장 합산 active TO 수가 제한 이상이면 예외를 던진다.
   /// draft TO를 즉시공개로 전환하기 직전에 호출한다.
+  /// [CREATE-ROLLBACK] 슬롯 생성 호출의 응답이 불명확할 때, 서버에서 생성이
+  /// **끝났다고 확인되는가**.
+  ///
+  ///   서버가 분명히 거절한 오류(invalid-argument·failed-precondition·권한 등)는
+  ///   확인할 필요가 없다 — false. 시간 초과·연결 끊김·내부 오류처럼 결과를 모를
+  ///   때만 공고를 **서버에서** 다시 읽고(캐시 아님), 삭제되지 않았고
+  ///   `totalSlots > 0` 이면 true. 읽지 못하면 false(모르는 것을 성공으로 보지 않는다).
+  @visibleForTesting
+  static bool isAmbiguousCallableError(Object e) {
+    if (e is FirebaseFunctionsException) {
+      return const {'deadline-exceeded', 'unavailable', 'unknown', 'internal', 'cancelled'}
+          .contains(e.code);
+    }
+    return true; // 네트워크·타임아웃 등 Functions 오류가 아닌 실패
+  }
+
+  Future<bool> _flexSlotsCompletedOnServer(String toId, Object e) async {
+    if (!isAmbiguousCallableError(e)) return false;
+    try {
+      final snap = await _firestore
+          .collection('tos')
+          .doc(toId)
+          .get(const GetOptions(source: Source.server));
+      final d = snap.data();
+      if (d == null || d['isDeleted'] == true) return false;
+      final total = d['totalSlots'];
+      return total is int && total > 0;
+    } catch (readError) {
+      debugPrint('⚠️ [TO] 생성 결과 재확인 실패 — 롤백으로 진행: $readError');
+      return false;
+    }
+  }
+
   Future<void> assertActiveTOLimit(String uid) async {
     final results = await Future.wait([
       getMaxActiveTOLimit(adminUID: uid),
@@ -627,6 +670,7 @@ extension TOFirestore on FirestoreService {
       clearCache(toId: toId);
     } catch (e) {
       debugPrint('❌ [TO] 공고 수정 실패: $e');
+      _refreshQuotaOnLimit(e);
       rethrow;
     } finally {
       GlobalLoadingController.hide();
@@ -649,6 +693,7 @@ extension TOFirestore on FirestoreService {
           (e.message ?? '').contains('MAX_ACTIVE_TO_LIMIT')) {
         final parts = (e.message ?? '').split(':');
         final limitStr = parts.length >= 2 ? parts.last : '4';
+        _refreshQuotaOnLimit(e);
         throw Exception('MAX_ACTIVE_TO_LIMIT:$limitStr');
       }
       debugPrint('❌ [TO] 공개 전환 실패: ${e.code} — ${e.message}');
@@ -674,18 +719,35 @@ extension TOFirestore on FirestoreService {
       // [R7-P1-2.3] 삭제 전 관계 확인 — 세는 것은 status 뿐이다.
       final allApps = await getApplicationsByTOId(toId,
           businessId: businessId, purpose: 'capacity');
-      final apps = allApps.where((a) => AppStatus.activeStates.contains(a.status)).toList();
-      final confirmed = apps.where((a) =>
+      // [E2-INVITED-SEAT] 초대(INVITED)도 관계다. 예전에는 activeStates 만 세어
+      //   초대만 있는 공고를 `hasApplicants: false` 로 말했다. 직접 지원과 초대를
+      //   나눠 센다(지원은 관심, 초대는 관리자가 먼저 보낸 제안).
+      //   [주의] 화면은 이 결과로 삭제 가능 여부를 판정하지 않는다 —
+      //   showDeleteTODialog 는 서버(callableDeleteTO 의 relation-zero, 상태 무관
+      //   문서 존재 = 관계)에 맡긴다. 이 함수는 그 판정의 사본이 아니다.
+      final direct = allApps
+          .where((a) => AppStatus.activeStates.contains(a.status))
+          .toList();
+      final invited =
+          allApps.where((a) => a.status == AppStatus.invited).length;
+      final confirmed = direct.where((a) =>
           AppStatus.confirmedStatuses.contains(a.status)).length;
       return {
-        'hasApplicants': apps.isNotEmpty,
+        'hasApplicants': direct.isNotEmpty || invited > 0,
         'confirmedCount': confirmed,
-        'totalCount': apps.length,
+        'totalCount': direct.length,
+        'invitedCount': invited,
       };
     } catch (e) {
       debugPrint('❌ [TO] 삭제 전 지원자 확인 실패: $e');
       // fail-closed: 조회 실패 시 삭제 차단 (안전 기본값)
-      return {'hasApplicants': true, 'confirmedCount': 0, 'totalCount': 0, 'hasError': true};
+      return {
+        'hasApplicants': true,
+        'confirmedCount': 0,
+        'totalCount': 0,
+        'invitedCount': 0,
+        'hasError': true,
+      };
     }
   }
 
@@ -702,6 +764,13 @@ extension TOFirestore on FirestoreService {
       return true;
     } catch (e) {
       debugPrint('❌ [TO] 공고 삭제 실패: $e');
+      // [POSTING-AUTH-45] 늦은 지원서 정리는 반영됐고 공고 삭제만 막혔다.
+      //   true 를 돌려 호출부가 목록을 새로 읽게 한다(공고는 남아 있다).
+      if (isPostingPartialRevoke(e)) {
+        clearCache(toId: toId);
+        ToastHelper.showWarning(postingPartialRevokeMessage);
+        return true;
+      }
       // [POSTING-V2-01C.2] 서버가 쓴 안내를 그대로 전달한다.
       // callableDeleteTO는 관계가 있으면 failed-precondition과 함께
       // '…모집을 중단하려면 공고 종료를 이용해주세요.'를 반환하는데,

@@ -223,13 +223,13 @@ void main() {
       expect(WageCalculator.getMinimumWage(2022), equals(9160));
     });
 
-    test('SCENARIO-TAX-24 getMinimumWage(2027) → 최근 연도(2026) 폴백 = 10320원', () {
-      // _minimumWageByYear에 2027이 없으므로 keys.reduce(max)=2026 반환
-      expect(WageCalculator.getMinimumWage(2027), equals(10320));
+    test('SCENARIO-TAX-24 getMinimumWage(2027) = 10700원 (고시 제2026-60호, .73 내장)', () {
+      // .73: 2027 고시값이 내장표에 있다 — 2026 값으로 폴백하지 않는다
+      expect(WageCalculator.getMinimumWage(2027), equals(10700));
     });
 
-    test('SCENARIO-TAX-25 getMinimumWage(1990) → 최근 연도(2026) 폴백 = 10320원', () {
-      expect(WageCalculator.getMinimumWage(1990), equals(10320));
+    test('SCENARIO-TAX-25 getMinimumWage(1990) → 최근 연도(2027) 폴백 = 10700원', () {
+      expect(WageCalculator.getMinimumWage(1990), equals(10700));
     });
   });
 

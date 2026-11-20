@@ -18,6 +18,7 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 
 import 'package:ALfit/models/core/application_model.dart';
+import 'package:ALfit/services/contract_service.dart';
 import 'package:ALfit/models/core/attendance_model.dart';
 import 'package:ALfit/models/core/business_model.dart';
 import 'package:ALfit/models/core/user_model.dart';
@@ -337,7 +338,7 @@ DayApplicantsReads _reads({
     slotWorkDetails: (toId, slotId) async => <WorkDetailData>[],
     to: (toId) async => null,
     contractStatusBatch: (ids, {required businessId}) async =>
-        <String, String?>{},
+        const ContractStatusBatch(),
   );
 }
 
@@ -543,7 +544,9 @@ void main() {
 
         // 지원 수·확정 수는 운영 판단의 근거다 — 좁다고 사라지면 안 된다.
         expect(find.text('지원 8'), findsWidgets, reason: '지원 수가 사라졌다');
-        expect(find.text('확정 3'), findsWidgets, reason: '확정 수가 사라졌다');
+        // [UI-SCREEN-CONSISTENCY.1] 업무가 하나인 공고는 공고 머리의 `확정 N` 배지를 두지 않는다
+        //   (바로 아래 업무 줄과 같은 숫자의 반복). 확정 수는 상단 집계 `N건` 이 말한다.
+        expect(find.text('3건'), findsWidgets, reason: '확정 수가 사라졌다');
       });
     }
 
@@ -555,7 +558,7 @@ void main() {
       expect(col.hits, isEmpty, reason: '대규모 표본에서 넘쳤다: ${col.hits}');
       expect(find.text('지원 120'), findsWidgets,
           reason: '세 자리 지원 수가 사라졌다');
-      expect(find.text('확정 48'), findsWidgets, reason: '확정 수가 사라졌다');
+      expect(find.text('48건'), findsWidgets, reason: '확정 수가 사라졌다');
     });
   });
 
@@ -585,6 +588,28 @@ void main() {
         // 확인 CTA.
         expect(find.textContaining('전체 일괄 확정'), findsOneWidget,
             reason: '일괄 확정 CTA 가 사라졌다');
+      });
+    }
+
+    // [TEXT-LAYOUT-CONSUMER.29] 기기 320dp·1.3 에서 탭이 '미확 / 정', 2.0 에서 '확정'(내역 잘림)으로 보였고
+    //   이름이 '합성 …' 으로 잘렸다. 세 탭이 안 들어가면 가로 스크롤(탭 이름 한 줄), 이름은 말줄임 없음.
+    for (final c in [(411.0, 1.0, false), (320.0, 2.0, true)]) {
+      testWidgets('WC-29 ${c.$1.toInt()}dp 배율 ${c.$2} — 탭 ${c.$3 ? '가로 스크롤' : '고정'}, 이름 말줄임 없음',
+          (tester) async {
+        final col = await _pumpWageConfirm(tester, width: c.$1, textScale: c.$2);
+        expect(col.hits, isEmpty, reason: '넘침: ${col.hits}');
+        final bar = tester.widget<TabBar>(find.byType(TabBar).first);
+        expect(bar.isScrollable, c.$3);
+        final names = find.byWidgetPredicate((w) =>
+            w is Text &&
+            (w.data ?? w.textSpan?.toPlainText() ?? '')
+                .replaceAll('\u2060', '')
+                .replaceAll('\u200B', '')
+                .contains('김근로'));
+        expect(names, findsWidgets);
+        for (final e in names.evaluate()) {
+          expect((e.widget as Text).overflow, isNot(TextOverflow.ellipsis));
+        }
       });
     }
   });

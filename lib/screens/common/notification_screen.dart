@@ -8,6 +8,7 @@ import '../../utils/notification_retention.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/dialog_helper.dart';
 import '../../providers/user_provider.dart';
 // 네비게이션 대상 화면들
 import '../user/my_applications_screen.dart';
@@ -38,6 +39,7 @@ import '../business_admin/admin_review_list_screen.dart';
 import '../user/my_reviews_screen.dart';
 import '../business_admin/admin_contract_management_screen.dart';
 import '../../services/monthly_review_service.dart';
+import '../../models/core/attendance_model.dart';
 import '../../models/core/review_request_model.dart';
 import '../../models/core/user_model.dart';
 import '../../widgets/dialogs/monthly_review_dialog.dart';
@@ -53,6 +55,9 @@ import '../user/user_tab_scope.dart';                   // [Phase 8.1C] toMatch 
 import 'job_posting_screen.dart';                       // [Phase 8.1C] toMatch 공고 상세
 import '../business_admin/payroll/payroll_payment_dashboard_screen.dart'; // [FCM-ROUTE-01]
 import '../../utils/admin_tab_switcher.dart';           // [FCM-ROUTE-01] Settlement tab canonical routing
+import '../super_admin/noshow_pending_review_screen.dart'; // [NS-PENDING-DEST]
+// [ISG2-REFRESH] 알림에서 연 명단에서의 변경도 다른 화면에 알린다.
+import '../../controllers/workforce_controller.dart';
 
 // ════════════════════════════════════════════════════════════════════════
 // 관리자 알림 접근 검증 결과 — 클릭 시점에 멤버십·권한을 재확인한다.
@@ -173,7 +178,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
         }
 
         // 모두 읽음 액션 버튼 — 흰색 배경이므로 Primary 색상으로
-        final markAllReadAction = provider.hasUnread
+        // [.66] 목록을 못 불러왔으면 남은 미읽음은 이전 값이다 — 오류 화면 위에 '모두 읽음'을 두지 않는다.
+        final markAllReadAction = provider.hasUnread && !provider.hasError
             ? TextButton(
                 onPressed: _isMarkingAllRead
                     ? null
@@ -237,7 +243,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
           return DefaultTabController(
             length: 3,
             child: Scaffold(
-              backgroundColor: AppColors.grey50,
+              backgroundColor: AppColors.background, // [DU242] 앱 공통 화면 바탕
               appBar: buildAppBar(
                 bottom: PreferredSize(
                   preferredSize: const Size.fromHeight(48),
@@ -248,7 +254,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
                       children: [
                         TabBar(
                           labelColor: Theme.of(context).primaryColor,
-                          unselectedLabelColor: AppColors.grey500,
+                          unselectedLabelColor: AppColors.textSecondary, // [DU242]
                           indicatorColor: Theme.of(context).primaryColor,
                           indicatorWeight: 2.0,
                           indicatorSize: TabBarIndicatorSize.tab,
@@ -277,7 +283,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
         // ── Pure USER / BUSINESS_ADMIN: 단일 목록, 탭 없음 ───────────────
         return Scaffold(
-          backgroundColor: AppColors.grey50,
+          backgroundColor: AppColors.background, // [DU242] 앱 공통 화면 바탕
           appBar: buildAppBar(),
           body: _buildBody(context, provider, isSubAdmin: false),
         );
@@ -303,7 +309,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
               decoration: BoxDecoration(
-                color: AppColors.error,
+                color: AppColors.errorDark, // [DU242] 흰 숫자 6.57(이전 error 위 3.68)
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
@@ -432,20 +438,17 @@ class _NotificationScreenState extends State<NotificationScreen> {
           selected: _showUnreadOnly,
           onSelected: (val) => setState(() => _showUnreadOnly = val),
           // 활성 시 Blue 체크 + 연한 Blue 배경 — 빨간색(삭제/오류 의미)은 사용하지 않음
+          // [DU242] 하드코딩 색 → 토큰. 선택은 대표색(brand), 기본은 흰 바탕·얇은 테두리·보조 글자.
           showCheckmark: true,
-          checkmarkColor: AppColors.workTypeBlue,
-          backgroundColor: Colors.white,
-          selectedColor: const Color(0xFFE3F2FD),
+          checkmarkColor: AppColors.brand,
+          backgroundColor: AppColors.surface,
+          selectedColor: AppColors.brandSurface,
           side: BorderSide(
-            color: _showUnreadOnly
-                ? AppColors.workTypeBlue
-                : const Color(0xFFE0E0E0),
+            color: _showUnreadOnly ? AppColors.brand : AppColors.grey200,
           ),
           labelStyle: ResponsiveHelper.smallStyle(
             context,
-            color: _showUnreadOnly
-                ? AppColors.workTypeBlue
-                : const Color(0xFF757575),
+            color: _showUnreadOnly ? AppColors.brand : AppColors.textSecondary,
             fontWeight: _showUnreadOnly ? FontWeight.w600 : FontWeight.w400,
           ),
           padding: EdgeInsets.symmetric(
@@ -510,34 +513,35 @@ class _NotificationScreenState extends State<NotificationScreen> {
     // [R7-P1.1] `날짜 확인 불가`는 시간 그룹이 아니다 — 더 약하게 그린다.
     //   시간 그룹들과 같은 무게로 보이면 그것도 하나의 시간대처럼 읽힌다.
     final isUnknownTime = label == kUnknownTimeGroup;
+    // [DU242] 날짜 묶음 제목 — 관리자 홈(S010)·관리 탭과 같은 16 bold 본문색, 카드 왼쪽 선에서 4 들여쓴다.
+    //   '날짜 확인 불가'는 시간 그룹보다 약하게(13 보조색)는 그대로 두되 읽히는 색으로 올린다.
     return Padding(
       padding: EdgeInsets.only(
-        left: ResponsiveHelper.spacing(context, 16),
-        right: ResponsiveHelper.spacing(context, 16),
-        top: ResponsiveHelper.spacing(context, 8),
-        bottom: ResponsiveHelper.spacing(context, 6),
+        left: ResponsiveHelper.spacing(context, 4),
+        right: ResponsiveHelper.spacing(context, 4),
+        top: ResponsiveHelper.spacing(context, 12),
+        bottom: ResponsiveHelper.spacing(context, 8),
       ),
       child: isUnknownTime
           ? Row(
               children: [
                 Icon(Icons.help_outline,
                     size: ResponsiveHelper.iconSize(context, 13),
-                    color: AppColors.grey400),
+                    color: AppColors.textSecondary),
                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                 Flexible(
                   child: Text(
                     label,
                     style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.grey400),
-                    overflow: TextOverflow.ellipsis,
+                        color: AppColors.textSecondary),
                   ),
                 ),
               ],
             )
           : Text(
               label,
-              style: ResponsiveHelper.smallStyle(context,
-                  color: AppColors.grey500, fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                  fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
             ),
     );
   }
@@ -559,6 +563,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
         icon: Icons.notifications_none,
         title: emptyMessage,
         subtitle: emptySubtitle,
+        subtitleColor: AppColors.textSecondary, // [DU242] 공용 기본 grey400 1.88 → 호출부 opt-in
       );
     }
 
@@ -618,7 +623,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
                           '지난 기록은 지원·계약·일정·근태·급여 화면에서 확인할 수 있어요.',
                   textAlign: TextAlign.center,
                   style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.grey400),
+                      color: AppColors.textSecondary), // [DU242] 이전 grey400 1.88
                 ),
               );
             }
@@ -658,6 +663,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       iconColor: AppColors.warning,
       title: '알림을 불러오지 못했습니다',
       subtitle: '네트워크 상태를 확인하고 다시 시도해주세요',
+      subtitleColor: AppColors.textSecondary, // [DU242]
       action: TextButton.icon(
         onPressed: provider.retry,
         icon: const Icon(Icons.refresh),
@@ -1486,9 +1492,43 @@ class _NotificationScreenState extends State<NotificationScreen> {
         }
         break;
 
+      case NotificationType.noShowLedgerPending:
+        // [NS-PENDING-DEST] 노쇼 원장 보류 경보 — (보류 키, 발생 번호) 한 건의 처리 화면.
+        //   슈퍼관리자만 연다. 화면이 서버에서 현재 상태를 다시 읽고 역할도 다시 확인한다.
+        if (context.read<UserProvider>().currentUser?.isSuperAdmin != true) {
+          ToastHelper.showWarning('슈퍼관리자만 확인할 수 있는 알림입니다.');
+          break;
+        }
+        // [.66] 푸시(onNotificationCreated)는 data 값을 모두 문자열로 싣는다 — occurrence '0' 을
+        //   `as num?` 로 읽으면 TypeError 로 처리 화면이 열리지 않았다. 숫자·문자열 둘 다 읽는다.
+        final occRaw = notification.data?['occurrence'];
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => NoShowPendingReviewScreen(
+              pendingId: notification.data?['pendingId']?.toString(),
+              occurrence: occRaw is num ? occRaw.toInt() : int.tryParse('${occRaw ?? ''}'),
+              targetUid: notification.data?['uid']?.toString(),
+            ),
+          ),
+        );
+        break;
+
       case NotificationType.systemNotice:
       case NotificationType.other:
-        // 시스템 공지·기타: 내용은 알림 카드에 이미 표시됨 — 별도 화면 이동 없음
+        // 시스템 공지·기타: 열 화면이 없다. [.66] 예전에는 아무 반응이 없었고, 카드는 본문을 2줄로
+        //   자르므로 긴 내용은 어디서도 끝까지 읽을 수 없었다 — 전문을 띄운다.
+        //   other 는 앱이 모르는 종류(새 서버 유형 등)도 포함한다 — 열 화면이 없다는 것을 함께 말한다.
+        //   푸시로 들어온 합성 알림은 제목·본문이 비어 있다 — 빈 창 대신 지금 보이는 목록을 그대로 둔다.
+        if (notification.title.isEmpty && notification.body.isEmpty) break;
+        await DialogHelper.showAlert(
+          context,
+          title: notification.title,
+          message: notification.type == NotificationType.other
+              ? '${notification.body}\n\n이 앱에서 따로 열 수 있는 화면이 없는 알림입니다.'
+              : notification.body,
+          icon: Icons.notifications_outlined,
+        );
         break;
     }
     } finally {
@@ -1747,35 +1787,59 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       // attendance 기반 실제 근무일 수 조회 (로딩 유지)
       int workDaysInMonth = 0;
+      int onTimeDays = 0;
+      int lateDays = 0;
       String? workerGender;
       int? workerAge;
 
       try {
         if (!isUser) {
           // 관리자: worker 프로필 + attendance CF 경유 병렬 조회
+          // [.62] 프로필을 `users/{workerId}` 직접 get 으로 읽었다. 규칙은 users get 을
+          //   본인·SA 에게만 연다 → 관리자는 **항상** permission-denied 였고, 알림의
+          //   '리뷰 작성'이 창을 열지 못했다. 리뷰 목록 화면과 같은 callable 을 쓴다.
+          final usersBatchCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableGetUsersBatch',
+                  options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
           final attendanceCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
               .httpsCallable('callableGetAdminAttendances',
                   options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
           final results = await Future.wait([
-            FirebaseFirestore.instance.collection('users').doc(req.workerId).get(),
+            usersBatchCallable.call<Map<String, dynamic>>({
+              'uids': [req.workerId],
+              'businessId': req.businessId,
+            }),
             attendanceCallable.call<Map<String, dynamic>>({
               'businessId': req.businessId,
               'yearMonth': yearMonthStr,
               'userId': req.workerId,
             }),
           ]);
-          final userSnap = results[0] as DocumentSnapshot<Map<String, dynamic>>;
-          if (userSnap.exists && userSnap.data() != null) {
-            final worker = UserModel.fromMap(userSnap.data()!, userSnap.id);
-            workerGender = worker.gender;
-            workerAge = worker.age;
+          final usersResult = results[0];
+          // 플러그인은 최상위만 Map<String, dynamic> 으로 바꾼다 — 안쪽은 cast 로 감싼다.
+          final users =
+              (usersResult.data['users'] as Map?)?.cast<String, dynamic>() ?? {};
+          final workerData =
+              (users[req.workerId] as Map?)?.cast<String, dynamic>();
+          if (workerData != null) {
+            workerGender = workerData['gender'] as String?;
+            final birthDateRaw = workerData['birthDate'];
+            if (birthDateRaw is Map) {
+              final s = (birthDateRaw['_seconds'] as num? ?? 0).toInt();
+              workerAge = DateTime.now().year -
+                  DateTime.fromMillisecondsSinceEpoch(s * 1000).year;
+            }
           }
           final cfResult = results[1] as HttpsCallableResult<Map<String, dynamic>>;
           final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
-          workDaysInMonth = cfItems.whereType<Map>().where((e) {
-            final status = e['wageStatus'] as String?;
-            return status == 'confirmed' || status == 'transferred';
-          }).length;
+          // 리뷰 목록과 같은 canonical 실근무 판정 — 노쇼·결근은 wageStatus 가
+          //   confirmed(0원 마감)여도 근무일이 아니다.
+          //   [REVIEW-ABSENCE-METRIC] 정시·지각도 같은 행에서 센다(목록과 같은 함수).
+          final summary =
+              AttendanceModel.reviewAttendanceSummary(cfItems.whereType<Map>());
+          workDaysInMonth = summary.workDays;
+          onTimeDays = summary.onTime;
+          lateDays = summary.late;
         } else {
           // 근무자: CF 프록시로 조회 (직접 list 불허 — Firestore 규칙)
           final attendances = await FirestoreService().getMyMonthlyAttendances(
@@ -1816,6 +1880,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
           reviewYear: req.reviewYear,
           reviewMonth: req.reviewMonth,
           workDaysInMonth: workDaysInMonth,
+          normalAttendanceDays: onTimeDays,
+          lateDays: lateDays,
           requestId: req.id,
         );
       } else {
@@ -2071,7 +2137,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         return;
       }
 
-      await showDialog<bool>(
+      // [ISG2-REFRESH] 결과를 버리고 있었다 — 알림에서 들어와 확정·초대를
+      //   해도 공고 탭·Home 이 모르고 있었다.
+      final changed = await showDialog<bool>(
         context: context,
         barrierDismissible: false,
         builder: (_) => DayApplicantsDialog(
@@ -2080,6 +2148,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
           businesses: businesses,
         ),
       );
+      if (changed == true) {
+        WorkforceController.notifyDataChanged(
+          origin: AdminMutationOrigin.home,
+        );
+      }
     } catch (e) {
       if (nav.canPop()) nav.pop();
       debugPrint('❌ DayApplicantsDialog 로드 실패: $e');
@@ -2399,7 +2472,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
         final initialDate = workDateStr != null
             ? DateTime.tryParse(workDateStr)
             : null;
-        await showDialog<WorkApplicantsDialogResult>(
+        // [ISG2-REFRESH] 같은 이유로 결과를 읽는다.
+        final waResult = await showDialog<WorkApplicantsDialogResult>(
           context: context,
           barrierDismissible: false,
           builder: (_) => WorkApplicantsDialog(
@@ -2413,6 +2487,12 @@ class _NotificationScreenState extends State<NotificationScreen> {
             targetPermissions: targetPermissions,
           ),
         );
+        // [ISG2-REFRESH] 초대만 바뀐 경우는 Home 숫자가 그대로다.
+        if (waResult != null && waResult.homeRelevant) {
+          WorkforceController.notifyDataChanged(
+            origin: AdminMutationOrigin.home,
+          );
+        }
       });
     } catch (e) {
       if (navWA.canPop()) navWA.pop();

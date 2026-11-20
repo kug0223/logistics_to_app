@@ -98,7 +98,9 @@ void main() {
   final money = _helper(raw, 'srvCountOrphanMoneyObligations');
   final workerWage = _helper(raw, 'srvCountWorkerUnpaidPayableWages');
   final preview = _fn(raw, 'callableGetWithdrawBlockers');
-  final deact = _fn(raw, 'onBusinessDeactivated');
+  // [ARCHIVE-CASCADE-PAGINATION] 비활성화 본문은 srvRunBusinessArchiveCascade 로 옮겨졌다.
+  final deact = _fn(raw, 'onBusinessDeactivated') +
+      _helper(raw, 'srvRunBusinessArchiveCascade');
   final finalFn = _fn(raw, 'callableDeleteAccountFinal');
 
   group('WPM-A — 확정 약속(CONFIRMED_WORKERS)', () {
@@ -350,10 +352,12 @@ void main() {
     });
 
     test('WPM-D-04 이미 보낸 돈은 blocker 가 아니다 (P4)', () {
+      // [BUSINESS-ARCHIVE] "pending" 은 **일했지만 계산 전**(실근무 + 오늘까지)만 센다 —
+      //   남기고 탈퇴하면 계좌가 사라져 지급할 수 없게 된다. 보낸 돈(transferred)은 여전히 아니다.
       expect(_flat(workerWage), contains(
-          '(["calculated", "confirmed"] as const).map((ws) =>'));
+          '(["calculated", "confirmed", "pending"] as const).map((ws) =>'));
       expect(workerWage, isNot(contains('"transferred"')));
-      expect(workerWage, isNot(contains('"pending"')));
+      expect(workerWage, contains('if (srvActualWorkReasonOf(d.data())) n++;'));
     });
 
     test('WPM-D-05 보낼 돈이 0원인 건으로 막지 않는다 (P8)', () {

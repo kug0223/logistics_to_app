@@ -113,6 +113,8 @@ extension UserFirestore on FirestoreService {
     //   사업장 자동승인·공고 등록 선행조건을 여는 값이라 클라이언트가 쓰면 안 된다.
     'businessLicenseImageUrl', 'businessLicenseImagePath', 'businessLicenseUploadedAt',
     'bankReviewedBy', 'bankReviewedAt',
+    // [POSTING-QUOTA-42] 공고 한도 — callableSetAdminTOLimit(슈퍼관리자) 전용. rules denylist 와 동기화.
+    'maxActiveTOs',
   };
 
   Future<void> updateUserDocument(String uid, Map<String, dynamic> data) async {

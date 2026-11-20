@@ -173,6 +173,19 @@ Future<Uint8List> _build({
 /// 공백을 접어 비교한다 — `-layout` 은 칸을 맞추려고 빈칸을 넣는다.
 String _flat(String s) => s.replaceAll(RegExp(r'\s+'), ' ').trim();
 
+/// [.29-A1] PDF 고지는 '근태 인정 기준' 구조 — 항목 제목(label)과 그 기준 설명(value) 쌍으로 펼친다.
+///   화면과 같은 생성 함수(attendanceRuleGuide)다. 예전 7줄 라벨·값 표를 대신한다.
+class _GL {
+  const _GL(this.label, this.value);
+  final String label;
+  final String value;
+}
+
+List<_GL> _guideLines(AttendanceRules r) => [
+      for (final i in attendanceRuleGuide(r).sections.expand((s) => s.items))
+        for (final p in i.points) _GL(i.title, p),
+    ];
+
 void main() {
   tearDownAll(() {
     try {
@@ -210,7 +223,7 @@ void main() {
     testWidgets('PDFV-02 7개 근태 기준이 라벨·값 모두 들어간다', (t) async {
       final r = _standard();
       final text = _flat(_extract(await _build(policy: r), tag: 'seven'));
-      final lines = attendancePolicyLines(r);
+      final lines = _guideLines(r);
       expect(lines.length, 7);
       for (final l in lines) {
         expect(text.contains(l.label), isTrue,
@@ -223,12 +236,12 @@ void main() {
     testWidgets('PDFV-03 경계 설정도 그 설정의 숫자로 적힌다', (t) async {
       final r = _boundary();
       final text = _flat(_extract(await _build(policy: r), tag: 'bound'));
-      for (final l in attendancePolicyLines(r)) {
+      for (final l in _guideLines(r)) {
         expect(text.contains(_flat(l.value)), isTrue,
             reason: '경계 설정의 값이 PDF 에 없다: ${l.value}');
       }
       // 기본값(30분) 문구가 섞이지 않았다.
-      for (final l in attendancePolicyLines(_standard())) {
+      for (final l in _guideLines(_standard())) {
         expect(text.contains(_flat(l.value)), isFalse,
             reason: '다른 설정의 문구가 섞였다: ${l.value}');
       }
@@ -237,7 +250,7 @@ void main() {
     testWidgets('PDFV-04 가장 긴 조합도 잘리지 않는다', (t) async {
       final r = _longest();
       final text = _flat(_extract(await _build(policy: r), tag: 'long'));
-      for (final l in attendancePolicyLines(r)) {
+      for (final l in _guideLines(r)) {
         expect(text.contains(_flat(l.value)), isTrue,
             reason: '긴 문구가 PDF 에서 잘렸다: ${l.value}');
       }
@@ -252,7 +265,7 @@ void main() {
       final raw = _extract(await _build(policy: _longest()), tag: 'wrap');
       final rows = raw.split('\n');
       // 가장 긴 고지 값이 한 행에 통째로 들어가 있지 않다.
-      final longest = attendancePolicyLines(_longest())
+      final longest = _guideLines(_longest())
           .map((l) => l.value)
           .reduce((a, b) => a.length >= b.length ? a : b);
       final onOneRow = rows.any((r) => _flat(r).contains(_flat(longest)));
@@ -295,28 +308,24 @@ void main() {
 
     testWidgets('PDFV-07 짧은 계약서의 2쪽은 **서명 블록**이다 — 잘린 본문이 아니다',
         (t) async {
-      // 실측: 고지가 없으면 1쪽, 7줄 고지가 들어가면 2쪽이 된다.
+      // 실측(.28 이전): 고지가 없으면 1쪽, 7줄 고지가 들어가면 2쪽이었다.
       //   2쪽에는 서명 블록만 있다(58자). 내용이 사라진 것이 아니라
       //   서명이 통째로 다음 장으로 넘어간 것이므로 결함이 아니다 —
       //   법적으로 필요한 고지를 줄여 1쪽에 맞추지 않는다.
       final bytes = await _build();
+      // [.29-A1] '근태 인정 기준'(사례 포함)이 들어가 본문이 길어졌다 — 기준이 다음 쪽으로 이어지는 것은
+      //   정상 흐름이다. 지킬 것: 내용 손실 없음 + 서명 블록은 마지막 쪽에 통째로.
       final pages = _pageCount(bytes, tag: 'single');
-      expect(pages, lessThanOrEqualTo(2),
+      expect(pages, lessThanOrEqualTo(3),
           reason: '짧은 계약서가 $pages장이다 — 예상보다 많다');
-
-      if (pages == 2) {
-        final p2 = _flat(_extract(bytes, page: 2, tag: 'single_p2'));
-        // 서명 영역이 통째로 2쪽에 있다.
-        for (final must in const ['사업주', '근로자', '박사장', '김근로']) {
-          expect(p2.contains(must), isTrue,
-              reason: '2쪽에 서명 블록이 없다 — 그럼 무엇이 넘어갔는가: $p2');
-        }
-        // 본문 고지가 2쪽으로 **쪼개져** 넘어가지 않았다.
-        final p1 = _flat(_extract(bytes, page: 1, tag: 'single_p1'));
-        for (final l in attendancePolicyLines(_standard())) {
-          expect(p1.contains(_flat(l.value)), isTrue,
-              reason: '고지가 1쪽에 온전히 있지 않다: ${l.value}');
-        }
+      final last = _flat(_extract(bytes, page: pages, tag: 'single_last'));
+      for (final must in const ['사업주', '근로자', '박사장', '김근로']) {
+        expect(last.contains(must), isTrue, reason: '마지막 쪽에 서명 블록이 온전히 없다');
+      }
+      final all = _flat(_extract(bytes, tag: 'single_all'));
+      for (final l in _guideLines(_standard())) {
+        expect(all.contains(_flat(l.value)), isTrue,
+            reason: '쪽이 나뉘며 기준 설명이 사라졌다: ${l.value}');
       }
     });
 
@@ -345,7 +354,7 @@ void main() {
             reason: '고지를 넣자 "$must" 가 사라졌다');
       }
       // 고지 쪽에만 7줄이 더 있다.
-      for (final l in attendancePolicyLines(_standard())) {
+      for (final l in _guideLines(_standard())) {
         expect(a.contains(_flat(l.value)), isFalse);
         expect(b.contains(_flat(l.value)), isTrue);
       }
@@ -375,7 +384,7 @@ void main() {
       expect(text.contains('2026-10-12'), isTrue,
           reason: '마지막 근무일이 표에서 잘렸다');
       // 표가 생겨도 7개 고지가 함께 남는다.
-      for (final l in attendancePolicyLines(_standard())) {
+      for (final l in _guideLines(_standard())) {
         expect(text.contains(_flat(l.value)), isTrue,
             reason: '표 때문에 고지가 밀려 사라졌다: ${l.value}');
       }
@@ -395,35 +404,31 @@ void main() {
       return File(out).readAsStringSync();
     }
 
-    testWidgets('PDFV-10 7개 라벨 각각이 **자기 값**과 같은 줄에 있다', (t) async {
+    testWidgets('PDFV-10 항목 제목 바로 뒤에 **그 항목의** 기준 설명이 차례로 온다', (t) async {
       for (final r in [_standard(), _boundary(), _longest()]) {
-        final rows = raw(await _build(policy: r), 'pair${r.lateUnit}')
-            .split('\n')
-            .map(_flat)
-            .toList();
-        for (final l in attendancePolicyLines(r)) {
-          final hit = rows.where((row) => row.startsWith('${l.label} '));
-          expect(hit, isNotEmpty,
-              reason: '단위 ${r.lateUnit} — "${l.label}" 줄이 없다');
-          expect(hit.first, '${l.label} ${_flat(l.value)}',
-              reason: '단위 ${r.lateUnit} — "${l.label}" 의 값이 어긋났다\n'
-                  '  기대: ${l.label} ${_flat(l.value)}\n'
-                  '  실제: ${hit.first}');
+        final flat = _flat(raw(await _build(policy: r), 'pair${r.lateUnit}'));
+        for (final item in attendanceRuleGuide(r).sections.expand((s) => s.items)) {
+          final at = flat.indexOf('${item.title} · ');
+          expect(at, greaterThan(-1), reason: '단위 ${r.lateUnit} — "${item.title}" 항목이 없다');
+          var from = at;
+          for (final p in item.points) {
+            final i = flat.indexOf(_flat(p), from);
+            expect(i, greaterThan(from - 1),
+                reason: '단위 ${r.lateUnit} — "${item.title}" 아래 설명이 어긋났다: $p');
+            from = i;
+          }
         }
       }
     });
 
-    testWidgets('PDFV-11 값 없는 라벨이 없다 — 7개 모두 내용을 가진다', (t) async {
+    testWidgets('PDFV-11 빈 항목이 없다 — 모든 항목이 설명을 가진다', (t) async {
       final r = _standard();
-      final rows = raw(await _build(policy: r), 'empty')
-          .split('\n')
-          .map(_flat)
-          .toList();
-      for (final l in attendancePolicyLines(r)) {
-        final row = rows.firstWhere((x) => x.startsWith('${l.label} '),
-            orElse: () => '');
-        expect(row.replaceFirst('${l.label} ', '').trim().isNotEmpty, isTrue,
-            reason: '"${l.label}" 이 값 없이 적혔다');
+      final flat = _flat(raw(await _build(policy: r), 'empty'));
+      expect(flat.contains(kAttendanceRuleGuideTitle), isTrue);
+      for (final item in attendanceRuleGuide(r).sections.expand((s) => s.items)) {
+        expect(item.points, isNotEmpty);
+        expect(flat.contains('${item.title} · ${_flat(item.points.first)}'), isTrue,
+            reason: '"${item.title}" 이 설명 없이 적혔다');
       }
     });
   });
@@ -438,7 +443,7 @@ void main() {
 
       // 그 행에 근태 고지 값이 같이 끼어 있지 않다 — 겹쳐 적힌 흔적.
       final policyValues =
-          attendancePolicyLines(_standard()).map((l) => _flat(l.value));
+          _guideLines(_standard()).map((l) => _flat(l.value));
       for (final v in policyValues) {
         expect(rows[signRow].contains(v), isFalse,
             reason: '서명 행에 본문 고지가 겹쳤다: $v');

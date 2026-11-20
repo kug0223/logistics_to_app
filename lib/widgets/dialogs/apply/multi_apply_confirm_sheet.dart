@@ -47,9 +47,11 @@ import '../../../services/schedule_conflict_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../models/core/business_model.dart' show AttendanceRules;
 import '../../../utils/attendance_policy_disclosure.dart';
+import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../theme/app_colors.dart';
+import '../../../utils/text_layout.dart';
 import '../../../widgets/common/common_widgets.dart';
 import 'application_relation.dart';
 import 'document_access_consent.dart';
@@ -187,7 +189,12 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
       final byDate = <DateTime, List<_ItemMeta>>{};
       for (final meta in toCheck) {
         final raw = meta.item.slot?.date ?? widget.to.date;
-        final key = DateTime(raw.year, raw.month, raw.day);
+        // [SIM-ADJ-1] 저장된 근무일(KST 자정 instant)의 **KST 달력일**로 묶고 묻는다.
+        //   예전 `DateTime(raw.year, raw.month, raw.day)` 는 기기 local 성분이라
+        //   GMT 기기에서 10/20 지원을 10/19 확정 근무와 비교했다(겹침을 놓치고,
+        //   없는 겹침으로 막았다). 그 날의 KST 자정 instant 로 넘긴다.
+        final key =
+            FormatHelper.kstMidnightOfKstDay(FormatHelper.toKstDate(raw));
         byDate.putIfAbsent(key, () => []).add(meta);
       }
 
@@ -436,9 +443,6 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildHeader(context),
-          SizedBox(height: ResponsiveHelper.spacing(context, 14)),
-
           // [R7-P4.4E.6C] 본문 **하나**만 스크롤한다.
           //
           //   예전에는 업무 목록만 `ConstrainedBox(0.42×화면높이)` 안에서
@@ -451,12 +455,21 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
           //   `Flexible` 이라 내용이 적으면 시트는 내용 크기대로 작게 뜨고
           //   (1건: 시트 701.9 < 800 — 고정 높이로 키우지 않는다),
           //   많아지면 이 안에서 스크롤된다. 중첩 스크롤도 없다.
+          //
+          // [DU508 r3 · 후속120 §2-1] 머리(제목 · '나머지 N개는 …' 안내)도 이 스크롤 **안**에 둔다.
+          //   머리가 고정 칸에 남아 있으면 B(320 · 글자 2.0)에서 제목 2줄 · 안내 3줄이 세로를 먼저 가져가
+          //   본문 스크롤 칸이 40px 남짓만 남았다 — 날짜 행이 '11월 23' 까지만 보였다(r2 TA B BLOCK 원PNG).
+          //   고정은 아래 하단(지원 안내 · 지원하기 · 취소 / 결과)뿐이다. 처음 열면 스크롤 위치 0 이라
+          //   제목이 맨 위에 그대로 보이고, 내용이 적으면 시트가 작아지는 것도 그대로다(Flexible · min).
           Flexible(
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  _buildHeader(context),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 14)),
+
                   ..._metas.map((meta) => _buildItemCard(context, meta)),
 
                   // 서류 접근 사전동의 — submit 전에만 표시 (result 후 불필요)
@@ -517,9 +530,12 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
         if (blockedCount > 0 && !_isCheckingConflicts) ...[
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
           Text(
-            '나머지 $blockedCount개는 이미 지원 중이거나 확정된 근무와 겹쳐요.',
+            // [DU508] B(320 · 2.0)에서 '겹쳐 / 요.'처럼 음절 안에서 끊겼다 — 낱말 조판(원문 semantics).
+            TextLayout.keepWords('나머지 $blockedCount개는 이미 지원 중이거나 확정된 근무와 겹쳐요.'),
+            semanticsLabel: '나머지 $blockedCount개는 이미 지원 중이거나 확정된 근무와 겹쳐요.',
+            // [DU471] 보조 안내 grey500(2.68) → textTertiary.
             style: ResponsiveHelper.tinyStyle(context)
-                .copyWith(color: AppColors.grey500),
+                .copyWith(color: AppColors.textTertiary),
           ),
         ],
       ],
@@ -534,7 +550,10 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
     final weekDays = ['월', '화', '수', '목', '금', '토', '일'];
     String dateStr = '';
     if (slot != null) {
-      final d = slot.date;
+      // [SIM-B] 저장된 근무일은 KST 자정 instant 다 — 기기 local 성분으로 읽으면
+      //   GMT 기기에서 10/20 근무가 10/19(월)이 된다. KST 달력일로 말한다.
+      //   보내는 값(_applyOne 의 workDate)은 instant 그대로라 바꾸지 않는다.
+      final d = FormatHelper.toKstDate(slot.date);
       dateStr = '${d.month}월 ${d.day}일(${weekDays[d.weekday - 1]}) · ';
     }
 
@@ -619,7 +638,23 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
       }
     }
 
+    // [DU508 r3 · 후속120 §2-1 · F120-2] 날짜 · 업무명 줄 — 글자 모양 · 상태별 색은 그대로다.
+    final rowStyle = ResponsiveHelper.bodyStyle(context).copyWith(
+      fontWeight: FontWeight.bold,
+      color: isDisabled ? AppColors.grey400 : AppColors.textPrimary,
+    );
+    // [DU508 r3] 업무명 — 띄어쓰기가 없고 5자 이하인 이름은 원문 그대로 둔다: 아래 Wrap 이 이름을 **통째로**
+    //   다음 줄로 옮기고, B(320 · 2.0) 한 줄(≈257px)에 5자(≈150px)가 다 들어가 낱말 안에서 끊길 일이 없다.
+    //   띄어쓰기가 있거나 6자 이상인 이름은 식별 이름 규칙(TextLayout.identity — 공백 · 가운데에서만 줄바꿈)으로 끊는다.
+    final workName = work.workType;
+    final workNameShown =
+        workName.contains(' ') || workName.characters.length >= 6
+            ? TextLayout.identity(workName)
+            : workName;
+
     return Container(
+      // [DU508 r4 · 후속121 F121-1] 카드 바탕/테두리는 본문 폭을 다 쓴다 — r3 에서 Row(Expanded)를 걷은 뒤 W 카드가 내용 폭(≈206px)으로 줄었다.
+      width: double.infinity,
       margin:
           EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
@@ -631,64 +666,67 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '$dateStr${work.workType}',
-                      style: ResponsiveHelper.bodyStyle(context).copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: isDisabled
-                            ? AppColors.grey400
-                            : AppColors.textPrimary,
-                      ),
-                    ),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 3)),
-                    Text(
-                      '${work.startTime} ~ ${work.endTime}  ·  ${work.formattedWage}',
-                      style: ResponsiveHelper.smallStyle(context).copyWith(
-                        color: isDisabled
-                            ? AppColors.grey400
-                            : AppColors.grey600,
-                      ),
-                    ),
-                  ],
+          // [DU508 r3 · 후속120 §2-1 · F120-2] 날짜 덩어리와 업무명을 **따로** 놓고 Wrap 이 줄을 나눈다.
+          //   업무명이 날짜 줄에 다 들어가지 않으면 업무명 전체가 다음 줄로 간다('11월 23일(일) ·' / '냉장분류') —
+          //   r2 TA 에서 B 날짜가 '11월 2 / 3일' · '23일(일)' 안에서 끊긴 것을 막는다. 날짜 덩어리(≈214px)는
+          //   B 카드 안쪽 폭(≈257px — 상태 표시를 아래 줄로 옮겨 생긴 온 폭)보다 짧아 한 줄에 든다.
+          //   화면 글자는 원문이라 날짜 · 짧은 업무명을 원문으로 찾는 기존 시험(MAC-30 · KD-1)이 그대로 맞는다.
+          //   읽기 이름은 한 덩어리 원문('11월 23일(일) · 냉장분류') 그대로다.
+          Semantics(
+            label: '$dateStr${work.workType}',
+            excludeSemantics: true,
+            child: Wrap(
+              children: [
+                if (dateStr.isNotEmpty) Text(dateStr, style: rowStyle),
+                Text(workNameShown, style: rowStyle),
+              ],
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+          Text(
+            // [DU1-F2] 금액 단위 — 저장 급여 형태 라벨(시급/일급)을 붙인다. 새 계산 없음.
+            '${work.startTime} ~ ${work.endTime}  ·  ${work.wageTypeLabel} ${work.formattedWage}',
+            style: ResponsiveHelper.smallStyle(context).copyWith(
+              color: isDisabled
+                  ? AppColors.grey400
+                  : AppColors.grey600,
+            ),
+          ),
+          // [DU508 r3 · 후속120 §2-1] 상태 표시(확인 중 · 완료 표시 · 배지)는 날짜 · 시간 **아래 줄**이다.
+          //   예전에는 날짜 칸 오른쪽에 붙어 B(320 · 2.0)에서 '이미 지원중' 배지가 날짜 칸 폭을 차지했고,
+          //   날짜가 덩어리 안에서 끊겼다(r2 TA B BLOCK ok=false · 3줄). 세 표시 모두 같은 자리로 옮긴다 —
+          //   판정 순서 · 문구 · 색 · 크기는 그대로다(배치만 바꾼다).
+          if (isChecking) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.5,
+                color: AppColors.grey400,
+              ),
+            ),
+          ] else if (_submitDone && meta.applyError == null && !isDisabled) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+            const Icon(Icons.check_circle, color: AppColors.success, size: 20),
+          ] else if (badgeText != null) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: badgeColor!.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: badgeColor.withValues(alpha: 0.4)),
+              ),
+              child: Text(
+                badgeText,
+                style: ResponsiveHelper.tinyStyle(context).copyWith(
+                  color: badgeColor,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(width: 8),
-              if (isChecking)
-                const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.5,
-                    color: AppColors.grey400,
-                  ),
-                )
-              else if (_submitDone && meta.applyError == null && !isDisabled)
-                const Icon(Icons.check_circle, color: AppColors.success, size: 20)
-              else if (badgeText != null)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: badgeColor!.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: badgeColor.withValues(alpha: 0.4)),
-                  ),
-                  child: Text(
-                    badgeText,
-                    style: ResponsiveHelper.tinyStyle(context).copyWith(
-                      color: badgeColor,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-            ],
-          ),
+            ),
+          ],
           if (subMsg != null) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 6)),
             Text(
@@ -741,8 +779,11 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
                 SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                 Flexible(
                   child: Text(
-                    '지원 후 관리자의 근무 확정을 기다려주세요. '
-                    '근무 확정 전까지 지원을 취소할 수 있습니다.',
+                    // [DU508] B 에서 '지원 / 을'처럼 끊겼다 — 낱말 조판(원문 semantics).
+                    TextLayout.keepWords('지원 후 관리자의 근무 확정을 기다려주세요. '
+                        '근무 확정 전까지 지원을 취소할 수 있습니다.'),
+                    semanticsLabel: '지원 후 관리자의 근무 확정을 기다려주세요. '
+                        '근무 확정 전까지 지원을 취소할 수 있습니다.',
                     style: ResponsiveHelper.tinyStyle(context)
                         .copyWith(color: AppColors.grey700),
                   ),
@@ -796,14 +837,15 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
           child: TextButton(
             onPressed: _isSubmitting ? null : () => Navigator.pop(context),
             style: TextButton.styleFrom(
-              foregroundColor: AppColors.grey400,
+              // [DU471] 취소 grey400(1.88) → textSecondary(DU441 취소 · UI-1 보조 글자 버튼). 처리 중(비활성)은 아래 글자색이 grey400 을 지킨다.
+              foregroundColor: AppColors.textSecondary,
               padding: EdgeInsets.symmetric(
                   vertical: ResponsiveHelper.spacing(context, 8)),
             ),
             child: Text(
               '취소',
               style: ResponsiveHelper.bodyStyle(context)
-                  .copyWith(color: AppColors.grey400),
+                  .copyWith(color: _isSubmitting ? AppColors.grey400 : AppColors.textSecondary),
             ),
           ),
         ),

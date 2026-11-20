@@ -1,3 +1,4 @@
+import 'support/visible_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -15,6 +16,7 @@ import 'package:ALfit/models/core/user_region.dart';
 import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/user/attendance_check_reads.dart';
+import 'support/checkin_contract_fixture.dart';
 import 'package:ALfit/screens/user/attendance_check_screen.dart';
 import 'package:ALfit/screens/user/my_schedule_reads.dart';
 import 'package:ALfit/screens/user/my_schedule_screen.dart';
@@ -158,6 +160,8 @@ AttendanceCheckReads _attReads({
   Object? appsError,
 }) =>
     AttendanceCheckReads(
+      // [CONTRACT-BEFORE-CHECKIN] 출근 버튼은 계약 양측 서명 완료일 때만 열린다(2026-10-25) — 이 시험의 전제로 명시
+      myContracts: (uid) async => completedContractsFor(apps),
       myApplications: (uid) async {
         if (appsError != null) throw appsError;
         return apps;
@@ -279,10 +283,10 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('강남 물류센터'), findsWidgets);
-    expect(find.text('역삼 편의점'), findsWidgets,
+    expect(findVisibleText('강남 물류센터'), findsWidgets);
+    expect(findVisibleText('역삼 편의점'), findsWidgets,
         reason: '장기 근무는 workDate 가 계약 시작일이라 빠지기 쉽다');
-    expect(find.text('오늘 확정된 근무가 없습니다'), findsNothing);
+    expect(findVisibleText('오늘 확정된 근무가 없습니다'), findsNothing);
   });
 
   testWidgets('SAT-2 전날 미퇴근 + 오늘 확정이 함께 잡힌다', (tester) async {
@@ -303,9 +307,9 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('출근 완료'), findsWidgets,
+    expect(findVisibleText('출근 완료'), findsWidgets,
         reason: '어제 출근한 근무는 퇴근이 남은 상태로 보여야 한다');
-    expect(find.text('오늘 사업장'), findsWidgets);
+    expect(findVisibleText('오늘 사업장'), findsWidgets);
   });
 
   testWidgets('SAT-3 이미 퇴근한 어제 기록은 오늘 목록에 남지 않는다(양성 대조)',
@@ -327,7 +331,7 @@ void main() {
       ),
     );
 
-    expect(find.text('오늘 확정된 근무가 없습니다'), findsOneWidget,
+    expect(findVisibleText('오늘 확정된 근무가 없습니다'), findsOneWidget,
         reason: '끝난 일이 오늘 할 일처럼 남으면 안 된다');
   });
 
@@ -351,7 +355,7 @@ void main() {
           ],
         ),
       );
-      expect(find.text('오늘 확정된 근무가 없습니다'), findsOneWidget,
+      expect(findVisibleText('오늘 확정된 근무가 없습니다'), findsOneWidget,
           reason: '자동 처리된 기록이 오늘 카드로 남으면 안 된다: $st');
     }
   });
@@ -364,7 +368,7 @@ void main() {
       ]),
     );
 
-    expect(find.text('오늘 확정된 근무가 없습니다'), findsOneWidget,
+    expect(findVisibleText('오늘 확정된 근무가 없습니다'), findsOneWidget,
         reason: '지원=관심 · 확정=약속 — 지원만으로 출근 대상이 되지 않는다');
   });
 
@@ -386,7 +390,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     // 내 기록이 아니므로 '출근 완료' 상태가 붙지 않는다.
-    expect(find.text('출근 완료'), findsNothing);
+    expect(findVisibleText('출근 완료'), findsNothing);
   });
 
   // ══════════════════════════════════════════════════════════
@@ -401,17 +405,17 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('근무 정보를 불러오지 못했습니다'), findsOneWidget);
-    expect(find.text('다시 시도'), findsOneWidget);
-    expect(find.text('오늘 확정된 근무가 없습니다'), findsNothing,
+    expect(findVisibleText('근무 정보를 불러오지 못했습니다'), findsOneWidget);
+    expect(findVisibleText('다시 시도'), findsOneWidget);
+    expect(findVisibleText('오늘 확정된 근무가 없습니다'), findsNothing,
         reason: '못 읽은 것을 "근무 없음"으로 말하면 그날 출근을 놓친다');
   });
 
   testWidgets('SAT-8 정말 근무가 없을 때는 없다고 말한다(양성 대조)', (tester) async {
     await _pumpAttendance(tester, reads: _attReads(apps: const []));
 
-    expect(find.text('오늘 확정된 근무가 없습니다'), findsOneWidget);
-    expect(find.text('근무 정보를 불러오지 못했습니다'), findsNothing);
+    expect(findVisibleText('오늘 확정된 근무가 없습니다'), findsOneWidget);
+    expect(findVisibleText('근무 정보를 불러오지 못했습니다'), findsNothing);
   });
 
   testWidgets('SAT-9 일정 조회 실패도 "일정 없음"이 아니다(기존 계약 회귀)',
@@ -422,8 +426,8 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('일정을 불러오지 못했습니다'), findsOneWidget);
-    expect(find.textContaining('일정이 없어요'), findsNothing);
+    expect(findVisibleText('일정을 불러오지 못했어요'), findsOneWidget);
+    expect(findVisibleTextContaining('일정이 없어요'), findsNothing);
   });
 
   // ══════════════════════════════════════════════════════════
@@ -438,7 +442,7 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('강남 물류센터'), findsWidgets);
+    expect(findVisibleText('강남 물류센터'), findsWidgets);
   });
 
   testWidgets('SAT-11 지원(PENDING)과 확정을 같은 말로 하지 않는다', (tester) async {
@@ -451,8 +455,8 @@ void main() {
 
     expect(tester.takeException(), isNull);
     // 확정 상태 문구가 지원 건에 붙으면 안 된다.
-    expect(find.text('출근 완료'), findsNothing);
-    expect(find.text('출퇴근 완료'), findsNothing);
+    expect(findVisibleText('출근 완료'), findsNothing);
+    expect(findVisibleText('출퇴근 완료'), findsNothing);
   });
 
   // ══════════════════════════════════════════════════════════
@@ -478,7 +482,7 @@ void main() {
           textScale: scale,
         );
         expect(tester.takeException(), isNull);
-        expect(find.text('서울특별시 강남구 테헤란로 물류센터 제2창고'), findsWidgets);
+        expect(findVisibleText('서울특별시 강남구 테헤란로 물류센터 제2창고'), findsWidgets);
       });
     }
   }
@@ -511,8 +515,8 @@ void main() {
     }
 
     // 같은 사업장·업무가 상세에 있다 — 다른 근무로 튀지 않는다.
-    expect(find.textContaining(app.businessName), findsWidgets);
-    expect(find.textContaining(app.selectedWorkType), findsWidgets);
+    expect(findVisibleTextContaining(app.businessName), findsWidgets);
+    expect(findVisibleTextContaining(app.selectedWorkType), findsWidgets);
   });
 
   testWidgets('PSN-2 상세를 닫으면 일정의 선택 날짜가 그대로다', (tester) async {
@@ -521,7 +525,7 @@ void main() {
     await _pumpSchedule(tester, reads: _schedReads(apps: [app]));
 
     // 닫기 전 머리말이 말하는 날짜를 적어 둔다.
-    final before = find.textContaining('${_today.month}월 ${_today.day}일');
+    final before = findVisibleTextContaining('${_today.month}월 ${_today.day}일');
     final hadHeader = before.evaluate().isNotEmpty;
 
     await tester.tap(find.byType(ScheduleCard).first);
@@ -538,7 +542,7 @@ void main() {
     expect(find.byType(ScheduleCard), findsWidgets,
         reason: '닫으면 일정 목록으로 돌아와야 한다');
     if (hadHeader) {
-      expect(find.textContaining('${_today.month}월 ${_today.day}일'),
+      expect(findVisibleTextContaining('${_today.month}월 ${_today.day}일'),
           findsWidgets,
           reason: '닫은 뒤 선택 날짜가 다른 날로 바뀌면 안 된다');
     }
@@ -594,7 +598,7 @@ void main() {
     }
 
     // 머리줄이 다음 달을 말한다.
-    expect(find.textContaining('${_today.month + 1}월'), findsWidgets,
+    expect(findVisibleTextContaining('${_today.month + 1}월'), findsWidgets,
         reason: '명시 선택한 달이 화면에 남아야 한다');
   });
 
@@ -616,7 +620,7 @@ void main() {
     final card = find.byType(ScheduleCard);
     if (card.evaluate().isEmpty) {
       // 그 달 카드가 목록에 서지 않으면 그 사실을 남긴다 — 꾸미지 않는다.
-      expect(find.textContaining('${_today.month + 1}월'), findsWidgets);
+      expect(findVisibleTextContaining('${_today.month + 1}월'), findsWidgets);
       return;
     }
     await tester.ensureVisible(card.first);
@@ -626,7 +630,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
     // 상세가 그 달의 그 근무를 말한다.
-    expect(find.textContaining('성수 창고'), findsWidgets);
+    expect(findVisibleTextContaining('성수 창고'), findsWidgets);
 
     // 닫기까지만 — 안의 행동 버튼은 누르지 않는다.
     tester.state<NavigatorState>(find.byType(Navigator).first).pop();
@@ -635,7 +639,7 @@ void main() {
     }
 
     // 닫은 뒤에도 **명시 선택한 달**이 현재 달로 덮이지 않는다.
-    expect(find.textContaining('${_today.month + 1}월'), findsWidgets,
+    expect(findVisibleTextContaining('${_today.month + 1}월'), findsWidgets,
         reason: '닫으면 고른 달이 현재 달로 되돌아가면 안 된다');
   });
 

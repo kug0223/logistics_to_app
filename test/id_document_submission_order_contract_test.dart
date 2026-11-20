@@ -162,15 +162,23 @@ void main() {
     });
 
     test('SUB-41 현재 accepted 경로는 절대 지우지 않는다 (§4)', () {
-      expect(cf, contains('if (protect !== null && path === protect) return;'),
+      // [DOC-LATE-DELETE.7 갱신] 예전 단언: if (protect !== null && path === protect) return;
+      //   보호는 그대로이고, 지우기 전에 같은 users 거래에서 '지금 현재면 지우지 않는다'를 한 번 더 본다.
+      expect(cf, contains('if (protect !== null && path === protect) return "SKIPPED";'),
           reason: '정리가 데이터 손실이 되면 안 된다');
+      expect(cf, contains('if (mark === "CURRENT") return "CURRENT";'));
     });
 
     test('SUB-42 남의 경로는 건드리지 않는다', () {
       // [R7-P4.4E.10A.4 §3 갱신] 술어가 `users/{uid}/` 접두 검사에서 신분증
       //   네임스페이스 helper 로 좁혀졌다. 계약("남의 것은 안 건드린다")은
       //   그대로이고 더 강해졌다 — 같은 폴더의 통장사본도 못 건드린다.
-      expect(cf, contains('if (!srvIsOwnedIdDocumentStoragePath(uid, path)) {'));
+      // [DOC-PRODUCT-DELETE.8 갱신] 예전 단언: if (!srvIsOwnedIdDocumentStoragePath(uid, path)) {
+      //   기본 술어는 그대로다. 가입 중단만 `users/{uid}/idCard_` 아래 전부(예전 앱이 남긴 이름 포함)를
+      //   같은 정리 대기 규약으로 치우도록 플래그로 넓힌다 — 여전히 본인 폴더·신분증 이름만이다.
+      expect(cf, contains('srvIsOwnedIdDocumentStoragePath(uid, path); if (!owned) {'));
+      expect(cf, contains(r'path.startsWith(`users/${uid}/idCard_`) && '
+          r'!path.slice(`users/${uid}/`.length).includes("/") && !path.includes("..") :'));
       expect(cf, isNot(contains(r'if (!path.startsWith(`users/${uid}/`)) return;')),
           reason: '넓은 술어가 남아 있으면 좁힌 의미가 없다');
     });

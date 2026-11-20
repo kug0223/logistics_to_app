@@ -59,14 +59,16 @@ void main() {
       expect(ContractStatus.pendingEmployer.badgeColors.fg,
           AppColors.warningDark);
       expect(ContractStatus.pendingEmployer.badgeColors.bg, AppColors.warningBg);
-      expect(ContractStatus.pendingWorker.badgeColors.fg, AppColors.infoDark);
+      // [DU342 시험 추종] 정보 톤 그대로 — infoDark 는 infoBg 위 4.03 이라 작은 배지 글자에 모자라 infoDeep(Standards 감사04).
+      expect(ContractStatus.pendingWorker.badgeColors.fg, AppColors.infoDeep);
       expect(ContractStatus.pendingWorker.badgeColors.bg, AppColors.infoBg);
     });
 
     test('완료는 성공 톤, 무효는 중립 톤', () {
       expect(ContractStatus.completed.badgeColors.fg, AppColors.successDark);
       expect(ContractStatus.completed.badgeColors.bg, AppColors.successBg);
-      expect(ContractStatus.voided.badgeColors.fg, AppColors.grey600);
+      // [DU342 시험 추종] 중립 톤 그대로 — grey600 은 grey100 위 4.23 이라 textSecondary.
+      expect(ContractStatus.voided.badgeColors.fg, AppColors.textSecondary);
       expect(ContractStatus.voided.badgeColors.bg, AppColors.grey100);
     });
 

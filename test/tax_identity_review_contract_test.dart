@@ -273,7 +273,8 @@ void main() {
 
     test('21 §36 — 원본도 현재 문서 버전에 묶인다', () {
       expect(urlCf, contains('expectedIdDocumentVersion !== curIdV'));
-      expect(urlCf, contains('srvIsOwnedStoragePath(storagePath, targetUid)'));
+      // [DOC-LATE-DELETE.7 · C 갱신] 예전 단언: srvIsOwnedStoragePath(storagePath, targetUid) — 신분증 모양까지 본다.
+      expect(urlCf, contains('srvIsOwnedIdCardObjectPath(targetUid, storagePath)'));
     });
 
     test('22 §30 — 불일치는 근로자 할 일로 넘어간다', () {

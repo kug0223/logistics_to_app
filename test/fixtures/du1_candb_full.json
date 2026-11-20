@@ -1,0 +1,137 @@
+{
+ "apps": {
+  "manual": {
+   "uid": "w_manual",
+   "businessId": "b1",
+   "businessName": "B",
+   "toTitle": "단기",
+   "status": "CONFIRMED",
+   "toId": "to1",
+   "slotId": "s1",
+   "workDetailId": "QA_09:00_18:00",
+   "wdId": "wd1",
+   "selectedWorkType": "QA",
+   "startTime": "09:00",
+   "endTime": "18:00",
+   "workDate": {
+    "_seconds": 1793631600,
+    "_nanoseconds": 0
+   },
+   "appliedAt": {
+    "_seconds": 1793494800,
+    "_nanoseconds": 0
+   },
+   "confirmedAt": {
+    "_seconds": 1793545200,
+    "_nanoseconds": 0
+   },
+   "wage": 13000,
+   "wageType": "hourly",
+   "applicationMessage": "연락처 010-0000-0000",
+   "cancelReason": "사정",
+   "attendancePolicyAcknowledgement": {
+    "v": 1
+   },
+   "conflictingBusiness": "다른곳",
+   "breakMinutes": 45,
+   "nightAllowanceApplied": false,
+   "nightIncluded": true,
+   "taxDeductionType": "freelancer_3_3",
+   "baseHourlyWage": 14000,
+   "baseHourlyWageMode": "MANUAL",
+   "payScheduleType": "weekly",
+   "payScheduleDay": 5
+  },
+  "auto": {
+   "uid": "w_auto",
+   "businessId": "b1",
+   "businessName": "B",
+   "toTitle": "단기",
+   "status": "CONFIRMED",
+   "toId": "to1",
+   "slotId": "s1",
+   "workDetailId": "QA_09:00_18:00",
+   "wdId": "wd1",
+   "selectedWorkType": "QA",
+   "startTime": "09:00",
+   "endTime": "18:00",
+   "workDate": {
+    "_seconds": 1793631600,
+    "_nanoseconds": 0
+   },
+   "appliedAt": {
+    "_seconds": 1793494800,
+    "_nanoseconds": 0
+   },
+   "confirmedAt": {
+    "_seconds": 1793545200,
+    "_nanoseconds": 0
+   },
+   "wage": 13000,
+   "wageType": "hourly",
+   "applicationMessage": "연락처 010-0000-0000",
+   "cancelReason": "사정",
+   "attendancePolicyAcknowledgement": {
+    "v": 1
+   },
+   "conflictingBusiness": "다른곳",
+   "breakMinutes": 30,
+   "nightAllowanceApplied": true,
+   "nightIncluded": false,
+   "taxDeductionType": "none",
+   "baseHourlyWageMode": "AUTO"
+  },
+  "legacy": {
+   "uid": "w_legacy",
+   "businessId": "b1",
+   "businessName": "B",
+   "toTitle": "단기",
+   "status": "CONFIRMED",
+   "toId": "to1",
+   "slotId": "s1",
+   "workDetailId": "QA_09:00_18:00",
+   "wdId": "wd1",
+   "selectedWorkType": "QA",
+   "startTime": "09:00",
+   "endTime": "18:00",
+   "workDate": {
+    "_seconds": 1793631600,
+    "_nanoseconds": 0
+   },
+   "appliedAt": {
+    "_seconds": 1793494800,
+    "_nanoseconds": 0
+   },
+   "confirmedAt": {
+    "_seconds": 1793545200,
+    "_nanoseconds": 0
+   },
+   "wage": 110000,
+   "wageType": "daily",
+   "applicationMessage": "연락처 010-0000-0000",
+   "cancelReason": "사정",
+   "attendancePolicyAcknowledgement": {
+    "v": 1
+   },
+   "conflictingBusiness": "다른곳"
+  }
+ },
+ "live": {
+  "wage": 15000,
+  "wageType": "hourly",
+  "workType": "QA",
+  "startTime": "09:00",
+  "endTime": "18:00",
+  "breakMinutes": 60,
+  "baseHourlyWage": 16000,
+  "baseHourlyWageMode": "MANUAL",
+  "nightAllowanceApplied": true,
+  "nightIncluded": false,
+  "taxDeductionType": "none",
+  "payScheduleType": "next_day",
+  "payScheduleDay": 1,
+  "shiftType": "day",
+  "requiredCount": 9,
+  "rawSecretMemo": "TO 원문 메모"
+ }
+}

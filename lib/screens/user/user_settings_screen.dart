@@ -15,8 +15,10 @@ import '../../services/fcm_service.dart';
 import '../../services/legal_terms_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
+import '../../widgets/common/terms_read_only_screen.dart';
 import '../common/help_screen.dart';
 import '../common/tour_screen.dart';
 
@@ -103,6 +105,8 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
       final userId = userProvider.currentUser?.uid;
       if (userId == null) return;
 
+      final isAdminForFcm =
+          userProvider.isSubAdmin ? userProvider.isAdminMode : userProvider.isAdmin;
       if (value) {
         final permStatus = await Permission.notification.status;
         if (permStatus.isDenied) await Permission.notification.request();
@@ -113,14 +117,19 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
           await openAppSettings();
           return;
         }
-        final isAdminForFcm =
-            userProvider.isSubAdmin ? userProvider.isAdminMode : userProvider.isAdmin;
         await FCMService().initialize(userId, isAdmin: isAdminForFcm);
         if (!mounted) return;
         ToastHelper.showSuccess('푸시 알림이 활성화되었습니다');
       } else {
-        await FCMService().clearToken();
+        // [.69] 서버 반영이 확인돼야 '꺼짐'(settings_screen 과 같은 계약).
+        final removed = await FCMService().clearToken(networkTimeout: const Duration(seconds: 8));
         if (!mounted) return;
+        if (!removed) {
+          await FCMService().initialize(userId, isAdmin: isAdminForFcm);
+          if (!mounted) return;
+          ToastHelper.showError('푸시 알림을 끄지 못했습니다. 서버에 반영되지 않아 알림이 계속 올 수 있어요. 연결을 확인한 뒤 다시 시도해 주세요.');
+          return;
+        }
         ToastHelper.showSuccess('푸시 알림이 비활성화되었습니다');
       }
       setState(() => _isPushEnabled = value);
@@ -169,10 +178,13 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
     await Navigator.of(ctx).push(
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => _TermsReadOnlyScreen(
+        // [DU263] 공용 약관 화면(두 설정 화면의 같은 사본을 합침). 못 읽으면 본문 대신 실패 상태를 보인다
+        //   — 이전에는 실패 문장을 약관 본문처럼 그렸다.
+        builder: (_) => TermsReadOnlyScreen(
           title: item?.title ?? fallbackTitle,
-          content: item?.content ?? '약관을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.',
+          content: item?.content ?? '',
           version: item?.version,
+          loadFailed: item == null,
         ),
       ),
     );
@@ -336,7 +348,6 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
           _buildMenuGroup([
             _MenuRow(
               icon: Icons.help_outline,
-              iconColor: AppColors.infoDark,
               label: '도움말 (Q&A)',
               onTap: () => Navigator.push(
                 context,
@@ -345,7 +356,6 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
             ),
             _MenuRow(
               icon: Icons.tour_outlined,
-              iconColor: AppColors.purpleDark,
               label: '가이드 다시 보기',
               // [R7-ONBOARDING.1] 같은 메뉴 이름이 두 화면을 열고 있었다.
               //
@@ -370,21 +380,18 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
           _buildMenuGroup([
             _MenuRow(
               icon: Icons.article_outlined,
-              iconColor: AppColors.grey600,
               label: '서비스 이용약관',
               onTap: () =>
                   _showTermsInApp(context, 'service_terms', '서비스 이용약관'),
             ),
             _MenuRow(
               icon: Icons.privacy_tip_outlined,
-              iconColor: AppColors.infoDark,
               label: '개인정보 처리방침',
               onTap: () =>
                   _showTermsInApp(context, 'privacy_policy', '개인정보 처리방침'),
             ),
             _MenuRow(
               icon: Icons.location_on_outlined,
-              iconColor: AppColors.successDark,
               label: '위치정보 이용 동의',
               onTap: () =>
                   _showTermsInApp(context, 'location_terms', '위치정보 이용 동의'),
@@ -395,26 +402,28 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
           // ── 계정 ─────────────────────────────────────────────────
           _SectionHeader(label: '계정'),
           _buildMenuGroup([
+            // [DU247] 로그아웃은 다시 로그인하면 되는 계정 동작이다 — 위험색 없이 다른 메뉴와 같은 중립 행
+            //   (관리자 설정 S045 의 중립 버튼과 같은 뜻). 확인은 로그아웃 확인 대화가 맡는다(사용자 11-10 "중립으로 진행").
             _MenuRow(
               icon: Icons.logout,
-              iconColor: AppColors.error,
               label: '로그아웃',
-              labelColor: AppColors.error,
               onTap: _handleLogout,
             ),
           ]),
           const SizedBox(height: 8),
           // 회원탈퇴 — 파괴적 작업이므로 눈에 덜 띄게 표시
+          // [DU245] 덜 띄게 = 중립 보조색·작은 밑줄 글자·맨 아래 자리. 글자는 읽혀야 한다(이전 grey400, 바탕 위 1.75).
+          //   위험색(빨강)은 탈퇴를 오히려 강조하므로 쓰지 않는다(사용자 11-10). 관리자 설정(S045)과 같다.
           Center(
             child: TextButton(
               onPressed: _handleDeleteAccount,
-              child: Text(
+              child: const Text(
                 '회원탈퇴',
                 style: TextStyle(
                   fontSize: 13,
-                  color: AppColors.grey400,
+                  color: AppColors.textSecondary,
                   decoration: TextDecoration.underline,
-                  decorationColor: AppColors.grey400,
+                  decorationColor: AppColors.textSecondary,
                 ),
               ),
             ),
@@ -428,68 +437,46 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
   // ── 알림 카드 ──────────────────────────────────────────────────
 
   Widget _buildNotificationCard() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.borderLight),
-      ),
-      child: Column(
+    // [DU244] 다른 묶음과 같은 카드(_group). 행 아이콘도 메뉴 행과 같은 중립 상자다 — 켜짐/꺼짐은 스위치가 말한다.
+    final theme = Theme.of(context);
+    return _group(
+      Column(
         children: [
           // 마스터 토글
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
             child: Row(
               children: [
-                const Icon(Icons.notifications_outlined,
-                    size: 18, color: AppColors.textSecondary),
+                const _IconBox(icon: Icons.notifications_outlined),
                 const SizedBox(width: 12),
-                const Expanded(
-                  child: Text(
-                    '푸시 알림',
-                    style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary),
-                  ),
-                ),
+                const Expanded(child: _RowLabel('푸시 알림')),
                 if (_isLoading)
                   const SizedBox(
                     width: 20,
                     height: 20,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: AppColors.info),
+                    child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 else
                   Switch(
                     value: _isPushEnabled,
                     onChanged: _togglePushNotification,
-                    activeThumbColor: AppColors.infoDark,
+                    activeThumbColor: theme.primaryColor, // [DU244] 대표색(S045 와 같음)
                   ),
               ],
             ),
           ),
           // 상세 설정 확장 (활성화됐을 때만)
           if (_isPushEnabled) ...[
-            const Divider(height: 1, color: AppColors.borderLight, indent: 16),
+            const Divider(height: 1, thickness: 1, color: AppColors.grey100, indent: 64),
             InkWell(
               onTap: () => setState(() => _isNotifExpanded = !_isNotifExpanded),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: Row(
                   children: [
-                    const Icon(Icons.tune, size: 18, color: AppColors.textSecondary),
+                    const _IconBox(icon: Icons.tune),
                     const SizedBox(width: 12),
-                    const Expanded(
-                      child: Text(
-                        '알림 세부 설정',
-                        style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary),
-                      ),
-                    ),
+                    const Expanded(child: _RowLabel('알림 세부 설정')),
                     Icon(
                       _isNotifExpanded
                           ? Icons.keyboard_arrow_up
@@ -504,29 +491,16 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
             if (_isNotifExpanded) _buildNotifCategories(),
           ],
           // 시스템 알림 설정 링크
-          const Divider(height: 1, color: AppColors.borderLight, indent: 16),
+          const Divider(height: 1, thickness: 1, color: AppColors.grey100, indent: 64),
           InkWell(
             onTap: () async => openAppSettings(),
-            borderRadius: const BorderRadius.only(
-              bottomLeft: Radius.circular(12),
-              bottomRight: Radius.circular(12),
-            ),
             child: const Padding(
               padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Row(
                 children: [
-                  Icon(Icons.settings_applications_outlined,
-                      size: 18, color: AppColors.textSecondary),
+                  _IconBox(icon: Icons.settings_applications_outlined),
                   SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      '시스템 알림 설정',
-                      style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary),
-                    ),
-                  ),
+                  Expanded(child: _RowLabel('시스템 알림 설정')),
                   Icon(Icons.open_in_new,
                       size: 14, color: AppColors.textSecondary),
                 ],
@@ -552,28 +526,37 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
       color: AppColors.grey50,
       child: Column(
         children: categories.map((c) {
+          // [DU244] 위 행 글자 시작(64)과 맞춘다.
           return Padding(
-            padding: const EdgeInsets.fromLTRB(40, 0, 8, 0),
+            padding: const EdgeInsets.fromLTRB(64, 0, 8, 0),
             child: Row(
               children: [
                 Expanded(
+                  // [DU244 v2] 큰 글자에서 줄이 바뀌면 낱말 단위로만(음절 끊김 금지). 읽기 도구에는 원문.
                   child: Text(
-                    c.label,
+                    TextLayout.keepWords(c.label),
+                    semanticsLabel: c.label,
                     style: const TextStyle(
                         fontSize: 13, color: AppColors.textSecondary),
                   ),
                 ),
+                // [DU244] 스위치 터치 48(shrinkWrap 제거). 저장 중 표시도 같은 높이 상자에 둬 행이 줄었다 늘지 않는다.
                 _isNotifPrefsLoading
                     ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 1.5),
+                        width: 60,
+                        height: 48,
+                        child: Center(
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 1.5),
+                          ),
+                        ),
                       )
                     : Switch(
                         value: _notifPrefs[c.key] ?? true,
                         onChanged: (v) => _toggleNotifPref(c.key, v),
-                        activeThumbColor: AppColors.infoDark,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        activeThumbColor: Theme.of(context).primaryColor, // [DU244] 대표색
                       ),
               ],
             ),
@@ -585,20 +568,31 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
 
   // ── 공통 레이아웃 helpers ─────────────────────────────────────────
 
-  Widget _buildMenuGroup(List<_MenuRow> items) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.borderLight),
+  /// [DU244] 묶음 카드 — 관리자 홈(S010)·슈퍼관리자 홈(S062)과 같은 흰 면·반경 16·grey200 선.
+  ///   Material 이라 안쪽 InkWell 의 눌림 표시가 카드 위에 보이고(이전 흰 Container 는 가렸다), 모서리에서 잘린다.
+  Widget _group(Widget child) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Material(
+        color: AppColors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppColors.grey200),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: child,
       ),
-      child: Column(
+    );
+  }
+
+  Widget _buildMenuGroup(List<_MenuRow> items) {
+    return _group(
+      Column(
         children: [
           for (var i = 0; i < items.length; i++) ...[
             items[i],
             if (i < items.length - 1)
-              const Divider(height: 1, color: AppColors.borderLight, indent: 16),
+              const Divider(height: 1, thickness: 1, color: AppColors.grey100, indent: 64),
           ],
         ],
       ),
@@ -606,19 +600,13 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
   }
 
   Widget _buildInfoGroup(List<_InfoRow> items) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.borderLight),
-      ),
-      child: Column(
+    return _group(
+      Column(
         children: [
           for (var i = 0; i < items.length; i++) ...[
             items[i],
             if (i < items.length - 1)
-              const Divider(height: 1, color: AppColors.borderLight, indent: 16),
+              const Divider(height: 1, thickness: 1, color: AppColors.grey100, indent: 64),
           ],
         ],
       ),
@@ -634,15 +622,15 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // [DU244] 관리자 홈(S010)·관리자 설정(S045)과 같은 16 bold 본문색. 원문 그대로(짧은 낱말, 기존 시험·접근성이 원문으로 찾는다).
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 6),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
       child: Text(
         label,
         style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          color: AppColors.textHint,
-          letterSpacing: 0.4,
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: AppColors.textPrimary,
         ),
       ),
     );
@@ -651,53 +639,71 @@ class _SectionHeader extends StatelessWidget {
 
 class _MenuRow extends StatelessWidget {
   final IconData icon;
-  final Color iconColor;
   final String label;
-  final Color? labelColor;
   final VoidCallback onTap;
 
   const _MenuRow({
     required this.icon,
-    required this.iconColor,
     required this.label,
-    this.labelColor,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    // [DU244] 아이콘은 중립 상자(S010·S045 와 같음) — 색으로 종류를 말하지 않는다. 눌림 표시는 묶음 카드가 자른다.
+    //   [DU247] 진입 메뉴에는 위험색을 쓰지 않는다(위험색은 확인 대화 같은 확정 순간에만) — 위험 행 경로를 지웠다.
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
         child: Row(
           children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: iconColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: Icon(icon, color: iconColor, size: 17),
-            ),
+            _IconBox(icon: icon),
             const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: labelColor ?? AppColors.textPrimary,
-                ),
-              ),
-            ),
+            Expanded(child: _RowLabel(label)),
             const Icon(Icons.chevron_right,
-                size: 17, color: AppColors.grey300),
+                size: 18, color: AppColors.grey400), // [DU244] S010·S062 와 같음
           ],
         ),
       ),
+    );
+  }
+}
+
+/// [DU244 v2] 행 제목 — 14 w600. 큰 글자에서 줄이 바뀌면 낱말 단위로만 바꾼다(음절 끊김 금지). 읽기 도구에는 원문.
+class _RowLabel extends StatelessWidget {
+  final String text;
+
+  const _RowLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      TextLayout.keepWords(text),
+      semanticsLabel: text,
+      style: const TextStyle(
+          fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+    );
+  }
+}
+
+/// [DU244] 행 아이콘 상자 — 관리자 홈(S010)·관리자 설정(S045)과 같은 36·반경 10·grey100 바탕·grey600 아이콘.
+///   [DU247] 위험색 상자는 없앴다(진입 메뉴는 중립).
+class _IconBox extends StatelessWidget {
+  final IconData icon;
+
+  const _IconBox({required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        color: AppColors.grey100,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(icon, color: AppColors.grey600, size: 18),
     );
   }
 }
@@ -719,26 +725,9 @@ class _InfoRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
       child: Row(
         children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: AppColors.grey100,
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: Icon(icon, color: AppColors.textSecondary, size: 17),
-          ),
+          _IconBox(icon: icon), // [DU244] 메뉴 행과 같은 중립 상자
           const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
-            ),
-          ),
+          Expanded(child: _RowLabel(label)),
           if (trailing != null) trailing!,
         ],
       ),
@@ -746,75 +735,7 @@ class _InfoRow extends StatelessWidget {
   }
 }
 
-// ── 약관 읽기 전용 화면 ────────────────────────────────────────────
-
-/// [LEGAL-FIX 2026-08-10] 개인정보보호법 제35조 열람 요구권 대응
-/// 동의 버튼 없이 읽기만 가능
-class _TermsReadOnlyScreen extends StatelessWidget {
-  final String title;
-  final String content;
-  final String? version;
-
-  const _TermsReadOnlyScreen({
-    required this.title,
-    required this.content,
-    this.version,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: AppColors.background,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          color: AppColors.grey700,
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        title: Text(
-          title,
-          style: const TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-            color: AppColors.grey900,
-          ),
-        ),
-        centerTitle: true,
-      ),
-      body: SafeArea(
-        top: false,
-        child: Column(
-          children: [
-            if (version != null)
-              Container(
-                width: double.infinity,
-                color: AppColors.grey100,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Text(
-                  '버전 $version',
-                  style: const TextStyle(
-                      fontSize: 12, color: AppColors.grey500),
-                ),
-              ),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: SelectableText(
-                  content,
-                  style: const TextStyle(
-                      fontSize: 14, color: AppColors.grey800, height: 1.6),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+// [DU263] 약관 읽기 전용 화면은 공용 TermsReadOnlyScreen(lib/widgets/common/terms_read_only_screen.dart)으로 옮겼다.
 
 // ══════════════════════════════════════════════════════════════════════
 // [FC-01 OWNERSHIP FIX] 비밀번호 확인 다이얼로그 — 독립 StatefulWidget

@@ -205,7 +205,8 @@ void main() {
       //   제목이 이미 "2단계 남았어요" 라고 말한다 — 같은 사실을 같은 무게로
       //   두 번 두면 정작 다음 행동이 늦게 보이고, 좁은 화면에서는 제목을
       //   밀어냈다. 크기 체계는 그대로다(새 scale 없음).
-      expect('fontSize: 12'.allMatches(home).length, 18);
+      // [DU-VQ-03 · 후속13 §2] 18 → 19: 부족 통합 시 오늘 확정 근무의 업무·시간 보조 줄(12) 하나. 새 크기 없음.
+      expect('fontSize: 12'.allMatches(home).length, 19);
       expect(home.contains('fontSize: 11'), isFalse, reason: 'TYPO-50 하한 유지');
     });
 

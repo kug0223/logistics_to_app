@@ -15,6 +15,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ALfit/screens/business_admin/contract_import_result_screen.dart';
 import 'package:ALfit/utils/contract_article_parser.dart';
 
+import 'support/visible_text.dart';
+
 /// 2줄을 확실히 넘기는 본문
 const _longBody =
     '1일 8시간을 초과하는 근로에 대하여는 통상임금의 100분의 50 이상을 가산하여 지급한다. '
@@ -79,8 +81,9 @@ class _Harness {
 }
 
 /// 본문 Text 위젯(제목/칩 제외)을 찾는다.
+/// [DU336 시험 추종] 본문 · 제목 · 칩이 낱말 단위 표시 문자열이 됐다 — 보이는 글자 기준 finder(DU255).
 Text _bodyText(WidgetTester tester, String content) =>
-    tester.widget<Text>(find.text(content));
+    tester.widget<Text>(findVisibleText(content));
 
 void main() {
   group('ImportArticleCard — 기본 밀도', () {
@@ -158,7 +161,7 @@ void main() {
     testWidgets('IAC-22 카드 본체 탭은 여전히 include를 토글한다', (tester) async {
       final h = await _pumpCard(tester, article: _article(included: true));
 
-      await tester.tap(find.text('제4조 (연장·야간근로 수당)'));
+      await tester.tap(findVisibleText('제4조 (연장·야간근로 수당)'));
       await tester.pump();
 
       expect(h.includeToggleCount, 1);
@@ -170,7 +173,7 @@ void main() {
       await tester.tap(find.text('전문 보기'));
       await tester.pump();
 
-      await tester.tap(find.text('제4조 (연장·야간근로 수당)'));
+      await tester.tap(findVisibleText('제4조 (연장·야간근로 수당)'));
       await tester.pump();
 
       expect(h.expanded, true, reason: '펼침 유지');
@@ -198,7 +201,7 @@ void main() {
       expect(_bodyText(tester, _longBody).maxLines, isNull);
       expect(h.article.included, false, reason: '기본 제외 상태 유지');
       // 기존 안내 문구는 그대로 남아야 한다
-      expect(find.text('ALfit에서 자동 작성되는 항목과 겹칩니다.'), findsOneWidget);
+      expect(findVisibleText('ALfit에서 자동 작성되는 항목과 겹칩니다.'), findsOneWidget);
     });
 
     testWidgets('IAC-31 likelyDuplicate 조항도 펼침 가능', (tester) async {
@@ -225,8 +228,9 @@ void main() {
       await tester.tap(find.text('전문 보기'));
       await tester.pump();
 
-      // 원문 그대로 — 자동 마스킹/삭제를 추가하지 않는다
-      expect(find.text(body), findsOneWidget);
+      // 원문 그대로 — 자동 마스킹/삭제를 추가하지 않는다(보이는 글자 = 원문, 낭독 이름도 원문)
+      expect(findVisibleText(body), findsOneWidget);
+      expect(tester.widget<Text>(findVisibleText(body)).semanticsLabel, body);
       expect(_bodyText(tester, body).maxLines, isNull);
     });
 

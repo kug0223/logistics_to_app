@@ -421,15 +421,16 @@ void main() {
       expect(parent.contains('if (saved != true || !mounted) return;'), isTrue);
     });
 
-    test('WT-SAVE-15 수정 경로도 같은 규칙이다', () {
+    test('WT-SAVE-15 [WORKTYPE-IDENTITY 2026-10-17] 이름·아이콘 수정 경로는 없다', () {
+      // 의도적 변경: 업무 유형의 이름·아이콘은 등록 후 고정한다(제품 기준). 예전에는 같은 시트로
+      //   수정했고 이 셀은 그 수정 경로가 추가 경로와 같은 저장 규칙을 쓰는지 봤다. 이제 그 경로
+      //   자체가 없다 — 다른 업무가 필요하면 새로 만든다(설명·사진은 상세 화면에서 고친다).
       final parent = File(
               'lib/screens/business_admin/work_type_management_screen.dart')
           .readAsStringSync();
-      final i = parent.indexOf('Future<void> _showEditDialog');
-      final body = parent.substring(i, i + 1400);
-      expect(body.contains('onSubmit: (draft) async {'), isTrue,
-          reason: '같은 시트를 쓰는데 한쪽만 입력을 잃으면 구조가 갈린다');
-      expect(body.contains('updateBusinessWorkType('), isTrue);
+      expect(parent.contains('Future<void> _showEditDialog'), isFalse);
+      expect(parent.contains('updateBusinessWorkType('), isFalse);
+      expect(parent.contains('AddWorkTypeSheet.show('), isTrue, reason: '추가 경로는 그대로');
     });
 
     test('WT-SAVE-16 writer 판정을 시트가 다시 쓰지 않는다', () {

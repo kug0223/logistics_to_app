@@ -174,9 +174,12 @@ void main() {
       }
     });
 
-    test('ISC-GATE-05 비활성화된 사업장은 세지 않는다', () {
-      // 이 탈퇴가 만드는 상태가 아니다 — 기존 blocker 관례와 같은 필터.
-      expect(_flat(helper), contains(r'!d.data()["deactivatedAt"]'));
+    test('ISC-GATE-05 운영을 종료(비활성)한 사업장의 돈 의무도 센다', () {
+      // [BUSINESS-ARCHIVE 2026-10-16] 이전 계약("이 탈퇴가 만드는 상태가 아니다")을 뒤집었다.
+      //   소유자가 운영 종료 뒤 탈퇴하면 그 사업장의 미지급·승인 정산을 처리할 사람이
+      //   사라진다 — 돈 의무는 사업장이 닫혀도 남는다(fence-runtime W-1 실측).
+      expect(_flat(helper), isNot(contains(r'!d.data()["deactivatedAt"]')));
+      expect(_flat(helper), contains('const live = bizSnap.docs;'));
     });
   });
 

@@ -18,7 +18,8 @@
 // [사업장 scope]
 //   BUSINESS_ADMIN (단일): 사업장명 (controller.knownBusinessNames 캐시 사용)
 //   BUSINESS_ADMIN (복수): 전체 사업장
-//   SubAdmin: 배정 사업장 (up.subAdminBusinessNames)
+//   SubAdmin: 선택(유효) 사업장 이름 (up.effectiveBusinessId → up.subAdminBusinessNames)
+//     — 근무 명단은 그 한 곳만 읽는다(OperationalView._ensureBusinesses). [DU236 J4]
 //   미로드 시: '내 사업장' fallback
 //
 import 'package:flutter/material.dart';
@@ -174,17 +175,21 @@ class _WorkforceRootScreenState extends State<WorkforceRootScreen> {
 
   /// 사업장 scope label 계산 — [POSTING-V2-02F.1] 공고 탭과 같은 resolver를 쓴다.
   ///
-  /// 두 Root는 같은 데이터 범위(managedBusinessIds / subAdminBusinessIds)를
-  /// 조회하므로 같은 문구로 설명해야 한다. 이 화면의 query·filter·permission·
-  /// layout은 바뀌지 않는다 — 표시 문구만 공용 규칙을 따른다.
+  /// 소유자의 범위(managedBusinessIds)는 공고 탭과 같으므로 같은 문구로 설명한다.
+  /// [DU236 J4] SubAdmin 은 다르다 — 이 화면의 근무 명단은 배정 전체가 아니라
+  /// **선택(유효) 사업장 한 곳**만 읽는다(`_ensureBusinesses` → `effectiveBusinessId`).
+  /// 그래서 '담당 사업장 N곳' 대신 그 선택 사업장으로 설명한다. 선택이 없으면 배정으로 말한다(기존과 같다).
+  /// 이 화면의 query·filter·permission·layout은 바뀌지 않는다 — 표시 문구만이다.
   /// - controller.knownBusinessNames: items 0건이어도 마지막 로드 이름 유지
   String _computeScopeLabel(WorkforceController controller, UserProvider up) {
     final user = up.currentUser;
+    final selected = up.isSubAdmin ? up.effectiveBusinessId : null;
     return resolveAdminBusinessScopeLabel(
       isSuperAdmin: user?.isSuperAdmin ?? false,
       isSubAdmin: up.isSubAdmin,
       managedBusinessIds: user?.managedBusinessIds ?? const [],
-      subAdminBusinessIds: user?.subAdminBusinessIds ?? const [],
+      subAdminBusinessIds:
+          selected != null ? [selected] : (user?.subAdminBusinessIds ?? const []),
       subAdminBusinessNames: up.subAdminBusinessNames,
       loadedBusinessNames: controller.items.isNotEmpty
           ? controller.items.map((g) => g.businessName).toList()

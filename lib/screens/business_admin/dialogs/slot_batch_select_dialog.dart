@@ -503,7 +503,8 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
                 status: SlotStatusUtil.slotStatus(slot, widget.to),
                 scheduledAt: SlotStatusUtil.slotScheduledAt(slot, widget.to),
                 compact: true,
-                recruitmentComplete: slot.isFull || widget.to.isFull,
+                // [INVITE-CAPACITY] 날짜 행은 그 날짜의 충원으로만 말한다(FULL≠DONE).
+                recruitmentComplete: slot.isFull,
               ),
             ],
           ),

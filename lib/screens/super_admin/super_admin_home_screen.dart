@@ -14,8 +14,19 @@ import 'system_settings_screen.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/notification_badge.dart';
+import '../../utils/text_layout.dart';
+import '../../utils/format_helper.dart';
+
+/// [DU240] 메뉴 행 한 줄 — 제목·설명·목적지. soon 이면 '준비 중' 표시(누르면 안내 toast).
+typedef _MenuItem = ({IconData icon, String title, String subtitle, VoidCallback onTap, bool soon});
 
 /// 최고관리자(SUPER_ADMIN) 홈 화면
+///
+/// [DU240] 시안·관리자 홈(S010)과 같은 시각 체계로 옮겼다.
+///   파란 그라데이션 hero·둥근 회색 본문·작은 회색 섹션 라벨·떨어진 색 아이콘 타일 대신,
+///   흰 머리(로고·이름·역할 배지·알림/로그아웃) → 화면 바탕 위 굵은 섹션 제목 → 흰 묶음 카드
+///   (중립 아이콘 상자 + 제목/설명 + chevron, 행 사이 구분선)로 읽는다.
+///   읽는 값(회원·사업장 count)·로딩 '-'·실패 '확인 못함'·목적지 5곳·로그아웃·FCM 소비·당겨서 새로고침은 그대로다.
 class AdminHomeScreen extends StatefulWidget {
   const AdminHomeScreen({super.key});
 
@@ -71,13 +82,20 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
     } catch (e) {
       debugPrint('❌ 슈퍼관리자 통계 로드 실패: $e');
       if (!mounted) return;
+      // [SA-AUDIT.49] 읽지 못한 것을 0명·0개로 말하지 않는다.
       setState(() {
-        _stats = const _SuperAdminStats(
-            totalUsers: 0, totalBusinesses: 0);
+        _stats = null;
         _isLoading = false;
       });
     }
   }
+
+  /// [DU240] 묶음 카드 바탕 — 관리자 홈(S010 `_groupSurface`)과 같은 값: surface · radius 16 · grey200 1px · 그림자 없음.
+  static final BoxDecoration _groupSurface = BoxDecoration(
+    color: AppColors.surface,
+    borderRadius: BorderRadius.circular(16),
+    border: Border.all(color: AppColors.grey200, width: 1),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -85,43 +103,98 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
       // [PERF] 이름 1개만 구독 — 다른 UserProvider 변경 시 rebuild 방지
       selector: (_, p) => p.currentUser?.name,
       builder: (context, userName, _) {
-        final theme = Theme.of(context);
-        final isLandscape =
-            MediaQuery.orientationOf(context) == Orientation.landscape;
-
+        final s = ResponsiveHelper.getScale(context);
         return Scaffold(
-          body: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [theme.primaryColor, theme.colorScheme.secondary],
-              ),
-            ),
-            child: SafeArea(
-              bottom: false,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+          backgroundColor: AppColors.background,
+          body: SafeArea(
+            bottom: false,
+            child: RefreshIndicator(
+              onRefresh: _loadStats,
+              // [DU240] 머리도 본문과 함께 스크롤한다 — 큰 글자에서 고정 머리가 화면을 차지하지 않는다.
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: EdgeInsets.only(
+                    bottom: ResponsiveHelper.listPadding(context, extra: 8 * s).bottom),
                 children: [
-                  // ── 상단 헤더 ──────────────────────────────────
-                  _buildHeader(context, theme, isLandscape, userName),
-
-                  // ── 스크롤 가능 콘텐츠 영역 ────────────────────
-                  Expanded(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: AppColors.grey50,
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(32),
-                          topRight: Radius.circular(32),
-                        ),
-                      ),
-                      child: RefreshIndicator(
-                        onRefresh: _loadStats,
-                        child: _buildBody(context, theme, isLandscape),
-                      ),
+                  _buildHeader(context, s, userName),
+                  SizedBox(height: 20 * s),
+                  _sectionHeader(s, '플랫폼 현황'),
+                  SizedBox(height: 8 * s),
+                  _buildStatsRow(context, s),
+                  SizedBox(height: 24 * s),
+                  _sectionHeader(s, '관리'),
+                  SizedBox(height: 8 * s),
+                  _group(context, s, [
+                    (
+                      icon: Icons.business_center_outlined,
+                      title: '모든 사업장',
+                      subtitle: '전체 사업장 현황 및 관리',
+                      soon: false,
+                      onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const AllBusinessesScreen()),
+                          ),
                     ),
-                  ),
+                    (
+                      icon: Icons.people_outline,
+                      title: '사용자 관리',
+                      subtitle: '회원 목록 조회 및 정보 관리',
+                      soon: false,
+                      onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const AllUsersScreen()),
+                          ),
+                    ),
+                  ]),
+                  SizedBox(height: 24 * s),
+                  _sectionHeader(s, '시스템'),
+                  SizedBox(height: 8 * s),
+                  _group(context, s, [
+                    (
+                      icon: Icons.admin_panel_settings_outlined,
+                      title: '시스템 설정',
+                      subtitle: '신뢰도 규칙·배지·임금·공고 설정 관리',
+                      soon: false,
+                      onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const SystemSettingsScreen()),
+                          ),
+                    ),
+                  ]),
+                  SizedBox(height: 24 * s),
+                  _sectionHeader(s, '개인'),
+                  SizedBox(height: 8 * s),
+                  _group(context, s, [
+                    (
+                      icon: Icons.settings_outlined,
+                      title: '설정',
+                      subtitle: '개인 설정 및 테마',
+                      soon: false,
+                      onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                          ),
+                    ),
+                  ]),
+                  SizedBox(height: 24 * s),
+                  _sectionHeader(s, '준비 중'),
+                  SizedBox(height: 8 * s),
+                  _group(context, s, [
+                    (
+                      icon: Icons.dashboard_outlined,
+                      title: '공고 모니터링',
+                      subtitle: '전체 공고 현황 분석',
+                      soon: true,
+                      onTap: () => ToastHelper.showInfo('공고 모니터링 기능은 준비 중입니다'),
+                    ),
+                    (
+                      icon: Icons.analytics_outlined,
+                      title: '전체 통계',
+                      subtitle: '플랫폼 전체 통계 분석',
+                      soon: true,
+                      onTap: () => ToastHelper.showInfo('통계 기능은 준비 중입니다'),
+                    ),
+                  ]),
                 ],
               ),
             ),
@@ -132,471 +205,341 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
   }
 
   // ────────────────────────────────────────────────────────────
-  //  헤더
+  //  헤더 — 흰 머리(관리자 홈 S010 과 같은 로고·버튼)
   // ────────────────────────────────────────────────────────────
 
-  Widget _buildHeader(
-    BuildContext context,
-    ThemeData theme,
-    bool isLandscape,
-    String? userName,
-  ) {
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 24),
-        vertical: ResponsiveHelper.spacing(context, isLandscape ? 8 : 20),
-      ),
+  Widget _buildHeader(BuildContext context, double s, String? userName) {
+    final name = '${userName ?? '관리자'}님';
+    return Container(
+      color: AppColors.surface,
+      padding: EdgeInsets.fromLTRB(20 * s, 8 * s, 16 * s, 16 * s),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 1행: 로고 + 뱃지 + 알림·로그아웃
           Row(
             children: [
-              // 로고 + ALfit 텍스트
-              ClipOval(
-                child: Image.asset(
-                  'assets/icons/app_icon.png',
-                  width: ResponsiveHelper.spacing(context, 26),
-                  height: ResponsiveHelper.spacing(context, 26),
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                'ALfit',
-                style: ResponsiveHelper.titleStyle(context).copyWith(
-                  color: Colors.white,
-                  fontSize:
-                      ResponsiveHelper.titleStyle(context).fontSize! * 1.3,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.5,
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              // 최고관리자 뱃지
               Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 10),
-                  vertical: ResponsiveHelper.spacing(context, 5),
+                width: 32 * s,
+                height: 32 * s,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [AppColors.infoDark, AppColors.info],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
                 ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.admin_panel_settings,
-                      color: Colors.white,
-                      size: ResponsiveHelper.iconSize(context, 14),
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                    Text(
-                      '최고',
-                      style: ResponsiveHelper.tinyStyle(
-                        context,
-                        color: Colors.white,
-                      ).copyWith(fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ),
+                clipBehavior: Clip.hardEdge,
+                child: Image.asset('assets/icons/app_icon_foreground.png',
+                    width: 32 * s, height: 32 * s, fit: BoxFit.cover),
               ),
-
-              const Spacer(),
-
+              SizedBox(width: 8 * s),
+              Expanded(
+                child: Text('ALfit',
+                    style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                        color: AppColors.infoDark,
+                        letterSpacing: -0.6)),
+              ),
               // 알림 벨
+              // [.66] 화면 읽기에 이름·버튼 역할이 없었다('읽지 않은 알림 N건' 값만) — 배지 값은 그대로 두고 이름을 준다.
               NotificationBadge(
-                child: Material(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
-                  child: InkWell(
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => const NotificationScreen()),
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                    child: Padding(
-                      padding:
-                          EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                      child: Icon(
-                        Icons.notifications_outlined,
-                        color: Colors.white,
-                        size: ResponsiveHelper.iconSize(context, 22),
-                      ),
-                    ),
+                child: _headerBtn(
+                  s,
+                  Icons.notifications_outlined,
+                  label: '알림',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const NotificationScreen()),
                   ),
                 ),
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-
-              // 로그아웃
-              Material(
-                color: Colors.white.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(12),
-                child: InkWell(
-                  onTap: () async {
-                    final confirmed =
-                        await DialogHelper.showLogoutConfirm(context);
-                    if (confirmed && context.mounted) {
-                      // signOut 먼저: 실패 시 ThemeProvider.reset() 호출 방지
-                      await context.read<UserProvider>().signOut();
-                      if (context.mounted) {
-                        context.read<ThemeProvider>().reset();
-                      }
+              SizedBox(width: 6 * s),
+              // 로그아웃 — [.66] 화면 읽기에 이름이 없었다(노드 자체가 비어 있음).
+              _headerBtn(
+                s,
+                Icons.logout,
+                label: '로그아웃',
+                onTap: () async {
+                  final confirmed = await DialogHelper.showLogoutConfirm(context);
+                  if (confirmed && context.mounted) {
+                    // signOut 먼저: 실패 시 ThemeProvider.reset() 호출 방지
+                    await context.read<UserProvider>().signOut();
+                    if (context.mounted) {
+                      context.read<ThemeProvider>().reset();
                     }
-                  },
-                  borderRadius: BorderRadius.circular(12),
-                  child: Padding(
-                    padding:
-                        EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                    child: Icon(
-                      Icons.logout,
-                      color: Colors.white,
-                      size: ResponsiveHelper.iconSize(context, 22),
-                    ),
-                  ),
-                ),
+                  }
+                },
               ),
             ],
           ),
+          SizedBox(height: 12 * s),
+          // 이름 + 역할 배지 — 긴 이름은 낱말 단위로 줄을 바꾼다(말줄임 없음). 좁으면 배지가 다음 줄로 간다.
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8 * s,
+            runSpacing: 6 * s,
+            children: [
+              Text(
+                TextLayout.keepWords(name),
+                semanticsLabel: name,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.textPrimary,
+                  letterSpacing: -0.3,
+                ),
+              ),
+              _roleBadge(context, s),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 
-          // 2행: 인사말 (가로 모드에서는 생략)
-          if (!isLandscape) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-            Text(
-              '안녕하세요,',
-              style: ResponsiveHelper.bodyStyle(
-                context,
-                color: Colors.white.withValues(alpha: 0.9),
+  /// [DU240] 머리 버튼 — S010 `_headerBtn` 과 같은 회색 사각, 누르는 영역은 48×48 이상(아이콘 크기는 그대로).
+  Widget _headerBtn(double s, IconData icon,
+      {required String label, required VoidCallback onTap}) {
+    return Semantics(
+      button: true,
+      label: label,
+      child: Material(
+        color: AppColors.grey100,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            child: Center(
+              widthFactor: 1,
+              heightFactor: 1,
+              child: Padding(
+                padding: EdgeInsets.all(8 * s),
+                child: Icon(icon, color: AppColors.textSecondary, size: 22 * s),
               ),
             ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-            Text(
-              '${userName ?? '관리자'}님',
-              style: ResponsiveHelper.titleStyle(context).copyWith(
-                color: Colors.white,
-                fontSize:
-                    ResponsiveHelper.titleStyle(context).fontSize! * 1.5,
-                fontWeight: FontWeight.bold,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// [DU240] 역할 배지 — S010 `_adminBadge` 와 같은 모양('관리자' → '최고관리자').
+  Widget _roleBadge(BuildContext context, double s) {
+    final color = Theme.of(context).primaryColor;
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 10 * s, vertical: 4 * s),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.25), width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.admin_panel_settings_outlined, color: color, size: 12 * s),
+          SizedBox(width: 4 * s),
+          Text('최고관리자',
+              style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
         ],
       ),
     );
   }
 
   // ────────────────────────────────────────────────────────────
-  //  메인 스크롤 바디
+  //  섹션 제목 · 통계 · 묶음 카드
   // ────────────────────────────────────────────────────────────
 
-  Widget _buildBody(
-    BuildContext context,
-    ThemeData theme,
-    bool isLandscape,
-  ) {
-    return ListView(
-      // listPadding: 하단 홈 인디케이터 높이를 자동 추가
-      padding: ResponsiveHelper.listPadding(context,
-          extra: ResponsiveHelper.spacing(context, 8)),
-      children: [
-        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-
-        // ── 통계 요약 ──────────────────────────────────────
-        _buildStatsRow(context, theme),
-        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-        // ── 관리 섹션 ──────────────────────────────────────
-        _buildSectionLabel(context, '관리'),
-        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-        _buildMenuTile(
-          context,
-          icon: Icons.business_center_outlined,
-          color: theme.primaryColor,
-          title: '모든 사업장',
-          subtitle: '전체 사업장 현황 및 관리',
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const AllBusinessesScreen()),
-          ),
-        ),
-        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-        _buildMenuTile(
-          context,
-          icon: Icons.people_outline,
-          color: theme.primaryColor,
-          title: '사용자 관리',
-          subtitle: '회원 목록 조회 및 정보 관리',
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const AllUsersScreen()),
-          ),
-        ),
-        SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-
-        // ── 시스템 섹션 ────────────────────────────────────
-        _buildSectionLabel(context, '시스템'),
-        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-        _buildMenuTile(
-          context,
-          icon: Icons.admin_panel_settings_outlined,
-          color: AppColors.purple,
-          title: '시스템 설정',
-          subtitle: '신뢰도 규칙·배지·임금·공고 설정 관리',
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const SystemSettingsScreen()),
-          ),
-        ),
-        SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-
-        // ── 개인 섹션 ──────────────────────────────────────
-        _buildSectionLabel(context, '개인'),
-        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-        _buildMenuTile(
-          context,
-          icon: Icons.settings_outlined,
-          color: AppColors.grey600,
-          title: '설정',
-          subtitle: '개인 설정 및 테마',
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const SettingsScreen()),
-          ),
-        ),
-        SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-
-        // ── 준비 중 섹션 ──────────────────────────────────
-        _buildSectionLabel(context, '준비 중'),
-        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-        _buildMenuTile(
-          context,
-          icon: Icons.dashboard_outlined,
-          color: AppColors.grey400,
-          title: '공고 모니터링',
-          subtitle: '전체 공고 현황 분석',
-          isDisabled: true,
-          onTap: () => ToastHelper.showInfo('공고 모니터링 기능은 준비 중입니다'),
-        ),
-        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-        _buildMenuTile(
-          context,
-          icon: Icons.analytics_outlined,
-          color: AppColors.grey400,
-          title: '전체 통계',
-          subtitle: '플랫폼 전체 통계 분석',
-          isDisabled: true,
-          onTap: () => ToastHelper.showInfo('통계 기능은 준비 중입니다'),
-        ),
-      ],
+  Widget _sectionHeader(double s, String title) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 20 * s),
+      child: Text(
+        TextLayout.keepWords(title),
+        semanticsLabel: title,
+        style: TextStyle(
+            fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+      ),
     );
   }
 
-  // ────────────────────────────────────────────────────────────
-  //  통계 행
-  // ────────────────────────────────────────────────────────────
-
-  Widget _buildStatsRow(BuildContext context, ThemeData theme) {
-    return Row(
-      children: [
-        _buildStatCard(
-          context,
-          label: '전체 회원',
-          value: _isLoading ? '-' : '${_stats?.totalUsers ?? 0}명',
-          icon: Icons.people_outline,
-          color: theme.primaryColor,
+  Widget _buildStatsRow(BuildContext context, double s) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16 * s),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: _statCard(
+                s,
+                label: '전체 회원',
+                value: _isLoading ? '-' : (_stats == null ? '확인 못함' : '${FormatHelper.formatNumber(_stats!.totalUsers)}명'),
+                icon: Icons.people_outline,
+              ),
+            ),
+            SizedBox(width: 8 * s),
+            Expanded(
+              child: _statCard(
+                s,
+                label: '전체 사업장',
+                value: _isLoading ? '-' : (_stats == null ? '확인 못함' : '${FormatHelper.formatNumber(_stats!.totalBusinesses)}개'),
+                icon: Icons.business_outlined,
+              ),
+            ),
+          ],
         ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-        _buildStatCard(
-          context,
-          label: '전체 사업장',
-          value: _isLoading ? '-' : '${_stats?.totalBusinesses ?? 0}개',
-          icon: Icons.business_outlined,
-          color: AppColors.purple,
-        ),
-      ],
+      ),
     );
   }
 
-  Widget _buildStatCard(
-    BuildContext context, {
+  /// [DU240] 통계 값 — 숫자로 시작하면 TextLayout.amount(쉼표 뒤에서만 줄바꿈), 그 밖('확인 못함'·'-')은 낱말 단위.
+  static String _statText(String v) =>
+      v.isNotEmpty && '0123456789'.contains(v[0]) ? TextLayout.amount(v) : TextLayout.keepWords(v);
+
+  Widget _statCard(
+    double s, {
     required String label,
     required String value,
     required IconData icon,
-    required Color color,
-    bool highlight = false,
   }) {
-    return Expanded(
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          vertical: ResponsiveHelper.spacing(context, 12),
-          horizontal: ResponsiveHelper.spacing(context, 6),
-        ),
-        decoration: BoxDecoration(
-          color: highlight ? color.withValues(alpha: 0.07) : Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: highlight
-              ? Border.all(color: color.withValues(alpha: 0.25))
-              : null,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon,
-                size: ResponsiveHelper.iconSize(context, 22), color: color),
-            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-            Text(
-              value,
-              style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
-            ),
-            Text(
-              label,
-              style:
-                  ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ────────────────────────────────────────────────────────────
-  //  섹션 레이블
-  // ────────────────────────────────────────────────────────────
-
-  Widget _buildSectionLabel(BuildContext context, String title) {
-    return Padding(
-      padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 4)),
-      child: Text(
-        title,
-        style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)
-            .copyWith(
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.5,
-        ),
-      ),
-    );
-  }
-
-  // ────────────────────────────────────────────────────────────
-  //  메뉴 타일 (리스트 카드)
-  // ────────────────────────────────────────────────────────────
-
-  Widget _buildMenuTile(
-    BuildContext context, {
-    required IconData icon,
-    required Color color,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-    String? badge,
-    bool isDisabled = false,
-  }) {
-    return Material(
-      color: isDisabled ? AppColors.grey100 : Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      elevation: isDisabled ? 0 : 1.5,
-      shadowColor: Colors.black.withValues(alpha: 0.07),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 16),
-            vertical: ResponsiveHelper.spacing(context, 14),
-          ),
-          child: Row(
+    // 아는 값만 굵은 본문색 — 로딩 '-'·실패 '확인 못함'은 보조색으로 0 이나 값처럼 보이지 않게 한다.
+    final known = !_isLoading && _stats != null;
+    return Container(
+      decoration: _groupSurface,
+      padding: EdgeInsets.fromLTRB(14 * s, 12 * s, 14 * s, 12 * s),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
             children: [
-              // 아이콘 원형
-              Container(
-                width: ResponsiveHelper.spacing(context, 44),
-                height: ResponsiveHelper.spacing(context, 44),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: isDisabled ? 0.06 : 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  icon,
-                  size: ResponsiveHelper.iconSize(context, 22),
-                  color: isDisabled ? AppColors.grey400 : color,
+              Icon(icon, size: 16 * s, color: AppColors.grey600),
+              SizedBox(width: 6 * s),
+              Flexible(
+                child: Text(
+                  TextLayout.keepWords(label),
+                  semanticsLabel: label,
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                 ),
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 14)),
-
-              // 텍스트
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      title,
-                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: isDisabled
-                            ? AppColors.grey400
-                            : AppColors.textPrimary,
-                      ),
-                    ),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                    Text(
-                      isDisabled ? '준비 중' : subtitle,
-                      style: ResponsiveHelper.tinyStyle(context,
-                          color: AppColors.grey500),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-
-              // 대기 건수 뱃지 (외국인 승인 등)
-              if (badge != null) ...[
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 8),
-                    vertical: ResponsiveHelper.spacing(context, 3),
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.warning,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    badge,
-                    style: ResponsiveHelper.tinyStyle(
-                      context,
-                      color: Colors.white,
-                    ).copyWith(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              ],
-
-              // 화살표 (비활성 항목은 숨김)
-              if (!isDisabled)
-                Icon(
-                  Icons.chevron_right,
-                  color: AppColors.grey300,
-                  size: ResponsiveHelper.iconSize(context, 20),
-                ),
             ],
           ),
+          SizedBox(height: 6 * s),
+          Text(
+            _statText(value),
+            semanticsLabel: value,
+            style: TextStyle(
+              fontSize: known ? 20 : 15,
+              fontWeight: known ? FontWeight.w800 : FontWeight.w600,
+              color: known ? AppColors.textPrimary : AppColors.textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// [DU240] 묶음 카드 — 관리자 홈 '처리할 일'과 같은 흰 카드 하나에 행을 구분선으로 잇는다.
+  Widget _group(BuildContext context, double s, List<_MenuItem> items) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16 * s),
+      child: Material(
+        color: AppColors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppColors.grey200),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            for (var i = 0; i < items.length; i++)
+              _menuRow(context, s, items[i], isLast: i == items.length - 1),
+          ],
         ),
       ),
+    );
+  }
+
+  /// [DU240] 메뉴 설명 — 낱말 안에서는 끊지 않고, 가운뎃점(·) 뒤에서는 줄을 바꿀 수 있다
+  ///   ('신뢰도 규칙·배지·임금·공고'가 한 줄보다 길 때 글자 중간이 아니라 '·' 뒤에서 바뀐다).
+  ///   화면 전용 문자는 TextLayout.plain 이 지우므로 semanticsLabel 은 원문 그대로다.
+  static String _menuText(String s) =>
+      s.split('·').map(TextLayout.keepWords).join('·${String.fromCharCode(0x200B)}');
+
+  /// [DU240] 메뉴 행 — S010 처리할 일 행과 같은 중립 아이콘 상자(grey100·radius 10·36) + 제목 15 w600 + 설명 12.
+  ///   준비 중이면 chevron 대신 '준비 중' 표시를 두고, 누르면 지금처럼 안내 toast 를 띄운다.
+  Widget _menuRow(BuildContext context, double s, _MenuItem it, {required bool isLast}) {
+    return Column(
+      children: [
+        InkWell(
+          onTap: it.onTap,
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 13 * s),
+            child: Row(
+              children: [
+                Container(
+                  width: 36 * s,
+                  height: 36 * s,
+                  decoration: BoxDecoration(
+                    color: AppColors.grey100,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(it.icon,
+                      size: 18 * s, color: it.soon ? AppColors.grey400 : AppColors.grey600),
+                ),
+                SizedBox(width: 12 * s),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        TextLayout.keepWords(it.title),
+                        semanticsLabel: it.title,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: it.soon ? AppColors.textSecondary : AppColors.textPrimary,
+                        ),
+                      ),
+                      SizedBox(height: 2 * s),
+                      Text(
+                        _menuText(it.subtitle),
+                        semanticsLabel: it.subtitle,
+                        style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(width: 8 * s),
+                if (it.soon)
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 3 * s),
+                    decoration: BoxDecoration(
+                      color: AppColors.grey100,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text('준비 중',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textSecondary)),
+                  )
+                else
+                  Icon(Icons.chevron_right, size: 18 * s, color: AppColors.grey400),
+              ],
+            ),
+          ),
+        ),
+        if (!isLast)
+          Padding(
+            padding: EdgeInsets.only(left: 64 * s),
+            child: const Divider(height: 1, thickness: 1, color: AppColors.grey100),
+          ),
+      ],
     );
   }
 }

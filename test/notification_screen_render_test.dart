@@ -10,6 +10,7 @@
 //   테스트용 카드나 문구를 복제하지 않는다.
 //
 //   새 알림 기능은 만들지 않는다 — 지금 있는 상태를 보이는지만 본다.
+import 'support/visible_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -225,11 +226,11 @@ void main() {
 
   testWidgets('NTF-01 알림 없음 — 비어 있다고 말하고 다음을 안내한다', (t) async {
     await _pump(t, items: const []);
-    expect(find.text('알림'), findsOneWidget);          // AppBar
-    expect(find.text('알림이 없습니다'), findsOneWidget);
-    expect(find.text('새로운 알림이 오면 여기에서 확인할 수 있어요.'), findsOneWidget);
+    expect(findVisibleText('알림'), findsOneWidget);          // AppBar
+    expect(findVisibleText('알림이 없습니다'), findsOneWidget);
+    expect(findVisibleText('새로운 알림이 오면 여기에서 확인할 수 있어요.'), findsOneWidget);
     // 빈 상태에서 "모두 읽음" 을 내밀지 않는다 — 읽을 것이 없다.
-    expect(find.text('모두 읽음'), findsNothing);
+    expect(findVisibleText('모두 읽음'), findsNothing);
     expect(t.takeException(), isNull);
   });
 
@@ -237,11 +238,11 @@ void main() {
     final p = await _pump(t, error: true, items: const []);
     // ERROR ≠ EMPTY. 이 문구가 '알림이 없습니다'로 바뀌면 사용자는
     // 조회가 실패한 줄 모르고 "알림이 안 왔다"고 믿는다.
-    expect(find.text('알림을 불러오지 못했습니다'), findsOneWidget);
-    expect(find.text('알림이 없습니다'), findsNothing);
-    expect(find.text('다시 시도'), findsOneWidget);
+    expect(findVisibleText('알림을 불러오지 못했습니다'), findsOneWidget);
+    expect(findVisibleText('알림이 없습니다'), findsNothing);
+    expect(findVisibleText('다시 시도'), findsOneWidget);
 
-    await t.tap(find.text('다시 시도'));
+    await t.tap(findVisibleText('다시 시도'));
     await t.pump();
     expect(p.retryCalls, 1, reason: '재시도가 실제로 provider 에 닿아야 한다');
     expect(t.takeException(), isNull);
@@ -249,8 +250,8 @@ void main() {
 
   testWidgets('NTF-03 로딩 — 없음이라고 말하지 않는다', (t) async {
     await _pump(t, loading: true, items: const []);
-    expect(find.text('알림 불러오는 중...'), findsOneWidget);
-    expect(find.text('알림이 없습니다'), findsNothing);
+    expect(findVisibleText('알림 불러오는 중...'), findsOneWidget);
+    expect(findVisibleText('알림이 없습니다'), findsNothing);
     expect(t.takeException(), isNull);
   });
 
@@ -260,10 +261,10 @@ void main() {
       _n(id: 'b', title: '계약서 서명이 필요합니다', isRead: true, daysAgo: 1),
       _n(id: 'c', title: '급여가 지급되었습니다', isRead: true, daysAgo: 3),
     ]);
-    expect(find.text('지원이 확정되었습니다'), findsOneWidget);
-    expect(find.text('계약서 서명이 필요합니다'), findsOneWidget);
-    expect(find.text('급여가 지급되었습니다'), findsOneWidget);
-    expect(find.text('알림이 없습니다'), findsNothing);
+    expect(findVisibleText('지원이 확정되었습니다'), findsOneWidget);
+    expect(findVisibleText('계약서 서명이 필요합니다'), findsOneWidget);
+    expect(findVisibleText('급여가 지급되었습니다'), findsOneWidget);
+    expect(findVisibleText('알림이 없습니다'), findsNothing);
     expect(t.takeException(), isNull);
   });
 
@@ -272,8 +273,8 @@ void main() {
       _n(id: 'a', isRead: false),
       _n(id: 'b', isRead: true, daysAgo: 1),
     ]);
-    expect(find.text('모두 읽음'), findsOneWidget);
-    await t.tap(find.text('모두 읽음'));
+    expect(findVisibleText('모두 읽음'), findsOneWidget);
+    await t.tap(findVisibleText('모두 읽음'));
     await _settleToast(t);
     expect(p.markAllCalls, 1);
     expect(t.takeException(), isNull);
@@ -285,7 +286,7 @@ void main() {
       _n(id: 'a', isRead: true),
       _n(id: 'b', isRead: true, daysAgo: 1),
     ]);
-    expect(find.text('모두 읽음'), findsNothing);
+    expect(findVisibleText('모두 읽음'), findsNothing);
     expect(t.takeException(), isNull);
   });
 
@@ -294,23 +295,23 @@ void main() {
       _n(id: 'a', title: '안 읽은 알림', isRead: false),
       _n(id: 'b', title: '읽은 알림', isRead: true, daysAgo: 1),
     ]);
-    expect(find.text('읽은 알림'), findsOneWidget);
+    expect(findVisibleText('읽은 알림'), findsOneWidget);
 
-    await t.tap(find.text('미읽음만'));
+    await t.tap(findVisibleText('미읽음만'));
     await t.pumpAndSettle();
 
-    expect(find.text('안 읽은 알림'), findsOneWidget);
-    expect(find.text('읽은 알림'), findsNothing);
+    expect(findVisibleText('안 읽은 알림'), findsOneWidget);
+    expect(findVisibleText('읽은 알림'), findsNothing);
     expect(t.takeException(), isNull);
   });
 
   testWidgets('NTF-08 미읽음만 보기 + 미읽음 0 — 전용 문구를 쓴다', (t) async {
     await _pump(t, items: [_n(id: 'a', isRead: true)]);
-    await t.tap(find.text('미읽음만'));
+    await t.tap(findVisibleText('미읽음만'));
     await t.pumpAndSettle();
     // '알림이 없습니다'가 아니다 — 알림은 있고, 안 읽은 것만 없다.
-    expect(find.text('새로운 알림이 없습니다'), findsOneWidget);
-    expect(find.text('모든 알림을 확인했어요.'), findsOneWidget);
+    expect(findVisibleText('새로운 알림이 없습니다'), findsOneWidget);
+    expect(findVisibleText('모든 알림을 확인했어요.'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -324,8 +325,8 @@ void main() {
       _n(id: 'a', title: '시각 미상 알림', createdAtKnown: false),
       _n(id: 'b', title: '정상 알림'),
     ]);
-    expect(find.text('시각 미상 알림'), findsOneWidget);
-    expect(find.text('정상 알림'), findsOneWidget);
+    expect(findVisibleText('시각 미상 알림'), findsOneWidget);
+    expect(findVisibleText('정상 알림'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -334,8 +335,8 @@ void main() {
       _n(id: 'a', title: '', body: ''),
       _n(id: 'b', title: '정상 알림', body: ''),
     ]);
-    expect(find.text('정상 알림'), findsOneWidget);
-    expect(find.text('알림이 없습니다'), findsNothing);
+    expect(findVisibleText('정상 알림'), findsOneWidget);
+    expect(findVisibleText('알림이 없습니다'), findsNothing);
     expect(t.takeException(), isNull);
   });
 
@@ -345,8 +346,8 @@ void main() {
       _n(id: 'a', title: '대상 없는 지원 알림', data: const {}),
       _n(id: 'b', title: '대상 null 지원 알림'),
     ]);
-    expect(find.text('대상 없는 지원 알림'), findsOneWidget);
-    expect(find.text('대상 null 지원 알림'), findsOneWidget);
+    expect(findVisibleText('대상 없는 지원 알림'), findsOneWidget);
+    expect(findVisibleText('대상 null 지원 알림'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -358,13 +359,16 @@ void main() {
     final p = await _pump(t, items: [
       _n(id: 'a', type: NotificationType.systemNotice, title: '점검 안내'),
     ]);
-    await t.tap(find.text('점검 안내'));
+    await t.tap(findVisibleText('점검 안내'));
     await t.pumpAndSettle();
 
-    // 알림 화면이 그대로다 — 공지는 카드에 이미 다 쓰여 있으므로
-    // 이동할 목적지가 없다. 없는 곳으로 밀지 않는다.
-    expect(find.text('알림'), findsOneWidget);
-    expect(find.text('점검 안내'), findsOneWidget);
+    // 이동할 목적지가 없다 — 없는 곳으로 밀지 않는다. [.66] 카드 본문은 2줄로 잘리므로
+    //   전문은 알림 화면 위 안내 창으로 보인다(무반응이 아니다). 닫으면 알림 화면 그대로.
+    expect(find.byType(Dialog), findsOneWidget);
+    await t.tap(find.text('확인'));
+    await t.pumpAndSettle();
+    expect(findVisibleText('알림'), findsOneWidget);
+    expect(findVisibleText('점검 안내'), findsOneWidget);
     // 읽음 처리는 도메인 업무 완료가 아니다 — 읽음만 기록한다.
     expect(p.markedRead, ['a']);
     expect(t.takeException(), isNull);
@@ -376,8 +380,8 @@ void main() {
     await _pump(t,
         items: [_n(id: 'a', title: '정상 알림')],
         autoDispatchPayload: const {'screen': ''});
-    expect(find.text('알림'), findsOneWidget);
-    expect(find.text('정상 알림'), findsOneWidget);
+    expect(findVisibleText('알림'), findsOneWidget);
+    expect(findVisibleText('정상 알림'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -392,12 +396,12 @@ void main() {
           title: '새 지원자가 있습니다',
           data: const {'businessId': 'b1', 'toId': 't1'}),
     ]);
-    await t.tap(find.text('새 지원자가 있습니다'));
+    await t.tap(findVisibleText('새 지원자가 있습니다'));
     await _settleToast(t);
 
-    expect(find.text('현재 처리할 수 없는 알림입니다.'), findsOneWidget);
+    expect(findVisibleText('현재 처리할 수 없는 알림입니다.'), findsOneWidget);
     // 알림 목록에 그대로 있다 — 엉뚱한 화면으로 밀려나지 않았다.
-    expect(find.text('알림'), findsOneWidget);
+    expect(findVisibleText('알림'), findsOneWidget);
     expect(t.takeException(), isNull);
     await _drainToast(t);
   });
@@ -410,12 +414,12 @@ void main() {
           title: '다른 사업장 지원자 알림',
           data: const {'businessId': 'bX', 'toId': 't1'}),
     ]);
-    await t.tap(find.text('다른 사업장 지원자 알림'));
+    await t.tap(findVisibleText('다른 사업장 지원자 알림'));
     await _settleToast(t);
 
     // '권한이 없다'와 '확인하지 못했다'를 섞지 않는다. 여기는 소속이 아닌 경우다.
-    expect(find.text('해당 사업장에 대한 관리자 권한이 없습니다.'), findsOneWidget);
-    expect(find.text('알림'), findsOneWidget);
+    expect(findVisibleText('해당 사업장에 대한 관리자 권한이 없습니다.'), findsOneWidget);
+    expect(findVisibleText('알림'), findsOneWidget);
     expect(t.takeException(), isNull);
     await _drainToast(t);
   });
@@ -427,7 +431,7 @@ void main() {
   testWidgets('NTF-14 순수 USER — 탭이 없다', (t) async {
     await _pump(t, role: UserRole.USER, items: [_n(id: 'a')]);
     expect(find.byType(TabBar), findsNothing);
-    expect(find.text('관리 알림'), findsNothing);
+    expect(findVisibleText('관리 알림'), findsNothing);
     expect(t.takeException(), isNull);
   });
 
@@ -441,9 +445,9 @@ void main() {
     await _pump(t,
         role: UserRole.USER, subAdminOf: const ['b1'], items: [_n(id: 'a')]);
     expect(find.byType(TabBar), findsOneWidget);
-    expect(find.text('전체'), findsOneWidget);
-    expect(find.text('내 알림'), findsOneWidget);
-    expect(find.text('관리 알림'), findsOneWidget);
+    expect(findVisibleText('전체'), findsOneWidget);
+    expect(findVisibleText('내 알림'), findsOneWidget);
+    expect(findVisibleText('관리 알림'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -456,20 +460,20 @@ void main() {
     ]);
 
     // 전체 탭: 둘 다
-    expect(find.text('내 지원이 확정됐어요'), findsOneWidget);
-    expect(find.text('새 지원자가 있습니다'), findsOneWidget);
+    expect(findVisibleText('내 지원이 확정됐어요'), findsOneWidget);
+    expect(findVisibleText('새 지원자가 있습니다'), findsOneWidget);
 
     // 내 알림 탭: 관리 알림은 없다
-    await t.tap(find.text('내 알림'));
+    await t.tap(findVisibleText('내 알림'));
     await t.pumpAndSettle();
-    expect(find.text('내 지원이 확정됐어요'), findsOneWidget);
-    expect(find.text('새 지원자가 있습니다'), findsNothing);
+    expect(findVisibleText('내 지원이 확정됐어요'), findsOneWidget);
+    expect(findVisibleText('새 지원자가 있습니다'), findsNothing);
 
     // 관리 알림 탭: 개인 알림은 없다
-    await t.tap(find.text('관리 알림'));
+    await t.tap(findVisibleText('관리 알림'));
     await t.pumpAndSettle();
-    expect(find.text('새 지원자가 있습니다'), findsOneWidget);
-    expect(find.text('내 지원이 확정됐어요'), findsNothing);
+    expect(findVisibleText('새 지원자가 있습니다'), findsOneWidget);
+    expect(findVisibleText('내 지원이 확정됐어요'), findsNothing);
     expect(t.takeException(), isNull);
   });
 
@@ -535,14 +539,14 @@ void main() {
   testWidgets('NTF-19 빈 상태도 320dp × 배율 2.0 에서 넘치지 않는다', (t) async {
     await _pump(t,
         items: const [], size: const Size(320, 640), textScale: 2.0);
-    expect(find.text('알림이 없습니다'), findsOneWidget);
+    expect(findVisibleText('알림이 없습니다'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
   testWidgets('NTF-20 오류 상태도 320dp × 배율 2.0 에서 넘치지 않는다', (t) async {
     await _pump(t,
         error: true, items: const [], size: const Size(320, 640), textScale: 2.0);
-    expect(find.text('알림을 불러오지 못했습니다'), findsOneWidget);
+    expect(findVisibleText('알림을 불러오지 못했습니다'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -556,14 +560,14 @@ void main() {
         _n(id: 'n$i', title: '알림 $i', isRead: i.isEven, daysAgo: i ~/ 4),
     ];
     await _pump(t, items: many);
-    expect(find.text('알림 0'), findsOneWidget);
+    expect(findVisibleText('알림 0'), findsOneWidget);
 
     final sc = find.byType(Scrollable).last;
     await t.dragUntilVisible(
-        find.text('알림 23'), sc, const Offset(0, -300),
+        findVisibleText('알림 23'), sc, const Offset(0, -300),
         maxIteration: 60);
     await t.pumpAndSettle();
-    expect(find.text('알림 23'), findsOneWidget);
+    expect(findVisibleText('알림 23'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -575,12 +579,12 @@ void main() {
 
     final sc = find.byType(Scrollable).last;
     await t.dragUntilVisible(
-        find.text('알림 23'), sc, const Offset(0, -300),
+        findVisibleText('알림 23'), sc, const Offset(0, -300),
         maxIteration: 60);
     await t.pumpAndSettle();
 
     // 마지막 카드의 아래끝이 화면 바닥에서 inset 만큼 위에 있어야 한다.
-    final box = t.getRect(find.text('알림 23'));
+    final box = t.getRect(findVisibleText('알림 23'));
     final screenH = t.view.physicalSize.height / t.view.devicePixelRatio;
     expect(box.bottom, lessThanOrEqualTo(screenH - 48),
         reason: '마지막 알림이 홈 인디케이터 영역에 들어갔다');
@@ -597,10 +601,10 @@ void main() {
     ]);
     final sc = find.byType(Scrollable).last;
     await t.dragUntilVisible(
-        find.textContaining('지난 기록은'), sc, const Offset(0, -300),
+        findVisibleTextContaining('지난 기록은'), sc, const Offset(0, -300),
         maxIteration: 60);
     await t.pumpAndSettle();
-    expect(find.textContaining('지난 기록은 지원·계약·일정·근태·급여 화면에서'),
+    expect(findVisibleTextContaining('지난 기록은 지원·계약·일정·근태·급여 화면에서'),
         findsOneWidget);
     expect(t.takeException(), isNull);
   });

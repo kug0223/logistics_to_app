@@ -414,7 +414,14 @@ void main() {
       final ov = _codeOf(File(
         'lib/screens/business_admin/payroll/payroll_overview_screen.dart',
       ).readAsStringSync());
-      expect(ov.contains('AttendanceModel.isNonPayableZeroOf('), isTrue);
+      // [PAYROLL-ANNUAL-READ.48] 월별 집계는 개요가 부르는 MonthLedgerCounts(payroll_month_ledger.dart)
+      //   하나로 옮겼다 — 같은 식을 쓰는지는 그 파일에서, 개요가 그 계산을 쓰는지는 개요에서 본다.
+      final ledger = _codeOf(File(
+        'lib/screens/business_admin/payroll/payroll_month_ledger.dart',
+      ).readAsStringSync());
+      expect(ledger.contains('AttendanceModel.isNonPayableZeroOf('), isTrue);
+      expect(ov.contains('MonthLedgerCounts.fromItems('), isTrue);
+      expect(ov.contains('return loadMonthLedgers('), isTrue);
     });
   });
 }

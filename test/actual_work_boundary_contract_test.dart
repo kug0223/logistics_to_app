@@ -76,6 +76,15 @@ void main() {
   final cancel =
       _flat(_callableBody(rawCf, 'callableCancelConfirmedApplication'));
   final reconfirm = _flat(_callableBody(rawCf, 'callableRespondToReconfirm'));
+  // [SIM-RECONFIRM-DECLINE-ALIGN] 확정취소·리컨펌 거절의 판정·트랜잭션은 공용 core 한 벌이다.
+  //   (매개변수 타입이 `{` 로 시작해 _fnBody 의 첫 `{` 규칙이 맞지 않는다 — 다음
+  //   export 앞까지 자른다.)
+  final cancelCore = () {
+    final a = rawCf.indexOf('async function srvCancelConfirmedApplicationCore(');
+    final b = rawCf.indexOf('export const callableRespondToReconfirm', a);
+    if (a < 0 || b < 0) throw StateError('srvCancelConfirmedApplicationCore 를 찾지 못함');
+    return _flat(rawCf.substring(a, b));
+  }();
   final release = _flat(_callableBody(rawCf, 'callableReleaseNoshowSeat'));
   final checkIn = _flat(_callableBody(rawCf, 'callableCheckIn'));
   final batchCheckIn = _flat(_callableBody(rawCf, 'callableBatchCheckIn'));
@@ -150,15 +159,22 @@ void main() {
   });
 
   group('R5.3E.1 — 확정을 되돌리는 writer 전부가 같은 경계를 쓴다', () {
-    test('확정취소 — pre-check + TX 내 재확인', () {
-      expect(cancel, contains('srvHasActualWorkStarted('));
-      expect(cancel, contains('srvAssertNoActualWorkInTx('));
-      expect(cancel, contains('ACTUAL_WORK_BLOCK_MESSAGE'));
+    test('확정취소 — pre-check + TX 내 재확인 (공용 core)', () {
+      expect(cancelCore, contains('srvHasActualWorkStarted('));
+      expect(cancelCore, contains('srvAssertNoActualWorkInTx('));
+      expect(cancelCore, contains('ACTUAL_WORK_BLOCK_MESSAGE'));
+      // pre-check 가 TX 재확인보다 앞선다
+      expect(cancelCore.indexOf('srvHasActualWorkStarted('),
+          lessThan(cancelCore.indexOf('srvAssertNoActualWorkInTx(')));
+      expect(cancel, contains('await srvCancelConfirmedApplicationCore({'));
+      expect(cancel, contains('source: "CONFIRM_CANCEL"'));
     });
 
-    test('리컨펌 거절 — 확정취소와 같은 경계', () {
-      expect(reconfirm, contains('srvHasActualWorkStarted('));
-      expect(reconfirm, contains('srvAssertNoActualWorkInTx('));
+    test('리컨펌 거절 — 확정취소와 같은 경계(같은 core)', () {
+      expect(reconfirm, contains('await srvCancelConfirmedApplicationCore({'));
+      expect(reconfirm, contains('source: "RECONFIRM"'));
+      // 자체 트랜잭션으로 상태만 바꾸던 옛 경로가 남지 않는다
+      expect(reconfirm, isNot(contains('runTransaction')));
     });
 
     test('좌석 반납 — 실근무자의 자리를 반납하지 않는다', () {

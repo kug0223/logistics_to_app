@@ -73,6 +73,8 @@ class ResponsiveHelper {
   /// 반응형 텍스트 스타일 - 큰 제목 (사업장명 등)
   static TextStyle titleStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     return TextStyle(
+      // [DU1 VQ] 버튼 textStyle 로 넘기면 theme 글꼴을 물려받지 못한다(ButtonStyle 은 ambient 와 merge 하지 않음) — 앱 글꼴을 명시
+      fontFamily: 'NotoSansKR',
       fontSize: 19,
       fontWeight: fontWeight ?? FontWeight.bold,
       color: color,
@@ -82,6 +84,8 @@ class ResponsiveHelper {
   /// 반응형 텍스트 스타일 - 중간 제목 (TO 제목 등)
   static TextStyle subtitleStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     return TextStyle(
+      // [DU1 VQ] 버튼 textStyle 로 넘기면 theme 글꼴을 물려받지 못한다(ButtonStyle 은 ambient 와 merge 하지 않음) — 앱 글꼴을 명시
+      fontFamily: 'NotoSansKR',
       fontSize: 17,
       fontWeight: fontWeight ?? FontWeight.bold,
       color: color ?? AppColors.textPrimary,
@@ -91,6 +95,8 @@ class ResponsiveHelper {
   /// 반응형 텍스트 스타일 - 본문 (날짜, 정보 등)
   static TextStyle bodyStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     return TextStyle(
+      // [DU1 VQ] 버튼 textStyle 로 넘기면 theme 글꼴을 물려받지 못한다(ButtonStyle 은 ambient 와 merge 하지 않음) — 앱 글꼴을 명시
+      fontFamily: 'NotoSansKR',
       fontSize: 15,
       color: color ?? AppColors.grey700,
       fontWeight: fontWeight,
@@ -100,6 +106,8 @@ class ResponsiveHelper {
   /// 반응형 텍스트 스타일 - 작은 텍스트 (배지, 라벨 등)
   static TextStyle smallStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     return TextStyle(
+      // [DU1 VQ] 버튼 textStyle 로 넘기면 theme 글꼴을 물려받지 못한다(ButtonStyle 은 ambient 와 merge 하지 않음) — 앱 글꼴을 명시
+      fontFamily: 'NotoSansKR',
       fontSize: 13,
       color: color ?? AppColors.grey600,
       fontWeight: fontWeight,
@@ -109,6 +117,8 @@ class ResponsiveHelper {
   /// 반응형 텍스트 스타일 - 매우 작은 텍스트 (통계 등)
   static TextStyle tinyStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     return TextStyle(
+      // [DU1 VQ] 버튼 textStyle 로 넘기면 theme 글꼴을 물려받지 못한다(ButtonStyle 은 ambient 와 merge 하지 않음) — 앱 글꼴을 명시
+      fontFamily: 'NotoSansKR',
       fontSize: 12,
       color: color ?? AppColors.grey600,
       fontWeight: fontWeight,
@@ -117,6 +127,8 @@ class ResponsiveHelper {
   /// 반응형 텍스트 스타일 - 캡션 (힌트, 설명 등)
   static TextStyle captionStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     return TextStyle(
+      // [DU1 VQ] 버튼 textStyle 로 넘기면 theme 글꼴을 물려받지 못한다(ButtonStyle 은 ambient 와 merge 하지 않음) — 앱 글꼴을 명시
+      fontFamily: 'NotoSansKR',
       fontSize: 12,
       color: color ?? AppColors.grey600,
       fontWeight: fontWeight,

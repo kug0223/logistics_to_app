@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../../models/core/monthly_review_model.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/responsive_helper.dart';
 
 enum ReviewCardPerspective {
@@ -84,29 +85,40 @@ class ReviewCard extends StatelessWidget {
   }
 
   Widget _buildWorkerHeader(BuildContext context) {
+    // [.63] 근로자 입구를 열며 확인 — 이름 + '검토 중' + 기간이 한 줄이라 392·2.0 에서 넘쳤고,
+    //   사업장 이름은 말줄임됐다. 이름은 줄을 바꾸고 배지·기간은 오른쪽에 위아래로 둔다.
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
           child: Text(
-            review.businessName,
+            TextLayout.keepWords(review.businessName),
             style: ResponsiveHelper.subtitleStyle(context)
                 .copyWith(fontWeight: FontWeight.bold),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
           ),
         ),
-        if (!review.isPublished) ...[
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          _buildPendingBadge(context),
-        ],
         SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-        Text(
-          review.periodText,
-          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (!review.isPublished) ...[
+              _buildPendingBadge(context),
+              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            ],
+            Text(
+              review.periodText,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+            ),
+          ],
         ),
       ],
     );
   }
+
+  String _ageGender() => '(${[
+        if (review.targetUserAge != null) '${review.targetUserAge}세',
+        if (review.targetUserGender != null) review.targetUserGender!,
+      ].join(', ')})';
 
   Widget _buildAdminHeader(BuildContext context) {
     final titleText = perspective == ReviewCardPerspective.adminWritten
@@ -120,37 +132,30 @@ class ReviewCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Flexible(
-                    child: Text(
-                      titleText,
-                      style: ResponsiveHelper.bodyStyle(context)
-                          .copyWith(fontWeight: FontWeight.bold),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                    ),
+              // [TEXT-LAYOUT-CONSUMER.29] 이름은 식별 정보 — 말줄임 없이, (나이, 성별)은 한 덩어리로 다음 줄에.
+              //   근태 화면 이름 줄(.28)과 같은 규칙.
+              Text.rich(TextSpan(children: [
+                TextSpan(
+                  text: TextLayout.identity(titleText),
+                  semanticsLabel: titleText,
+                  style: ResponsiveHelper.bodyStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold),
+                ),
+                if (perspective == ReviewCardPerspective.adminWritten &&
+                    (review.targetUserAge != null ||
+                        review.targetUserGender != null))
+                  TextSpan(
+                    text: ' ${_ageGender().replaceAll(' ', '\u00A0')}',
+                    semanticsLabel: ' ${_ageGender()}',
+                    style: ResponsiveHelper.smallStyle(
+                        context, color: AppColors.grey500),
                   ),
-                  if (perspective == ReviewCardPerspective.adminWritten &&
-                      (review.targetUserAge != null ||
-                          review.targetUserGender != null)) ...[
-                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                    Text(
-                      '(${[
-                        if (review.targetUserAge != null)
-                          '${review.targetUserAge}세',
-                        if (review.targetUserGender != null)
-                          review.targetUserGender!,
-                      ].join(', ')})',
-                      style: ResponsiveHelper.smallStyle(
-                          context, color: AppColors.grey500),
-                    ),
-                  ],
-                ],
-              ),
+              ])),
               SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+              // '[사업장] · 2026년 10월' — 구분점 뒤에서만 줄바꿈('2026 / 년 10월' 방지).
               Text(
-                '${review.businessName} · ${review.periodText}',
+                TextLayout.joinParts('${review.businessName} · ${review.periodText}'),
+                semanticsLabel: '${review.businessName} · ${review.periodText}',
                 style: ResponsiveHelper.smallStyle(
                     context, color: AppColors.grey500),
               ),
@@ -312,7 +317,10 @@ class ReviewCard extends StatelessWidget {
             color: AppColors.grey700,
           ),
         ),
-        if (review.wouldRehire != null) ...[
+        // [.63] 재고용 의사는 작성 창에서 '관리자 전용 · 다른 관리자에게만 공개'로 받는다.
+        //   근로자 본인 화면에는 그리지 않는다(코멘트와 같은 취급).
+        if (review.wouldRehire != null &&
+            perspective != ReviewCardPerspective.workerReceived) ...[
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           _buildRehireBadge(context),
         ],
@@ -376,17 +384,33 @@ class ReviewCard extends StatelessWidget {
   Widget _buildTag(BuildContext context, String label,
       {required bool isPositive}) {
     final color = isPositive ? AppColors.success : AppColors.warning;
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),
-        vertical: ResponsiveHelper.spacing(context, 4),
+    // [.62] 좋았던 점/아쉬운 점을 색으로만 갈랐다('집중력'은 어느 쪽인지 글자로 알 수 없다).
+    //   작성 창과 같은 아이콘과 낭독 라벨을 붙인다.
+    return Semantics(
+      label: '${isPositive ? '좋았던 점' : '아쉬운 점'} $label',
+      excludeSemantics: true,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 8),
+          vertical: ResponsiveHelper.spacing(context, 4),
+        ),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(isPositive ? Icons.thumb_up_outlined : Icons.lightbulb_outline,
+                size: ResponsiveHelper.iconSize(context, 11), color: color),
+            SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+            Flexible(
+              child: Text(TextLayout.keepWords(label),
+                  style: ResponsiveHelper.tinyStyle(context).copyWith(color: color)),
+            ),
+          ],
+        ),
       ),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(label,
-          style: ResponsiveHelper.tinyStyle(context).copyWith(color: color)),
     );
   }
 
@@ -401,11 +425,10 @@ class ReviewCard extends StatelessWidget {
     }
     return Padding(
       padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
+      // [TEXT-LAYOUT-CONSUMER.29] 카드에 상세 화면이 없다 — 두 줄로 자르면 나머지를 볼 방법이 없었다. 전부 보인다.
       child: Text(
         '"${review.comment!}"',
         style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
       ),
     );
   }

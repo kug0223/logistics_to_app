@@ -339,18 +339,21 @@ void main() {
     final posting = _code(_src('lib/screens/common/job_posting_screen.dart'));
 
     test('DISC-11 근로자 수락 화면이 7개 전부를 쓴다', () {
-      expect(mine.contains('attendancePolicyGroups('), isTrue);
+      // [.29-A1] 공용 '근태 인정 기준' 생성 — 항목을 직접 만들지 않는다.
+      expect(mine.contains('attendanceRuleGuide('), isTrue);
+      expect(mine.contains("AttendanceRuleItem('"), isFalse);
       // 자체 라벨 목록을 복제하지 않는다.
       for (final bad in ["('지각 유예'", "('지각 처리'", "('조퇴 처리'"]) {
         expect(mine.contains(bad), isFalse, reason: '라벨 복제: $bad');
       }
-      expect(mine.contains('kAttendancePolicyTitle'), isTrue);
+      expect(mine.contains('kAttendanceRuleGuideTitle'), isTrue);
       expect(mine.contains('kAttendancePolicyFrozenNote'), isTrue);
     });
 
     test('DISC-12 계약서·PDF 가 같은 목록을 쓴다', () {
       for (final body in [sign, pdf]) {
-        expect(body.contains('attendancePolicyLines('), isTrue);
+        expect(body.contains('attendanceRuleGuide('), isTrue); // [.29-A1] 화면·PDF 같은 생성 함수
+        expect(body.contains("AttendanceRuleItem('"), isFalse);
         // 손으로 적은 항목이 남아 있지 않다 — 한쪽만 7개가 되는 일을 막는다.
         expect(body.contains("'조출 인정'"), isFalse);
         expect(body.contains("'지각 유예'"), isFalse);
@@ -382,7 +385,7 @@ void main() {
       expect(disclosure.contains('kAttendancePolicyUnknownNote'), isTrue);
       expect(mine.contains('kAttendancePolicyUnknownNote'), isTrue);
       // 전달값이 null 이면 안내를 보여준다 — 아무것도 안 보여주지 않는다.
-      expect(mine.contains('_attendancePolicyBlock(offerApp.attendancePolicySnapshot)'),
+      expect(mine.contains('_attendancePolicyBlock(offerApp.attendancePolicySnapshot, offerApp)'),
           isTrue);
       expect(mine.contains('if (rules == null)'), isTrue);
       // 안내 문구가 현재 기준을 권하지 않는다.

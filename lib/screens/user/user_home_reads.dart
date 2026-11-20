@@ -1,12 +1,15 @@
 import '../../models/core/application_model.dart';
 import '../../models/core/attendance_model.dart';
 import '../../models/core/business_model.dart';
+import '../../models/core/employment_contract_model.dart';
 import '../../models/core/id_card_access_request_model.dart';
 import '../../models/core/renewal_proposal_model.dart';
 import '../../models/core/slot_model.dart';
 import '../../models/core/to_model.dart';
+import '../../services/contract_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/payroll_correction_service.dart';
+import '../../models/core/legal_readiness.dart';
 
 /// [R7-P2-1 P21-E] 지원자 홈의 **원시 외부 읽기 경계**.
 ///
@@ -27,7 +30,17 @@ class UserHomeReads {
     required this.slotsForTO,
     required this.invalidatePublishedTOsCache,
     required this.documentCorrections,
+    required this.myContracts,
+    this.legalReadiness,
   });
+
+  /// [CONTRACT-DISPATCH-B4] 오늘 근무 CTA 가 출퇴근 화면과 **같은 계약 판정**을 쓰도록 —
+  ///   홈 로드 1회에 합류한다(상시 listener 없음). 실패는 throw — 화면이 '모름'으로 둔다.
+  final Future<List<EmploymentContractModel>> Function(String uid) myContracts;
+
+  /// [DU1 VQ] 약관 할 일 카드의 읽기. null 이면 카드가 기존 기본 reader(LegalConsentReads)를 쓴다 — production 은 넘기지 않는다.
+  ///   LOCAL 렌더(전후 비교)에서 같은 약관 상태를 고정하려고 둔다.
+  final Future<LegalReadiness> Function()? legalReadiness;
 
   final Future<List<ApplicationModel>> Function(String uid) myApplications;
 
@@ -81,6 +94,7 @@ class UserHomeReads {
       invalidatePublishedTOsCache: svc.invalidatePublishedTOsCache,
       // 같은 정적 호출을 그대로 쓴다 — uid·시점·캐시 계약을 바꾸지 않는다.
       documentCorrections: PayrollCorrectionService.loadMine,
+      myContracts: (uid) => ContractService().getByWorker(uid),
     );
   }
 }

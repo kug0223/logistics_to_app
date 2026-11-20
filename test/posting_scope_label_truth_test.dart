@@ -14,6 +14,11 @@
 //
 // 계약: Scope ≠ Filter, Scope ≠ effectiveBusinessId, Scope ≠ 데이터 분포.
 //
+// [DU243 — DU236 J4 추종, 사용자 11-10] 위 계약의 뿌리는 '범위 표기 = 실제 접근(읽는) 범위'다.
+//   공고 탭은 배정 전체를 읽으므로 effectiveBusinessId 로 좁히면 거짓이 된다 — 그대로 금지한다.
+//   근무 탭은 SubAdmin 이면 선택(유효) 사업장 한 곳만 읽는다(workforce_operational_view `_reload`) —
+//   그래서 그 탭의 범위 표기는 같은 선택 사업장을 말해야 맞다(DU236 J4, 감사236 수용). 05-b·07-b·09-b 를 그 사실로 갱신했다.
+//
 // 판정은 순수 resolver를 직접 호출해 검증하고(화면은 Firebase 서비스를 필드로
 // 즉시 보유해 widget 테스트가 불가능하다), 두 Root의 배선은 소스로 고정한다.
 
@@ -184,8 +189,8 @@ void main() {
     //   판정 내용은 그대로다.
     test('00-i SUPER_ADMIN query scope는 그대로 전체다 (§10)', () {
       final body = _flat(_codeOf(
-          _bodyOf(_src(_ctrlPath), 'List<String>? _scopeOf(UserModel user)')));
-      expect(body.contains('if (user.isSuperAdmin) return null;'), true,
+          _bodyOf(_src(_ctrlPath), '({List<String>? ids, List<String> unresolved}) _scopeOf(')));
+      expect(body.contains('if (user.isSuperAdmin) return (ids: null, unresolved: const <String>[]);'), true,
           reason: 'display 수정이 query scope를 건드렸다');
     });
   });
@@ -324,14 +329,24 @@ void main() {
       expect(withA, '담당 사업장 2곳');
     });
 
-    test('05-b §29 resolver·caller 어디에도 effectiveBusinessId가 없다', () {
+    test('05-b §29 resolver·공고 탭은 effectiveBusinessId를 쓰지 않고, 근무 탭은 실제로 읽는 선택 사업장만 말한다', () {
+      // resolver 는 Home context 를 입력으로 받지 않는다(그대로).
       expect(_codeOf(_src(_labelPath)).contains('effectiveBusinessId'), false);
-      for (final p in [_jobsPath, _wfPath]) {
-        final body =
-            _codeOf(_bodyOf(_src(p), 'String _computeScopeLabel('));
-        expect(body.contains('effectiveBusinessId'), false,
-            reason: '$p 의 scope label이 Home context를 말한다');
-      }
+      // 공고 탭은 배정 전체를 읽는다 — 선택 사업장으로 좁히면 범위 표기가 거짓이 된다(그대로).
+      final jobs = _codeOf(_bodyOf(_src(_jobsPath), 'String _computeScopeLabel('));
+      expect(jobs.contains('effectiveBusinessId'), false,
+          reason: '공고 탭 scope label이 Home context를 말한다');
+      // [DU243 — DU236 J4] 근무 탭은 SubAdmin 이면 선택 사업장 한 곳만 읽는다. 범위 표기도 그 한 곳을 말한다.
+      final wf = _flat(_codeOf(_bodyOf(_src(_wfPath), 'String _computeScopeLabel(')));
+      expect(wf.contains('final selected = up.isSubAdmin ? up.effectiveBusinessId : null;'), true,
+          reason: '근무 탭 범위 표기가 SubAdmin 선택 사업장을 따르지 않는다');
+      expect(wf.contains('subAdminBusinessIds: selected != null ? [selected] : (user?.subAdminBusinessIds ?? const []),'),
+          true);
+      // 표기의 근거 — 근무 탭 조회가 실제로 그 한 곳만 읽는다(읽는 범위와 표기를 함께 고정한다).
+      final view = _flat(_codeOf(_src(
+          'lib/screens/business_admin/workforce_management/workforce_operational_view.dart')));
+      expect(view.contains('if (up.isSubAdmin && effectiveBizId != null) {'), true,
+          reason: '근무 탭 조회 범위가 바뀌었다 — 범위 표기 근거를 다시 확인해야 한다');
     });
 
     test('05-c CreateTO·Home의 effectiveBusinessId 사용처는 그대로다', () {
@@ -399,12 +414,21 @@ void main() {
       for (final arg in [
         'isSubAdmin: up.isSubAdmin,',
         'managedBusinessIds: user?.managedBusinessIds ?? const [],',
-        'subAdminBusinessIds: user?.subAdminBusinessIds ?? const [],',
         'subAdminBusinessNames: up.subAdminBusinessNames,',
       ]) {
         expect(jobs.contains(arg), true, reason: 'jobs: $arg');
         expect(wf.contains(arg), true, reason: 'workforce: $arg');
       }
+      // [SUBADMIN-SCOPE.40] 서브관리자 범위 = 공고 권한이 확인된 배정(서버 R5-D2 가 canManageTo 를 요구한다).
+      //   공고 탭 범위 표기는 실제로 요청한 범위를 말하고, 요청 전에는 배정으로 말한다.
+      // [DU243 — DU236 J4] 근무 탭은 SubAdmin 선택 사업장이 있으면 그 한 곳, 없으면 배정으로 말한다(실제 조회 범위).
+      expect(
+          wf.contains(
+              'subAdminBusinessIds: selected != null ? [selected] : (user?.subAdminBusinessIds ?? const []),'),
+          true);
+      expect(jobs.contains('subAdminBusinessIds: (up.isSubAdmin ? controller.requestedScope : null) ?? '
+              'user?.subAdminBusinessIds ?? const [],'),
+          true);
     });
 
     test('07-c 같은 fixture면 두 화면이 같은 label을 낸다', () {
@@ -471,10 +495,20 @@ void main() {
     });
 
     test('09-b caller도 필터를 넘기지 않는다', () {
+      // [DU243] 'selected' 글자 자체가 아니라 필터 상태를 금지한다 — 근무 탭의 `selected` 는
+      //   필터가 아니라 SubAdmin 선택(유효) 사업장이다(05-b 참고).
       for (final p in [_jobsPath, _wfPath]) {
         final body =
             _codeOf(_bodyOf(_src(p), 'String _computeScopeLabel('));
-        expect(body.contains('selected'), false, reason: p);
+        for (final f in [
+          'selectedBusinessId',
+          'selectedDateRange',
+          'selectedTOType',
+          'selectedPublishStatus',
+          'hasActiveFilters',
+        ]) {
+          expect(body.contains(f), false, reason: '$p: $f');
+        }
       }
     });
 
@@ -489,14 +523,15 @@ void main() {
   group('SCOPE-10 범위 밖 무변경', () {
     test('10-a load()의 query scope가 그대로다', () {
       final body = _flat(_codeOf(
-          _bodyOf(_src(_ctrlPath), 'List<String>? _scopeOf(UserModel user)')));
-      expect(body.contains('if (user.isSubAdmin) return user.subAdminBusinessIds;'),
+          _bodyOf(_src(_ctrlPath), '({List<String>? ids, List<String> unresolved}) _scopeOf(')));
+      expect(body.contains('final s = up.subAdminBusinessesFor((p) => p.canManageTo); '
+          'return (ids: s.allowed, unresolved: s.unresolved);'),
           true);
-      expect(body.contains('return user.managedBusinessIds;'), true);
-      expect(body.contains('if (user.isSuperAdmin) return null;'), true);
+      expect(body.contains('return (ids: user.managedBusinessIds, unresolved: const <String>[]);'), true);
+      expect(body.contains('if (user.isSuperAdmin) return (ids: null, unresolved: const <String>[]);'), true);
       // load()는 그 resolver 하나만 쓴다
       final load = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad(')));
-      expect(load.contains('_scopeOf(user)'), true);
+      expect(load.contains('_scopeOf(user, userProvider)'), true);
     });
 
     test('10-b CreateTO picker scope 무변경 (§16)', () {

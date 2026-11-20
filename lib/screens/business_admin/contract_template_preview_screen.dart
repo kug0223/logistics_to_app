@@ -4,8 +4,10 @@ import '../../models/core/contract_template_model.dart';
 import '../../models/core/employment_contract_model.dart';
 import '../../screens/contract/contract_sign_screen.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/format_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../common/notification_screen.dart';
@@ -18,6 +20,9 @@ class ContractTemplatePreviewScreen extends StatelessWidget {
   final ContractTemplateModel template;
 
   const ContractTemplatePreviewScreen({super.key, required this.template});
+
+  static const String _kNotice = '예시 데이터로 보여주는 미리보기입니다.\n'
+      '제1~3조(당사자·근무조건·임금)는 계약서 작성 시 실제 정보로 자동 채워집니다.';
 
   /// 예시 스냅샷 — 자동 입력 영역이 어떻게 채워지는지 보여줌
   ContractSnapshot get _dummySnapshot => ContractSnapshot(
@@ -36,14 +41,33 @@ class ContractTemplatePreviewScreen extends StatelessWidget {
         startTime: '09:00',
         endTime: '18:00',
         breakMinutes: 60,
-        wage: 10030,
+        // [DU339] 예시 시급 10,030(2025 최저임금) → 10,320(2026 예시, 소급 감사 6 §3). 미리보기 전용 값이다.
+        wage: 10320,
         wageType: 'hourly',
         wagePaymentDay: 25,
-        baseHourlyWage: 10030,
+        baseHourlyWage: 10320,
       );
+
+  /// [DU339] 예시 근무일 1일 — 예시 슬롯이 없어 '근무 형태 단기 (0일)' 로 보였다(소급 감사 6 §3).
+  ///   미리보기 전용이다. 날짜는 계약 작성일(오늘, KST)과 같은 날, 시간 · 시급은 위 예시와 같다.
+  List<ContractSlot> _exampleSlots(DateTime contractDate) {
+    final d = FormatHelper.toKstDate(contractDate);
+    String two(int v) => v.toString().padLeft(2, '0');
+    return [
+      ContractSlot(
+        applicationId: 'preview-example',
+        workDate: '${d.year}-${two(d.month)}-${two(d.day)}',
+        startTime: '09:00',
+        endTime: '18:00',
+        wage: 10320,
+        wageType: 'hourly',
+      ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
+    final contractDate = DateTime.now();
     return AppPageScaffold(
       title: '미리보기',
       actions: [
@@ -67,32 +91,6 @@ class ContractTemplatePreviewScreen extends StatelessWidget {
       ],
       body: Column(
         children: [
-          // 안내 배너
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 16),
-              vertical: ResponsiveHelper.spacing(context, 10),
-            ),
-            color: AppColors.warning.withValues(alpha: 0.12),
-            child: Row(
-              children: [
-                Icon(Icons.info_outline,
-                    color: AppColors.warning,
-                    size: ResponsiveHelper.iconSize(context, 16)),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Expanded(
-                  child: Text(
-                    '예시 데이터로 보여주는 미리보기입니다.\n'
-                    '제1~3조(당사자·근무조건·임금)는 계약서 작성 시 실제 정보로 자동 채워집니다.',
-                    style: ResponsiveHelper.tinyStyle(context,
-                        color: AppColors.warningDark),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
           // 계약서 본문
           Expanded(
             child: SingleChildScrollView(
@@ -106,10 +104,48 @@ class ContractTemplatePreviewScreen extends StatelessWidget {
                 ResponsiveHelper.spacing(context, 16) +
                     MediaQuery.paddingOf(context).bottom,
               ),
-              child: ContractTemplateWidget(
-                snapshot: _dummySnapshot,
-                contractDate: DateTime.now(),
-                articles: template.articles,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // [DU335] 안내 — 화면 위 고정 띠 → 본문 첫 카드. 320 · 2.0 에서 고정 띠가 5줄(화면 높이 약 41%)을
+                  //   늘 차지해 계약서를 읽을 칸이 좁았다. 아이콘은 첫 줄에 맞추고 경고 진한색(warning 2.1:1 → warningDark),
+                  //   문장은 그대로 두고 낱말 단위 · '·' 뒤에서도 줄을 바꿀 수 있게 한다(긴 괄호 낱말이 음절로 갈리지 않게).
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 12),
+                      vertical: ResponsiveHelper.spacing(context, 10),
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.warningBg,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline,
+                            color: AppColors.warningDark,
+                            size: ResponsiveHelper.iconSize(context, 16)),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                        Expanded(
+                          child: Text(
+                            TextLayout.phrases(_kNotice)
+                                .replaceAll('·\u2060', '·\u200B'),
+                            semanticsLabel: _kNotice,
+                            style: ResponsiveHelper.tinyStyle(context,
+                                color: AppColors.warningDark),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                  ContractTemplateWidget(
+                    snapshot: _dummySnapshot,
+                    contractDate: contractDate,
+                    slots: _exampleSlots(contractDate),
+                    articles: template.articles,
+                  ),
+                ],
               ),
             ),
           ),

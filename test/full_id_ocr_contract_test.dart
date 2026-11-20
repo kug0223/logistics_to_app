@@ -164,7 +164,9 @@ void main() {
     test('14 입력이 바뀌면 이전 판정을 버린다', () {
       final sheet = _codeOf(_src(_sheetPath));
       final fn = _flat(_sliceOf(sheet, 'onChanged: (v) {', '},'));
-      expect(fn, contains('setState(() => _match = DocFieldOutcome.unassessed);'));
+      expect(fn, contains('_match = DocFieldOutcome.unassessed;'));
+      // [FULL13-REEVAL] 서버에 보낼 근거도 그 값에 대한 것이 아니게 된다.
+      expect(fn, contains('_evidence = null;'));
     });
   });
 

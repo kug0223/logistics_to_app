@@ -225,8 +225,10 @@ extension NotificationFirestore on FirestoreService {
         hasMore: hasMore,
       );
     } catch (e) {
+      // [.66] 빈 페이지로 바꾸면 '더 이전 알림 없음'과 구별되지 않는다(더 보기 버튼이 말없이 사라짐).
+      //   호출자(NotificationProvider.loadMore)가 실패를 표시하고 다시 누를 수 있게 둔다.
       debugPrint('❌ 이전 알림 조회 실패: $e');
-      return const NotificationPage(records: [], hasMore: false);
+      rethrow;
     }
   }
 }

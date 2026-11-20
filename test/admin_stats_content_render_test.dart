@@ -1,3 +1,5 @@
+import 'support/visible_text.dart';
+import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -74,6 +76,26 @@ class _AdminProvider extends UserProvider {
   bool can(bool Function(MemberPermissions p) check) => true;
 }
 
+/// [ADMIN-STATS-CLOSEOUT] 같은 SubAdmin 이 사업장마다 다른 급여 권한(바꿀 수 있음).
+class _SubProvider extends UserProvider {
+  _SubProvider(this.perms);
+  final Map<String, PermissionCheck> perms;
+  @override
+  UserModel? get currentUser => UserModel(uid: 'sub1', username: 'sub1', name: '박부관리', email: 's@alfit.local', role: UserRole.USER,
+      subAdminBusinessIds: perms.keys.toList());
+  @override
+  bool get isBusinessAdmin => false;
+  @override
+  bool get isSubAdmin => true;
+  @override
+  PermissionCheck checkCurrentBusiness(bool Function(MemberPermissions p) check) => PermissionCheck.allowed;
+  @override
+  PermissionCheck checkForBusiness(String businessId, bool Function(MemberPermissions p) check) =>
+      perms[businessId] ?? PermissionCheck.denied;
+  @override
+  bool can(bool Function(MemberPermissions p) check) => true;
+}
+
 const _longName = '서울특별시 강남구 제1물류센터 야간운영팀 상시근무지';
 
 /// 현행 schema 그대로 — 단위는 원(금액) · 건(근무) · 명(고유 인원).
@@ -93,6 +115,7 @@ AnnualStatsData _annual({
       totalWorkerCount: totalWorkerCount,
       prevYearTotalWage: 98000000,
       prevYearTotalWorkCount: 1200,
+      attendanceRecordCount: totalWorkCount == 0 ? 0 : 1500,
       attendanceRate: attendanceRate,
       prevYearAttendanceRate: 95.0,
       rehireRate: 72.5,
@@ -204,6 +227,7 @@ Future<void> _pump(
   Widget home, {
   Size size = const Size(390, 900),
   double textScale = 1.0,
+  UserProvider? provider,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -212,7 +236,7 @@ Future<void> _pump(
   await tester.pumpWidget(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider<UserProvider>(create: (_) => _AdminProvider()),
+        ChangeNotifierProvider<UserProvider>(create: (_) => provider ?? _AdminProvider()),
         ChangeNotifierProvider<NotificationProvider>(
             create: (_) => NotificationProvider()),
       ],
@@ -231,6 +255,11 @@ Future<void> _pump(
     await tester.pump(const Duration(milliseconds: 100));
   }
 }
+
+/// [STATS-TO-ATTENDANCE.27] 여러 낱말 라벨은 낱말 안에서 줄이 바뀌지 않게 WORD JOINER 가 들어간다 —
+///   보이는 글자로 찾는다.
+Finder _label(String s) => find.byWidgetPredicate(
+    (w) => w is Text && (w.data ?? '').replaceAll('\u2060', '') == s);
 
 void main() {
   setUpAll(() async {
@@ -253,15 +282,15 @@ void main() {
 
     expect(tester.takeException(), isNull);
     // 금액은 압축 표기(1.3억), 근무는 건 — 단위가 서로 바뀌지 않는다.
-    expect(find.text('총 인건비'), findsWidgets);
-    expect(find.text('1.3억'), findsOneWidget);
-    expect(find.text('근무 건수'), findsOneWidget);
-    expect(find.text('1472건'), findsOneWidget);
-    expect(find.text('출근율'), findsOneWidget);
-    expect(find.text('97.4%'), findsOneWidget);
+    expect(findVisibleText('총 인건비'), findsWidgets);
+    expect(findVisibleText('1.3억'), findsOneWidget);
+    expect(_label('급여 확정 근무'), findsOneWidget);
+    expect(findVisibleText('1472건'), findsOneWidget);
+    expect(_label('출근율'), findsOneWidget);
+    expect(findVisibleText('97.4%'), findsOneWidget);
     // 집계 범위(연·사업장)가 화면에 있다.
-    expect(find.text('2026년 전체'), findsOneWidget);
-    expect(find.text('전체 사업장'), findsWidgets);
+    expect(findVisibleText('2026년 전체'), findsOneWidget);
+    expect(findVisibleText('전체 사업장'), findsWidgets);
   });
 
   testWidgets('ASC-2 배율 2.0 에서도 예외 없이 스크롤로 닿는다', (tester) async {
@@ -295,8 +324,8 @@ void main() {
                   totalWage: 0, totalWorkCount: 0, totalWorkerCount: 0)),
         ));
     expect(tester.takeException(), isNull);
-    expect(find.text('0건'), findsWidgets);
-    expect(find.text('확인 불가'), findsNothing);
+    expect(findVisibleText('0건'), findsWidgets);
+    expect(findVisibleText('확인 불가'), findsNothing);
 
     // 전체 조회 실패 — 수치를 아예 주장하지 않는다(0건·0원도 아니다).
     await _pump(
@@ -306,11 +335,11 @@ void main() {
           service: _FakeStats(annualError: StateError('stats cf down')),
         ));
     expect(tester.takeException(), isNull);
-    expect(find.text('통계를 불러오지 못했습니다'), findsOneWidget);
-    expect(find.textContaining('데이터가 없습니다'), findsNothing,
+    expect(findVisibleText('통계를 불러오지 못했습니다'), findsOneWidget);
+    expect(findVisibleTextContaining('데이터가 없습니다'), findsNothing,
         reason: '실패를 "없음"으로 바꾸지 않는다');
-    expect(find.text('0건'), findsNothing);
-    expect(find.text('근무 건수'), findsNothing);
+    expect(findVisibleText('0건'), findsNothing);
+    expect(_label('급여 확정 근무'), findsNothing);
   });
 
   // ══════════════════════════════════════════════════════════
@@ -330,9 +359,9 @@ void main() {
 
     expect(tester.takeException(), isNull);
     // 금액·건수·출근율을 완전한 결과처럼 보여주지 않는다.
-    expect(find.text('확인 불가'), findsWidgets);
-    expect(find.text('1472건'), findsNothing);
-    expect(find.text('1.3억'), findsNothing);
+    expect(findVisibleText('확인 불가'), findsWidgets);
+    expect(findVisibleText('1472건'), findsNothing);
+    expect(findVisibleText('1.3억'), findsNothing);
   });
 
   // ══════════════════════════════════════════════════════════
@@ -352,16 +381,16 @@ void main() {
         size: const Size(390, 1000));
 
     // 조회가 떠 있는 동안 사업장을 바꾼다(연도 버튼은 _isFetching 중 비활성이다).
-    await tester.tap(find.text('전체 사업장').first);
+    await tester.tap(findVisibleText('전체 사업장').first);
     for (var i = 0; i < 10; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
-    await tester.tap(find.text('평택 센터').last);
+    await tester.tap(findVisibleText('평택 센터').last);
     for (var i = 0; i < 15; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
     expect(fake.filtersSeen.last, 'biz2');
-    expect(find.text('7건'), findsOneWidget, reason: '현재 선택(평택 센터)의 응답');
+    expect(findVisibleText('7건'), findsOneWidget, reason: '현재 선택(평택 센터)의 응답');
 
     // 이제 첫 조회(전체 사업장)가 옛 값으로 도착한다.
     slowFirst.complete(_annual(totalWorkCount: 9999));
@@ -370,8 +399,8 @@ void main() {
     }
 
     expect(tester.takeException(), isNull);
-    expect(find.text('7건'), findsOneWidget);
-    expect(find.text('9999건'), findsNothing,
+    expect(findVisibleText('7건'), findsOneWidget);
+    expect(findVisibleText('9999건'), findsNothing,
         reason: '낡은 응답이 현재 맥락을 덮었다');
   });
 
@@ -384,11 +413,11 @@ void main() {
 
     expect(fake.filtersSeen.last, isNull, reason: '처음은 전체 사업장');
 
-    await tester.tap(find.text('전체 사업장').first);
+    await tester.tap(findVisibleText('전체 사업장').first);
     for (var i = 0; i < 10; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
-    await tester.tap(find.text('평택 센터').last);
+    await tester.tap(findVisibleText('평택 센터').last);
     for (var i = 0; i < 12; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
@@ -396,8 +425,8 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(fake.filtersSeen.last, 'biz2', reason: '선택이 조회 범위로 간다');
     // 머리말이 현재 맥락을 말한다.
-    expect(find.text('평택 센터'), findsWidgets);
-    expect(find.text('2026년 전체'), findsOneWidget);
+    expect(findVisibleText('평택 센터'), findsWidgets);
+    expect(findVisibleText('2026년 전체'), findsOneWidget);
   });
 
   testWidgets('ASC-7 월 상세가 실제 콘텐츠를 단위대로 그린다', (tester) async {
@@ -431,10 +460,157 @@ void main() {
         textScale: 1.3);
 
     expect(tester.takeException(), isNull);
-    expect(find.text('김근로'), findsOneWidget);
+    expect(_label('김근로'), findsOneWidget);
     // 근무일은 고유 날짜 수 — 건 단위 지표에는 '일' 을 붙이지 않는다.
-    expect(find.text('12일'), findsOneWidget);
-    expect(find.textContaining('지각 2'), findsOneWidget);
-    expect(find.text('지각 2일'), findsNothing);
+    // [STATS-TO-ATTENDANCE.27-T1] 320dp·1.3 은 표 대신 쌓은 행 — 근무일이 제 이름과 함께 나온다.
+    expect(findVisibleText('근무일 12일'), findsOneWidget);
+    expect(findVisibleTextContaining('지각 2'), findsOneWidget);
+    expect(findVisibleText('지각 2일'), findsNothing);
+  });
+
+  // [ADMIN-MONTHLY-1] 퇴근 미확인은 결근 칩이 아니라 따로 · 동명이인은 인력번호로 갈린다
+  testWidgets('ASC-8 퇴근 미확인 칩·배지와 동명이인 인력번호', (tester) async {
+    await _pump(
+        tester,
+        AdminMonthDetailScreen(
+          businessIds: const ['biz1'],
+          filterBusinessId: 'biz1',
+          year: 2026,
+          month: 10,
+          businesses: const [BusinessOption(id: 'biz1', name: '평택 센터')],
+          service: _FakeStats(
+            detail: MonthDetailData(
+              year: 2026, month: 10, presentCount: 4, lateCount: 1, absentCount: 1, missedCheckoutCount: 1,
+              totalWage: 126420, avgRating: 0, rehireCount: 0, noRehireCount: 0, posTagFreq: const {}, impTagFreq: const {},
+              rawAttendance: const [], userInfoMap: const {},
+              workers: const [
+                WorkerMonthSummary(userId: 'a', userName: '합성 김동명', personNo: 'P-002', totalDays: 1, presentDays: 2, lateDays: 0, absentDays: 0, totalWage: 41280, records: []),
+                WorkerMonthSummary(userId: 'b', userName: '합성 김동명', personNo: 'P-003', totalDays: 1, presentDays: 1, lateDays: 0, absentDays: 0, totalWage: 0, records: []),
+                WorkerMonthSummary(userId: 'c', userName: '합성 정미퇴근', personNo: 'P-005', totalDays: 1, presentDays: 0, lateDays: 0, absentDays: 0, missedCheckoutDays: 1, totalWage: 0, records: []),
+              ],
+            ),
+          ),
+        ),
+        size: const Size(320, 900),
+        textScale: 1.3);
+    expect(tester.takeException(), isNull);
+    expect(findVisibleText('퇴근 미확인 14%'), findsOneWidget);
+    expect(findVisibleText('결근 14%'), findsOneWidget, reason: '노쇼 1건만 결근');
+    // [STATS-TO-ATTENDANCE.27] 배지는 누를 수 있다 — '›' 가 붙는다.
+    expect(findVisibleText('퇴근미확인 1 ›'), findsOneWidget);
+    expect(findVisibleText('결근 1 ›'), findsNothing, reason: '미퇴근 근로자 행에 결근 배지가 없다');
+    expect(findVisibleText('P-002'), findsOneWidget);
+    expect(findVisibleText('P-003'), findsOneWidget);
+    expect(_label('합성 김동명'), findsNWidgets(2));
+  });
+
+  test('ASC-9 설정 → 통계 입구는 고른 사업장의 급여 권한을 다시 본다', () {
+    final src = File('lib/screens/common/settings_screen.dart').readAsStringSync();
+    final i = src.indexOf("title: '통계',");
+    final seg = src.substring(i, src.indexOf('AdminStatsScreen(businessIds: [biz.id])', i));
+    expect(seg, contains('userProvider.checkForBusiness('));
+    expect(seg, contains('biz.id, (p) => p.canManageWage)'));
+  });
+
+  // ── [ADMIN-STATS-CLOSEOUT] 조회 대상 사업장별 급여 권한 — 실제 화면 행동 ──
+  testWidgets('ASC-10 급여 권한 없는 사업장은 숫자를 부르지도 그리지도 않는다 · 있는 사업장은 정상', (tester) async {
+    final p = _SubProvider({'bizA': PermissionCheck.allowed, 'bizB': PermissionCheck.denied});
+    final fa = _FakeStats(annual: _annual(totalWorkCount: 7));
+    await _pump(tester, AdminStatsScreen(businessIds: const ['bizA'], service: fa), provider: p);
+    expect(findVisibleText('7건'), findsOneWidget);
+    expect(fa.annualCalls, 1);
+    final fb = _FakeStats(annual: _annual(totalWorkCount: 7));
+    await _pump(tester, AdminStatsScreen(businessIds: const ['bizB'], service: fb), provider: p);
+    expect(fb.annualCalls, 0, reason: '권한 없는 대상은 조회하지 않는다');
+    expect(findVisibleText('이 사업장의 급여 관리 권한이 없어요'), findsOneWidget);
+    expect(findVisibleText('0원'), findsNothing);
+    expect(findVisibleText('7건'), findsNothing);
+  });
+
+  testWidgets('ASC-11 권한 확인 실패·모름은 허용이 아니다', (tester) async {
+    for (final c in [PermissionCheck.unknown, PermissionCheck.error]) {
+      final f = _FakeStats();
+      await _pump(tester, AdminStatsScreen(businessIds: const ['bizA'], service: f), provider: _SubProvider({'bizA': c}));
+      expect(f.annualCalls, 0, reason: '$c');
+      expect(findVisibleText('권한을 확인하지 못했어요'), findsOneWidget);
+    }
+  });
+
+  testWidgets('ASC-12 A 조회 중 B(무권한)로 전환 → 늦게 온 A 응답이 B 화면을 덮지 않는다 → A 복귀 시 회복', (tester) async {
+    final slowA = Completer<AnnualStatsData>();
+    final f = _FakeStats(options: const [BusinessOption(id: 'biz1', name: '강남 센터'), BusinessOption(id: 'biz2', name: '평택 센터')],
+        annualByCall: [slowA.future, Future<AnnualStatsData>.value(_annual(totalWorkCount: 11))]);
+    final p = _SubProvider({'biz1': PermissionCheck.allowed, 'biz2': PermissionCheck.denied});
+    await _pump(tester, AdminStatsScreen(businessIds: const ['biz1', 'biz2'], service: f), provider: p, size: const Size(390, 1000));
+    // 전체 범위에 무권한 사업장이 섞여 있으면 막힌다 — 강남(허용)으로 좁힌다
+    expect(findVisibleText('이 사업장의 급여 관리 권한이 없어요'), findsOneWidget);
+    await tester.tap(findVisibleText('전체 사업장').first);
+    for (var i = 0; i < 10; i++) { await tester.pump(const Duration(milliseconds: 100)); }
+    await tester.tap(findVisibleText('강남 센터').last);
+    for (var i = 0; i < 5; i++) { await tester.pump(const Duration(milliseconds: 100)); }
+    expect(f.filtersSeen.last, 'biz1');
+    // A 응답이 오기 전에 B 로 바꾼다
+    await tester.tap(findVisibleText('강남 센터').first);
+    for (var i = 0; i < 10; i++) { await tester.pump(const Duration(milliseconds: 100)); }
+    await tester.tap(findVisibleText('평택 센터').last);
+    for (var i = 0; i < 10; i++) { await tester.pump(const Duration(milliseconds: 100)); }
+    expect(findVisibleText('이 사업장의 급여 관리 권한이 없어요'), findsOneWidget);
+    slowA.complete(_annual(totalWorkCount: 9999));
+    for (var i = 0; i < 12; i++) { await tester.pump(const Duration(milliseconds: 100)); }
+    expect(findVisibleText('9999건'), findsNothing, reason: '늦게 온 A 응답이 무권한 B 화면에 나타났다');
+    expect(findVisibleText('이 사업장의 급여 관리 권한이 없어요'), findsOneWidget);
+    // A 로 복귀 → 정상 조회
+    await tester.tap(findVisibleText('평택 센터').first);
+    for (var i = 0; i < 10; i++) { await tester.pump(const Duration(milliseconds: 100)); }
+    await tester.tap(findVisibleText('강남 센터').last);
+    for (var i = 0; i < 15; i++) { await tester.pump(const Duration(milliseconds: 100)); }
+    expect(findVisibleText('11건'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('ASC-13 월 상세가 열린 사이 권한 취소 → 새로고침은 숫자를 지우고 Excel 을 막는다 → 권한 복구 시 회복', (tester) async {
+    final perms = {'biz1': PermissionCheck.allowed};
+    final f = _FakeStats(detail: _detail(totalWage: 126420));
+    await _pump(tester, AdminMonthDetailScreen(businessIds: const ['biz1'], filterBusinessId: 'biz1', year: 2026, month: 10,
+        businesses: const [BusinessOption(id: 'biz1', name: '강남 센터')], service: f), provider: _SubProvider(perms));
+    expect(findVisibleText('126,420원'), findsOneWidget);
+    IconButton exportBtn() => tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.download_outlined).first);
+    expect(exportBtn().onPressed, isNotNull);
+    perms['biz1'] = PermissionCheck.denied;
+    await tester.tap(find.byIcon(Icons.refresh_rounded).first);
+    for (var i = 0; i < 10; i++) { await tester.pump(const Duration(milliseconds: 100)); }
+    expect(findVisibleText('126,420원'), findsNothing);
+    expect(findVisibleText('이 사업장의 급여 관리 권한이 없어요'), findsOneWidget);
+    expect(exportBtn().onPressed, isNull, reason: '권한 없는 대상의 Excel');
+    final calls = f.detailCalls;
+    perms['biz1'] = PermissionCheck.allowed;
+    await tester.tap(find.byIcon(Icons.refresh_rounded).first);
+    for (var i = 0; i < 10; i++) { await tester.pump(const Duration(milliseconds: 100)); }
+    expect(f.detailCalls, calls + 1);
+    expect(findVisibleText('126,420원'), findsOneWidget);
+    expect(exportBtn().onPressed, isNotNull);
+  });
+
+  testWidgets('ASC-14 0원·0%: 확정 0원은 확정, 분모 있는 0%는 0%, 근태 0건만 "-"', (tester) async {
+    await _pump(tester, AdminStatsScreen(businessIds: const ['biz1'], service: _FakeStats(annual: AnnualStatsData(
+        year: 2026, totalWage: 0, totalWorkCount: 1, totalWorkerCount: 1, prevYearTotalWage: 0, prevYearTotalWorkCount: 0,
+        attendanceRecordCount: 3, attendanceRate: 0, prevYearAttendanceRate: 0, rehireRate: 0, avgRating: 0, noShowCount: 0, noShowRate: 0,
+        prevYearNoShowRate: 0, wageByWorkType: const {}, monthlyTrends: List.generate(12, (i) => MonthlyTrend(year: 2026, month: i + 1, workCount: i == 9 ? 3 : 0, totalWage: 0, workerCount: i == 9 ? 1 : 0)),
+        exceptions: const [], exceptionMonth: 10))));
+    expect(findVisibleText('0원'), findsOneWidget, reason: '확정 근무 1건의 합 0원');
+    expect(findVisibleText('0.0%'), findsNWidgets(2), reason: '출근율·노쇼율 분모 3');
+    expect(_label('급여 확정 근무'), findsOneWidget);
+    expect(findVisibleText('전체 근태 (건)'), findsOneWidget);
+    await _pump(tester, AdminMonthDetailScreen(businessIds: const ['biz1'], filterBusinessId: 'biz1', year: 2026, month: 10,
+        businesses: const [BusinessOption(id: 'biz1', name: '강남 센터')], service: _FakeStats(detail: MonthDetailData(
+          year: 2026, month: 10, presentCount: 0, lateCount: 0, absentCount: 1, totalWage: 0, settledCount: 1, avgRating: 0, rehireCount: 0, noRehireCount: 0,
+          posTagFreq: const {}, impTagFreq: const {}, rawAttendance: const [], userInfoMap: const {},
+          workers: const [
+            WorkerMonthSummary(userId: 'a', userName: '합성 최노쇼', personNo: 'P-004', totalDays: 1, presentDays: 0, lateDays: 0, absentDays: 1, totalWage: 0, records: [], hasSettledWage: true),
+            WorkerMonthSummary(userId: 'b', userName: '합성 대기', personNo: 'P-008', totalDays: 1, presentDays: 1, lateDays: 0, absentDays: 0, totalWage: 0, records: []),
+          ]))));
+    expect(findVisibleText('0원'), findsOneWidget, reason: '월 총 인건비 — 확정 1건 0원');
+    expect(findVisibleText('확정 · 0원'), findsOneWidget);
+    expect(findVisibleText('미확정'), findsOneWidget, reason: '확정 근무가 없는 사람만');
   });
 }

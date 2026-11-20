@@ -330,7 +330,8 @@ void main() {
     });
 
     test('07-d yearMonth 포맷이 writer와 같다 (YYYY-MM)', () {
-      expect(cf, contains(r'const yearMonth = `${year}-${mm}`'));
+      // [NOSHOW-ATOMICITY 2026-10-27] 자동 노쇼 writer 는 근무일마다 yearMonth 를 만든다(같은 YYYY-MM 형식)
+      expect(cf, contains(r'yearMonth: `${y}-${mm}`, workDateTs: Timestamp.fromDate(startUTC)'));
       expect(schedulerCode,
           contains(r'`${year}-${String(month).padStart(2, "0")}`'));
     });

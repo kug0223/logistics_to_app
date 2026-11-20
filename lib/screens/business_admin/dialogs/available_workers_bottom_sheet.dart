@@ -9,6 +9,7 @@ import '../../../models/core/available_worker_model.dart';
 import '../../../models/core/user_model.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../services/available_workers_service.dart';
+import '../../../services/invite_save_verifier.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/format_helper.dart';
@@ -52,7 +53,28 @@ class AvailableWorkersBottomSheet extends StatefulWidget {
     required this.endTime,
     required this.requiredCount,
     required this.confirmedCount,
+    this.onInviteSucceeded,
+    this.onInviteUnconfirmed,
+    @visibleForTesting this.service,
   });
+
+  /// [E1-W3·SHEET] 응답이 불명확했고 저장을 **확인하지 못한** 대상 uid.
+  ///
+  ///   성공 콜백이 아니다 — 호출자는 이것만으로 성공을 추정하지 않는다.
+  ///   호출자(업무별 창)는 이 대상을 기억했다가 **성공한 목록 재조회**에서
+  ///   그 대상의 INVITED 를 읽었을 때만 상위에 알린다(직접 초대 창과 같은 규칙).
+  final ValueChanged<String>? onInviteUnconfirmed;
+
+  /// 테스트 전용 — 후보 조회·초대 호출 대체. null 이면 실제 서비스.
+  final AvailableWorkersService? service;
+
+  /// [INVITE-REFRESH] 초대가 **실제로 저장된 직후** 한 번 호출된다.
+  ///
+  ///   시트가 닫히는 경로는 하나가 아니다(스와이프·바깥 탭). 닫힘 결과값에
+  ///   기대면 그 경로에서 갱신이 빠진다. 그래서 성공 시점에 알린다 —
+  ///   취소·실패에서는 호출하지 않으므로 호출자가 성공 상태를 잘못 표시하지
+  ///   않는다.
+  final VoidCallback? onInviteSucceeded;
 
   @override
   State<AvailableWorkersBottomSheet> createState() =>
@@ -61,7 +83,8 @@ class AvailableWorkersBottomSheet extends StatefulWidget {
 
 class _AvailableWorkersBottomSheetState
     extends State<AvailableWorkersBottomSheet> {
-  final _svc = AvailableWorkersService();
+  late final AvailableWorkersService _svc =
+      widget.service ?? AvailableWorkersService();
 
   // ── 데이터 ──────────────────────────────────────────────────────────────────
   /// 서버 추천순 원본 (불변 source — sort/filter 복원 기준, append-only)
@@ -86,6 +109,14 @@ class _AvailableWorkersBottomSheetState
   // ── 초대 상태 ────────────────────────────────────────────────────────────────
   final Set<String> _invitedUids = {};
   final Map<String, bool> _invitingUids = {};
+
+  /// [E1-AMBIGUOUS-INVITE] 응답이 불명확했고, 다시 읽기에도 실패한 사람.
+  ///   저장 여부를 모른다 — 이 행에는 `근무 제안` 대신 `다시 확인`만 둔다.
+  final Set<String> _unconfirmedUids = {};
+
+  /// 이 시트에서 한 번이라도 응답이 불명확했던 사람. 다시 보냈는데
+  ///   already-exists 가 오면 앞선 시도가 커밋된 것일 수 있다 — 확인한다.
+  final Set<String> _ambiguousUids = {};
 
   // ── [R7.2A] Filter / Sort 상태 ────────────────────────────────────────────
   bool _filterWorkExperience = false;
@@ -487,9 +518,27 @@ class _AvailableWorkersBottomSheetState
         _invitingUids.remove(worker.uid);
       });
       ToastHelper.showSuccess('근무 제안을 보냈습니다.');
+      // [INVITE-REFRESH] 서버가 pendingCount 를 올렸다 — 이 시트를 연 화면도
+      //   그 사실을 알아야 같은 세션에서 `대기 N`이 어긋나지 않는다.
+      widget.onInviteSucceeded?.call();
     } catch (e) {
       if (!mounted) return;
+      // [E1-AMBIGUOUS-INVITE] 응답이 불명확하면 실패로 단정하지 않는다 —
+      //   대상 지원서를 다시 읽어 정한다.
+      if (isAmbiguousInviteError(e) ||
+          (_ambiguousUids.contains(worker.uid) &&
+              isAlreadyExistsInviteError(e))) {
+        _ambiguousUids.add(worker.uid);
+        await _verifyInvite(worker);
+        return;
+      }
       setState(() => _invitingUids.remove(worker.uid));
+      // [PILOT-INVITE-FENCE-UI] 시범 운영 차단은 "전송 실패 — 다시 시도"가 아니다.
+      //   다시 보내도 같은 결과이므로 재시도를 권하지 않는다. 정확한 reason 에만 적용한다.
+      if (isPilotInviteCreateBlockedError(e)) {
+        ToastHelper.showWarning(kPilotInviteCreateBlockedMessage);
+        return;
+      }
       final s = e.toString().toLowerCase();
       String msg = '제안 전송에 실패했습니다. 다시 시도해주세요.';
       if (s.contains('full') || s.contains('정원')) {
@@ -500,6 +549,47 @@ class _AvailableWorkersBottomSheetState
         msg = '초대 권한이 없습니다.';
       }
       ToastHelper.showError(msg);
+    }
+  }
+
+  /// [E1-AMBIGUOUS-INVITE] 이 사람의 이 공고 지원서를 다시 읽는다.
+  ///   saved    → 성공과 같다(`제안 보냄` + 상위 성공 콜백)
+  ///   notSaved → 다시 보낼 수 있다. 서버가 같은 사람·같은 공고 중복을 막는다
+  ///   unknown  → `다시 확인`만 둔다. 모르는 채로 재발송을 권하지 않는다
+  Future<void> _verifyInvite(AvailableWorkerModel worker) async {
+    final uid = worker.uid;
+    setState(() {
+      _invitingUids[uid] = true;
+      _unconfirmedUids.remove(uid);
+    });
+    final c = await InviteSaveVerifier.check(
+      businessId: widget.businessId,
+      toId: widget.toId,
+      targetUid: uid,
+      slotId: widget.slotId,
+    );
+    if (!mounted) return;
+    switch (c) {
+      case InviteSaveCheck.saved:
+        setState(() {
+          _invitingUids.remove(uid);
+          _invitedUids.add(uid);
+        });
+        ToastHelper.showSuccess('응답이 늦었지만 근무 제안이 저장된 것을 확인했어요.');
+        // 저장이 **확인됐다** — 성공 콜백의 조건을 만족한다.
+        widget.onInviteSucceeded?.call();
+      case InviteSaveCheck.notSaved:
+        setState(() => _invitingUids.remove(uid));
+        ToastHelper.showError('제안이 저장되지 않았어요. 다시 보내도 중복으로 저장되지 않아요.');
+        // 늦게 보이는 저장일 수 있다 — 호출자가 다음 재조회에서 다시 본다.
+        widget.onInviteUnconfirmed?.call(uid);
+      case InviteSaveCheck.unknown:
+        setState(() {
+          _invitingUids.remove(uid);
+          _unconfirmedUids.add(uid);
+        });
+        ToastHelper.showWarning('제안 저장 여부를 확인하지 못했어요.');
+        widget.onInviteUnconfirmed?.call(uid);
     }
   }
 
@@ -839,6 +929,7 @@ class _AvailableWorkersBottomSheetState
   Widget _buildCandidateRow(AvailableWorkerModel worker) {
     final isInviting = _invitingUids[worker.uid] == true;
     final isInvited = _invitedUids.contains(worker.uid);
+    final isUnconfirmed = _unconfirmedUids.contains(worker.uid);
 
     // [R7.2A] 통합 메타데이터 줄 (§38-40)
     // exact workType count / totalWorkDays / 신규 badge 미노출 (R3-D / §41-43)
@@ -939,6 +1030,23 @@ class _AvailableWorkersBottomSheetState
                   height: 20,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
+              ),
+            )
+          else if (isUnconfirmed)
+            OutlinedButton(
+              onPressed: () => _verifyInvite(worker),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.warningDark,
+                side: const BorderSide(color: AppColors.warningDark),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.padded,
+              ),
+              child: Text(
+                '다시 확인',
+                style: ResponsiveHelper.smallStyle(
+                    context, color: AppColors.warningDark),
               ),
             )
           else

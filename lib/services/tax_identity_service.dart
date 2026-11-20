@@ -68,25 +68,39 @@ class TaxIdentityService {
   static Future<String?> register(
     String rawIdentifier, {
     DocFieldOutcome documentMatch = DocFieldOutcome.unassessed,
+    TaxIdDocumentEvidence? documentEvidence,
   }) =>
-      _submit('callableRegisterTaxIdentity', rawIdentifier, documentMatch);
+      _submit('callableRegisterTaxIdentity', rawIdentifier, documentMatch,
+          documentEvidence);
 
   /// 본인 정정. 지문이 바뀌면 모든 사업장의 확인이 낡는다.
+  ///   [FULL13-REEVAL] 서버는 옛 번호로 만든 신분증 자동 대조도 버린다.
   static Future<String?> update(
     String rawIdentifier, {
     DocFieldOutcome documentMatch = DocFieldOutcome.unassessed,
+    TaxIdDocumentEvidence? documentEvidence,
   }) =>
-      _submit('callableUpdateTaxIdentity', rawIdentifier, documentMatch);
+      _submit('callableUpdateTaxIdentity', rawIdentifier, documentMatch,
+          documentEvidence);
 
   /// [PII-B4-R1.4.1 §13] 수집이 꺼져 있을 때 가입한 외국인의 복구.
   ///
   ///   일반 등록이 아니다. 서버가 입력값을 **가입 때 만든 신원 지문과
   ///   대조**해서 같을 때만 받는다. 다르면 아무것도 쓰지 않는다 —
   ///   번호가 바뀐 것이라면 신원 재확인의 일이지 세무정보 정정이 아니다.
-  static Future<String?> recoverForeign(String rawForeignIdentifier) async {
+  ///
+  ///   [FULL13-REEVAL.2] [documentEvidence] 는 지금 올라간 등록증을 다시 읽은
+  ///   근거다. 서버가 같은 거래에서 문서 대조를 다시 판정한다.
+  static Future<String?> recoverForeign(
+    String rawForeignIdentifier, {
+    TaxIdDocumentEvidence? documentEvidence,
+  }) async {
     try {
-      await _fn.httpsCallable('callableRecoverForeignTaxIdentity')
-          .call({'rawForeignIdentifier': rawForeignIdentifier});
+      await _fn.httpsCallable('callableRecoverForeignTaxIdentity').call({
+        'rawForeignIdentifier': rawForeignIdentifier,
+        if (documentEvidence != null)
+          'documentEvidence': documentEvidence.toWire(),
+      });
       return null;
     } on FirebaseFunctionsException catch (e) {
       debugPrint('❌ [TaxIdentity] 외국인 복구 실패 | code=${e.code}');
@@ -101,11 +115,14 @@ class TaxIdentityService {
     String name,
     String rawIdentifier,
     DocFieldOutcome documentMatch,
+    TaxIdDocumentEvidence? documentEvidence,
   ) async {
     try {
       await _fn.httpsCallable(name).call({
         'rawIdentifier': rawIdentifier,
         'documentMatch': documentMatch.wire,
+        if (documentEvidence != null)
+          'documentEvidence': documentEvidence.toWire(),
       });
       return null;
     } on FirebaseFunctionsException catch (e) {
@@ -117,6 +134,30 @@ class TaxIdentityService {
       return '세무정보를 저장하지 못했습니다. 잠시 후 다시 시도해주세요.';
     }
   }
+}
+
+/// [FULL13-REEVAL] **지금 올라가 있는** 신분증을 앱이 다시 읽은 근거.
+///
+///   판정은 서버가 한다 — 서버가 후보를 입력 번호의 지문과 대조해
+///   전체 13자리가 같을 때만 MATCHED 로 적는다(업로드 경로와 같은 판정기).
+///   [idDocumentVersion] 이 서버의 현재 버전과 다르면 서버는 이 근거를
+///   쓰지 않는다. 후보는 서버에 저장되지 않는다.
+class TaxIdDocumentEvidence {
+  const TaxIdDocumentEvidence({
+    required this.idDocumentVersion,
+    required this.name,
+    required this.identifierCandidates,
+  });
+
+  final int idDocumentVersion;
+  final DocFieldOutcome name;
+  final List<String> identifierCandidates;
+
+  Map<String, dynamic> toWire() => {
+        'idDocumentVersion': idDocumentVersion,
+        'name': name.wire,
+        'identifierCandidates': identifierCandidates,
+      };
 }
 
 /// 본인이 볼 수 있는 세무 identity 상태 — 번호 없음.

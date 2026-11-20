@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/core/notification_model.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../theme/app_colors.dart';
 
 /// 알림 목록 아이템 카드
@@ -206,6 +207,7 @@ class _NotificationCardState extends State<NotificationCard>
       case NotificationType.reconfirmAdminWarning:
       case NotificationType.reconfirmDeclined:         return Icons.warning_amber;
       case NotificationType.toMatch:                   return Icons.work_outline; // [Phase 8.1C] 일자리 발견
+      case NotificationType.noShowLedgerPending:       return Icons.pending_actions; // [NS-PENDING-DEST]
       case NotificationType.systemNotice:              return Icons.campaign;
       case NotificationType.other:                     return Icons.notifications;
     }
@@ -266,6 +268,7 @@ class _NotificationCardState extends State<NotificationCard>
       case NotificationType.toPostingExpired:
       case NotificationType.reconfirmAdminWarning:
       case NotificationType.reconfirmDeclined:
+      case NotificationType.noShowLedgerPending: // [NS-PENDING-DEST] 처리할 보류
         return AppColors.warning;
 
       // ── 리뷰 → amber ───────────────────────────────────────────────────
@@ -349,15 +352,18 @@ class _NotificationCardState extends State<NotificationCard>
     final isReminder = importance == NotificationImportance.reminderInfo;
 
     // 아이콘 색상: REMINDER_INFO는 neutral grey, 나머지는 의미론적 색상
-    // grey400(disabled 톤)보다 한 단계 진한 grey500 사용 — 비활성처럼 보이지 않도록
+    // [DU242] 의미(확정·거절·주의·요청)는 그대로 두고 아이콘용 진한 토큰으로 바꾼다 — 연한 원색은
+    //   옅은 바탕 위에서 3:1 에 못 미쳤다. 안내(REMINDER_INFO)는 중립 grey600.
     final iconColor = isReminder
-        ? AppColors.grey500
-        : _getSemanticIconColor(n.type);
+        ? AppColors.grey600
+        : _readable(_getSemanticIconColor(n.type));
 
     // 제목 fontWeight: REMINDER_INFO → w500, 미읽음·ACTION_REQUIRED → w600, 읽음 → w500
     final titleWeight = (!isReminder && isUnread) ? FontWeight.w600 : FontWeight.w500;
 
-    return Stack(
+    return _shell(
+      context,
+      Stack(
       clipBehavior: Clip.hardEdge,
       children: [
         // ── 액션 패널 (스와이프로 드러남) ─────────────────────────────────
@@ -455,16 +461,16 @@ class _NotificationCardState extends State<NotificationCard>
               },
               child: Container(
                 padding: ResponsiveHelper.cardPadding(context),
+                // [DU242] 흰 둥근 카드(관리자 홈 묶음 카드와 같은 radius 16·grey200). 미읽음은 대표색 5% 를 얹는다.
                 decoration: BoxDecoration(
                   color: isUnread
                       ? Color.alphaBlend(
                           theme.primaryColor.withValues(alpha: 0.05),
-                          theme.scaffoldBackgroundColor,
+                          AppColors.surface,
                         )
-                      : theme.scaffoldBackgroundColor,
-                  border: Border(
-                    bottom: BorderSide(color: AppColors.grey200, width: 1),
-                  ),
+                      : AppColors.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.grey200, width: 1),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -481,7 +487,7 @@ class _NotificationCardState extends State<NotificationCard>
                           n.businessName!,
                           style: ResponsiveHelper.tinyStyle(
                             context,
-                            color: AppColors.workTypeBlue,
+                            color: AppColors.textSecondary, // [DU242] 업무 팔레트색 → 보조 글자
                             fontWeight: FontWeight.w600,
                           ),
                           maxLines: 1,
@@ -497,9 +503,10 @@ class _NotificationCardState extends State<NotificationCard>
                         Container(
                           width: ResponsiveHelper.spacing(context, 36),
                           height: ResponsiveHelper.spacing(context, 36),
+                          // [DU242] 원 → 관리자 홈과 같은 둥근 사각(radius 10).
                           decoration: BoxDecoration(
-                            color: iconColor.withValues(alpha: 0.12),
-                            shape: BoxShape.circle,
+                            color: iconColor.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(10),
                           ),
                           child: Icon(
                             _getIcon(n.type),
@@ -522,8 +529,11 @@ class _NotificationCardState extends State<NotificationCard>
                                 children: [
                                   // 미읽음 dot — 6px, workTypeBlue, 제목 바로 앞
                                   // 아이콘 위보다 제목 근처가 시각적으로 더 명확히 인지됨
+                                  // [.66] 점은 색·모양뿐이라 화면 읽기에는 전해지지 않았다 — 같은 자리에서 '읽지 않음'을 말한다.
                                   if (isUnread)
-                                    FadeTransition(
+                                    Semantics(
+                                      label: '읽지 않음',
+                                      child: FadeTransition(
                                       opacity: _badgeFade,
                                       child: Container(
                                         width: 6,
@@ -532,21 +542,21 @@ class _NotificationCardState extends State<NotificationCard>
                                           right: ResponsiveHelper.spacing(context, 5),
                                         ),
                                         decoration: const BoxDecoration(
-                                          color: AppColors.workTypeBlue,
+                                          color: AppColors.brand, // [DU242] 대표색
                                           shape: BoxShape.circle,
                                         ),
                                       ),
                                     ),
-                                  // 제목
+                                    ),
+                                  // 제목 — [.66] 말줄임 없이 줄바꿈한다(392·2.0 에서 SA 보류 경보 제목이
+                                  //   '노쇼 원장 보류 — 건별…'로 잘렸다). 본문은 미리보기라 2줄 그대로.
                                   Expanded(
                                     child: Text(
-                                      n.title,
+                                      TextLayout.keepWords(n.title),
                                       style: ResponsiveHelper.bodyStyle(
                                         context,
                                         fontWeight: titleWeight,
                                       ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
                                   SizedBox(width: ResponsiveHelper.spacing(context, 6)),
@@ -555,7 +565,7 @@ class _NotificationCardState extends State<NotificationCard>
                                     n.timeAgo,
                                     style: ResponsiveHelper.tinyStyle(
                                       context,
-                                      color: AppColors.grey400,
+                                      color: AppColors.textTertiary, // [DU242] 이전 grey400 1.88
                                     ),
                                     overflow: TextOverflow.ellipsis,
                                     maxLines: 1,
@@ -588,7 +598,7 @@ class _NotificationCardState extends State<NotificationCard>
                                 n.body,
                                 style: ResponsiveHelper.smallStyle(
                                   context,
-                                  color: AppColors.grey600,
+                                  color: AppColors.textSecondary, // [DU242]
                                 ),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
@@ -606,10 +616,10 @@ class _NotificationCardState extends State<NotificationCard>
                                     child: TextButton(
                                       onPressed: widget.onTap,
                                       style: TextButton.styleFrom(
-                                        foregroundColor: AppColors.workTypeBlue,
+                                        foregroundColor: AppColors.brand, // [DU242] 대표색
                                         textStyle: ResponsiveHelper.smallStyle(
                                           context,
-                                          color: AppColors.workTypeBlue,
+                                          color: AppColors.brand,
                                           fontWeight: FontWeight.w600,
                                         ),
                                         padding: const EdgeInsets.only(
@@ -644,6 +654,23 @@ class _NotificationCardState extends State<NotificationCard>
           ),
         ),
       ],
-    );
+    ));
+  }
+
+  /// [DU242] 카드 바깥 — 카드 사이 8, 스와이프 패널도 같은 둥근 모서리로 자른다.
+  Widget _shell(BuildContext context, Widget child) => Padding(
+        padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+        child: ClipRRect(borderRadius: BorderRadius.circular(16), child: child),
+      );
+
+  /// [DU242] 의미색 → 아이콘용 진한 토큰(같은 계열).
+  static Color _readable(Color c) {
+    if (c == AppColors.success) return AppColors.successDark;
+    if (c == AppColors.error) return AppColors.errorDark;
+    if (c == AppColors.warning || c == AppColors.amber) return AppColors.warningDark;
+    if (c == AppColors.teal) return AppColors.tealDark;
+    if (c == AppColors.info) return AppColors.infoDark;
+    if (c == AppColors.grey500) return AppColors.grey600;
+    return c;
   }
 }

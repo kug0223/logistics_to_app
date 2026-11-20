@@ -139,6 +139,8 @@ enum NotificationType {
   toMatch,                 // 가능일에 새 일자리 발견 알림 (CF: "toMatch", screen: "toMatch")
 
   // 시스템
+  // [NS-PENDING-DEST] 노쇼 원장 보류 경보(슈퍼관리자에게, CF: "noShowLedgerPending") — 처리 화면으로 간다
+  noShowLedgerPending,
   systemNotice,            // 시스템 공지
   other,                   // 기타
 }
@@ -204,6 +206,8 @@ const Set<String> kPermissionBearingNotifTypes = {
   'reconfirmDeclined',
   'toPostingExpired',
   'toPostingExpiringTomorrow',
+  // [NS-PENDING-DEST] 슈퍼관리자 보류 경보 — 역할 판정은 dispatcher 한 곳에서(슈퍼관리자만)
+  'noShowLedgerPending',
 };
 
 const Set<NotificationType> kAdminNotifTypes = {
@@ -603,6 +607,8 @@ class NotificationModel {
       // [Phase 8.1C] 일자리 매칭 알림
       case NotificationType.toMatch:
         return 'work_outline';
+      case NotificationType.noShowLedgerPending:
+        return 'pending_actions';
       // 시스템
       case NotificationType.systemNotice:
         return 'campaign';
@@ -762,6 +768,8 @@ class NotificationModel {
       case 'interimSettlementCompleted': return NotificationType.interimSettlementCompleted;
       // [Phase 8.1C] 일자리 매칭 알림
       case 'toMatch': return NotificationType.toMatch;
+      // [NS-PENDING-DEST] 노쇼 원장 보류 경보
+      case 'noShowLedgerPending': return NotificationType.noShowLedgerPending;
       // 시스템
       case 'systemNotice': return NotificationType.systemNotice;
       default: return NotificationType.other;
@@ -856,6 +864,7 @@ class NotificationModel {
       case NotificationType.interimSettlementCompleted: return 'interimSettlementCompleted';
       // [Phase 8.1C] 일자리 매칭 알림
       case NotificationType.toMatch: return 'toMatch';
+      case NotificationType.noShowLedgerPending: return 'noShowLedgerPending';
       // 시스템
       case NotificationType.systemNotice: return 'systemNotice';
       case NotificationType.other: return 'other';

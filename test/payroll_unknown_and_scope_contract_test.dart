@@ -39,6 +39,7 @@ void main() {
   late String wd;
   late String calc;
   late String fns;
+  late String ledger;
 
   setUpAll(() {
     ov = _src(_ovPath);
@@ -47,31 +48,34 @@ void main() {
     wd = _src(_wdPath);
     calc = _src(_calcPath);
     fns = _src(_fnsPath);
+    ledger = _src('lib/screens/business_admin/payroll/payroll_month_ledger.dart');
   });
 
   // ══════════════════════════════════════════════════════════
   group('PAY-1 모름을 0 으로 말하지 않는다', () {
-    test('U-1 출근 집계 실패를 상태로 들고 있다', () {
-      expect(ov.contains('bool _attCountsUnknown = false;'), isTrue);
-      expect(
-          ov.contains(
-              'final attUnknown = attResult == null || attResult!.limitReached;'),
-          isTrue,
-          reason: '실패(null)와 상한 도달(limitReached) 둘 다 모름이다');
-      expect(ov.contains('_attCountsUnknown = attUnknown;'), isTrue);
+    // [PAYROLL-ANNUAL-READ.48] 모름은 이제 **달마다**다(연간 플래그 하나가 12개월을 덮던 구조를 바꿨다).
+    //   보호 의미는 같다: 실패·상한은 모름이고, 모름을 0 으로 말하지 않는다.
+    test('U-1 출근 집계 실패를 상태로 들고 있다(달마다)', () {
+      expect(ov.contains('Map<int, MonthLedgerState> _ledger'), isTrue);
+      expect(ledger.contains('return fail(month, MonthLedgerFailure.failed);'), isTrue,
+          reason: '조회 실패는 모름이다');
+      expect(ledger.contains('return fail(month, MonthLedgerFailure.limit);'), isTrue,
+          reason: '상한 도달(limitReached)도 모름이다');
+      expect(ledger.contains('if (!r.limitReached) return MonthLedgerState.known('), isTrue);
     });
 
     test('U-2 월 카드가 모름을 지우지 않고 말한다', () {
       expect(ov.contains("'미이체 확인 못함'"), isTrue);
       // 모름 분기가 0 비교보다 **먼저** 와야 한다 — 아니면 줄이 사라진다.
-      final unknownAt = ov.indexOf('if (_attCountsUnknown) ...[');
+      final unknownAt = ov.indexOf('ledgerStatus == MonthLedgerStatus.unknown) ...[');
       final zeroAt = ov.indexOf('summary.notTransferredCount > 0');
       expect(unknownAt, greaterThan(-1));
       expect(unknownAt, lessThan(zeroAt));
     });
 
     test('U-3 월 상세로 모름이 전달되고, 받으면 파생값을 주장하지 않는다', () {
-      expect(ov.contains('countsUnknown: _attCountsUnknown,'), isTrue);
+      expect(ov.contains('countsUnknown: !(ledgerState?.isComplete ?? false),'), isTrue,
+          reason: '이번 조회로 끝까지 센 달만 모름이 아니다(이전 조회·확인 중은 모름)');
       expect(ov.contains('final bool countsUnknown;'), isTrue);
       expect(ov.contains('late bool _countsUnknown = widget.countsUnknown;'), isTrue);
       // 이체 완료·미이체 두 자리 모두 모름을 말한다.
@@ -103,9 +107,12 @@ void main() {
     });
 
     test('U-6 개요 근무자 행과 상세가 건으로 말한다', () {
-      expect(ov.contains(r"'확정 근무 ${worker.workDays}건'"), isTrue);
+      // [UI-INTEGRATION.33] 천 단위 구분(대량 사업장) — 단위는 그대로 건.
+      expect(ov.contains(r"'확정 근무 ${FormatHelper.formatNumber(worker.workDays)}건'"), isTrue);
       expect(ov.contains(r"'${worker.workDays}일 근무'"), isFalse);
-      expect(wd.contains(r"Text('${_records.length}건',"), isTrue);
+      // [PAYROLL-DETAIL.32] 상세 건수는 개요(서버)와 같은 식 — 노쇼·결근 0원 제외(_payableCount). 단위는 여전히 건.
+      expect(wd.contains(r"Text('$_payableCount건',"), isTrue);
+      expect(wd.contains(r"Text('$_payableCount일',"), isFalse);
       expect(wd.contains(r"Text('${_records.length}일',"), isFalse);
       expect(wd.contains("Text('확정 근무',"), isTrue);
       expect(wd.contains("Text('근무일수',"), isFalse);
@@ -165,8 +172,16 @@ void main() {
 
   // ══════════════════════════════════════════════════════════
   group('PAY-4 반응형 — 잘리는 것을 글자 축소로 덮지 않는다', () {
-    test('R-1 월 카드 높이가 OS 글자 배율을 반영한다', () {
-      expect(ov.contains('MediaQuery.textScalerOf(context).scale(baseTextPx)'), isTrue);
+    test('R-1 월 카드 높이를 고정하지 않는다 — 내용이 높이를 정한다', () {
+      // [DEVICE-MISMATCH-FIX 10-20] 예전 계약은 `104 + 배율 보정` 으로 높이를
+      //   계산해 그리드 비율에 못박는 것이었다. 보정식의 줄 높이 추정(1.25배)이
+      //   기기 한글 폰트보다 작아 Pixel 5 기본 배율에서도 1px 넘쳤다
+      //   (`미이체 2` 잘림, DEVICE). 이제 고정 비율 자체를 쓰지 않는다.
+      expect(ov.contains('childAspectRatio'), isFalse,
+          reason: '고정 비율은 글자 줄 높이를 추정해야 한다 — 추정이 틀리면 잘린다');
+      expect(ov.contains('IntrinsicHeight('), isTrue);
+      expect(ov.contains('BoxConstraints(minHeight: 104)'), isTrue,
+          reason: '최소 높이만 둔다(늘어날 수 있다)');
       expect(ov.contains('const itemHeight = 100.0;'), isFalse,
           reason: '고정 높이는 배율 1.3 에서 아래를 잘랐다');
       // 글자를 줄이는 우회를 쓰지 않았다.
@@ -175,8 +190,20 @@ void main() {
     });
 
     test('R-2 금액 줄과 상태 줄이 넘치지 않게 flex·Wrap 을 쓴다', () {
-      expect(ov.contains('Expanded(\n                child: Row(mainAxisSize: MainAxisSize.min'), isTrue,
-          reason: '금액 묶음이 남는 공간을 차지하고, 모자라면 라벨부터 줄인다');
+      // [UI-INTEGRATION.33] 금액 묶음은 남는 공간을 차지하고(Expanded), 모자라면 말줄임 대신
+      //   금액은 쉼표 뒤·라벨은 다음 자리로 줄을 바꾼다(Wrap).
+      final norm = ov.replaceAll('\r\n', '\n');
+      // [AMOUNT-LAYOUT.34] 라벨·버튼 줄(라벨 Expanded) 다음에 금액 전용 줄 — 금액과 버튼이 한 줄에서 다투지 않는다.
+      final head = norm.indexOf('Widget _buildSummaryHeader(');
+      final labelAt = norm.indexOf("TextLayout.keepWords('총 지급액')", head);
+      final buttonAt = norm.indexOf('payButton,', head);
+      final amountAt = norm.indexOf('AmountText.total(', head);
+      expect([labelAt, buttonAt, amountAt].every((i) => i > head), isTrue);
+      expect(labelAt < buttonAt && buttonAt < amountAt, isTrue,
+          reason: '총 지급액·지급 현황 줄 다음에 금액 줄');
+      // [AMOUNT-LAYOUT.34] 공통 금액 부품(AmountText)으로 — 말줄임 없음·쉼표 뒤 줄바꿈은 부품이 지킨다.
+      expect(RegExp(r'AmountText(\.total)?\(\s*_liveSummary\.formattedTotalPayout').hasMatch(norm), isTrue,
+          reason: '총액을 말줄임하지 않는다');
       final statusAt = ov.indexOf('// ── 2행: 이체완료 | 미이체 상태');
       expect(statusAt, greaterThan(-1));
       expect(ov.substring(statusAt, statusAt + 900).contains('Wrap('), isTrue);
@@ -208,18 +235,22 @@ void main() {
   // ══════════════════════════════════════════════════════════
   group('OWN 미이체 owner 수렴', () {
     test('OWN-1 계산이 한 곳에만 있다 (공유 reading)', () {
-      expect(ov.contains('class _LedgerMonthCounts'), isTrue);
-      // 월별 집계 루프가 화면에 중복으로 남아 있지 않다.
-      expect("data['wageStatus'] as String?".allMatches(ov).length, 1,
+      expect(ledger.contains('class MonthLedgerCounts'), isTrue);
+      // 월별 집계 루프가 화면에 남아 있지 않다 — 판정은 MonthLedgerCounts 하나.
+      expect("data['wageStatus'] as String?".allMatches(ov).length, 0,
           reason: '같은 판정을 두 곳에서 하면 다시 갈린다');
-      expect("AttendanceModel.isNonPayableZeroOf".allMatches(ov).length, 1);
+      expect("AttendanceModel.isNonPayableZeroOf".allMatches(ov).length, 0);
+      expect("AttendanceModel.isNonPayableZeroOf".allMatches(ledger).length, 1);
     });
 
     test('OWN-2 로더와 복귀 갱신이 같은 계산을 쓴다', () {
       final loader = _bodyOf(ov, 'Future<void> _loadYear(', 'Future<void> _loadTodayCount(');
       final refresh = _bodyOf(ov, 'Future<void> _refreshSummary(', 'Future<void> _loadWorkers(');
-      expect(loader.contains('_LedgerMonthCounts.of('), isTrue);
-      expect(refresh.contains('_LedgerMonthCounts.of('), isTrue);
+      // 로더는 달마다 같은 계산(loadMonthLedgers → MonthLedgerCounts.fromItems)을 쓴다.
+      expect(loader.contains('_readMonths(gen, bizId, year, months, previous)'), isTrue);
+      expect(ov.contains('return loadMonthLedgers('), isTrue);
+      expect(ledger.contains('MonthLedgerState.known(MonthLedgerCounts.fromItems(r.items, month))'), isTrue);
+      expect(refresh.contains('MonthLedgerCounts.fromItems('), isTrue);
       expect(refresh.contains('_reads.adminAttendances('), isTrue,
           reason: '복귀 갱신도 원장을 읽는다 — 집계 문서로 건수를 덮지 않는다');
     });
@@ -227,26 +258,23 @@ void main() {
     test('OWN-3 파생(이체 완료)이 한 owner 안에서 끝난다', () {
       final loader = _bodyOf(ov, 'Future<void> _loadYear(', 'Future<void> _loadTodayCount(');
       // 문서가 있어도 원장을 쓸 수 있으면 확정 건수도 원장에서 온다.
-      expect(
-          loader.contains(
-              'attUnknown ? existing.confirmedCount : (ntCount + tCount)'),
-          isTrue);
+      expect(loader, isNotEmpty);
+      expect(ov.contains('confirmedCount: complete ? (ntCount + tCount) : existing.confirmedCount,'), isTrue);
       final refresh = _bodyOf(ov, 'Future<void> _refreshSummary(', 'Future<void> _loadWorkers(');
-      expect(
-          refresh.contains(
-              'ledger.notTransferred[monthIdx] + ledger.transferred[monthIdx]'),
-          isTrue);
+      expect(refresh.contains('ledger.notTransferred + ledger.transferred'), isTrue);
     });
 
     test('OWN-4 상한 도달은 모름이다 (fail-closed)', () {
-      expect(ov.contains('attResult!.limitReached'), isTrue);
+      expect(ledger.contains('r.limitReached'), isTrue);
       expect(seam.contains("r.data['limitReached'] == true"), isTrue);
       final refresh = _bodyOf(ov, 'Future<void> _refreshSummary(', 'Future<void> _loadWorkers(');
       expect(refresh.contains('ledgerResult.limitReached'), isTrue);
     });
 
     test('OWN-5 모르는 달을 빈 달이라고 말하지 않는다', () {
-      expect(ov.contains("_attCountsUnknown ? '확인 못함' : '데이터 없음'"), isTrue);
+      expect(ov.contains("MonthLedgerStatus.known => '데이터 없음',"), isTrue);
+      expect(ov.contains("MonthLedgerStatus.loading => '확인 중',"), isTrue);
+      expect(ov.contains("_ => '확인 못함',"), isTrue);
     });
 
     test('OWN-6 세 번째 정의(전 기간 count)의 죽은 호출부를 없앴다', () {

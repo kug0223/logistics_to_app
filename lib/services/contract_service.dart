@@ -1,9 +1,12 @@
 import 'dart:convert';
+import 'dart:math' show Random;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 import '../models/core/application_model.dart';
 import '../models/core/business_model.dart';
@@ -16,9 +19,132 @@ import '../models/core/work_detail_data.dart';
 import '../utils/format_helper.dart';
 import 'firestore_service.dart';
 
+/// [R8P6-SIG-CUTOVER] 서명 이미지 1건의 **그때의** 열람 링크.
+///
+///   `url` 은 15분 뒤 만료되므로 **저장하지 않는다**. `version` 은 그 반대로
+///   서명 파일이 바뀌지 않는 한 그대로여서, 이미지 캐시 키의 근거가 된다
+///   (URL 을 키로 쓰면 15분마다 같은 서명을 다시 내려받는다).
+class ContractSignatureLink {
+  final String url;
+  final String version;
+
+  const ContractSignatureLink({required this.url, required this.version});
+}
+
+/// 서명 링크를 받아 오는 방법 — 렌더 테스트가 서버 없이 돌 수 있게 분리했다.
+typedef ContractSignatureResolver = Future<ContractSignatureLink> Function(
+  String contractId,
+  String role,
+);
+
+/// [REISSUE-RECOVERY] 계약 상태 일괄 조회 결과 — **모름과 없음을 나눠** 돌려준다.
+///
+///   `statuses` 는 조회에 성공한 지원서만 담는다(계약이 없으면 값이 null).
+///   `unresolved` 는 그 청크 조회가 실패해 **아직 모르는** 지원서다.
+///   소비자는 `isMissingContract` 로만 "계약서 없음"을 판정해야 한다 —
+///   `statuses[id] == null` 하나만 보면 조회 실패가 미작성으로 섞인다.
+class ContractStatusBatch {
+  final Map<String, String?> statuses;
+  final Set<String> unresolved;
+
+  const ContractStatusBatch({
+    this.statuses = const {},
+    this.unresolved = const {},
+  });
+
+  /// 계약서가 **없다고 확인된** 경우만 true. 조회 실패는 false.
+  bool isMissingContract(String applicationId) {
+    if (unresolved.contains(applicationId)) return false;
+    final s = statuses[applicationId];
+    return s == null || s.isEmpty || s == 'voided';
+  }
+
+  bool isUnresolved(String applicationId) => unresolved.contains(applicationId);
+
+  /// 발송 직후 낙관적 반영 — 그 건은 더 이상 `unresolved` 가 아니다.
+  ContractStatusBatch withStatus(String applicationId, String status) =>
+      ContractStatusBatch(
+        statuses: {...statuses, applicationId: status},
+        unresolved: unresolved.where((id) => id != applicationId).toSet(),
+      );
+}
+
+/// [BULK-DISPATCH-RECONCILE] 지원서 하나에 **발송된 계약이 있는가**의 세 가지 답.
+///
+///   `none` 과 `unknown` 을 같은 값으로 돌려주는 API 로는 롤백을 판단할 수 없다.
+///   조회가 실패한 것을 "계약 0건"으로 읽으면, 계약이 살아 있는데 지원서를
+///   PENDING 으로 되돌리게 된다 — 근로자가 PENDING 지원서의 계약서에 서명한다.
+///   그래서 `getByApplication`(실패를 null 로 삼킨다)을 쓰지 않고 따로 둔다.
+enum ContractLedgerProbe {
+  /// 근로자에게 전달된 계약이 **있다** (pending_worker·completed·active…).
+  issued,
+
+  /// 조회는 됐고, 전달된 계약이 **없다** (문서 없음 또는 voided/draft/pending_employer).
+  notIssued,
+
+  /// **확인하지 못했다.** 0건이 아니다.
+  unknown,
+}
+
+/// [E2-EMPLOYER-SIG-LOST-RESPONSE] 사업주 서명 callable 호출 경계 — 테스트에서 교체한다.
+typedef EmployerSignatureCall = Future<Object?> Function(Map<String, dynamic> data);
+
+/// [E2-EMPLOYER-SIG-LOST-RESPONSE] 계약 문서 단건 원본 읽기 경계(없으면 null).
+///   production 은 [ContractService.getById] 와 같은 `employment_contracts/{id}` get 이다.
+typedef ContractDocReader = Future<Map<String, dynamic>?> Function(String contractId);
+
+/// 서버가 끝까지 처리했는지 **알 수 없는** callable 오류 코드.
+///   work_applicants_dialog `_indeterminateCfCodes` 와 같은 집합 + 'unknown'.
+const Set<String> kEmployerSignatureIndeterminateCodes = {
+  'deadline-exceeded',
+  'unavailable',
+  'internal',
+  'cancelled',
+  'aborted',
+  'unknown',
+};
+
+/// [E2-EMPLOYER-SIG-LOST-RESPONSE · E2-WORKER-SIG-LOST-RESPONSE] 서명 callable 응답을 못 받았고,
+///   원장으로도 커밋을 **증명하지 못했다.** (사업주·근로자 서명 공통)
+///
+///   실패가 아니다 — 서버가 아직 처리 중이거나, 처리했는데 읽지 못했을 수 있다.
+///   원래 오류의 `code` 를 그대로 들고 다닌다. 일괄 발송 경로는 code 로
+///   "불명확"을 판정하므로(확정을 되돌리지 않는다) 그 동작이 바뀌지 않는다.
+class SignatureOutcomeUnknown extends FirebaseFunctionsException {
+  SignatureOutcomeUnknown({required super.code, required this.reason})
+      : super(
+          message: '서명 저장 결과를 확인하지 못했습니다. '
+              '계약서 목록에서 상태를 확인한 뒤 다시 시도해 주세요.',
+          details: {'reason': reason},
+        );
+
+  /// `absent`(문서 없음·아직 미서명) · `mismatch`(다른 지원서·사업장·근로자·서명) · `readFailed`.
+  final String reason;
+}
+
 class ContractService {
   final _db = FirebaseFirestore.instance;
   final _firestoreService = FirestoreService();
+
+  /// 서명 이미지 바이트를 받을 때만 쓴다 — 테스트에서 교체할 수 있게 주입받는다.
+  final http.Client _http;
+
+  final EmployerSignatureCall? _employerSignatureCall;
+  final EmployerSignatureCall? _workerSignatureCall;
+  final ContractDocReader? _contractDocReader;
+  final Duration _employerSignatureRecheckDelay;
+
+  ContractService({
+    http.Client? httpClient,
+    EmployerSignatureCall? employerSignatureCall,
+    EmployerSignatureCall? workerSignatureCall,
+    ContractDocReader? contractDocReader,
+    Duration employerSignatureRecheckDelay = const Duration(seconds: 2),
+  })  : _http = httpClient ?? http.Client(),
+        _employerSignatureCall = employerSignatureCall,
+        _workerSignatureCall = workerSignatureCall,
+        _contractDocReader = contractDocReader,
+        _employerSignatureRecheckDelay = employerSignatureRecheckDelay;
 
   // ── 핵심: 번들링 생성/추가 ─────────────────────────────────────
 
@@ -126,6 +252,33 @@ class ContractService {
   /// mixed-version 문서가 된다.
   ///
   /// 스냅샷이 없는 레거시 지원서는 금액만 맞춘다 — 그 이상은 복원할 근거가 없다.
+  /// [GAP-2] 그 **날짜의 약속 시간** — 계약 슬롯이 쓸 유일한 출처.
+  ///
+  ///   예전에는 `workDetail.startTime/endTime` 을 썼다. 그 `workDetail` 은
+  ///   `_getWorkForApp()` 이 **마스터 TO 의 workDetails** 에서 찾은 값이다.
+  ///   그런데 슬롯(날짜)은 자기 `workDetails` 를 갖고
+  ///   `callableUpdateSlotWorkDetails` 가 **날짜 하나만** 바꿀 수 있다 —
+  ///   날짜마다 시간이 갈라지면 계약서에 그 날의 실제 시간이 아닌 값이 적힌다.
+  ///
+  ///   지원서는 그 날짜의 약속을 보존한다(`[DESIGN-SLOT-S4]`: 슬롯 시간을
+  ///   바꿔도 기존 지원서는 소급 변경하지 않는다). 서버도 composite
+  ///   `workDetailId`(`workType_startTime_endTime`)를 **슬롯의 workDetails 와
+  ///   exact match** 시킨 뒤에야 지원을 받는다.
+  ///
+  ///   값이 비어 있으면 **마스터 값으로 조용히 대체하지 않는다.** 그렇게 하면
+  ///   "확인되지 않은 시간"이 정상 계약처럼 보인다 — 임금과 같은 규칙이다.
+  ({String start, String end}) _promisedTimes(ApplicationModel application) {
+    final start = application.startTime.trim();
+    final end = application.endTime.trim();
+    if (start.isEmpty || end.isEmpty) {
+      throw StateError(
+        '지원 시점 근무시간 정보가 없어 계약서를 만들 수 없습니다. '
+        '(applicationId: ${application.id})',
+      );
+    }
+    return (start: start, end: end);
+  }
+
   WorkDetailData _withPromisedWage(
     ApplicationModel application,
     WorkDetailData workDetail,
@@ -174,9 +327,14 @@ class ContractService {
   /// [SEC-EMPLOYER-SIG] callableFinalizeEmployerSignature CF 경유:
   ///   Storage Admin SDK 업로드 + 소속 검증 서버 강제.
   ///   storage.rules signature_employer.png → if false (클라이언트 직접 업로드 차단).
+  ///
+  /// [CONTRACT-DISPATCH-B1] [signatureBytes] 가 null 이면 **사업장 owner 의 등록 날인**을
+  ///   서버가 찾아 찍는다(P4.4C-SIGNER-01). 앱은 owner 문서를 읽을 수 없다 — 사업장 목록은
+  ///   ownerId 를 지우고(SEC-20) users 문서는 본인만 읽는다. 그래서 발송 화면은 바이트를
+  ///   보내지 않는다. 바이트를 보내도 owner 본인일 때만 그 바이트가 쓰인다(서버 판정).
   Future<EmploymentContractModel> saveEmployerSignature({
     required EmploymentContractModel contract,
-    required Uint8List signatureBytes,
+    Uint8List? signatureBytes,
   }) async {
     // 클라이언트 사전 가드 (UX용) — CF에서 재검증
     if (contract.status == ContractStatus.voided) {
@@ -189,10 +347,13 @@ class ContractService {
       throw Exception('이미 사업주 서명이 완료된 계약서입니다');
     }
 
-    final signatureBase64 = base64Encode(signatureBytes);
+    // 응답 유실 때 "이 시도가 커밋됐는가"를 확인할 표식 — 서버가 계약 문서에 그대로 남긴다.
+    final signRequestId =
+        '${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 32)}';
     final Map<String, dynamic> cfData = {
       'contractId': contract.id,
-      'signatureBase64': signatureBase64,
+      if (signatureBytes != null) 'signatureBase64': base64Encode(signatureBytes),
+      'signRequestId': signRequestId,
     };
 
     if (contract.isNewUnsaved) {
@@ -206,18 +367,63 @@ class ContractService {
       cfData['contractData'] = contractMap;
     }
 
-    final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableFinalizeEmployerSignature',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
-        .call(cfData);
+    Object? responseData;
+    final injectedCall = _employerSignatureCall;
+    try {
+      responseData = injectedCall != null
+          ? await injectedCall(cfData)
+          : (await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                  .httpsCallable('callableFinalizeEmployerSignature',
+                      options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
+                  .call(cfData))
+              .data;
+    } on FirebaseFunctionsException catch (e) {
+      // [E2-EMPLOYER-SIG-LOST-RESPONSE] 명확한 거절(권한·검증·중복 등)은 그대로 실패다.
+      if (!kEmployerSignatureIndeterminateCodes.contains(e.code)) rethrow;
+      // 응답을 못 받았다 — 서버가 커밋했는지 원장으로 확인한다.
+      //   성공으로 바꾸는 것은 **이 계약 문서에 이 지원서·사업장·근로자로, 이번에 보낸
+      //   서명 바이트(sha256)가 저장된 것이 보일 때**뿐이다. 그 밖에는 원래 code 를
+      //   유지한 "불명확" 으로 던진다 — 다시 보내지 않는다(서버도 중복 생성을 막는다).
+      final verdict = await _confirmEmployerSignatureCommitted(
+          contract, signatureBytes, signRequestId);
+      if (verdict != 'committed') {
+        debugPrint('⚠️ [contract] 사업주 서명 응답 유실 — 커밋 확인 안 됨 '
+            '(${contract.id}, ${e.code}, $verdict)');
+        throw SignatureOutcomeUnknown(code: e.code, reason: verdict);
+      }
+      debugPrint('ℹ️ [contract] 사업주 서명 응답 유실 — 원장에서 커밋 확인 (${contract.id}, ${e.code})');
+      responseData = null;
+    }
 
-    final cfMap = result.data as Map<dynamic, dynamic>?;
+    // [BULK-DISPATCH-RECONCILE] 응답 모양을 캐스트로 단정하지 않는다.
+    //   `as Map` 은 응답이 Map 이 아니면 **커밋 뒤에** TypeError 를 던진다.
+    final cfMap = responseData is Map ? responseData : null;
+    // [R8P6-STAGE-B] 서명이 **저장됐다**는 증거는 경로다 — URL 이 아니다.
+    //
+    //   예전에는 `employerSignatureUrl` 이 비면 예외를 던졌다. 단계 C 에서
+    //   CF 가 URL 발급을 멈추는 순간 그 줄이 **사업주 서명을 막는다**.
+    //   근로자 서명 경로는 이미 `pdfStoragePath` 를 보도록 고쳐져 있었다 —
+    //   여기만 비대칭으로 남아 있었다.
+    final sigPath = cfMap?['employerSignatureStoragePath'] as String? ?? '';
     final url = cfMap?['employerSignatureUrl'] as String? ?? '';
-    if (url.isEmpty) throw Exception('CF 응답에 employerSignatureUrl 없음');
+    if (sigPath.isEmpty && url.isEmpty) {
+      // [BULK-DISPATCH-RECONCILE] 여기서 던지면 **커밋된 뒤의 실패**가 된다.
+      //
+      //   CF 가 정상 반환했다는 것은 트랜잭션이 커밋됐다는 뜻이다 — 커밋
+      //   이후로 그 CF 는 던지지 않는다(알림 실패는 CF 안에서 삼킨다).
+      //   응답을 읽지 못한 것은 **저장되지 않았다는 증거가 아니다.**
+      //   예전에는 예외를 던졌고, 일괄 발송 루프가 그 예외를 보고 확정을
+      //   PENDING 으로 되돌렸다 — 계약서는 살아 있는데 지원서만 돌아갔다.
+      //   그래서 실패로 바꾸지 않고, 눈에 보이게 기록만 남긴다.
+      debugPrint('⚠️ [contract] 사업주 서명 응답에 경로·URL 이 둘 다 없다 '
+          '— 서버 커밋은 된 것으로 본다 (${contract.id})');
+    }
     final now = DateTime.now();
     final updated = contract.copyWith(
       status: ContractStatus.pendingWorker,
-      employerSignatureUrl: url,
+      // 단계 A 에서는 둘 다 온다. 단계 C 에서는 경로만 온다.
+      employerSignatureUrl: url.isNotEmpty ? url : null,
+      employerSignatureAvailable: true,
       employerSignedAt: now,
       updatedAt: now,
     );
@@ -227,6 +433,63 @@ class ContractService {
     // (이전 클라이언트 createNotification 호출은 CF 반환 후 크래시 시 영구 누락 위험이 있었음)
 
     return updated;
+  }
+
+  /// [E2-EMPLOYER-SIG-LOST-RESPONSE] 사업주 서명이 **이 시도로** 커밋됐는가.
+  ///
+  ///   읽는 것은 `employment_contracts/{contract.id}` 단건 get 하나다(이미 허용된 경로 —
+  ///   rules 의 get 은 사업장 관리자·계약 권한 하위관리자, CF 호출 권한과 같은 범위).
+  ///   CF(00066)는 커밋 때 `employerSignatureHash = sha256(서명 바이트)` 를 함께 쓴다.
+  ///   그 값이 이번에 보낸 바이트의 해시와 같아야 "이번 서명"이다 — 다른 관리자의
+  ///   서명이나 다른 계약을 성공으로 읽지 않는다.
+  ///
+  ///   반환: `committed` · `absent`(문서 없음·아직 미서명 — 진행 중일 수 있음) ·
+  ///   `mismatch`(다른 지원서·사업장·근로자·서명) · `readFailed`.
+  ///   `absent` 이면 한 번만 더 읽는다(제한된 재조회).
+  Future<String> _confirmEmployerSignatureCommitted(
+    EmploymentContractModel contract,
+    Uint8List? signatureBytes,
+    String signRequestId,
+  ) async {
+    // [CONTRACT-DISPATCH-B1] 서버가 owner 날인을 찍으면 앱은 그 해시를 모른다 —
+    //   이번 요청 id 가 저장된 것으로 증명한다. 보낸 바이트 해시가 같아도 이번 시도다.
+    final expectedHash =
+        signatureBytes == null ? null : sha256.convert(signatureBytes).toString();
+    final reader = _contractDocReader ??
+        (String id) async =>
+            (await _db.collection('employment_contracts').doc(id).get()).data();
+    String verdictOf(Map<String, dynamic>? d) {
+      if (d == null) return 'absent';
+      final appIds = (d['applicationIds'] as List?)?.whereType<String>().toSet() ?? const <String>{};
+      final sameApp = contract.applicationId.isNotEmpty &&
+          (d['applicationId'] == contract.applicationId || appIds.contains(contract.applicationId));
+      if (!sameApp ||
+          d['businessId'] != contract.businessId ||
+          d['workerId'] != contract.workerId) {
+        return 'mismatch';
+      }
+      final status = d['status'];
+      final signed = d['employerSignedAt'] != null &&
+          (status == 'pending_worker' || status == 'completed');
+      if (!signed) return 'absent';
+      final sameRequest = d['employerSignRequestId'] == signRequestId;
+      final sameBytes = expectedHash != null && d['employerSignatureHash'] == expectedHash;
+      return (sameRequest || sameBytes) ? 'committed' : 'mismatch';
+    }
+
+    for (var attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await Future<void>.delayed(_employerSignatureRecheckDelay);
+      Map<String, dynamic>? doc;
+      try {
+        doc = await reader(contract.id);
+      } catch (e) {
+        debugPrint('⚠️ [contract] 사업주 서명 커밋 확인 읽기 실패 (${contract.id}): $e');
+        return 'readFailed';
+      }
+      final v = verdictOf(doc);
+      if (v != 'absent') return v;
+    }
+    return 'absent';
   }
 
   /// 근무자 서명 → 완료 상태로 전환
@@ -253,35 +516,65 @@ class ContractService {
     // 클라이언트가 직접 업로드하지 않고 base64로 CF에 전달 → CF가 Admin SDK로 업로드
     final sigBase64 = base64Encode(signatureBytes);
     final pdfBase64 = base64Encode(pdfBytes);
-    final HttpsCallableResult cfResult;
+    final cfPayload = {
+      'contractId': contract.id,
+      'signatureBase64': sigBase64,
+      'pdfBase64': pdfBase64,
+    };
+    Map<Object?, Object?>? cfData;
+    final injectedCall = _workerSignatureCall;
     try {
-      cfResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableFinalizeWorkerSignature',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 60)))
-          .call({
-            'contractId': contract.id,
-            'signatureBase64': sigBase64,
-            'pdfBase64': pdfBase64,
-          });
-    } catch (e) {
-      // CF 실패 → CF 내부에서 Storage 정리 완료.
-      rethrow;
+      final data = injectedCall != null
+          ? await injectedCall(cfPayload)
+          : (await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                  .httpsCallable('callableFinalizeWorkerSignature',
+                      options: HttpsCallableOptions(timeout: const Duration(seconds: 60)))
+                  .call(cfPayload))
+              .data;
+      cfData = data as Map<Object?, Object?>?;
+    } on FirebaseFunctionsException catch (e) {
+      // CF 실패 → CF 내부에서 Storage 정리 완료. 명확한 거절은 그대로 실패다.
+      if (!kEmployerSignatureIndeterminateCodes.contains(e.code)) rethrow;
+      // [E2-WORKER-SIG-LOST-RESPONSE] 응답을 못 받았다 — 서버가 커밋했는지 원장으로 본다.
+      //   성공으로 바꾸는 것은 이 계약이 이 근로자·지원서·사업장으로 completed 가 됐고,
+      //   저장된 근로자 서명 해시와 PDF 해시가 **이번에 보낸 바이트**와 둘 다 같을 때뿐이다.
+      //   CF 는 다시 부르지 않고 파일도 다시 올리지 않는다(읽기만).
+      final confirmed = await _confirmWorkerSignatureCommitted(contract, signatureBytes, pdfBytes);
+      if (confirmed.verdict != 'committed') {
+        debugPrint('⚠️ [contract] 근무자 서명 응답 유실 — 커밋 확인 안 됨 '
+            '(${contract.id}, ${e.code}, ${confirmed.verdict})');
+        throw SignatureOutcomeUnknown(code: e.code, reason: confirmed.verdict);
+      }
+      debugPrint('ℹ️ [contract] 근무자 서명 응답 유실 — 원장에서 커밋 확인 (${contract.id}, ${e.code})');
+      cfData = {
+        'pdfStoragePath': confirmed.pdfStoragePath,
+        'workerSignatureStoragePath': confirmed.sigStoragePath,
+      };
     }
 
-    // CF 응답에서 URL 추출 (CF가 Admin SDK로 업로드 후 반환한 실제 Storage URL)
-    final cfData = cfResult.data as Map<Object?, Object?>?;
-    final cfPdfUrl = cfData?['pdfUrl'] as String? ?? '';
+    // CF 응답 추출.
+    //
+    // [R8P6-PDF-REMEDIATION] PDF 는 더 이상 영구 URL 로 오지 않는다.
+    //   CF 가 `pdfStoragePath` 를 돌려주고, 열람은 그때마다
+    //   `callableGetContractPdfSignedUrl` 이 권한을 확인한 뒤 15분 링크로 낸다.
+    //   그래서 여기서 검사하는 것도 URL 이 아니라 **경로**다.
+    final cfPdfPath = cfData?['pdfStoragePath'] as String? ?? '';
     final cfSigUrl = cfData?['sigUrl'] as String? ?? '';
-    // saveEmployerSignature와 동일한 가드: 빈 URL은 CF 응답 이상 — completed 설정 금지
-    if (cfSigUrl.isEmpty) throw Exception('CF 응답에 sigUrl 없음');
-    if (cfPdfUrl.isEmpty) throw Exception('CF 응답에 pdfUrl 없음');
+    // [R8P6-STAGE-B] 서명이 저장됐다는 증거는 **경로**다 — 단계 C 에서
+    //   `sigUrl` 이 사라져도 근로자가 서명을 끝낼 수 있어야 한다.
+    final cfSigPath = cfData?['workerSignatureStoragePath'] as String? ?? '';
+    if (cfSigPath.isEmpty && cfSigUrl.isEmpty) {
+      throw Exception('CF 응답에 근로자 서명 경로가 없음');
+    }
+    if (cfPdfPath.isEmpty) throw Exception('CF 응답에 pdfStoragePath 없음');
 
     final workerNow = DateTime.now(); // 로컬 변수 분리 — nullable ! 방지
     final updated = contract.copyWith(
       status: ContractStatus.completed,
-      workerSignatureUrl: cfSigUrl,
+      workerSignatureUrl: cfSigUrl.isNotEmpty ? cfSigUrl : null,
+      workerSignatureAvailable: true,
       workerSignedAt: workerNow,
-      pdfUrl: cfPdfUrl,
+      pdfStoragePath: cfPdfPath,
       updatedAt: workerNow,
     );
 
@@ -301,6 +594,62 @@ class ContractService {
     //   팬아웃이 한 번으로 정리돼 중복 알림이 사라진다.
 
     return updated;
+  }
+
+  /// [E2-WORKER-SIG-LOST-RESPONSE] 근무자 서명·PDF 가 **이 시도로** 커밋됐는가.
+  ///
+  ///   읽는 것은 `employment_contracts/{contract.id}` 단건 get 하나다 — rules 의 get 은
+  ///   `isOwner(resource.data.workerId)` 로 근로자 본인에게 열려 있다(DEV ruleset 8210de0d).
+  ///   CF(00081)는 같은 tx 에서 `workerSignatureHash`·`pdfHash`(각 바이트의 sha256 hex)와
+  ///   status completed·workerSignedAt·pdfStoragePath 를 쓴다. 둘 다 이번 바이트와 같아야 한다.
+  ///   `absent`(없음·아직 미완료)면 한 번만 더 읽는다.
+  Future<({String verdict, String pdfStoragePath, String sigStoragePath})> _confirmWorkerSignatureCommitted(
+    EmploymentContractModel contract,
+    Uint8List signatureBytes,
+    Uint8List pdfBytes,
+  ) async {
+    final sigHash = sha256.convert(signatureBytes).toString();
+    final pdfHash = sha256.convert(pdfBytes).toString();
+    final reader = _contractDocReader ??
+        (String id) async =>
+            (await _db.collection('employment_contracts').doc(id).get()).data();
+    String verdictOf(Map<String, dynamic>? d) {
+      if (d == null) return 'absent';
+      final appIds = (d['applicationIds'] as List?)?.whereType<String>().toSet() ?? const <String>{};
+      final sameApp = contract.applicationId.isNotEmpty &&
+          (d['applicationId'] == contract.applicationId || appIds.contains(contract.applicationId));
+      if (!sameApp ||
+          d['businessId'] != contract.businessId ||
+          d['workerId'] != contract.workerId) {
+        return 'mismatch';
+      }
+      if (d['status'] != 'completed' || d['workerSignedAt'] == null) return 'absent';
+      final pathOk = (d['pdfStoragePath'] as String? ?? '').isNotEmpty;
+      return (d['workerSignatureHash'] == sigHash && d['pdfHash'] == pdfHash && pathOk)
+          ? 'committed'
+          : 'mismatch';
+    }
+
+    for (var attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await Future<void>.delayed(_employerSignatureRecheckDelay);
+      Map<String, dynamic>? doc;
+      try {
+        doc = await reader(contract.id);
+      } catch (e) {
+        debugPrint('⚠️ [contract] 근무자 서명 커밋 확인 읽기 실패 (${contract.id}): $e');
+        return (verdict: 'readFailed', pdfStoragePath: '', sigStoragePath: '');
+      }
+      final v = verdictOf(doc);
+      if (v == 'committed') {
+        return (
+          verdict: v,
+          pdfStoragePath: doc!['pdfStoragePath'] as String,
+          sigStoragePath: doc['workerSignatureStoragePath'] as String? ?? '',
+        );
+      }
+      if (v != 'absent') return (verdict: v, pdfStoragePath: '', sigStoragePath: '');
+    }
+    return (verdict: 'absent', pdfStoragePath: '', sigStoragePath: '');
   }
 
   // ── 사용자 서명 저장/삭제 ─────────────────────────────────────
@@ -434,6 +783,57 @@ class ContractService {
     }
   }
 
+  /// [BULK-DISPATCH-RECONCILE] 이 지원서에 **발송된 계약이 있는지** 원장에 묻는다.
+  ///
+  ///   일괄 발송이 실패했을 때 지원 상태를 되돌리기 전에 쓴다. 판정식은 서버와
+  ///   **같은 한 벌**이다 — `srvContractNotIssuedYet`:
+  ///   `voided · pending_employer · draft · (상태 없음)` 은 아직 미발송이다.
+  ///
+  ///   읽기 실패는 [ContractLedgerProbe.unknown] 이다. 0건으로 바꾸지 않는다.
+  ///
+  ///   조회 범위: 그 지원서 하나(`callableGetContractsByBiz` 의 `applicationId`
+  ///   경로). 목록 전체를 다시 읽지 않고, polling 도 하지 않는다.
+  ///
+  ///   한계: CF 의 `applicationId` 경로는 **1차 링크만** 본다
+  ///   (`applicationIds array-contains` 2차 링크는 보지 않는다). 번들 2차
+  ///   지원서는 지금 생성 경로가 없어 실사용에는 해당 사례가 없다.
+  Future<ContractLedgerProbe> probeIssuedContract(
+    String applicationId, {
+    required String businessId,
+  }) async {
+    if (applicationId.isEmpty || businessId.isEmpty) {
+      return ContractLedgerProbe.unknown;
+    }
+    try {
+      final res = await _fn
+          .httpsCallable('callableGetContractsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)))
+          .call({
+        'businessId': businessId,
+        'applicationId': applicationId,
+        'limit': 10,
+      });
+      final data = res.data;
+      if (data is! Map) return ContractLedgerProbe.unknown;
+      final listRaw = data['contracts'];
+      // 응답 모양이 다르면 "없다"가 아니라 "모른다"다.
+      if (listRaw is! List) return ContractLedgerProbe.unknown;
+      final issued = listRaw.whereType<Map>().any((m) {
+        final s = (m['status'] as String?) ?? '';
+        return !(s.isEmpty ||
+            s == 'voided' ||
+            s == 'pending_employer' ||
+            s == 'draft');
+      });
+      return issued
+          ? ContractLedgerProbe.issued
+          : ContractLedgerProbe.notIssued;
+    } catch (e) {
+      debugPrint('⚠️ [contract] 원장 재조회 실패 ($applicationId): $e');
+      return ContractLedgerProbe.unknown;
+    }
+  }
+
   /// applicationId 목록으로 계약서 상태 일괄 조회 (지원명단 배지용)
   /// 반환: applicationId → contractStatus 문자열 (계약서 없으면 null)
   ///
@@ -441,12 +841,21 @@ class ContractService {
   ///   applicationIds를 30개씩 청크로 나눠 callableGetContractsByBiz 병렬 호출.
   ///   CF는 applicationId 필드 직접 매핑만 수행하므로 번들 슬롯 2차 applicationId는
   ///   탐색 불가(null 처리). 배지 표시 전용 기능이므로 허용된 설계.
-  Future<Map<String, String?>> getContractStatusBatch(
+  ///
+  /// [REISSUE-RECOVERY] **조회 실패한 지원서는 `unresolved` 로 따로 돌려준다.**
+  ///
+  ///   예전에는 청크 호출이 실패해도 그 청크의 모든 id 를 `null` 로 채웠다.
+  ///   소비자는 `null` 을 "계약서 없음"으로 읽는다 — 그래서 조회 실패가
+  ///   `계약서 미작성 N명` 이라는 **가짜 업무**가 됐고, 이미 완료된 계약에도
+  ///   `계약서 작성` 버튼이 떴다. ERROR 와 ZERO 는 다른 사실이다.
+  ///   성공한 청크의 결과는 그대로 쓴다 — 부분 성공을 버리지 않는다.
+  Future<ContractStatusBatch> getContractStatusBatch(
     List<String> applicationIds, {
     required String businessId,
   }) async {
-    if (applicationIds.isEmpty) return {};
+    if (applicationIds.isEmpty) return const ContractStatusBatch();
     final result = <String, String?>{};
+    final unresolved = <String>{};
 
     // CF 병렬 호출: applicationIds 30개 단위 청크
     const chunkSize = 30;
@@ -459,25 +868,36 @@ class ContractService {
           final res = await _fn
               .httpsCallable('callableGetContractsByBiz')
               .call({'businessId': businessId, 'applicationIds': chunk, 'limit': 200});
-          final raw = (res.data['contracts'] as List? ?? []).whereType<Map>().toList();
-          for (final c in raw) {
+          final data = res.data;
+          final raw = data is Map ? data['contracts'] : null;
+          if (raw is! List) {
+            // 응답 모양이 다르면 "계약 0건"이 아니라 **모르는 것**이다.
+            unresolved.addAll(chunk);
+            return;
+          }
+          for (final c in raw.whereType<Map>()) {
             final appId = c['applicationId'] as String?;
             final status = c['status'] as String?;
             if (appId != null && !result.containsKey(appId)) {
               result[appId] = status;
             }
           }
-        } catch (e) { debugPrint('⚠️ 계약 상태 조회 오류 (청크): $e'); }
+        } catch (e) {
+          debugPrint('⚠️ 계약 상태 조회 오류 (청크 ${chunk.length}건): $e');
+          unresolved.addAll(chunk);
+        }
       }());
     }
     await Future.wait(futures);
 
-    // 미매칭 항목 null 처리 (번들 슬롯 2차 applicationId 포함)
+    // 미매칭 항목 null 처리 (번들 슬롯 2차 applicationId 포함).
+    //   조회에 성공한 청크에서만 "없음"으로 단정한다.
     for (final id in applicationIds) {
+      if (unresolved.contains(id)) continue;
       result.putIfAbsent(id, () => null);
     }
 
-    return result;
+    return ContractStatusBatch(statuses: result, unresolved: unresolved);
   }
 
   static final _fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3');
@@ -592,6 +1012,91 @@ class ContractService {
 
 
   /// 계약서 무효화 (관리자 전용)
+  /// [R8P6-PDF-REMEDIATION] 계약서 PDF 열람 링크를 **그때의 권한으로** 받는다.
+  ///
+  ///   예전에는 계약 문서의 `pdfUrl`(영구 다운로드 토큰)을 그대로 열었다.
+  ///   그 URL 은 만료가 없고 로그인도 필요 없어서, 한 번 본 사람이 권한을
+  ///   잃은 뒤에도 계속 열 수 있었다. 이제는 열 때마다 서버가 계약 당사자·
+  ///   사업장 관계·`canManageContract` 를 확인한 뒤 15분 링크를 낸다.
+  ///
+  ///   돌려받은 URL 은 **저장하지 않는다.** 만료되면 다시 부른다.
+  ///   레거시 계약(`pdfStoragePath` 없음)도 서버가 경로를 역산해 처리한다.
+  Future<String> fetchContractPdfUrl(String contractId) async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetContractPdfSignedUrl',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+    final result = await callable.call({'contractId': contractId});
+    final data = result.data as Map<dynamic, dynamic>?;
+    final url = data?['signedUrl'] as String? ?? '';
+    if (url.isEmpty) throw Exception('CF 응답에 signedUrl 없음');
+    return url;
+  }
+
+  /// [R8P6-SIG-CUTOVER] 서명 이미지(PNG) 열람 링크를 **그때의 권한으로** 받는다.
+  ///
+  ///   PDF 와 같은 인가 한 벌(`srvAssertContractViewAccess`)을 쓴다 — 같은 계약에서
+  ///   PDF 는 열리고 서명은 막히는 상태가 생기지 않는다.
+  ///   계약이 `pending_worker`(사업주만 서명)인 동안에도 근로자는 당사자이므로
+  ///   사업주 서명을 볼 수 있다. 서버는 계약 **상태를 보지 않는다.**
+  ///
+  ///   `role` 은 `employer` 또는 `worker`. 클라이언트는 Storage 경로를
+  ///   **보내지 않는다** — 서버가 계약 문서에서 경로를 찾고, 레거시 계약은
+  ///   기존 URL 에서 경로만 역산한다.
+  Future<ContractSignatureLink> fetchContractSignature(
+    String contractId,
+    String role,
+  ) async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetContractSignatureUrl',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+    final result = await callable.call({
+      'contractId': contractId,
+      'role': role,
+    });
+    final data = result.data as Map<dynamic, dynamic>?;
+    final url = data?['signedUrl'] as String? ?? '';
+    if (url.isEmpty) throw Exception('CF 응답에 signedUrl 없음');
+    return ContractSignatureLink(
+      url: url,
+      // 서버가 판을 못 주는 구버전 CF 와 섞여 돌 수 있다 — 그때는 계약·역할만으로
+      //   키를 만든다(재서명 후 옛 이미지가 남을 수 있으나 깨지지는 않는다).
+      version: data?['signatureVersion'] as String? ?? 'unknown',
+    );
+  }
+
+  /// [R8P6-SIG-CUTOVER] 서명 이미지 **바이트**를 가져온다 — PDF 에 박을 때 쓴다.
+  ///
+  ///   예전에는 계약 문서의 영구 토큰 URL 을 `http.get` 했다. 그 URL 이 사라지는
+  ///   단계 C 에서는 **사업주 서명이 빠진 PDF 가 조용히 만들어졌다** — 서명란이
+  ///   빈 계약서가 완료 처리되는 셈이다. 그래서 여기서는 못 가져온 것을
+  ///   **예외로** 알린다. 빈 바이트를 돌려주지 않는다.
+  ///
+  ///   만료는 정상적인 일이다(링크 수명 15분). 403/401 이면 **한 번** 다시 발급받아
+  ///   재시도한다. 두 번째도 실패하면 예외다.
+  Future<Uint8List> fetchContractSignatureBytes(
+    String contractId,
+    String role,
+  ) async {
+    Future<http.Response> get(String url) => _http.get(Uri.parse(url));
+
+    var link = await fetchContractSignature(contractId, role);
+    var resp = await get(link.url);
+
+    if (resp.statusCode == 401 || resp.statusCode == 403) {
+      // 만료되었거나 서명이 더는 유효하지 않다 — 그때의 권한으로 한 번 더 받는다.
+      link = await fetchContractSignature(contractId, role);
+      resp = await get(link.url);
+    }
+
+    if (resp.statusCode != 200) {
+      throw Exception('서명 이미지를 불러오지 못했습니다 (HTTP ${resp.statusCode})');
+    }
+    if (resp.bodyBytes.isEmpty) {
+      throw Exception('서명 이미지가 비어 있습니다');
+    }
+    return resp.bodyBytes;
+  }
+
   ///
   /// [CONTRACT-VOID-ATOMIC 2026-09-07] callableVoidContractWithApplications CF로 교체.
   ///   Contract void + Application cancel + ID-CONSENT grant revoke를 단일 Firestore
@@ -676,6 +1181,18 @@ class ContractService {
             'workDetailId': workDetailId,
             'workerId': workerId,
             'isLongTerm': false,
+            // [GAP-1] 슬롯을 **추가할 수 있는** 계약만 고른다.
+            //
+            //   예전에는 상태를 묻지 않고 `limit: 1` 로 받아 와서 호출자가
+            //   걸렀다. 그런데 그 CF 는 `orderBy` 가 없어 문서 id 순으로 주고
+            //   auto-id 는 무작위다 — 같은 키에 계약이 둘 이상이면(사업주 서명
+            //   뒤 날짜가 추가돼 쪼개진 경우) **아무거나** 하나가 왔다.
+            //   그게 서명된 쪽이면 이어붙일 수 있는 미서명 계약을 놓치고
+            //   계약이 또 쪼개졌다.
+            //
+            //   서버는 `status` 를 `limit` **전에** where 로 적용하므로
+            //   (`buildBase()` → `q.limit(cap)`), 여기서 넘기면 후보가 정확해진다.
+            'status': 'pending_employer',
             'limit': 1,
           });
       final raw = (res.data['contracts'] as List? ?? []).whereType<Map>().toList();
@@ -696,11 +1213,13 @@ class ContractService {
     ApplicationModel application,
     WorkDetailData workDetail,
   ) async {
+    // [GAP-2] 시간은 그 날짜의 지원서에서, 임금은 이미 그렇게 하고 있었다.
+    final times = _promisedTimes(application);
     final newSlot = ContractSlot(
       applicationId: application.id,
       workDate: _fmtDate(application.workDate),
-      startTime: workDetail.startTime,
-      endTime: workDetail.endTime,
+      startTime: times.start,
+      endTime: times.end,
       wage: workDetail.wage,
       wageType: workDetail.wageType,
     );
@@ -798,11 +1317,12 @@ class ContractService {
     final slots = isLong
         ? <ContractSlot>[]
         : [
+            // [GAP-2] 시간의 출처는 그 날짜의 지원서다 — 마스터 TO 가 아니다.
             ContractSlot(
               applicationId: application.id,
               workDate: _fmtDate(application.workDate),
-              startTime: workDetail.startTime,
-              endTime: workDetail.endTime,
+              startTime: _promisedTimes(application).start,
+              endTime: _promisedTimes(application).end,
               wage: workDetail.wage,
               wageType: workDetail.wageType,
             ),

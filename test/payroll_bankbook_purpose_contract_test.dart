@@ -232,7 +232,10 @@ void main() {
           _after(screen, 'foregroundColor: bankViewAttention', 300);
       expect(r.contains("'통장사본 보기'"), isTrue, reason: '일상 접근 문구');
       expect(r.contains("'통장사본 확인'"), isTrue, reason: '주의 문구');
-      expect(r.contains('AppColors.infoDark'), isTrue, reason: '주의 색');
+      // [UI-3] 주의 색은 '이체 전 사람이 할 단계' 공통 표현(브랜드 테두리)으로 바뀌었다.
+      //   의미는 같다 — 평소(중립 글자)와 다른 색으로 구별된다.
+      expect(r.contains('AppColors.brand'), isTrue, reason: '주의 색');
+      expect(r.contains('AppColors.textSecondary'), isTrue, reason: '평소 색');
     });
 
     test('§10 target 선정이 canonical 하다', () {

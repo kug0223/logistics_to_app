@@ -46,6 +46,8 @@ import 'package:ALfit/utils/dialog_helper.dart';
 import 'package:ALfit/widgets/dialogs/apply/document_access_consent.dart';
 import 'package:ALfit/widgets/dialogs/apply/multi_apply_confirm_sheet.dart';
 
+import 'support/visible_text.dart';
+
 class _FakeApp extends Fake
     with MockPlatformInterfaceMixin
     implements FirebaseAppPlatform {
@@ -310,7 +312,7 @@ void main() {
     final sink = await _open(tester, w: 320, h: 640, scale: 2.0, count: 3);
 
     final parts = DocumentAccessConsent.partsFor(kBizName);
-    final tail = find.text(parts.last);
+    final tail = findVisibleText(parts.last); // [DU288] 보이는 글자(낱말 묶음 문자 제외)
     expect(tail, findsOneWidget, reason: '동의 마지막 문단이 트리에 있어야 한다');
     await tester.ensureVisible(tail);
     await tester.pump();
@@ -350,7 +352,7 @@ void main() {
     testWidgets('MAC-53 모든 문단이 화면에 그려진다', (tester) async {
       await _open(tester, w: 360, h: 800, scale: 1.0, count: 1);
       for (final p in DocumentAccessConsent.partsFor(kBizName)) {
-        expect(find.text(p), findsOneWidget,
+        expect(findVisibleText(p), findsOneWidget, // [DU288] 보이는 글자
             reason: '동의 내용이 일부라도 사라지면 안 된다: $p');
       }
       await tester.pump(const Duration(seconds: 5));

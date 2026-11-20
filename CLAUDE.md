@@ -1,5 +1,15 @@
 # AlFit 프로젝트 Claude 작업 지침
 
+## 역할 분담 · 공용 기록 (2026-11-04)
+
+- Claude = 구현·테스트·시뮬레이터 검증. Codex(gpt-6.1-sol) = 독립 감사 + 공용 기준 문서 관리.
+- 공용 기록 폴더: `C:\Users\kug02\codex-audit\records` — Continuity Index / Integrity Ledger / UX Master 는 **Codex만 직접 갱신**. Claude는 읽고, 구현·실행 증거는 별도 보고서(`reports/<PhaseID>_implementation_<차수>.md` 또는 기존 보고 폴더)로 남긴다.
+- 보고서에는 worktree·HEAD·미커밋 변경, 문제·writer/state/readers, 테스트 결과, DEV·시뮬레이터 증거 경로, 미실행·잔여를 적는다. 이전 차수를 덮어쓰지 않고, 전체 PRODUCT VERIFIED를 임의 선언하지 않는다.
+- 감사 요청: `C:\Users\kug02\codex-audit\ask-codex.ps1` (읽기 전용, `-Records`면 records 폴더만 쓰기). 아래 정책·HOLD는 그대로 유지된다.
+- 2026-11-05 대화 연결: 위 래퍼는 고정 대화 `01a1a598-83fa-7a22-9a37-c0ff9b4b9aa4` (`ALfit · Claude 협업·독립 감사`)에 공식 메시지 큐로 요청 원문과 실제 CLI 결과를 자동 누적한다. 감사 실행은 기존 읽기 전용/`-Records` 격리를 유지하고, 대화에는 출처를 표시한 전달 기록을 남긴다. UI 수신 시 같은 감사를 다시 실행하거나 공통 정본 writer를 추가하지 않는다. 직접 임시 실행·새 세션·`--last`로 이 전달 경로를 대체하지 않는다. 래퍼 호출끼리는 순서대로 실행하며, 기존 로그와 공용 기록을 보존한다.
+- 이미지 여러 장은 `-Images "C:/path/a.png,D:/path/b.png"` 형식도 지원한다. 래퍼가 배열/쉼표 목록을 정규화해 감사 CLI와 대화 큐에 같은 개수로 전달한다.
+- 래퍼 종료 코드 `91`은 감사 CLI 성공 후 대화 전달에 문제가 있었다는 뜻이다. 같은 감사를 다시 실행하지 말고 해당 요청 ID의 `.last.txt`·`.log`와 `.request.queue-receipt.json`·`.result.queue-receipt.json`을 확인한다. 큐 상태가 `unknown`이면 중복 여부 확인 없이 재전송하지 않는다.
+
 ## 절대 금지 사항
 
 ### Android 패키지 관련 파일 — 절대 수정 금지
@@ -507,3 +517,19 @@ PENDING 자체가 대기 상태이며, 관리자가 PENDING 인원 중에서 선
 - CF: `callableMarkIdCardVerified` — Storage 경로 소유권 검증 + isIdVerified 설정
 - CF: `callableRecordTermsConsent` — 4가지 조건 확인 → active 자동 전환
 - CF: `callableAdminApproveForeignWorker` — V3에서 `unimplemented` throw로 비활성화 (dead code 제거 완료)
+
+## 전체 디자인 통일 · 사용자 선택 (2026-11-04)
+
+- 요청 정본: C:\Users\kug02\codex-audit\records\ALfit_Design_Unification_Request_2026-11-04.md
+- 선택 이미지: C:\Users\kug02\codex-audit\records\ALfit_Design_Concept_01.png — Claude도 두 파일을 실제 열고 확인한다.
+- 계획/기준: 같은 records의 ALfit_Design_Unification_Plan_2026-11-04.md / ALfit_Design_Standards_2026-11-04.md. 단일 적용표는 ALfit_Design_Surface_Register.csv다.
+- 첫 실행: records\requests\DU_implementation_1.md → DU_revalidation_1.md. 현재 .82의 증거·변경·원복 상태를 보존한 안정 지점에서 원본 확인 ACK 후 진행하며, 파일 게시만으로 상대 세션 실행을 가정하지 않는다.
+- 전체 목록 → 공통 기준 → 실제 대표 화면 → 밀도 패턴/전체 확장 → 실제 화면 재검증. 세 시안 화면에 한정하지 않고 가입부터 근무·급여·정산까지 적용한다.
+- 기존 전면 디자인 후속 제한은 사용자 승인 디자인 범위에서 대체한다. 실제 탭·정책·데이터/권한·검증 이력·HOLD·Android 금지 파일은 보존한다. Claude가 구현/기기 조작, 지정 Codex가 독립 감사/기준 기록을 담당한다. 공통 기준 문서의 별도 writer를 만들지 않는다.
+- **두 축 체계 (2026-11-06 사용자 지시 「매번 지적하지 않게 체계적으로」)**: 글자·대비·잘림·터치만 고치고 시각 완성도를 "적합"이라 쓰지 않는다. 매 DU 구현 보고는 다음을 갖춘다.
+  - `## … 시안 대조` 절: 시안·before·after 합성 PNG를 직접 열람하고 V1~V11 표를 채운다. V1~V11은 위계·헤더·섹션 구조·표면 깊이·행 패턴·강조/색·아이콘·여백·빈 상태·버튼 위계·교차 일관성이다.
+  - `## … 견고성` 절.
+  - 합성은 `records/work/du-tools/du_vq_compare.py`로 만든다.
+  - 감사 요청 전 `du_report_check.py <보고서>`를 통과해야 한다. 미통과면 요청하지 않는다. 합성 PNG는 `-Images`로 함께 보낸다.
+  - 요청서가 견고성 한 셀만 지정해도 V표는 채우고, 범위 밖은 `후보`로 올린다(판정은 Codex).
+  - 근거: `records/reports/DU_two_axis_protocol_2026-11-06.md`, 방향 검토 §7.2.

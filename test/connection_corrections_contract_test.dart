@@ -111,7 +111,10 @@ void main() {
       final fn = _tsSliceOf(cf, 'export const callableGetMyApplications',
           'export const callableGetMyInvitations');
       expect(fn.contains('workInstanceFull'), isTrue);
-      expect(fn.contains('getWorkDetailCount'), isTrue);
+      // [INVITE-CLOSURE-PROJECTION] 정원 판정은 수락 tx 와 같은 투영 함수가 한다.
+      expect(fn.contains('srvInviteUnitProjection('), isTrue);
+      expect(_tsSliceOf(cf, 'function srvInviteUnitProjection(', 'async function srvInviteReviewWindowOpen(')
+          .contains('getWorkDetailCount'), isTrue);
       // INVITED 문서에만 계산 — 일반 조회에 추가 read를 만들지 않는다
       expect(fn.contains('d.data()["status"] === "INVITED"'), isTrue);
     });
@@ -151,7 +154,7 @@ void main() {
       const nextGuard =
           'if (app.workInstanceCapacityState == InviteCapacityState.unknown) {';
       expect(code.contains(guard), isTrue);
-      expect(code.contains("'모집이 완료된 초대예요'"), isTrue);
+      expect(code.contains("'모집 인원이 찼어요'"), isTrue);
       final at = code.indexOf(guard);
       final end = code.indexOf(nextGuard, at);
       expect(end, greaterThan(at), reason: 'UNKNOWN 분기가 full 뒤에 없다');
@@ -289,7 +292,10 @@ void main() {
 
     test('05-e 상태는 canonical status에서 읽는다 — 새 enum 없음', () {
       // [R2.2.1] capacity를 함께 본다 — 시그니처에 isFull이 붙었다.
-      final b = _after(dlg, '(String, Color) _inviteStateLabel(', 1400);
+      // [INVITE-TERMINAL] CANCELED 분기에 사업장 쪽 철회 사유가 붙어 본문이 길어졌다 — 창만 넓힌다.
+      // [E2-INVITED-SEAT] 라벨 본문은 공용 함수(inviteStateLabelOf)로 옮겼다.
+      expect(dlg.contains('inviteStateLabelOf(app, capacity: capacity)'), isTrue);
+      final b = File('lib/widgets/admin/invite_state_label.dart').readAsStringSync();
       for (final s in ['초대 중', '초대 거절', '초대 철회', '응답 만료']) {
         expect(b.contains(s), isTrue, reason: s);
       }

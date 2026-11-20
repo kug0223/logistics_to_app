@@ -5,6 +5,7 @@
 //  P33-X2 TO 한도의 단위·적용 시점 (F6)
 //
 // 쓰기는 한 번도 실행하지 않는다 — 확인창을 여는 데까지만 간다.
+import 'support/visible_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -159,7 +160,7 @@ Future<void> _pushContract(
     ),
   );
   await tester.pump();
-  await tester.tap(find.text('계약 관리 열기'));
+  await tester.tap(findVisibleText('계약 관리 열기'));
   for (var i = 0; i < 30; i++) {
     await tester.pump(const Duration(milliseconds: 50));
   }
@@ -316,9 +317,9 @@ void main() {
     await _pushContract(tester, contract: false);
 
     // 예전에는 여기서 말없이 닫혔다.
-    expect(find.text('계약 관리 열기'), findsNothing);
-    expect(find.text('접근 권한이 없습니다'), findsOneWidget);
-    expect(find.text('계약 관리 권한이 있는 관리자에게 문의하세요.'), findsOneWidget);
+    expect(findVisibleText('계약 관리 열기'), findsNothing);
+    expect(findVisibleText('접근 권한이 없습니다'), findsOneWidget);
+    expect(findVisibleText('계약 관리 권한이 있는 관리자에게 문의하세요.'), findsOneWidget);
   });
 
   testWidgets('[ACX-2] 금지된 계약 내용은 한 줄도 열리지 않는다', (tester) async {
@@ -326,15 +327,15 @@ void main() {
 
     // 목록·검색 같은 본문 장치가 없다.
     expect(find.byType(TextField), findsNothing);
-    expect(find.text('이름 또는 업무로 검색'), findsNothing);
-    expect(find.text('근무자 이름으로 검색'), findsNothing);
+    expect(findVisibleText('이름 또는 업무로 검색'), findsNothing);
+    expect(findVisibleText('근무자 이름으로 검색'), findsNothing);
   });
 
   testWidgets('[ACX-3] 권한이 있으면 본문이 열린다 (양성 대조)', (tester) async {
     await _pushContract(tester, contract: true);
 
-    expect(find.text('접근 권한이 없습니다'), findsNothing);
-    expect(find.text('권한을 확인하지 못했습니다'), findsNothing);
+    expect(findVisibleText('접근 권한이 없습니다'), findsNothing);
+    expect(findVisibleText('권한을 확인하지 못했습니다'), findsNothing);
     expect(find.byType(TextField), findsWidgets); // 검색창이 살아 있다
   });
 
@@ -342,8 +343,8 @@ void main() {
     await _pushContract(tester, contract: true, member: false);
 
     // 머물 이유가 없다 — 앞 화면으로 돌아온다.
-    expect(find.text('계약 관리 열기'), findsOneWidget);
-    expect(find.text('접근 권한이 없습니다'), findsNothing);
+    expect(findVisibleText('계약 관리 열기'), findsOneWidget);
+    expect(findVisibleText('접근 권한이 없습니다'), findsNothing);
   });
 
   testWidgets('[ACX-5] 320dp × 2.0 — 거부 안내가 잘리지 않는다', (tester) async {
@@ -351,8 +352,8 @@ void main() {
         contract: false, size: const Size(320, 2000), textScale: 2.0);
 
     expect(tester.takeException(), isNull);
-    expect(find.text('접근 권한이 없습니다'), findsOneWidget);
-    expect(find.text('계약 관리 권한이 있는 관리자에게 문의하세요.'), findsOneWidget);
+    expect(findVisibleText('접근 권한이 없습니다'), findsOneWidget);
+    expect(findVisibleText('계약 관리 권한이 있는 관리자에게 문의하세요.'), findsOneWidget);
   });
 
   // ══ P33-X1 ═══════════════════════════════════════════════════════════════
@@ -361,18 +362,18 @@ void main() {
     await _pumpUsers(tester);
 
     // 블랙리스트 상태인 쪽(minsu01)을 고른다.
-    await tester.tap(find.text('김민수').first);
+    await tester.tap(findVisibleText('김민수').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('@minsu01 · 지원자'), findsOneWidget);
+    expect(findVisibleText('@minsu01 · 지원자'), findsOneWidget);
 
-    await tester.tap(find.text('블랙리스트 해제'));
+    await tester.tap(findVisibleText('블랙리스트 해제'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
     // 상세 시트는 닫혔다 — 그런데도 대상이 그대로 보인다.
-    expect(find.textContaining('@minsu01'), findsOneWidget);
-    expect(find.textContaining('이 계정의 블랙리스트를 해제하시겠습니까?'),
+    expect(findVisibleTextContaining('@minsu01'), findsOneWidget);
+    expect(findVisibleTextContaining('이 계정의 블랙리스트를 해제하시겠습니까?'),
         findsOneWidget);
     // 쓰기는 하지 않는다 — 확인창을 여는 데까지만.
   });
@@ -381,33 +382,33 @@ void main() {
     await _pumpUsers(tester);
 
     // 블랙리스트가 아닌 쪽(minsu77) — 등록 경로(사유 입력)로 간다.
-    await tester.tap(find.text('김민수').last);
+    await tester.tap(findVisibleText('김민수').last);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('@minsu77 · 지원자'), findsOneWidget);
+    expect(findVisibleText('@minsu77 · 지원자'), findsOneWidget);
 
-    await tester.tap(find.text('블랙리스트 등록'));
+    await tester.tap(findVisibleText('블랙리스트 등록'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
     // 사유 입력창에도 대상이 붙는다 — 제목만으로는 누구인지 알 수 없었다.
-    expect(find.textContaining('@minsu77'), findsOneWidget);
-    expect(find.textContaining('@minsu01'), findsNothing);
+    expect(findVisibleTextContaining('@minsu77'), findsOneWidget);
+    expect(findVisibleTextContaining('@minsu01'), findsNothing);
   });
 
   testWidgets('[ACX-8] 320dp × 2.0 — 확인창의 식별자가 잘리지 않는다', (tester) async {
     await _pumpUsers(tester,
         size: const Size(320, 2400), textScale: 2.0);
 
-    await tester.tap(find.text('김민수').first);
+    await tester.tap(findVisibleText('김민수').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.text('블랙리스트 해제'));
+    await tester.tap(findVisibleText('블랙리스트 해제'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
     expect(tester.takeException(), isNull);
-    expect(find.textContaining('@minsu01'), findsOneWidget);
+    expect(findVisibleTextContaining('@minsu01'), findsOneWidget);
   });
 
   // ══ P33-X2 ═══════════════════════════════════════════════════════════════
@@ -415,29 +416,29 @@ void main() {
   testWidgets('[ACX-9] 전역 탭이 단위와 적용 시점을 말한다', (tester) async {
     await _pumpLimit(tester);
 
-    expect(find.textContaining('한도는 한 관리자 계정이 동시에 진행 중인 공고 수입니다.'),
+    expect(findVisibleTextContaining('한도는 한 관리자 계정이 동시에 진행 중인 공고 수입니다.'),
         findsOneWidget);
-    expect(find.textContaining('사업장 수가 아닙니다'), findsOneWidget);
+    expect(findVisibleTextContaining('사업장 수가 아닙니다'), findsOneWidget);
     expect(
-        find.textContaining('새 공고를 등록할 때만 적용되고, 이미 등록된 공고는 닫히지 않습니다.'),
+        findVisibleTextContaining('새 공고를 등록할 때만 적용되고, 이미 등록된 공고는 닫히지 않습니다.'),
         findsOneWidget);
     // 기존 문구는 그대로 남는다.
-    expect(find.textContaining('draft 상태로는 제한 없이 저장 가능합니다.'),
+    expect(findVisibleTextContaining('draft 상태로는 제한 없이 저장 가능합니다.'),
         findsOneWidget);
   });
 
   testWidgets('[ACX-10] 관리자별 탭도 사업장 수와 한도를 갈라 말한다', (tester) async {
     await _pumpLimit(tester);
-    await tester.tap(find.text('관리자별 한도'));
+    await tester.tap(findVisibleText('관리자별 한도'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
     // 두 수가 나란히 있는 바로 그 목록 앞에서 단위를 못박는다.
-    expect(find.textContaining('한도는 동시에 진행 중인 공고 수입니다 — 사업장 수가 아닙니다.'),
+    expect(findVisibleTextContaining('한도는 동시에 진행 중인 공고 수입니다 — 사업장 수가 아닙니다.'),
         findsOneWidget);
-    expect(find.text('2개 사업장 관리 중'), findsOneWidget);
-    expect(find.text('개별 3개'), findsOneWidget);
-    expect(find.text('전역 7개'), findsOneWidget);
+    expect(findVisibleText('2개 사업장 관리 중'), findsOneWidget);
+    expect(findVisibleText('개별 3개'), findsOneWidget);
+    expect(findVisibleText('전역 7개'), findsOneWidget);
   });
 
   testWidgets('[ACX-11] 전역값을 모르는 상태에서 가짜 기본값이 저장되지 않는다',
@@ -445,13 +446,13 @@ void main() {
     await _pumpLimit(tester, failGlobal: true);
 
     // P3-2 에서 고친 상태가 그대로다 — 숫자를 말하지 않는다.
-    expect(find.textContaining('현재 기본 한도:'), findsNothing);
-    expect(find.textContaining('현재 기본 한도를 불러오지 못했습니다.'), findsOneWidget);
+    expect(findVisibleTextContaining('현재 기본 한도:'), findsNothing);
+    expect(findVisibleTextContaining('현재 기본 한도를 불러오지 못했습니다.'), findsOneWidget);
 
     // 입력칸은 비어 있고, 그 상태로 저장을 눌러도 값이 만들어지지 않는다.
     final field = tester.widget<TextField>(find.byType(TextField).first);
     expect(field.controller?.text, '');
-    await tester.tap(find.text('저장').first);
+    await tester.tap(findVisibleText('저장').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     // 저장 경로는 `int.tryParse` 로 막힌다 — 자동으로 4가 들어가지 않는다.
@@ -462,7 +463,7 @@ void main() {
     await _pumpLimit(tester, size: const Size(320, 2800), textScale: 2.0);
 
     expect(tester.takeException(), isNull);
-    expect(find.textContaining('사업장 수가 아닙니다'), findsOneWidget);
-    expect(find.text('현재 기본 한도: 7개'), findsOneWidget);
+    expect(findVisibleTextContaining('사업장 수가 아닙니다'), findsOneWidget);
+    expect(findVisibleText('현재 기본 한도: 7개'), findsOneWidget);
   });
 }

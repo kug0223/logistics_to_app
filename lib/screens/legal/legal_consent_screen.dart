@@ -20,9 +20,12 @@ import 'package:flutter/material.dart';
 import '../../models/core/legal_readiness.dart';
 import '../../models/core/legal_terms_model.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/light_app_bar_style.dart';
+import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../services/legal_terms_service.dart';
 import '../../utils/terms_consent_plan.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/auth/legal_consent_list.dart';
 import 'legal_consent_reads.dart';
@@ -104,6 +107,10 @@ class _LegalConsentScreenState extends State<LegalConsentScreen> {
       _submitting = true;
       _errorMessage = null;
     });
+    // [.54] 기록 요청이 서버에서 **성공했는가**와 그 뒤 상태 재확인을 나눈다.
+    //   예전에는 재확인 읽기 하나가 실패해도 "저장에 실패했습니다" 라고 말했다 —
+    //   실제로는 저장된 동의를 실패로 말하고, 사용자는 같은 동의를 다시 보낸다.
+    var recorded = false;
     try {
       final record = TermsConsentPlan.buildPayload(
         activeItems: terms.activeItems,
@@ -111,6 +118,7 @@ class _LegalConsentScreenState extends State<LegalConsentScreen> {
         choices: _choices,
       );
       if (record.isNotEmpty) await _reads.recordConsent(record);
+      recorded = true;
       if (!mounted) return;
       // 기록 뒤 canonical 상태를 **다시 묻는다** — 화면이 스스로
       // "이제 됐다" 고 판단하지 않는다.
@@ -143,10 +151,37 @@ class _LegalConsentScreenState extends State<LegalConsentScreen> {
       }
       debugPrint('⚠️ 약관 동의 기록 실패: $e');
       if (!mounted) return;
+      // [.54] 응답을 못 받은 경우 서버에는 저장됐을 수 있다. 저장된 기록을 다시 읽어
+      //   이미 받은 항목은 잠그고, 다시 누를 때 같은 동의를 또 보내지 않게 한다.
+      //   고른 값은 지우지 않는다. 읽기도 실패하면 그대로 둔다(자동 동의하지 않는다).
+      await _refreshStored();
+      if (!mounted) return;
       setState(() {
         _submitting = false;
-        _errorMessage = '저장에 실패했습니다.\n연결을 확인하고 다시 시도해주세요.';
+        _errorMessage = recorded
+            ? '동의는 저장됐지만 상태를 확인하지 못했습니다.\n다시 시도해 주세요.'
+            : '저장에 실패했을 수 있습니다.\n연결을 확인하고 다시 시도해주세요.';
       });
+    }
+  }
+
+  /// [.54] 저장된 동의만 다시 읽는다 — 서버에 이미 있는 항목을 화면에 반영한다.
+  Future<void> _refreshStored() async {
+    final terms = _terms;
+    if (terms == null) return;
+    try {
+      final stored = StoredConsent.parseMap(await _reads.storedConsent());
+      if (!mounted) return;
+      setState(() {
+        _stored = stored;
+        _choices = {
+          ..._choices,
+          for (final i in terms.activeItems)
+            if (TermsConsentPlan.isSatisfied(i, stored)) i.id: true,
+        };
+      });
+    } catch (e) {
+      debugPrint('⚠️ 저장된 동의 다시 읽기 실패: $e');
     }
   }
 
@@ -173,6 +208,9 @@ class _LegalConsentScreenState extends State<LegalConsentScreen> {
       appBar: AppBar(
         title: const Text('약관 동의'),
         backgroundColor: Colors.white,
+        // [E2-APPBAR-ON-LIGHT] 흰 배경 — 테마의 흰 제목·아이콘을 이 화면만 덮는다.
+        titleTextStyle: LightAppBarStyle.title(context),
+        iconTheme: LightAppBarStyle.iconTheme,
         elevation: 0,
         surfaceTintColor: Colors.transparent,
       ),
@@ -226,9 +264,11 @@ class _LegalConsentScreenState extends State<LegalConsentScreen> {
   String? get _upcomingNotice {
     final up = _readiness.upcoming;
     if (up.isEmpty) return null;
+    // [.80] 시행일은 KST 자정 instant 다 — 기기 시간대 날짜로 그리면 GMT 기기에서 하루 앞(11/12 → 11/11)이 된다(Pixel5 확인).
     final dates = up
         .map((u) => u.effectiveAt)
         .whereType<DateTime>()
+        .map(FormatHelper.toKstDate)
         .toList()
       ..sort();
     if (dates.isEmpty) {
@@ -280,13 +320,15 @@ class _LegalConsentScreenState extends State<LegalConsentScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
             children: [
-              Text(_headline,
+              // [.54] 큰 글자에서 '확|인해'·'동|의하셨는지'·'시도해주세|요' 로 끊겼다 — 낱말 단위(표시만).
+              Text(TextLayout.keepWords(_headline), semanticsLabel: _headline,
                   style: Theme.of(context)
                       .textTheme
                       .titleLarge
                       ?.copyWith(fontWeight: FontWeight.bold)),
               const SizedBox(height: 12),
-              Text(_body, style: ResponsiveHelper.smallStyle(context)),
+              Text(TextLayout.keepWords(_body), semanticsLabel: _body,
+                  style: ResponsiveHelper.smallStyle(context)),
               if (_upcomingNotice case final notice?) ...[
                 const SizedBox(height: 12),
                 _buildUpcomingNotice(notice),
@@ -299,7 +341,9 @@ class _LegalConsentScreenState extends State<LegalConsentScreen> {
                 viewed: _viewed,
                 enabled: !_submitting,
                 // 무엇이 달라졌는지 짚어 준다.
-                highlightIds: _readiness.attentionItems.toSet(),
+                // [.54] '(변경됨)' 은 새 판이 나온 항목에만 붙인다. 옛 기록이라 확인할 수 없는
+                //   항목(legacyUnknown)은 약관이 바뀐 것이 아니다 — 머리글처럼 두 사건을 나눈다.
+                highlightIds: _readiness.reconsentRequired.toSet(),
                 onChanged: (id, v) =>
                     setState(() => _choices = {..._choices, id: v}),
                 onViewed: (id) => setState(() => _viewed.add(id)),
@@ -313,7 +357,8 @@ class _LegalConsentScreenState extends State<LegalConsentScreen> {
                     color: AppColors.errorBg,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Text(_errorMessage!,
+                  child: Text(TextLayout.keepWords(_errorMessage!),
+                      semanticsLabel: _errorMessage,
                       style: ResponsiveHelper.smallStyle(context,
                           color: AppColors.error)),
                 ),

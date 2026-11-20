@@ -95,6 +95,8 @@ void main() {
   final residual = _helper(raw, 'srvCountDeletionDomainResidual');
   final expiry = _helper(raw, 'processExpiredTOInvitations');
   final dialog = _src('lib/screens/business_admin/dialogs/day_applicants_dialog.dart');
+  // [E2-INVITED-SEAT] 초대 라벨 본문은 날짜별 명단·업무별 창 공용 함수로 옮겼다.
+  final inviteLabel = _src('lib/widgets/admin/invite_state_label.dart');
   final model = _src('lib/models/core/application_model.dart');
 
   group('IAC-LIFE — 초대 lifecycle 과 canonical transition', () {
@@ -106,16 +108,32 @@ void main() {
 
     test('IAC-LIFE-02 기존 종료 상태의 의미가 그대로다', () {
       // 화면이 말하는 네 문장 — 이번 선택의 비교 기준이다.
-      expect(_flat(dialog), contains("return ('초대 거절', AppColors.grey600);"));
-      expect(_flat(dialog), contains("return ('초대 철회', AppColors.grey600);"));
-      expect(_flat(dialog), contains("return ('응답 만료', AppColors.grey600);"));
-      expect(_flat(dialog), contains("'자동 종료',"));
+      expect(dialog, contains('inviteStateLabelOf(app, capacity: capacity)'));
+      expect(_flat(inviteLabel), contains("return ('초대 거절', AppColors.grey600);"));
+      // [INVITE-TERMINAL] CANCELED 는 사유별 라벨, 기본값이 그대로 '초대 철회'다.
+      expect(_flat(inviteLabel), contains("_ => '초대 철회',"));
+      expect(_flat(inviteLabel), contains("return ('응답 만료', AppColors.grey600);"));
+      expect(_flat(inviteLabel), contains("'자동 종료',"));
     });
 
     test('IAC-LIFE-03 canonical transition 은 한 벌이고 둘이 공유한다', () {
       expect(_count(code, 'function srvTerminateWaitingApplicationInTx('), 1);
       // [R7-P4.4E.11C.0C.0b.2] 선언 1 + 호출 3(만료 · 삭제 INVITED · 삭제 PENDING).
-      expect(_count(code, 'srvTerminateWaitingApplicationInTx'), 4);
+      // [INVITE-DECLINE-TERMINAL] + 호출 1: 거절 요청이 기한 지난 INVITED 를 만나면 **같은 만료
+      //   전이**를 쓴다(새 전이를 만들지 않는다 — 한 벌을 공유한다).
+      // [E1-EXPIRED-ACCEPT-RACE] + 호출 1: 수락 요청이 기한 지난 INVITED 를 만나도 **같은 만료
+      //   전이**를 트랜잭션 안에서 쓴다. 예전의 batch(트랜잭션 밖 읽기 뒤 −1)는 스케줄러 만료와
+      //   겹치면 대기를 두 번 내렸다(로컬 결정적 하네스 실측) — 그 경로는 사라져야 한다.
+      expect(_count(code, 'srvTerminateWaitingApplicationInTx'), 6);
+      final acceptIdx = code.indexOf('export const callableAcceptTOInvitation');
+      expect(acceptIdx, greaterThan(0));
+      final accept = code.substring(acceptIdx, code.indexOf('\nexport const ', acceptIdx + 10));
+      final acceptFlat = _flat(accept);
+      expect(acceptFlat, contains('await db.runTransaction((tx) => '
+          'srvTerminateWaitingApplicationInTx(tx, appRef, { '
+          'expectStatus: "INVITED", status: "EXPIRED", action: "AUTO_EXPIRE",'));
+      expect(accept, isNot(contains('expireBatch')),
+          reason: '트랜잭션 밖 batch 로 만료·차감하는 경로가 남아 있으면 중복 차감이 다시 열린다');
       expect(_flat(expiry), contains(
           'srvTerminateWaitingApplicationInTx(tx, doc.ref, { '
           'expectStatus: "INVITED", status: "EXPIRED",'));
@@ -336,12 +354,12 @@ void main() {
       // "초대 중"은 invitedApps 에서만 나온다.
       expect(_flat(dialog), contains(
           'List<ApplicationModel> get activeInvites => '
-          'capacityState == InviteCapacityState.available ? invitedApps : const [];'));
+          'inviteCapacityState == InviteCapacityState.available ? invitedApps : const [];'));
     });
 
     test('IAC-PROJ-02 history 문구가 사건을 말한다 (§13)', () {
-      expect(_flat(dialog), contains("'ACCOUNT_DELETED' => '탈퇴로 종료',"));
-      expect(_flat(dialog), contains("'SCHEDULE_CONFLICT' => '일정 겹침 종료',"));
+      expect(_flat(inviteLabel), contains("'ACCOUNT_DELETED' => '탈퇴로 종료',"));
+      expect(_flat(inviteLabel), contains("'SCHEDULE_CONFLICT' => '일정 겹침 종료',"));
     });
 
     test('IAC-PROJ-03 reader 가 깨지지 않는다 (§14)', () {
@@ -358,10 +376,10 @@ void main() {
       // 정원 마감·모집 종료는 status 를 그대로 두고 표시만 가른다.
       expect(_flat(dialog), contains(
           'List<ApplicationModel> get staleInvites => '
-          'capacityState == InviteCapacityState.full ? invitedApps : const [];'));
+          'inviteCapacityState == InviteCapacityState.full ? invitedApps : const [];'));
       expect(_flat(dialog), contains(
           'List<ApplicationModel> get unitClosedInvites => '
-          'capacityState == InviteCapacityState.closed ? invitedApps : const [];'));
+          'inviteCapacityState == InviteCapacityState.closed ? invitedApps : const [];'));
     });
 
     test('IAC-SCOPE-02 .0C.0b fence 를 재설계하지 않았다 (§9)', () {

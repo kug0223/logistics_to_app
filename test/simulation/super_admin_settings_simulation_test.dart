@@ -785,10 +785,10 @@ void main() {
       expect(WageCalculator.getMinimumWage(2025), lessThan(WageCalculator.getMinimumWage(2026)));
     });
 
-    test('SA-09-05: 알 수 없는 연도(9999) → 최신 연도(2026) 폴백', () {
+    test('SA-09-05: 알 수 없는 연도(9999) → 최신 연도(2027, .73 고시 반영) 폴백', () {
       // 로컬 백업 맵에 없는 연도 → 가장 최근 연도 값 반환
       final fallback = WageCalculator.getMinimumWage(9999);
-      expect(fallback, WageCalculator.getMinimumWage(2026));
+      expect(fallback, WageCalculator.getMinimumWage(2027));
     });
 
     test('SA-09-06: 과거 연도(2020) = 8,590원', () {

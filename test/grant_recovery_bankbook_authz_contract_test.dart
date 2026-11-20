@@ -240,7 +240,10 @@ void main() {
     });
 
     test('마감 상태를 현재 값으로 다시 읽는다', () {
-      expect(accept.contains('모집이 종료된 근무는 수락할 수 없습니다'), true);
+      // [INVITE-LIFECYCLE] 마감 판정은 동의·검토와 같은 함수다(수동 마감·사유 없는
+      //   closed 는 막고 자동 접수 마감만 통과). tx 안에서 읽은 슬롯으로 부른다.
+      expect(accept.contains('srvInviteRecruitClosureBlock('), true);
+      expect(accept.contains('freshToData, freshSlotData as Record<string, unknown>, acceptWdId)'), true);
     });
 
     test('거부는 좌석을 잡기 전에 일어난다', () {

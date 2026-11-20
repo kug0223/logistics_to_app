@@ -6,7 +6,9 @@ import '../../models/core/wage_detail_model.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text_styles.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/transfer_export_plan.dart';
+import '../../utils/worker_wage_status.dart';
 import '../../widgets/common/viewport_fill_surface.dart';
 import '../common/document_management_screen.dart';
 
@@ -52,24 +54,10 @@ class WageDetailScreen extends StatelessWidget {
     if (att == null) {
       return (label: '처리 전', color: AppColors.textTertiary);
     }
-    switch (att.wageStatus) {
-      case AttendanceModel.wageTransferred:
-        return (label: '이체 처리 완료', color: AppColors.successDark);
-      case AttendanceModel.wageConfirmed:
-        // [PII-DOC-R1.6] 지급정보가 준비되지 않아 이체가 막힌 건을
-        //   '지급 예정'이라고 말하지 않는다. 그 문구는 기다리면 된다는
-        //   뜻인데, 실제로는 근로자가 무언가를 해야 풀린다. 금액은
-        //   그대로 확정돼 있다 — 사라진 것은 없다.
-        if (att.wageAccountReviewRequired == true) {
-          return (label: '지급정보 확인 필요', color: AppColors.warning);
-        }
-        return (label: '지급 예정', color: AppColors.brand);
-      case AttendanceModel.wageCalculated:
-        return (label: '급여 계산 완료', color: AppColors.success);
-      case AttendanceModel.wagePending:
-      default:
-        return (label: '급여 처리 전', color: AppColors.textTertiary);
-    }
+    // [SIM-WORKER-WAGE-VIEW] 월 근무 내역 행과 같은 판정 한 벌 —
+    //   계좌 재확인·노쇼·결근을 두 화면이 같은 말로 한다.
+    return WorkerWageStatus.of(att) ??
+        (label: '급여 처리 전', color: AppColors.textTertiary);
   }
 
   /// 표시 금액 — 관리자가 확정한 finalWage 우선, 없으면 예상 일당
@@ -115,16 +103,16 @@ class WageDetailScreen extends StatelessWidget {
   /// 예: 23:30 출근 → 08:30 퇴근(다음날)이면
   ///   실제 출근  23:30
   ///   실제 퇴근  7/22 08:30
+  ///
+  /// [SIM-WORKER-WAGE-VIEW] 시각·날짜 모두 **KST** 로 읽는다. 기기 성분을 쓰면
+  ///   GMT 기기에서 KST 20:00 출근이 '10/17 11:00' 으로 보였다(설치 앱 실측).
   String _formatCheckTime(DateTime? dt) {
     if (dt == null) return '-';
-    final workDate = application.workDate;
-    final time =
-        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    final time = FormatHelper.formatTime(dt);
     // 날짜가 근무 기준일과 다를 때만 "M/D HH:mm" 형식 추가
-    final sameDay = dt.year == workDate.year &&
-        dt.month == workDate.month &&
-        dt.day == workDate.day;
-    if (!sameDay) return '${dt.month}/${dt.day} $time';
+    final day = FormatHelper.toKstDate(dt);
+    final sameDay = day == FormatHelper.toKstDate(application.workDate);
+    if (!sameDay) return '${day.month}/${day.day} $time';
     return time;
   }
 
@@ -134,7 +122,9 @@ class WageDetailScreen extends StatelessWidget {
     final app = application;
     final att = attendance;
     final wd = att?.wageDetail; // WageDetailModel — 실근무·통상시급 등 계산 기준
-    final d = app.workDate;
+    // [SIM-WORKER-WAGE-VIEW] 근무일은 KST 자정 instant 다 — 기기 성분이 아니라
+    //   KST 달력일로 읽는다(GMT 기기에서 10/17 근무가 10/16 으로 보였다).
+    final d = FormatHelper.toKstDate(app.workDate);
     const dowLabels = ['', '월', '화', '수', '목', '금', '토', '일'];
     final dateStr = '${d.month}월 ${d.day}일(${dowLabels[d.weekday]})';
     final statusInfo = _wageStatusInfo();
@@ -201,12 +191,11 @@ class WageDetailScreen extends StatelessWidget {
                     ),
                   ),
                   SizedBox(height: 4 * s),
-                  Text(
-                    app.businessName +
-                        (app.selectedWorkType.isNotEmpty
-                            ? ' · ${app.selectedWorkType}'
-                            : ''),
-                    style: AppTextStyles.businessName(),
+                  // [DU334] 320·2.0 '골 / 든패스' 해소 — 낱말 단위(phrases: 구분점은 앞 조각에 붙고, 조각 안 공백에서는
+                  //   줄을 바꿀 수 있다). 원문은 낭독용. [DU340] 짧은 업무명은 한 덩어리 — 아래 _BusinessWorkTypeLine.
+                  _BusinessWorkTypeLine(
+                    businessName: app.businessName,
+                    workType: app.selectedWorkType,
                   ),
                 ],
               ),
@@ -330,14 +319,14 @@ class WageDetailScreen extends StatelessWidget {
                               size: 11 * s,
                               color: AppColors.textTertiary),
                           SizedBox(width: 3 * s),
-                          Text(
+                          Flexible(child: Text(
                             '통상시급 ${FormatHelper.formatWage(standardHourly)}',
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w500,
                               color: AppColors.textSecondary,
                             ),
-                          ),
+                          )),
                         ],
                       ),
                     )
@@ -373,6 +362,24 @@ class WageDetailScreen extends StatelessWidget {
                     ),
                   ],
                 ),
+                // [SIM-WORKER-WAGE-VIEW] 확정된 급여가 언제 지급될 예정인지.
+                //   이 값은 원장에 있었지만 근로자 화면 어디에도 없었다.
+                //   이체 전 확정 건에만 보인다(이체 완료·노쇼·결근 제외).
+                if (att != null && WorkerWageStatus.showsDueDate(att)) ...[
+                  SizedBox(height: 8 * s),
+                  _detailRow(
+                    s: s,
+                    label: '지급 예정일',
+                    value: WorkerWageStatus.dueDateLabel(att.paymentDueDate!),
+                  ),
+                  if (att.wageAccountReviewRequired == true) ...[
+                    SizedBox(height: 4 * s),
+                    Text(
+                      '지급정보 확인이 끝나야 이체할 수 있어요.',
+                      style: AppTextStyles.meta(),
+                    ),
+                  ],
+                ],
                 // [PII-DOC-R1.6] 막혀 있다면 무엇을 해야 풀리는지 말한다.
                 //   예전에는 이체가 막힌 건도 '지급 예정'으로만 보였다.
                 //   근로자는 자기 급여가 멈춰 있다는 것도, 그것을 푸는 사람이
@@ -616,18 +623,23 @@ class WageDetailScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // [DU1-B2] Row+Spacer 는 320dp·2.0 에서 배지가 24px 넘쳤다(Spacer 는 flex 가 아니다) — 양 끝 Wrap, 모자라면 배지가 다음 줄
           if (trailing != null)
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Text(
-                  title,
-                  // textSecondary: textTertiary 대비 한 단계 진하게 — 섹션 제목 가독성 개선
-                  style: AppTextStyles.caption(color: AppColors.textSecondary),
-                ),
-                const Spacer(),
-                trailing,
-              ],
+            SizedBox(
+              width: double.infinity,
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                runSpacing: 6 * s,
+                children: [
+                  Text(
+                    title,
+                    // textSecondary: textTertiary 대비 한 단계 진하게 — 섹션 제목 가독성 개선
+                    style: AppTextStyles.caption(color: AppColors.textSecondary),
+                  ),
+                  trailing,
+                ],
+              ),
             )
           else
             Text(
@@ -758,5 +770,42 @@ class _WageItemRowState extends State<_WageItemRow> {
           ),
       ],
     );
+  }
+}
+
+/// [DU340] 급여 명세 머리의 '사업장 · 업무' 줄(소급 감사 6 §3 채택).
+///   낱말 단위(phrases)를 기본으로 하고, **업무명 전체가 이 줄의 가용 폭에 한 줄로 들어가면** 업무명 안에서는
+///   줄을 바꾸지 않는다(`· QA / 분류` 해소). 한 줄 폭은 실제 글꼴 · 스타일 · 글자 배율 · 방향 · locale 로 잰다
+///   (TextLayout.fits 는 문자열 측정기가 아니다 — 배율을 두 번 곱하지 않는다). 길면 phrases 그대로(낱말 경계 줄바꿈).
+///   빈 업무명은 사업장만(구분점 없음). 낭독 이름은 원문이다.
+class _BusinessWorkTypeLine extends StatelessWidget {
+  final String businessName;
+  final String workType;
+  const _BusinessWorkTypeLine({required this.businessName, required this.workType});
+
+  @override
+  Widget build(BuildContext context) {
+    final style = AppTextStyles.businessName();
+    final full = businessName + (workType.isNotEmpty ? ' · $workType' : '');
+    final phrased = TextLayout.phrases(full);
+    if (workType.isEmpty) {
+      return Text(phrased, semanticsLabel: full, style: style);
+    }
+    return LayoutBuilder(builder: (ctx, c) {
+      final painter = TextPainter(
+        text: TextSpan(text: workType, style: DefaultTextStyle.of(ctx).style.merge(style)),
+        textDirection: Directionality.of(ctx),
+        textScaler: MediaQuery.textScalerOf(ctx),
+        locale: Localizations.maybeLocaleOf(ctx),
+        maxLines: 1,
+      )..layout();
+      final fitsOneLine = !c.hasBoundedWidth || painter.width <= c.maxWidth;
+      painter.dispose();
+      final tailWords = TextLayout.keepWords(workType);
+      final shown = fitsOneLine && phrased.endsWith(tailWords)
+          ? phrased.substring(0, phrased.length - tailWords.length) + TextLayout.unit(workType)
+          : phrased;
+      return Text(shown, semanticsLabel: full, style: style);
+    });
   }
 }

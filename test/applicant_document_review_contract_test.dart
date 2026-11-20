@@ -101,8 +101,8 @@ void main() {
     test('v2 이하는 검토 목적 열람에서 막힌다', () {
       expect(
         accessBlock,
-        contains('appData["documentAccessConsentVersion"] !== '
-            'DOCUMENT_ACCESS_CONSENT_V3'),
+        // [INVITE-PREACCEPT] 검토 목적 버전은 V3 와 초대 v1 둘이다 — v2 이하는 여전히 막힌다.
+        contains('if (!srvConsentCoversApplicantReview(appData)) {'),
       );
     });
 
@@ -152,8 +152,10 @@ void main() {
       //   술어로는 같은 사용자의 신분증이 BANKBOOK 으로 통과했다.
       //   실패하지 않았다고 두면 "이 reader 는 넓은 술어로 충분하다"로
       //   읽히므로 두 분기를 모두 못박는다.
-      expect(getUrl, contains('srvIsOwnedStoragePath(storagePath, targetUid)'),
-          reason: 'ID 분기 검증');
+      // [DOC-LATE-DELETE.7 · C 갱신] 예전 단언: srvIsOwnedStoragePath(storagePath, targetUid) — 접두만 봤다.
+      //   같은 폴더의 통장사본·하위 폴더·대문자 확장자를 신분증으로 서명했다(에뮬레이터 재현).
+      expect(getUrl, contains('srvIsOwnedIdCardObjectPath(targetUid, storagePath)'),
+          reason: 'ID 분기 검증 — 신분증 모양까지');
       expect(getUrl, contains(
           'srvResolveOwnedBankbookStoragePath(targetUid, storagePath)'),
           reason: 'BANKBOOK 분기는 exact 통장사본 술어를 거친다');
@@ -220,7 +222,8 @@ void main() {
 
     test('검토 상태는 사업장×근로자, 동의는 지원서 — 축이 다르다', () {
       expect(getReview, contains('srvBizReviewId(businessId, workerUid)'));
-      expect(getReview, contains('srvApplicantReviewAccessBlock(appData'));
+      // [INVITE-PREACCEPT] 초대면 slot 기준 창까지 보는 async 판정으로 강화됐다.
+      expect(getReview, contains('srvApplicantReviewAccessBlockAsync(appData'));
     });
   });
 
@@ -230,8 +233,9 @@ void main() {
       //   "신분 확인이 현재 유효한가"로 바뀌었다. 자동 정합성이 MATCHED면
       //   사람 검토 없이 통과하고, 급여계좌는 확정을 막지 않는다.
       //   고정하려던 불변식("확정은 현재 유효한 판정을 요구한다")은 그대로다.
-      expect(confirmApp,
-          contains('srvResolveMatchingReadiness(workerSnap.data(), reviewSnap.data())'));
+      // [DOC-LATE-DELETE.7 갱신] 예전 단언: srvResolveMatchingReadiness(workerSnap.data(), reviewSnap.data()).
+      //   같은 판정 — 상태 필드 없는 예전 문서는 지금 객체 확인을 덧씌운 사본을 넘긴다.
+      expect(confirmApp, contains('srvWithLegacyIdCardObject(workerSnap.data(), confirmLegacy)'));
       expect(confirmApp, contains('if (!readiness.ready)'));
       expect(confirmApp, contains('지원자 신분증 확인이 필요합니다'));
     });
@@ -249,8 +253,14 @@ void main() {
     });
 
     test('확정에 검토 provenance가 남는다', () {
-      expect(confirmApp, contains('documentReviewIdVersion: versions.id'));
-      expect(confirmApp, contains('documentReviewBankAccountVersion: versions.account'));
+      // [INVITE-PARITY] 근거는 초대 수락과 공용 함수(srvBuildMatchingProvenance)가
+      //   만든다 — 같은 필드를 같은 식으로 남긴다. 지키는 것(검토한 문서 버전이
+      //   확정 기록에 남는다)은 그대로다.
+      expect(confirmApp, contains('srvBuildMatchingProvenance('));
+      final builder = _sliceOf(_src(_cf), 'function srvBuildMatchingProvenance(',
+          'matchingAutoMatchStatus: readiness.autoMatchStatus');
+      expect(builder, contains('documentReviewIdVersion: versions.id'));
+      expect(builder, contains('documentReviewBankAccountVersion: versions.account'));
       expect(confirmApp, contains('...(confirmReviewProvenance ?? {})'));
     });
   });

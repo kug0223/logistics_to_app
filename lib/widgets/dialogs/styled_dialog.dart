@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/text_layout.dart';
 import '../../theme/app_text_styles.dart';
 
 /// 앱 전체 다이얼로그 크기 표준
@@ -21,6 +22,20 @@ class AppDialogSize {
   static const double borderRadius = 24.0;
   /// 내부 서브시트 최대 높이 비율 (다이얼로그 내 중첩 시트용)
   static const double subSheetHeightRatio = 0.85;
+}
+
+/// [DU287 RF1] 다이얼로그 의미색 — 흰 글을 올리는 채움 면·밝은 면 위 아이콘에 쓸 때, 밝은 의미색(error·warning·success·info)을
+///   같은 계열의 읽히는 짝(…Dark)으로 바꾼다. 호출부가 고른 의미(색 계열)는 그대로 두고 대비만 맞춘다(선례 DU265·DU271 호출부 교정).
+///   흰 글 대비(시험 실측): error 3.68 → 6.57, warning 2.16 → warningDark, success 2.78 → 7.13, info 3.12 → 4.60. 그 밖의 색은 그대로.
+///   StyledDialog·DialogHelper 두 셸이 같이 쓴다.
+class AppDialogColors {
+  static Color readableFill(Color c) {
+    if (c == AppColors.error) return AppColors.errorDark;
+    if (c == AppColors.warning) return AppColors.warningDark;
+    if (c == AppColors.success) return AppColors.successDark;
+    if (c == AppColors.info) return AppColors.infoDark;
+    return c;
+  }
 }
 
 /// 다이얼로그 닫힘 시 포커스 안전 해제 — 버튼/barrier/뒤로가기 모두 대응
@@ -136,7 +151,8 @@ class StyledDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final color = headerColor ?? theme.primaryColor;
+    // [DU287 RF3] 머리 아이콘·10% 면 — 밝은 의미색은 읽히는 짝으로(아이콘 3:1)
+    final color = AppDialogColors.readableFill(headerColor ?? theme.primaryColor);
 
     final screenH = MediaQuery.sizeOf(context).height;
 
@@ -177,6 +193,9 @@ class StyledDialog extends StatelessWidget {
   }
 
   /// 헤더 — [리디자인] 그라데이션 제거 → White 기반, color는 아이콘 컨테이너에만
+  ///   [DU286 SD1~SD3] 제목·부제목은 모든 배율에서 낱말 단위(들어가면 원문). 큰 글자에서 아이콘(+닫기) 옆 한 줄에 안 들어가는
+  ///   제목은 아이콘 줄을 위에 두고 전체 폭으로 쓴다(DialogHelper F48-1 과 같다). 부제목 2줄 말줄임 제거·textSecondary,
+  ///   닫기 #9CA3AF(2.54:1) → textSecondary·터치 48. 기본 배율·들어가는 제목은 기존 가로 배치 그대로.
   Widget _buildHeader(BuildContext context, Color color) {
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -185,93 +204,158 @@ class StyledDialog extends StatelessWidget {
         ResponsiveHelper.spacing(context, 16),
         0,
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // 아이콘 — color 10% 배경 + 아이콘 자체에 color
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              icon,
-              color: color,
-              size: ResponsiveHelper.iconSize(context, 24),
-            ),
+      child: LayoutBuilder(builder: (c, cons) {
+        // 아이콘 — color 10% 배경 + 아이콘 자체에 color
+        final iconBox = Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(12),
           ),
-
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-
-          // 제목 & 부제목
-          Expanded(
-            child: Column(
+          child: Icon(
+            icon,
+            color: color,
+            size: ResponsiveHelper.iconSize(c, 24),
+          ),
+        );
+        // 닫기 버튼 — 터치 48 을 테마 tap target 에 기대지 않고 직접 둔다
+        final close = showCloseButton
+            ? IconButton(
+                tooltip: '닫기',
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close, color: AppColors.textSecondary, size: 20), // [DU286 r1] 크기는 원래 20 그대로
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              )
+            : null;
+        final gap = ResponsiveHelper.spacing(c, 12);
+        final titleStyle = ResponsiveHelper.subtitleStyle(c).copyWith(
+          color: const Color(0xFF111827),
+          fontWeight: FontWeight.bold,
+        );
+        final subStyle = ResponsiveHelper.smallStyle(c).copyWith(color: AppColors.textSecondary);
+        final enlarged = MediaQuery.textScalerOf(c).scale(1) > 1.0;
+        final besideW = cons.maxWidth - 44 - gap - (close != null ? 48 : 0);
+        // 제목 & 부제목
+        Widget texts(double w) => Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  title,
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    color: const Color(0xFF111827),
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                _sdWordSafe(c, title, titleStyle, w),
                 if (subtitle != null) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 3)),
-                  Text(
-                    subtitle!,
-                    style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: const Color(0xFF757575),
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(c, 3)),
+                  _sdWordSafe(c, subtitle!, subStyle, w),
                 ],
               ],
-            ),
-          ),
-
-          // 닫기 버튼
-          if (showCloseButton)
-            IconButton(
-              tooltip: '닫기',
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.close, color: Color(0xFF9CA3AF), size: 20),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-        ],
-      ),
+            );
+        if (!enlarged || _sdFitsLine(c, title, titleStyle, besideW)) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              iconBox,
+              SizedBox(width: gap),
+              Expanded(child: texts(besideW)),
+              if (close != null) close,
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(children: [iconBox, const Spacer(), if (close != null) close]),
+            SizedBox(height: gap),
+            texts(cons.maxWidth),
+          ],
+        );
+      }),
     );
   }
 
   /// 버튼 영역 — [리디자인] 구분선 제거 → 여백만으로 콘텐츠와 분리
+  ///   [DU286 SD4] 칸에 안 들어가는 StyledDialogButton 글은 셸이 낱말 단위 표시본으로 바꾼다(모든 배율). 큰 글자에서 행동이
+  ///   전부 StyledDialogButton(2개 이상)이고 한 칸(안쪽 16 여유)에 안 들어가는 글이 있으면 세로 전체 폭으로 쌓는다 — 채움(주)이
+  ///   위, 테두리(보조)가 아래(DialogHelper F48-1 과 같다). 임의 위젯 행동·들어가는 글은 기존 가로 배치 그대로.
+  ///   버튼 안에는 LayoutBuilder 를 두지 않는다(IntrinsicHeight·AlertDialog 의 IntrinsicWidth 안에서도 안전).
   Widget _buildActions(BuildContext context) {
+    final acts = actions ?? [];
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Padding(
           padding: ResponsiveHelper.cardPadding(context),
-          child: Row(
-            children: (actions ?? [])
-                .map((action) => Expanded(child: action))
-                .toList()
-                .fold<List<Widget>>(
-              [],
-              (list, widget) {
-                if (list.isNotEmpty) {
-                  list.add(SizedBox(width: ResponsiveHelper.spacing(context, 12)));
-                }
-                list.add(widget);
-                return list;
-              },
-            ),
-          ),
+          child: LayoutBuilder(builder: (c, cons) {
+            final gap = ResponsiveHelper.spacing(c, 12);
+            final enlarged = MediaQuery.textScalerOf(c).scale(1) > 1.0;
+            const inner = 16.0;
+            final label = StyledDialogButton._labelStyle(c);
+            Widget shown(Widget a, double w) {
+              if (a is! StyledDialogButton || a.isLoading) return a;
+              if (_sdFitsLine(c, a.text, label, w)) return a;
+              return a._withShown(TextLayout.keepWords(TextLayout.plain(a.text)));
+            }
+
+            final per = acts.isEmpty ? cons.maxWidth : (cons.maxWidth - gap * (acts.length - 1)) / acts.length;
+            final btns = acts.whereType<StyledDialogButton>().toList();
+            if (enlarged &&
+                acts.length >= 2 &&
+                btns.length == acts.length &&
+                btns.any((b) => !_sdFitsLine(c, b.text, label, per - inner))) {
+              final ordered = [...btns.where((b) => !b.isOutlined), ...btns.where((b) => b.isOutlined)];
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var k = 0; k < ordered.length; k++) ...[
+                    if (k > 0) SizedBox(height: ResponsiveHelper.spacing(c, 8)),
+                    shown(ordered[k], cons.maxWidth),
+                  ],
+                ],
+              );
+            }
+            return Row(
+              children: acts
+                  .map((action) => Expanded(child: shown(action, per)))
+                  .toList()
+                  .fold<List<Widget>>(
+                [],
+                (list, widget) {
+                  if (list.isNotEmpty) {
+                    list.add(SizedBox(width: gap));
+                  }
+                  list.add(widget);
+                  return list;
+                },
+              ),
+            );
+          }),
         ),
       ],
     );
   }
+}
+
+/// [DU286 SD0] 글이 [maxWidth] 안에 한 줄(각 줄)로 들어가는가 — Text 가 그리는 것과 같은 기준(둘레 기본 글자 병합·locale).
+///   DialogHelper._fitsLine(DU284)과 같은 규칙이다(공용 도구로 합칠 후보).
+bool _sdFitsLine(BuildContext context, String text, TextStyle style, double maxWidth) {
+  final eff = style.inherit ? DefaultTextStyle.of(context).style.merge(style) : style;
+  final tp = TextPainter(
+    text: TextSpan(text: text, style: eff),
+    textDirection: TextDirection.ltr,
+    textScaler: MediaQuery.textScalerOf(context),
+    locale: Localizations.maybeLocaleOf(context),
+  )..layout();
+  final w = tp.width;
+  tp.dispose();
+  return w <= maxWidth;
+}
+
+/// [DU286 SD0] 들어가면 원문 그대로, 안 들어가면 낱말 단위로 묶는다(음절 끊김 방지). 읽기 이름은 원문.
+Widget _sdWordSafe(BuildContext context, String text, TextStyle style, double maxWidth) {
+  if (_sdFitsLine(context, text, style, maxWidth)) return Text(text, style: style);
+  final plain = TextLayout.plain(text);
+  return Text(TextLayout.keepWords(plain), semanticsLabel: plain, style: style);
 }
 
 /// 스타일 다이얼로그 버튼
@@ -283,6 +367,9 @@ class StyledDialogButton extends StatelessWidget {
   final bool isOutlined;
   final bool isLoading;
 
+  /// [DU286 SD5] 셸(StyledDialog)이 칸에 안 들어간다고 잰 글의 낱말 단위 표시본 — 읽기 이름은 [text] 원문
+  final String? _shown;
+
   const StyledDialogButton({
     super.key,
     required this.text,
@@ -291,7 +378,32 @@ class StyledDialogButton extends StatelessWidget {
     this.foregroundColor,
     this.isOutlined = false,
     this.isLoading = false,
-  });
+  }) : _shown = null;
+
+  const StyledDialogButton._copy({
+    super.key,
+    required this.text,
+    required this.onPressed,
+    this.backgroundColor,
+    this.foregroundColor,
+    this.isOutlined = false,
+    this.isLoading = false,
+    String? shown,
+  }) : _shown = shown;
+
+  StyledDialogButton _withShown(String s) => StyledDialogButton._copy(
+        key: key,
+        text: text,
+        onPressed: onPressed,
+        backgroundColor: backgroundColor,
+        foregroundColor: foregroundColor,
+        isOutlined: isOutlined,
+        isLoading: isLoading,
+        shown: s,
+      );
+
+  static TextStyle _labelStyle(BuildContext context) =>
+      ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600);
 
   /// Primary 버튼 (채워진 버튼)
   factory StyledDialogButton.primary({
@@ -330,7 +442,8 @@ class StyledDialogButton extends StatelessWidget {
     return StyledDialogButton(
       text: text,
       onPressed: onPressed,
-      backgroundColor: AppColors.error,
+      // [DU286 SD7] 흰 글 on error #F44336 3.68:1(4.5 미달) → errorDark(약 6.6:1)
+      backgroundColor: AppColors.errorDark,
       foregroundColor: AppColors.surface,
       isLoading: isLoading,
     );
@@ -348,7 +461,8 @@ class StyledDialogButton extends StatelessWidget {
 
     if (isDisabled) {
       bgColor = AppColors.grey200;
-      fgColor = AppColors.grey400;
+      // [DU286 SD6] grey400 on grey200 1.62:1 → textSecondary(DU 비활성 CTA 기준)
+      fgColor = AppColors.textSecondary;
       border = null;
     } else if (isOutlined) {
       // 취소 버튼 — 흰 배경 + 얇은 테두리
@@ -356,8 +470,10 @@ class StyledDialogButton extends StatelessWidget {
       fgColor = const Color(0xFF4B5563);
       border = Border.all(color: const Color(0xFFE5E7EB));
     } else {
-      bgColor = backgroundColor ?? theme.primaryColor;
       fgColor = foregroundColor ?? Colors.white;
+      // [DU287 RF4] 흰 글 채움일 때만 밝은 의미색을 읽히는 짝으로(다른 글색을 고른 호출부는 그대로)
+      final base = backgroundColor ?? theme.primaryColor;
+      bgColor = fgColor.toARGB32() == 0xFFFFFFFF ? AppDialogColors.readableFill(base) : base;
       border = null;
     }
 
@@ -369,11 +485,10 @@ class StyledDialogButton extends StatelessWidget {
               child: CircularProgressIndicator(strokeWidth: 2, color: fgColor),
             )
           : Text(
-              text,
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: fgColor,
-                fontWeight: FontWeight.w600,
-              ),
+              _shown ?? text,
+              semanticsLabel: _shown == null ? null : text,
+              textAlign: TextAlign.center,
+              style: _labelStyle(context).copyWith(color: fgColor),
             ),
     );
 
@@ -389,11 +504,15 @@ class StyledDialogButton extends StatelessWidget {
         child: InkWell(
           onTap: isLoading || isDisabled ? null : onPressed,
           borderRadius: BorderRadius.circular(10),
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              vertical: ResponsiveHelper.spacing(context, 13),
+          // [DU286 SD5] 실측 44.4(360·1.0) — 공통 기준 행동 최소 52(DialogHelper F48-1 과 같다, 고정 높이 아님)
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 52),
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                vertical: ResponsiveHelper.spacing(context, 13),
+              ),
+              child: child,
             ),
-            child: child,
           ),
         ),
       ),
@@ -580,6 +699,58 @@ class StyledDialogInfoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // [DU288 IC1] 글은 낱말 단위로 줄바꿈한다(음절 끊김 방지). 보이는 글자·읽기 이름은 원문 그대로다(동의 문구 버전 계약).
+    //   폭을 재지 않는다 — 이 카드는 AlertDialog(IntrinsicWidth) content 안에도 들어간다. 줄바꿈 문자는 keepWords 안에서도 강제 줄바꿈이다.
+    // [DU288 IC2] 기본 배율: 아이콘을 첫 줄 가운데에 맞춘다(긴 글 덩어리의 세로 가운데에 뜨지 않게).
+    // [DU288 IC3] 큰 글자(배율>1.0): 아이콘을 글 위 한 줄로 올려 글이 카드 안쪽 폭을 다 쓴다.
+    //   색(면·테두리·글자·아이콘)·글 크기·여백은 그대로다.
+    final style = ResponsiveHelper.smallStyle(context, color: _textColor(color));
+    final scaler = MediaQuery.textScalerOf(context);
+    final iconSz = ResponsiveHelper.iconSize(context, 18);
+    final iconW = Icon(icon, color: _getShade(color, 700), size: iconSz);
+    final body = segments == null
+        ? _words(message, style)
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < segments!.length; i++) ...[
+                if (i > 0)
+                  SizedBox(
+                      height: ResponsiveHelper.spacing(context, 8)),
+                _words(segments![i], style),
+              ],
+            ],
+          );
+    final Widget inner;
+    if (scaler.scale(1) > 1.0) {
+      inner = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          iconW,
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          body,
+        ],
+      );
+    } else {
+      final eff = style.inherit ? DefaultTextStyle.of(context).style.merge(style) : style;
+      final tp = TextPainter(
+        text: TextSpan(text: ' ', style: eff),
+        textDirection: TextDirection.ltr,
+        textScaler: scaler,
+        locale: Localizations.maybeLocaleOf(context),
+      );
+      final lineH = tp.preferredLineHeight;
+      tp.dispose();
+      final top = lineH > iconSz ? (lineH - iconSz) / 2 : 0.0;
+      inner = Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(padding: EdgeInsets.only(top: top), child: iconW),
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+          Expanded(child: body),
+        ],
+      );
+    }
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 14),
@@ -593,44 +764,24 @@ class StyledDialogInfoCard extends StatelessWidget {
           color: color.withValues(alpha: 0.22),
         ),
       ),
-      child: Row(
-        children: [
-          Icon(
-            icon,
-            color: _getShade(color, 700),
-            size: ResponsiveHelper.iconSize(context, 18),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-          Expanded(
-            child: segments == null
-                ? Text(
-                    message,
-                    style: ResponsiveHelper.smallStyle(
-                      context,
-                      color: _getShade(color, 800),
-                    ),
-                  )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      for (var i = 0; i < segments!.length; i++) ...[
-                        if (i > 0)
-                          SizedBox(
-                              height: ResponsiveHelper.spacing(context, 8)),
-                        Text(
-                          segments![i],
-                          style: ResponsiveHelper.smallStyle(
-                            context,
-                            color: _getShade(color, 800),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-          ),
-        ],
-      ),
+      child: inner,
     );
+  }
+
+  /// [DU288 IC1] 낱말 단위 표시본 — 보이는 글자는 원문과 같고(묶음 문자만 더한다), 읽기 이름은 원문이다.
+  static Widget _words(String s, TextStyle style) {
+    final shown = TextLayout.keepWords(s);
+    return Text(shown, semanticsLabel: shown == s ? null : s, style: style);
+  }
+
+  /// [DU1-F2] 읽는 본문 글자색 — 의미색을 18% 어둡게 한 값은 주황 경고에서 3.0:1 이었다(7% 바탕 위).
+  ///   공통 기준의 진한 글자 토큰에 연결한다: warning 4.96 · success 6.68 · error 6.00 · info(infoDeep). 그 밖은 예전 방식.
+  Color _textColor(Color color) {
+    if (color == AppColors.warning) return AppColors.warningDark;
+    if (color == AppColors.success) return AppColors.successDark;
+    if (color == AppColors.error) return AppColors.errorDark;
+    if (color == AppColors.info) return AppColors.infoDeep;
+    return _getShade(color, 800);
   }
 
   /// 색상 shade 가져오기 (MaterialColor가 아닌 경우 대체)
@@ -852,7 +1003,9 @@ class AppModalHeader extends StatelessWidget {
                   children: [
                     Text(title, style: AppTextStyles.jobTitle()),
                     if (subtitle != null)
-                      Text(subtitle!, style: AppTextStyles.meta()),
+                      Text(subtitle!,
+                          semanticsLabel: TextLayout.plain(subtitle!),
+                          style: AppTextStyles.meta()),
                   ],
                 ),
               ),

@@ -13,6 +13,12 @@ class WorkDetailData {
   /// workDetailCounts map key = wdId (new canonical) 또는 composite id (legacy fallback).
   final String? wdId;
 
+  /// [WORKTYPE-IDENTITY] 이 근무가 고른 사업장 업무유형 문서 id(businesses/{id}/workTypes/{workTypeId}).
+  ///   업무 안내(설명·사진)는 이 id 로 **최신본**을 읽는다 — 이름으로 찾으면 같은 이름을 다시 쓴
+  ///   다른 업무의 안내가 붙는다. null: 이 필드 이전에 만든 공고(레거시) — 안내 연결은
+  ///   WorkTypeGuideResolver 의 보수적 규칙만 따른다. 업무명·아이콘·임금·시간은 여전히 이 근무의 저장본이다.
+  final String? workTypeId;
+
   final String workType;
   final String workTypeIcon;
   final String workTypeColor;
@@ -116,6 +122,7 @@ class WorkDetailData {
   const WorkDetailData({
     required this.workType,
     this.wdId,
+    this.workTypeId,
     this.workTypeIcon = '📋',
     this.workTypeColor = '#2196F3',
     this.workTypeBackgroundColor = '#E3F2FD',
@@ -151,6 +158,9 @@ class WorkDetailData {
     return WorkDetailData(
       workType: map['workType'] as String? ?? id ?? '',
       wdId: map['wdId'] as String?,
+      workTypeId: map['workTypeId'] is String && (map['workTypeId'] as String).isNotEmpty
+          ? map['workTypeId'] as String
+          : null,
       workTypeIcon: map['workTypeIcon'] as String? ?? '📋',
       workTypeColor: map['workTypeColor'] as String? ?? '#2196F3',
       workTypeBackgroundColor: map['workTypeBackgroundColor'] as String? ?? '#E3F2FD',
@@ -189,6 +199,7 @@ class WorkDetailData {
   Map<String, dynamic> toMap() => {
     'workType': workType,
     if (wdId != null) 'wdId': wdId,
+    if (workTypeId != null) 'workTypeId': workTypeId,
     'workTypeIcon': workTypeIcon,
     'workTypeColor': workTypeColor,
     'workTypeBackgroundColor': workTypeBackgroundColor,
@@ -227,6 +238,7 @@ class WorkDetailData {
   WorkDetailData copyWith({
     String? workType,
     String? wdId,
+    String? workTypeId,
     String? workTypeIcon,
     String? workTypeColor,
     String? workTypeBackgroundColor,
@@ -268,6 +280,7 @@ class WorkDetailData {
     return WorkDetailData(
       workType: workType ?? this.workType,
       wdId: wdId ?? this.wdId, // [8.1E.1] immutable — 명시적 override만 허용
+      workTypeId: workTypeId ?? this.workTypeId, // 근무의 업무 정체성 — 수정 경로에서 바뀌지 않는다
       workTypeIcon: workTypeIcon ?? this.workTypeIcon,
       workTypeColor: workTypeColor ?? this.workTypeColor,
       workTypeBackgroundColor: workTypeBackgroundColor ?? this.workTypeBackgroundColor,

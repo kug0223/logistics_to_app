@@ -176,7 +176,14 @@ void main() {
     test('R6 관리자 화면에는 다른 사업장 이름·시간을 넣지 않는다', () {
       final mgr = _read(_kMgrDialog);
       // 관리자는 비민감 문구만 쓴다.
-      expect(mgr.contains("'SCHEDULE_CONFLICT' => '일정 겹침 종료'"), isTrue);
+      // [E2-INVITED-SEAT] 관리자 라벨 본문은 공용 함수(invite_state_label.dart)로 옮겼다.
+      final shared = _read('lib/widgets/admin/invite_state_label.dart');
+      expect(mgr.contains('inviteStateLabelOf(app, capacity: capacity)'), isTrue);
+      expect(shared.contains("'SCHEDULE_CONFLICT' => '일정 겹침 종료'"), isTrue);
+      for (final banned in ['scheduleConflictContext', 'workerEndReasonSentence',
+          'conflictingBusiness', 'conflictingTime']) {
+        expect(shared.contains(banned), isFalse, reason: banned);
+      }
       // 근로자용 맥락/문장 helper 를 관리자 화면이 쓰지 않는다.
       expect(mgr.contains('scheduleConflictContext'), isFalse);
       expect(mgr.contains('workerEndReasonSentence'), isFalse);

@@ -141,14 +141,22 @@ void main() {
     });
 
     test('12 응답에 번호가 없다 (§21)', () {
-      expect(rec, contains('return {success: true, outcome};'));
+      // [FULL13-REEVAL.2 갱신] 응답에 판정 상태가 붙었다 — 번호·지문은 여전히 없다.
+      expect(rec, contains(
+          'return {success: true, outcome, idCardMatchStatus: recDone?.status ?? null};'));
       expect(rec, isNot(contains('identifier:')));
+      expect(rec, isNot(contains('taxFp}')));
     });
   });
 
   group('INV-4 — 멱등 (§19)', () {
     test('13 이미 있으면 다시 쓰지 않는다', () {
-      expect(rec, contains('if (cur.exists) { return "already_registered"; }'));
+      // [FULL13-REEVAL.2 갱신] 이미 있으면 번호·지문을 다시 쓰지 않는다. 현재 등록증
+      //   근거가 묶여 오면 문서 대조만 다시 판정한다(같은 번호 — 지문 같음).
+      final exists = _sliceOf(rec, 'if (cur.exists) {', 'return "already_registered";');
+      expect(exists, isNot(contains('tx.set(')));
+      expect(exists, isNot(contains('encryptedIdentifier')));
+      expect(exists, contains('cur.get("identifierFingerprint") === taxFp'));
     });
 
     test('14 문서 id가 uid라 중복이 생길 수 없다', () {
@@ -213,7 +221,8 @@ void main() {
 
     test('22 복구 제출은 복구 callable로 간다', () {
       expect(svc, contains("httpsCallable('callableRecoverForeignTaxIdentity')"));
-      expect(doc, contains('TaxIdentityService.recoverForeign(value)'));
+      // [FULL13-REEVAL.2 갱신] 현재 등록증 근거를 함께 보낸다.
+      expect(_flat(doc), contains('TaxIdentityService.recoverForeign(value, documentEvidence: evidence)'));
     });
 
     test('23 복구에는 OCR 대조를 붙이지 않는다', () {

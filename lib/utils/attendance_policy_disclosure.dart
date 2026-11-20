@@ -150,6 +150,143 @@ List<AttendancePolicyGroup> attendancePolicyGroups(AttendanceRules r) => [
       ]),
     ];
 
+/// [ATTENDANCE-RULE-GUIDE.29-A1] 공고·초대·계약이 같은 형식으로 쓰는 '근태 인정 기준'.
+///
+///   예전에는 라벨+긴 문장 7줄 아래에 회색 사례 묶음이 따로 있어서, 어떤 사례가 어떤 기준의 것인지
+///   이어 읽기 어려웠다(사용자 지적). 이제 **출근 기준(일찍 출근·지각) / 퇴근 기준(늦게 퇴근·조퇴)** 두 묶음,
+///   항목마다 '짧은 기준 설명 → 그 기준의 사례' 순서다.
+///
+///   · 계산은 새로 만들지 않는다 — 사례는 [processCheckin]/[processCheckout](서버와 같은 식)을
+///     **이 근무의 시작·종료 시각**으로 돌린 결과다. 기준값(분)은 받은 [AttendanceRules] 그대로다.
+///   · 값의 출처는 소비자가 정한다: 공고 = 그 사업장 현재 기준, 초대 = 지원서 snapshot, 계약 = 계약 snapshot.
+///   · 시각을 모르거나 읽을 수 없으면 사례를 만들지 않는다(설명만). 기준이 없으면 소비자가 부르지 않는다.
+///   · '차감'은 금액 차감으로 오해된다 — **인정 시작/인정 종료 시각**으로 말한다.
+///   · 데이터 조회·권한·writer 없음. 표시용 줄바꿈 문자를 넣지 않는다(화면 위젯이 넣는다).
+class AttendanceRuleExample {
+  const AttendanceRuleExample(this.input, this.result);
+
+  /// '17:41 출근'
+  final String input;
+
+  /// '인정 시작 18:05'
+  final String result;
+}
+
+class AttendanceRuleItem {
+  const AttendanceRuleItem(this.title, this.points, this.examples);
+
+  /// '지각'
+  final String title;
+
+  /// 짧은 기준 설명 1~2개.
+  final List<String> points;
+
+  /// 이 기준의 사례(시각을 모르면 비어 있다).
+  final List<AttendanceRuleExample> examples;
+}
+
+class AttendanceRuleSection {
+  const AttendanceRuleSection(this.title, this.items);
+
+  /// '출근 기준' / '퇴근 기준'
+  final String title;
+  final List<AttendanceRuleItem> items;
+}
+
+class AttendanceRuleGuide {
+  const AttendanceRuleGuide({required this.workTime, required this.sections});
+
+  /// '17:35–18:35', 야간이면 '22:00–다음 날 06:00'. 시각을 모르면 null.
+  final String? workTime;
+  final List<AttendanceRuleSection> sections;
+
+  bool get hasExamples => sections.any((s) => s.items.any((i) => i.examples.isNotEmpty));
+}
+
+/// 화면·PDF 공통 제목. 관리자 설정('근태 및 급여 처리 기준')·확인 창('근태 기준 적용')과 같은 기준을 말한다.
+const String kAttendanceRuleGuideTitle = '근태 인정 기준';
+
+final RegExp _hhmm = RegExp(r'^([01]?\d|2[0-3]):[0-5]\d$');
+
+AttendanceRuleGuide attendanceRuleGuide(
+  AttendanceRules r, {
+  String? startHHmm,
+  String? endHHmm,
+}) {
+  final known = startHHmm != null &&
+      endHHmm != null &&
+      _hhmm.hasMatch(startHHmm) &&
+      _hhmm.hasMatch(endHHmm) &&
+      startHHmm != endHHmm;
+  // 날짜는 결과에 영향이 없다(분 단위 산술). 종료가 시작보다 이르면 다음 날 종료.
+  final day = DateTime(2026, 1, 1);
+  final start = known ? contractStartAt(day, startHHmm) : null;
+  final end = known ? contractEndAt(day, startHHmm, endHHmm) : null;
+  String hm(DateTime t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+  String endLabel(DateTime t) => t.day != day.day ? '다음 날 ${hm(t)}' : hm(t);
+
+  AttendanceRuleExample inEx(int offset) {
+    final at = start!.add(Duration(minutes: offset));
+    final res = processCheckin(offsetMinutes: offset, referenceAt: start, rules: r).roundedAt;
+    return AttendanceRuleExample('${hm(at)} 출근', '인정 시작 ${hm(res)}');
+  }
+
+  AttendanceRuleExample outEx(int offset) {
+    final at = end!.add(Duration(minutes: offset));
+    final res = processCheckout(offsetMinutes: offset, referenceAt: end, rules: r).roundedAt;
+    return AttendanceRuleExample('${hm(at)} 퇴근', '인정 종료 ${hm(res)}');
+  }
+
+  // 일찍 온 시간·더 일한 시간은 **전체**를 단위로 내려 인정한다(창을 뺀 나머지가 아님) — processCheckin/out 실측.
+  final early = AttendanceRuleItem('일찍 출근', [
+    if (r.earlyWindow > 0) '시작 ${r.earlyWindow}분 전까지의 출근은 시작 시각부터 인정해요.',
+    r.earlyWindow > 0
+        ? '${r.earlyWindow}분보다 일찍 출근하면 일찍 온 시간을 ${r.earlyArrivalUnit}분 단위로 인정해요. '
+            '단위에 못 미치는 분은 인정되지 않아요.'
+        : '시작 전에 출근하면 일찍 온 시간을 ${r.earlyArrivalUnit}분 단위로 인정해요. '
+            '단위에 못 미치는 분은 인정되지 않아요.',
+  ], [
+    if (known && r.earlyWindow > 0) inEx(-r.earlyWindow),
+    if (known) inEx(-(r.earlyWindow + 1)),
+  ]);
+  final late = AttendanceRuleItem('지각', [
+    if (r.lateGrace > 0) '시작 후 ${r.lateGrace}분까지는 정시로 인정해요.',
+    r.lateGrace > 0
+        ? '${r.lateGrace}분을 넘기면 늦은 시간 전체를 ${r.lateUnit}분 단위로 올려 인정 시작을 늦춰요.'
+        : '시작보다 늦으면 늦은 시간을 ${r.lateUnit}분 단위로 올려 인정 시작을 늦춰요.',
+  ], [
+    if (known && r.lateGrace > 0) inEx(r.lateGrace),
+    if (known) inEx(r.lateGrace + 1),
+  ]);
+  final stay = AttendanceRuleItem('늦게 퇴근', [
+    if (r.lateWindow > 0) '종료 후 ${r.lateWindow}분까지의 퇴근은 종료 시각까지 인정해요.',
+    r.lateWindow > 0
+        ? '${r.lateWindow}분을 넘기면 더 일한 시간을 ${r.overtimeUnit}분 단위로 인정해요. '
+            '단위에 못 미치는 분은 인정되지 않아요.'
+        : '종료 후 더 일한 시간을 ${r.overtimeUnit}분 단위로 인정해요. '
+            '단위에 못 미치는 분은 인정되지 않아요.',
+  ], [
+    if (known && r.lateWindow > 0) outEx(r.lateWindow),
+    if (known) outEx(r.lateWindow + 1),
+  ]);
+  final leave = AttendanceRuleItem('조퇴', [
+    '일찍 퇴근한 시간은 ${r.earlyLeaveUnit}분 단위로 올려 인정 종료를 앞당겨요.',
+  ], [
+    if (known) outEx(-1),
+  ]);
+  return AttendanceRuleGuide(
+    workTime: known ? '${hm(start!)}–${endLabel(end!)}' : null,
+    sections: [
+      AttendanceRuleSection('출근 기준', [early, late]),
+      AttendanceRuleSection('퇴근 기준', [stay, leave]),
+    ],
+  );
+}
+
+/// PDF·평문용 — 한 항목의 사례를 '예: 17:41 출근 → 인정 시작 18:05' 로.
+String attendanceRuleExampleText(AttendanceRuleExample e) => '${e.input} → ${e.result}';
+
 /// 그룹을 펼친 평면 목록 — 묶음 제목을 쓸 수 없는 좁은 화면·PDF 용.
 List<AttendancePolicyLine> attendancePolicyLines(AttendanceRules r) =>
     attendancePolicyGroups(r).expand((g) => g.lines).toList();

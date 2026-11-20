@@ -238,14 +238,32 @@ extension ApplicationFirestore on FirestoreService {
         'limit': 2000,
       });
       final statusSet = statuses != null ? Set<String>.from(statuses) : null;
-      return (result)
-          .whereType<Map>()
+      final rawRows = result.whereType<Map>().toList();
+      final parsed = rawRows
           .map((m) {
             final raw = _cfHydrate(Map<String, dynamic>.from(m));
             final id = raw.remove('id') as String? ?? '';
             return ApplicationModel.tryFromMap(raw, id);
           })
           .whereType<ApplicationModel>()
+          .toList();
+      // [DSE-CAPACITY-PROJECTION] 좌석을 **세는** 조회에서 파싱 실패는
+      //   "그 사람이 없다" 가 아니라 "못 읽었다" 다.
+      //
+      //   capacity projection 에 파서 필수 field 가 빠져 있으면 모든 지원서가
+      //   조용히 사라지고, 집계는 0 이 되어 확정된 근로자가 화면에서 없어진다.
+      //   `tryFromMap` 은 null 을 돌려주고 `whereType` 이 그것을 지우므로
+      //   소비자는 차이를 알 수 없었다 — 그래서 여기서 말한다.
+      //   소비자들은 이미 실패를 "모름"(`statsFailed`) 또는 fail-closed 로
+      //   다루므로, 던지는 쪽이 0 을 말하는 것보다 정확하다.
+      if (purpose == FirestoreService.purposeCapacity &&
+          parsed.length != rawRows.length) {
+        throw StateError(
+          '정원 조회 파싱 누락: ${rawRows.length}건 중 ${parsed.length}건만 읽음 '
+          '(toId=$toId${slotId == null ? '' : ', slotId=$slotId'})',
+        );
+      }
+      return parsed
           .where((a) => statusSet == null || statusSet.contains(a.status))
           .toList();
     } catch (e) {
@@ -395,6 +413,23 @@ extension ApplicationFirestore on FirestoreService {
         DateTime.now().difference(ts) < FirestoreService._myApplicationsCacheTTL) {
       return cached;
     }
+    // [MY-APPS-INFLIGHT] 같은 uid 의 조회가 이미 날아가 있으면 그 응답을 함께 받는다.
+    final inFlight = _myApplicationsInFlight[uid];
+    if (inFlight != null) return inFlight;
+    final generation = _myApplicationsGeneration[uid] ?? 0;
+    final request = _fetchMyApplications(uid, cached, generation);
+    _myApplicationsInFlight[uid] = request;
+    void release() {
+      if (identical(_myApplicationsInFlight[uid], request)) {
+        _myApplicationsInFlight.remove(uid);
+      }
+    }
+    unawaited(request.then<void>((_) => release(), onError: (Object _) => release()));
+    return request;
+  }
+
+  Future<List<ApplicationModel>> _fetchMyApplications(
+      String uid, List<ApplicationModel>? cached, int generation) async {
     try {
       // [CF 이전 2026-07-15] callableGetMyApplications — uid 서버 검증 강제
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
@@ -411,8 +446,11 @@ extension ApplicationFirestore on FirestoreService {
           .whereType<ApplicationModel>()
           .toList()
         ..sort((a, b) => b.appliedAt.compareTo(a.appliedAt));
-      _myApplicationsCache[uid] = list;
-      _myApplicationsCacheTimestamps[uid] = DateTime.now();
+      // 출발한 뒤 무효화됐다면(지원·취소 등) 이 응답은 변경 전 값일 수 있다 — 캐시에 남기지 않는다.
+      if ((_myApplicationsGeneration[uid] ?? 0) == generation) {
+        _myApplicationsCache[uid] = list;
+        _myApplicationsCacheTimestamps[uid] = DateTime.now();
+      }
       return list;
     } catch (e) {
       // [PREDEVICE-WORKER-ERROR-NOT-ZERO] 실패를 빈 목록으로 바꾸지 않는다.
@@ -661,6 +699,13 @@ extension ApplicationFirestore on FirestoreService {
       }
       if (e.code == 'already-exists') {
         return ApplyResult.alreadyApplied(msg);
+      }
+      // [.55] 새 약관 미동의로 거절 — 서버 메시지 앞의 내부 코드를 보이지 않고, 홈 약관 카드가
+      //   서버 판정을 다시 읽게 한다(홈을 연 채 시행 시각이 지나 카드가 숨어 있던 경우).
+      if (msg.startsWith('LEGAL_RECONSENT_REQUIRED')) {
+        LegalReadinessSignal.bump();
+        return ApplyResult.failed('변경된 약관에 동의한 뒤 지원할 수 있어요. 홈의 약관 안내에서 확인해 주세요.',
+            code: 'LEGAL_RECONSENT_REQUIRED');
       }
       // [R7-PAYROLL-POLICY.4C] 기준 변경은 실패와 다른 상태다 — 근로자가 할
       //   일이 정해져 있고, 지원은 **확실히 만들어지지 않았다**.
@@ -1308,22 +1353,26 @@ extension ApplicationFirestore on FirestoreService {
   /// [CF 이전 2026-07-13] callableGetApplicationsByBiz (workDateGteMs/LtMs)
   /// [R7-P1-2.2] [purpose] — 지원자 **검토** 목록이다. 호출부(당일 명단)는
   ///   `applicantReview` 를 넘겨 서버가 canManageTo 를 보게 한다.
+  ///   [STATUS-DIALOG-READS.27] [reviewRaw] — `applicantReview` 로 읽은 그날 원본을 이미
+  ///   요청 중이면 그것을 함께 쓴다(초대 현황과 같은 요청). 다른 purpose 에는 주지 않는다.
   Future<List<ApplicationModel>> getPendingApplicationsByDateAndBusiness({
     required DateTime date,
     required String businessId,
     String? purpose,
+    Future<List<Map<String, dynamic>>>? reviewRaw,
   }) async {
+    assert(reviewRaw == null || purpose == FirestoreService.purposeApplicantReview);
     // [R1.2.1] KST 영업일 창. canonical workDate가 KST 자정 instant이므로
     //   기기 local 자정으로 창을 만들면 UTC 기기에서 그 지원자가 창 밖으로 나간다.
     final (dateStart, dateEnd) = FormatHelper.kstDayRange(date);
     try {
-      final result = await fetchApplicationsByBizPaged({
+      final result = await (reviewRaw ?? fetchApplicationsByBizPaged({
         'businessId': businessId,
         'workDateGteMs': dateStart.millisecondsSinceEpoch,
         'workDateLtMs': dateEnd.millisecondsSinceEpoch,
         if (purpose != null) 'purpose': purpose,
         'limit': 2000,
-      });
+      }));
       return (result)
           .whereType<Map>()
           .map((m) {
@@ -1394,18 +1443,30 @@ extension ApplicationFirestore on FirestoreService {
   ///
   /// ERROR != ZERO: 실패는 throw. 호출부가 `초대 현황을 확인하지 못했어요`를
   /// 그린다 — 조회 실패를 `초대 중 0명`으로 바꾸지 않는다.
-  Future<List<ApplicationModel>> getDayInvitationsByDateAndBusiness({
+  /// [STATUS-DIALOG-READS.27] 그날 × 사업장의 지원 검토(`applicantReview`) 원본.
+  ///   대기 지원자와 초대 현황은 **같은 요청**(같은 창·같은 purpose·같은 limit)을 따로 보냈다.
+  ///   소비자는 각 행을 `Map.from` 으로 복사한 뒤 고치므로 한 응답을 함께 써도 서로 섞이지 않는다.
+  Future<List<Map<String, dynamic>>> fetchDayApplicantReviewRaw({
     required DateTime date,
     required String businessId,
-  }) async {
+  }) {
     final (dateStart, dateEnd) = FormatHelper.kstDayRange(date);
-    final result = await fetchApplicationsByBizPaged({
+    return fetchApplicationsByBizPaged({
       'businessId': businessId,
       'workDateGteMs': dateStart.millisecondsSinceEpoch,
       'workDateLtMs': dateEnd.millisecondsSinceEpoch,
       'limit': 2000,
-      'purpose': 'applicantReview',
+      'purpose': FirestoreService.purposeApplicantReview,
     });
+  }
+
+  Future<List<ApplicationModel>> getDayInvitationsByDateAndBusiness({
+    required DateTime date,
+    required String businessId,
+    Future<List<Map<String, dynamic>>>? reviewRaw,
+  }) async {
+    final result =
+        await (reviewRaw ?? fetchDayApplicantReviewRaw(date: date, businessId: businessId));
     return (result)
         .whereType<Map>()
         .map((m) {
@@ -1860,7 +1921,12 @@ extension ApplicationFirestore on FirestoreService {
     //   자리가 찼다는 뜻이다. 그런데 문구는 '초과 확정됩니다'라고 말해서,
     //   관리자가 정원을 넘겨 확정했다고 믿게 만들었다. 오버부킹 기능은 제품에
     //   존재하지 않는다.
-    final capacityWarning = data['capacityWarning'] as Map<String, dynamic>?;
+    // [SIM-A] 안쪽 map 은 플러그인이 `Map<Object?, Object?>` 로 준다(최상위만
+    //   변환된다). `as Map<String, dynamic>?` 는 **확정이 커밋된 뒤** TypeError 를
+    //   던졌고 — 정원 1 이면 마지막 자리라 항상 온다 — 화면은 성공을 오류로
+    //   말하며 재조회를 건너뛰었다. 아래 periodRevision·appInfo 와 같은 방식으로 읽는다.
+    final capacityWarning =
+        (data['capacityWarning'] as Map?)?.cast<String, dynamic>();
     if (capacityWarning != null) {
       ToastHelper.showSuccess(
         '[${capacityWarning['workType']}] 모집인원 ${capacityWarning['required']}명이 모두 찼습니다.');

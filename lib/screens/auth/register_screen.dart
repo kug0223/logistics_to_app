@@ -6,6 +6,8 @@ import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/terms_submit_guard.dart';
+import '../../utils/text_layout.dart';
 import '../../services/auth_service.dart';
 import '../../services/analytics_service.dart';
 import '../../services/legal_terms_service.dart';
@@ -23,15 +25,41 @@ import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth, FirebaseAut
 import 'package:cloud_functions/cloud_functions.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/common_widgets.dart';
+import '../../widgets/common/first_line_icon.dart';
+import '../../widgets/common/keep_words_text.dart';
 import 'foreign_register_screen.dart';
 
 /// 개선된 회원가입 화면 - 자동 스크롤 + 여백 최적화 + Storage 업로드
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
+  const RegisterScreen({super.key, this.termsLoaderForTest, this.initialUserTermsStepForTest = false});
+
+  /// [DU1 C0 S004 · 시험 전용] 약관 읽기를 바꿔 끼운다(로딩·실패·불완전·정상 LOCAL 렌더). production 은 넘기지 않는다.
+  @visibleForTesting
+  final Future<EffectiveLegalTerms> Function()? termsLoaderForTest;
+
+  /// [DU1 C0 S004 · 시험 전용] 지원자 약관 단계(2단계)에서 **화면만** 연다 — 본인인증·가입 writer 를 거치지 않는
+  ///   렌더 시험용이다. 가입 완료(_doRegister)의 인증·검증은 그대로라 이 값으로 가입되지 않는다. production 은 넘기지 않는다.
+  @visibleForTesting
+  final bool initialUserTermsStepForTest;
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
 }
+
+/// [DU1 C0-TERMS-SUBMIT-GUARD] 가입 진행·가입 시작 직전의 **약관 준비** 판정. 막을 이유 문구, 통과면 null.
+///
+/// 예전 두 단계 검증은 `_legalTerms?.…toList() ?? []` 로 시작해 읽기 실패·필수 0 일 때 **빈 목록 every = true** 가 되어
+/// 약관 없이 가입이 진행될 수 있었다. 로딩·실패·필수 0·필수 미동의를 각각 막고, 선택 항목 거부 의미는 그대로 둔다.
+///
+/// [DU359] 판정 본체는 공용 [termsSubmitBlockReason](외국인 가입과 단일 소유, 소급 11 채택)이다. 공개 함수 · 시그니처 · 문구는 그대로다.
+@visibleForTesting
+String? registerTermsBlockReason({
+  required bool loading,
+  required String? error,
+  required EffectiveLegalTerms? terms,
+  required Map<String, bool> consent,
+}) =>
+    termsSubmitBlockReason(loading: loading, error: error, terms: terms, consent: consent);
 
 class _RegisterScreenState extends State<RegisterScreen> {
   static final _pwLengthRe  = RegExp(r'.{8,}');
@@ -44,6 +72,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final PhoneVerificationService _phoneSvc = PhoneVerificationService();
 
   int _currentStep = 0;
+  // [DU379] 본인인증 없이 '다음' — 본인인증 버튼 아래 지속 안내(성공 · 국적 전환 · 역할 변경 · 단계 이동 때 지움)
+  bool _passGateShown = false;
+  final _passGateKey = GlobalKey();
   AutovalidateMode _autovalidateMode = AutovalidateMode.disabled;
   
   bool _isSubmitting = false;
@@ -114,6 +145,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialUserTermsStepForTest) {
+      _selectedRole = UserRole.USER;
+      _currentStep = 2;
+    }
     Future.delayed(const Duration(milliseconds: 400), () {
       if (mounted) _nameFocus.requestFocus();
     });
@@ -129,9 +164,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() {
       _isTermsLoading = true;
       _termsError = null;
+      // [DU359] 시행본이 바뀌었다(reset) — 고른 것과 열람 표시를 조회를 기다리기 **전에** 지운다.
+      //   열람 표시(_viewedTermIds)는 어디서도 지우지 않아, 같은 ID 새 버전을 열지 않고 체크할 수 있었다(소급 11 P1).
+      if (resetChoices) {
+        _consentNotifier.value = <String, bool>{};
+        _viewedTermIds.clear();
+      }
     });
     try {
-      final terms = await _legalTermsService.fetchEffectiveTerms();
+      final terms = await (widget.termsLoaderForTest ?? _legalTermsService.fetchEffectiveTerms)();
       if (!mounted) return;
       if (!terms.hasRequiredItems) {
         // 필수 항목이 하나도 없다 — "동의할 것이 없다" 가 아니라 데이터가
@@ -297,7 +338,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (_isKorean) {
       // 내국인: 본인인증 완료 여부 확인
       if (_passAuthResult == null) {
-        ToastHelper.showWarning('본인인증을 완료해주세요');
+        // [DU379] 토스트 → 본인인증 버튼 아래 지속 안내(같은 문구).
+        //   [r2] 버튼 · 안내 묶음이 화면 위쪽 밖이면 묶음 윗변까지 올리고(keepVisibleAtStart), 아래쪽 밖이면 끝까지 내린다
+        //   (keepVisibleAtEnd 는 위로 올리지 않는다 — B 에서 비밀번호 칸까지 내려간 상태라 안내가 위쪽 밖에 생겼다).
+        setState(() => _passGateShown = true);
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          final ctx = _passGateKey.currentContext;
+          if (!mounted || ctx == null) return;
+          await Scrollable.ensureVisible(ctx,
+              duration: const Duration(milliseconds: 200),
+              alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart);
+          final ctx2 = _passGateKey.currentContext;
+          if (ctx2 == null || !ctx2.mounted) return; // [r3] await 뒤에는 그 context 자신의 mounted 로 막는다
+          await Scrollable.ensureVisible(ctx2,
+              duration: const Duration(milliseconds: 200),
+              alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd);
+        });
         return false;
       }
     } else {
@@ -318,13 +374,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     // BUSINESS_ADMIN: 약관 동의 여기서 검증 (ADMIN은 STEP 3 없음)
     if (_selectedRole == UserRole.BUSINESS_ADMIN) {
-      final requiredItems = _legalTerms?.activeItems
-          .where((t) => t.isRequired)
-          .toList() ?? [];
-      final allRequiredAgreed = requiredItems.every(
-          (t) => _consentMap[t.id] == true);
-      if (!allRequiredAgreed) {
-        ToastHelper.showWarning('필수 약관에 모두 동의해주세요');
+      final block = _termsBlockReason();
+      if (block != null) {
+        ToastHelper.showWarning(block);
         return false;
       }
     }
@@ -339,13 +391,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return false;
     }
 
-    final requiredItems = _legalTerms?.activeItems
-        .where((t) => t.isRequired)
-        .toList() ?? [];
-    final allRequiredAgreed = requiredItems.every(
-        (t) => _consentMap[t.id] == true);
-    if (!allRequiredAgreed) {
-      ToastHelper.showWarning('필수 약관에 모두 동의해주세요');
+    final block = _termsBlockReason();
+    if (block != null) {
+      ToastHelper.showWarning(block);
       return false;
     }
 
@@ -375,7 +423,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       //   Step 2 → "일자리 시작 설정" (_buildStep3UserStart) — USER 전용
       if (_currentStep == 0) {
         if (_validateStep2()) {
-          setState(() => _currentStep = 1);
+          setState(() { _currentStep = 1; _passGateShown = false; });
           _scrollToTop();
         }
       } else if (_currentStep == 1) {
@@ -399,7 +447,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             await _doRegister();
           } else {
             // USER: STEP 3 (주로 일할 지역 + 약관)으로 이동
-            setState(() => _currentStep = 2);
+            setState(() { _currentStep = 2; _passGateShown = false; });
             _scrollToTop();
           }
         } else {
@@ -421,7 +469,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   void _onStepCancel() {
     if (_currentStep > 0) {
-      setState(() => _currentStep -= 1);
+      setState(() { _currentStep -= 1; _passGateShown = false; });
       _scrollToTop();
     } else {
       Navigator.pop(context);
@@ -448,6 +496,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
   /// - ADMIN: homeRegion = null (STEP 3 없음)
   Future<void> _doRegister() async {
     if (_isSubmitting) return;
+    // [DU1 C0-TERMS-SUBMIT-GUARD] 계정 생성(signUp)·동의 기록 전에 약관 준비를 다시 본다.
+    final termsBlock = _termsBlockReason();
+    if (termsBlock != null) {
+      ToastHelper.showWarning(termsBlock);
+      return;
+    }
     setState(() => _isSubmitting = true);
 
     final userProvider = context.read<UserProvider>();
@@ -899,6 +953,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           _passAuthResult = result;
           _nameController.text = result.name;
           _phoneController.text = result.phone;
+          _passGateShown = false; // [DU379]
         });
       } else {
         // 취소 또는 실패 — 이전 인증 결과 초기화 (재시도 시 구 결과 잔류 방지)
@@ -987,14 +1042,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 뒤로가기 버튼 — 다크 아이콘 (white surface 기준)
+          // [DU1 구현79 S004] 실측 터치 34.2×34.2 — 공통 최소 48×48 미만. 그림(22)은 그대로 두고 받는 영역만 48 로.
+          //   opaque: 아이콘 둘레 빈 칸도 누름을 받는다.
           GestureDetector(
             onTap: _onStepCancel,
-            child: Padding(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-              child: Icon(
-                Icons.arrow_back,
-                color: AppColors.textPrimary,
-                size: ResponsiveHelper.iconSize(context, 22),
+            behavior: HitTestBehavior.opaque,
+            child: SizedBox(
+              width: 48,
+              height: 48,
+              child: Center(
+                child: Icon(
+                  Icons.arrow_back,
+                  color: AppColors.textPrimary,
+                  size: ResponsiveHelper.iconSize(context, 22),
+                ),
               ),
             ),
           ),
@@ -1089,7 +1150,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       child: Row(children: [
         Icon(icon, size: 13, color: AppColors.grey500),
         const SizedBox(width: 5),
-        Text(title, style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500, fontWeight: FontWeight.w600)),
+        Text(title, style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
       ]),
     );
   }
@@ -1107,6 +1168,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               child: GestureDetector(
                 onTap: () => setState(() {
                   _isKorean = entry.$1;
+                  _passGateShown = false; // [DU379]
                   _passAuthResult = null;
                   _nameController.clear();
                   _residentResult.value = const _ResidentResult();
@@ -1158,6 +1220,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
       ],
+    );
+  }
+
+  /// [DU379] 본인인증 사전조건 안내 — 예전 경고 토스트와 같은 문구, DU378 휴대폰 단계 안내와 같은 경고 면 · 낭독(liveRegion).
+  Widget _passGateNotice() {
+    const style = TextStyle(fontSize: 13);
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.warningBg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.warningLight),
+        ),
+        child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          FirstLineIcon(Icons.warning_amber, size: 18, color: AppColors.warningDark, textStyle: style),
+          SizedBox(width: 8),
+          Expanded(child: KeepWordsText('본인인증을 완료해주세요', style: style)),
+        ]),
+      ),
     );
   }
 
@@ -1245,10 +1329,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                 // 내국인: 본인인증 버튼 → 완료 시 결과 표시 (이름/성별/생년월일/전화번호)
                 if (_isKorean) ...[
+                  // [DU379 r2] 버튼 · 안내를 한 묶음으로(스크롤 기준 — 묶음 윗변 = 버튼, 끝 = 안내)
+                  Column(
+                    key: _passGateKey,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                   PassAuthButton(
                     onPressed: _handlePassAuth,
                     isLoading: _isPassLoading,
                     isCompleted: _passAuthResult != null,
+                  ),
+                  // [DU379] 본인인증 없이 '다음' → 버튼 바로 아래 지속 안내(DU378 휴대폰 단계와 같은 경고 면)
+                  if (_passGateShown && _passAuthResult == null) ...[
+                    const SizedBox(height: 10),
+                    _passGateNotice(),
+                  ],
+                    ],
                   ),
                   if (_passAuthResult != null) ...[
                     const SizedBox(height: 12),
@@ -1500,12 +1597,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   child: Icon(Icons.credit_card, color: theme.colorScheme.primary, size: 22),
                 ),
                 const SizedBox(width: 10),
-                Text(
-                  '외국인등록증으로 간편 가입',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                    color: theme.colorScheme.primary,
+                // [DU391] 남은 폭 안에서 낱말 단위 줄바꿈(B 320@2.0 에서 152 넘쳤다)
+                Expanded(
+                  child: KeepWordsText(
+                    '외국인등록증으로 간편 가입',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                      color: theme.colorScheme.primary,
+                    ),
                   ),
                 ),
               ]),
@@ -1563,7 +1663,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             const Icon(Icons.arrow_upward, size: 14, color: AppColors.grey500),
             const SizedBox(width: 4),
             Text('이전 화면에서 이용 방법을 먼저 선택해주세요',
-                style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
+                style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary)),
           ]),
         ],
       ],
@@ -1661,11 +1761,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
             color: passed ? AppColors.success : AppColors.grey400,
           ),
           const SizedBox(width: 4),
-          Text(
-            label,
-            style: ResponsiveHelper.smallStyle(
-              context,
-              color: passed ? AppColors.successDark : AppColors.grey500,
+          // [DU391] 칸 폭 안에서 낱말 단위 줄바꿈(B 320@2.0 에서 '특수문자 포함' 칸이 48 넘쳤다)
+          Flexible(
+            child: KeepWordsText(
+              label,
+              style: ResponsiveHelper.smallStyle(
+                context,
+                color: passed ? AppColors.successDark : AppColors.grey500,
+              ),
             ),
           ),
         ],
@@ -1676,6 +1779,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // ============================================================
   // ── 법적 동의 섹션 — Firestore 약관 동적 로드 ─────────────
   // ============================================================
+
+  /// [DU1 C0-TERMS-SUBMIT-GUARD] 현재 화면 상태로 [registerTermsBlockReason] 을 부른다.
+  String? _termsBlockReason() => registerTermsBlockReason(
+        loading: _isTermsLoading, error: _termsError, terms: _legalTerms, consent: _consentMap);
 
   bool get _agreedToAll {
     if (_legalTerms == null) return false;
@@ -1776,7 +1883,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
             }
           },
           borderRadius: BorderRadius.circular(8),
-          child: Padding(
+          // [DU1 구현45 S004] 실측 전체 동의 터치 356×35.4(392·1.0) — 기준 48. 세로 최소 48, 내용은 왼쪽 가운데(문구·동작 그대로)
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 48),
+            alignment: Alignment.centerLeft,
             padding: EdgeInsets.symmetric(
               horizontal: ResponsiveHelper.spacing(context, 4),
               vertical: ResponsiveHelper.spacing(context, 8),
@@ -1784,17 +1894,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
             child: Row(children: [
               Icon(
                 agreedToAll ? Icons.check_circle : Icons.check_circle_outline,
-                color: agreedToAll ? theme.primaryColor : AppColors.grey400,
+                color: agreedToAll ? theme.primaryColor : AppColors.textTertiary,
                 size: ResponsiveHelper.iconSize(context, 18),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Text('전체 동의',
-                  style: ResponsiveHelper.bodyStyle(context)
-                      .copyWith(fontWeight: FontWeight.bold)),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text('(필수 및 선택 포함)',
-                  style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.grey400)),
+              // [DU1 C0 S004] 두 고정 글자의 폭 합이 320dp·2.0 에서 줄 폭을 190px 넘었다 — 남은 폭 안에서 다음 줄로.
+              //   보조 문구는 grey400(낮은 대비) → textSecondary(DU 읽기색).
+              Expanded(
+                child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: ResponsiveHelper.spacing(context, 6),
+                  runSpacing: ResponsiveHelper.spacing(context, 2),
+                  children: [
+                    Text('전체 동의',
+                        style: ResponsiveHelper.bodyStyle(context)
+                            .copyWith(fontWeight: FontWeight.bold)),
+                    Text('(필수 및 선택 포함)',
+                        style: ResponsiveHelper.tinyStyle(context,
+                            color: AppColors.textSecondary)),
+                  ],
+                ),
+              ),
             ]),
           ),
         ),
@@ -1839,45 +1959,60 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final checkColor = agreed
         ? theme.primaryColor
         : viewed
-            ? AppColors.grey400
-            : AppColors.grey300;
+            ? AppColors.textSecondary
+            : AppColors.textTertiary;
 
     return Padding(
       padding: EdgeInsets.symmetric(
           vertical: ResponsiveHelper.spacing(context, 2)),
       child: Row(children: [
-        InkWell(
-          onTap: () => onChanged(!agreed),
-          borderRadius: BorderRadius.circular(4),
-          child: Icon(
-            agreed ? Icons.check_circle : Icons.check_circle_outline,
-            color: checkColor,
-            size: ResponsiveHelper.iconSize(context, 18),
-          ),
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-        // 필수/선택 배지
-        Container(
-          padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 5), vertical: 1),
-          decoration: BoxDecoration(
-            color: isRequired ? AppColors.errorBg : AppColors.grey100,
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(
-            isRequired ? '필수' : '선택',
-            style: ResponsiveHelper.tinyStyle(context,
-                color: isRequired ? AppColors.error : AppColors.grey500,
-                fontWeight: FontWeight.w600),
-          ),
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+        // [DU1 구현159 S004] 체크·배지·제목 = 한 선택 대상(InkWell 하나 · 최소 48 · checked 의미). 보기는 아래 형제로 분리.
         Expanded(
-          child: InkWell(
-            onTap: () => onChanged(!agreed),
-            child: Text(label,
-                style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.grey700)),
+          child: MergeSemantics(
+            child: Semantics(
+              checked: agreed,
+              child: InkWell(
+                onTap: () => onChanged(!agreed),
+                borderRadius: BorderRadius.circular(4),
+                child: ConstrainedBox(
+                  // 최소 48 은 ResponsiveHelper 배율로 줄이지 않는다(긴 제목이면 높이가 늘어난다).
+                  constraints: const BoxConstraints(minHeight: 48),
+                  child: Row(children: [
+                    Icon(
+                      agreed ? Icons.check_circle : Icons.check_circle_outline,
+                      color: checkColor,
+                      size: ResponsiveHelper.iconSize(context, 18),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    // 필수/선택 배지
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                          horizontal: ResponsiveHelper.spacing(context, 5),
+                          vertical: 1),
+                      decoration: BoxDecoration(
+                        color: isRequired ? AppColors.errorBg : AppColors.grey100,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        isRequired ? '필수' : '선택',
+                        style: ResponsiveHelper.tinyStyle(context,
+                            color: isRequired
+                                ? AppColors.errorDark
+                                : AppColors.textSecondary,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                    // [DU365] 제목 낱말 조판(B '서비스 이용약|관') — data 는 원문(KeepWordsText: 찾기 · 낭독 원문)
+                    Expanded(
+                      child: KeepWordsText(label,
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.grey700)),
+                    ),
+                  ]),
+                ),
+              ),
+            ),
           ),
         ),
         if (onViewTap != null)
@@ -1886,21 +2021,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
             style: TextButton.styleFrom(
               padding: EdgeInsets.symmetric(
                   horizontal: ResponsiveHelper.spacing(context, 4)),
-              minimumSize: Size.zero,
+              // [DU1 후속43 S004] 실측 38.5×17(392·1.0)·69×34(320·2.0) — 터치 48. 글자 크기·위치는 그대로
+              minimumSize: const Size(48, 48),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
             // 미열람이면 '보기' 강조, 열람 완료면 일반 스타일
             child: Text(
-              viewed ? '다시보기' : '보기 *',
+              viewed ? '다시보기' : '보기',
               style: ResponsiveHelper.tinyStyle(context,
                   color: viewed
-                      ? AppColors.grey400
+                      ? AppColors.textSecondary
                       : theme.primaryColor,
                   fontWeight: viewed ? FontWeight.normal : FontWeight.w600)
                   .copyWith(
                     decoration: TextDecoration.underline,
                     decorationColor: viewed
-                        ? AppColors.grey400
+                        ? AppColors.textSecondary
                         : theme.primaryColor,
                   ),
             ),
@@ -1955,6 +2091,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _consentNotifier.value = {..._consentNotifier.value, item.id: true};
     }
     // 뷰어에서 동의하지 않고 닫아도 열람 기록은 유지 (재열람 없이 체크 허용)
+    // [DU1 후속43 S004] 열람 기록(_viewedTermIds)은 위에서 이미 남지만 화면을 다시 그리지 않아, 동의하지 않고 닫으면
+    //   보기 버튼이 '보기 *'(미열람)로 남았다(C0-TV before 실측). 복귀 시 다시 그려 '다시보기'로 반영한다 — 열람·동의 의미는 그대로.
+    if (mounted) setState(() {});
   }
 
   // ============================================================
@@ -2038,28 +2177,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
             decoration: CommonWidgets.compactCardDecoration(borderOnly: true),
             child: Row(
               children: [
+                // [DU359] 미선택 글 grey400(흰 면 1.88) → textTertiary, 아이콘 grey400 → grey600, 미선택 글 낱말 줄바꿈(외국인 DU356 선례)
                 Icon(
                   Icons.map_outlined,
                   size: ResponsiveHelper.iconSize(context, 20),
-                  color: _selectedHomeRegion != null ? theme.primaryColor : AppColors.grey400,
+                  color: _selectedHomeRegion != null ? theme.primaryColor : AppColors.grey600,
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Expanded(
                   child: Text(
                     _selectedHomeRegion != null
                         ? '${_selectedHomeRegion!.province ?? ''} ${_selectedHomeRegion!.city}'.trim()
-                        : '지역을 선택해주세요',
+                        : TextLayout.keepWords('지역을 선택해주세요'),
+                    semanticsLabel: _selectedHomeRegion != null ? null : '지역을 선택해주세요',
                     style: ResponsiveHelper.bodyStyle(
                       context,
                       color: _selectedHomeRegion != null
                           ? AppColors.textPrimary
-                          : AppColors.grey400,
+                          : AppColors.textTertiary,
                     ),
                   ),
                 ),
                 Icon(Icons.chevron_right,
                     size: ResponsiveHelper.iconSize(context, 20),
-                    color: AppColors.grey400),
+                    color: AppColors.grey600),
               ],
             ),
           ),
@@ -2071,7 +2212,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           child: Text(
             '가입 후 MY에서 언제든 변경할 수 있어요.',
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary),
           ),
         ),
 
@@ -2108,6 +2249,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _selectedRole = role;
         // 역할 변경 시 인증 상태 초기화 — 이전 역할 기준 인증 결과가 재사용되는 것 방지
         _passAuthResult = null;
+        _passGateShown = false; // [DU379]
         _phoneVerifyStatus.value = const _PhoneVerifyStatus();
         _phoneController.clear();
       }),
@@ -2151,16 +2293,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // [DU1 구현79 S004] 320·2.0 에서 '사업장 관리자|로 이용' 으로 낱말 중간이 끊겼다 — 선택지 제목은 낱말 단위(원문은 낭독용).
                   Text(
-                    title,
+                    TextLayout.keepWords(title),
+                    semanticsLabel: title,
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
                       color: isSelected ? primary : AppColors.textPrimary,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+                  // [DU1 구현79 S004] 기본 392·1.0 에서 '관리해|요.' 로 한 음절이 다음 줄에 남았다 — 낱말 단위 줄바꿈(표시만, 원문은 낭독용으로 보존).
                   Text(
-                    description,
+                    TextLayout.keepWords(description),
+                    semanticsLabel: description,
                     style: ResponsiveHelper.smallStyle(
                       context,
                       color: AppColors.textSecondary,
@@ -2205,6 +2351,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
           padding: EdgeInsets.symmetric(
             vertical: ResponsiveHelper.spacing(context, 14),
           ),
+          // [DU1 구현79 S004] 기본 글자에서 48 이었다(실측) — 공통 기준 주 버튼 최소 52. 글자 확대 시엔 여백대로 커진다.
+          minimumSize: const Size.fromHeight(52),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),

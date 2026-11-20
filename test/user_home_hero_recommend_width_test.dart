@@ -59,6 +59,8 @@ import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/user/user_home_reads.dart';
 import 'package:ALfit/screens/user/user_home_screen.dart';
 import 'package:ALfit/theme/app_text_styles.dart';
+import 'support/checkin_contract_fixture.dart';
+import 'support/visible_text.dart';
 import 'package:ALfit/utils/format_helper.dart';
 
 // ══ 공용 ════════════════════════════════════════════════════════════════
@@ -265,6 +267,8 @@ UserHomeReads _reads({
 }) =>
     UserHomeReads(
       slotsForTO: (toId) async => const <SlotModel>[],
+      // [CONTRACT-DISPATCH-B4] 홈 CTA 는 계약 동의 판정을 함께 본다 — 이 시험의 전제: 오늘 근무 계약은 양측 서명 완료
+      myContracts: (uid) async => completedContractsFor(applications),
       myApplications: (uid) async => applications,
       myMonthlyAttendances: (
               {required String userId,
@@ -523,7 +527,7 @@ void main() {
           expect(tester.takeException(), isNull,
               reason: '${w.toInt()}dp x$sc 에서 overflow/예외');
           // 제목·부제목·입구가 모두 살아 있다(글자 소실 0).
-          expect(find.text(_headline), findsOneWidget);
+          expect(findVisibleText(_headline), findsOneWidget); // [DU1 후속15] keepWords 결합 문자 — 보이는 글자로
           expect(find.text(_subtitle), findsOneWidget);
           expect(find.text(_more), findsOneWidget);
         });
@@ -601,10 +605,11 @@ void main() {
 
     test('S1 제목은 전폭을 쓴다 — 같은 줄에 고정 폭 형제가 없다', () {
       final b = heroBlock();
-      expect(b.contains("Text('언제 일하고 싶으세요?', style: AppTextStyles.heroTitle())"),
+      // [DU-VQ-01] 날짜 탐색 제목은 섹션 크기(sectionTitle) — 확정 카드와 경쟁하지 않게(토큰 heroTitle 은 그대로)
+      expect(b.contains("Text(TextLayout.keepWords('언제 일하고 싶으세요?'), style: AppTextStyles.sectionTitle())"),
           isTrue);
       // 제목과 더보기 사이에 Row 가 끼어 있지 않다.
-      final titleAt = b.indexOf("Text('언제 일하고 싶으세요?'");
+      final titleAt = b.indexOf("Text(TextLayout.keepWords('언제 일하고 싶으세요?')");
       final subAt = b.indexOf("Text('일할 날짜를 선택해보세요.'");
       expect(subAt, greaterThan(titleAt));
       final between = b.substring(titleAt, subAt);

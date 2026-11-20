@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'responsive_helper.dart';
+import 'text_layout.dart';
 import 'toast_helper.dart';
 import '../theme/app_colors.dart';
 import '../widgets/dialogs/styled_dialog.dart';
@@ -34,8 +35,62 @@ class _SheetFocusSafeAreaState extends State<_SheetFocusSafeArea> {
   Widget build(BuildContext context) => widget.child;
 }
 
+/// [DU1 구현49 F48-1] 공용 확인창 행동 — 셸이 **역할(주/보조)과 원문 label** 을 알아야
+///   좁은 폭·큰 글자에서 세로 배치(주 행동 위)와 단어 묶기를 고를 수 있다.
+///   `_confirmBtn`/`_cancelBtn` 만 만든다. showCustom 의 임의 actions 는 이 타입이 아니므로 기존 가로 배치 그대로다.
+class _DialogAction extends StatelessWidget {
+  final String label;
+  final bool primary;
+  final Widget Function(String shown) builder;
+  const _DialogAction({required this.label, required this.primary, required this.builder});
+
+  @override
+  Widget build(BuildContext context) => builder(label);
+}
+
 /// 공통 다이얼로그 헬퍼
 class DialogHelper {
+  /// [DU1 구현49 F48-1] 글이 [maxWidth] 안에 한 줄(각 `\n` 줄)로 들어가는가 — 실제 배율·글꼴로 잰다.
+  ///   [DU284 FL1·FL2] Text 가 그리는 것과 같은 기준으로 잰다 — 둘레 기본 글자(DefaultTextStyle: 확인창 안은 테마
+  ///   bodyMedium, letterSpacing 0.25)를 병합하고 locale 을 넘긴다. 둘이 빠져 그린 폭보다 최대 26px 좁게 쟀다(시험 실측).
+  static bool _fitsLine(BuildContext context, String text, TextStyle style, double maxWidth) {
+    final eff = style.inherit ? DefaultTextStyle.of(context).style.merge(style) : style;
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: eff),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
+    )..layout();
+    final w = tp.width;
+    tp.dispose();
+    return w <= maxWidth;
+  }
+
+  /// 들어가면 원문 그대로, 안 들어갈 때만 단어 단위로 묶는다(음절 끊김 방지). 표시 문자열이 바뀌면
+  ///   접근성 이름은 제어문자 없는 원문으로 남긴다.
+  static Widget _wordSafeText(BuildContext context, String text, TextStyle style, double maxWidth,
+      {TextAlign? textAlign, bool allowKeep = true}) {
+    final keep = allowKeep && !_fitsLine(context, text, style, maxWidth);
+    if (!keep) return Text(text, style: style, textAlign: textAlign);
+    return Semantics(
+      label: text,
+      child: ExcludeSemantics(child: Text(TextLayout.keepWords(text), style: style, textAlign: textAlign)),
+    );
+  }
+
+  static TextStyle _titleStyle(BuildContext context) => ResponsiveHelper.subtitleStyle(context).copyWith(
+        fontWeight: FontWeight.bold,
+        color: const Color(0xFF111827),
+      );
+  static TextStyle _cancelStyle(BuildContext context) => ResponsiveHelper.bodyStyle(context).copyWith(
+        color: const Color(0xFF4B5563),
+        fontWeight: FontWeight.w600,
+      );
+  static TextStyle _confirmStyle(BuildContext context) => ResponsiveHelper.bodyStyle(context).copyWith(
+        color: Colors.white,
+        fontWeight: FontWeight.bold,
+      );
+
   /// 확인 다이얼로그 (예/아니오)
   /// 
   /// 사용 예:
@@ -60,8 +115,13 @@ class DialogHelper {
     Color? iconColor,
   }) async {
     final theme = Theme.of(context);
-    
-    final accentColor = confirmColor ?? iconColor ?? theme.primaryColor;
+
+    // [DU309 Standards §9.1·§12.2] 의미색은 머리 아이콘에만, 확인 버튼은 행동 결과로 — showAlert(DU299 AC1)와 같은 원칙.
+    //   예전에는 아이콘 색(iconColor)만 넘긴 호출도 버튼이 그 색으로 칠해졌다(경고 아이콘 → 주황 `설정으로 이동`).
+    //   아이콘 = iconColor ?? confirmColor ?? brand(두 색 지정 시 iconColor 우선으로 변경), 버튼 = confirmColor ?? brand.
+    //   손실·책임 실행은 호출부가 confirmColor 로 명시한다(errorDark 등).
+    final iconAccent = iconColor ?? confirmColor ?? theme.primaryColor;
+    final buttonColor = confirmColor ?? theme.primaryColor;
 
     final result = await showDialog<bool>(
       context: context,
@@ -69,17 +129,22 @@ class DialogHelper {
         dialogContext,
         title: title,
         icon: icon ?? Icons.help_outline,
-        accentColor: accentColor,
-        body: Text(
-          message,
-          style: ResponsiveHelper.bodyStyle(
-            dialogContext,
-            color: theme.textTheme.bodyMedium?.color,
+        accentColor: iconAccent,
+        // [DU1 구현49 F48-1] 큰 글자(배율>1.0)에서 본문이 '변/경사항'·'있습니/다' 로 음절에서 끊겼다(320·2.0) —
+        //   그때 넘치는 줄만 단어 단위로 묶는다. 기본 배율은 기존 표시·문자열 그대로(일반 본문 줄바꿈).
+        body: LayoutBuilder(
+          builder: (c, cons) => _wordSafeText(
+            c,
+            message,
+            ResponsiveHelper.bodyStyle(c, color: theme.textTheme.bodyMedium?.color),
+            cons.maxWidth,
+            // [DU285 FL3a] 기본 배율에서도 넘치는 줄만 단어 단위로 묶는다 — 360·1.0 에서 '삭제하시겠습니 | 까?'·
+            //   '요청하세 | 요.' 처럼 음절에서 끊겼다(lib/ 문구 46개 중 본문 23곳). 한 줄에 들어가면 원문 그대로다.
           ),
         ),
         actions: [
           _cancelBtn(dialogContext, () => Navigator.pop(dialogContext, false), cancelText),
-          _confirmBtn(dialogContext, () => Navigator.pop(dialogContext, true), confirmText, accentColor),
+          _confirmBtn(dialogContext, () => Navigator.pop(dialogContext, true), confirmText, buttonColor),
         ],
       ),
     );
@@ -144,15 +209,20 @@ class DialogHelper {
         title: title,
         icon: icon ?? Icons.notifications_outlined,
         accentColor: accentColor,
-        body: Text(
-          message,
-          style: ResponsiveHelper.bodyStyle(
-            dialogContext,
-            color: theme.textTheme.bodyMedium?.color,
+        // [DU1 구현49 F48-1] showConfirm 본문과 같은 규칙 — 큰 글자에서 '위/해' 로 음절에서 끊겼다(320·2.0)
+        body: LayoutBuilder(
+          builder: (c, cons) => _wordSafeText(
+            c,
+            message,
+            ResponsiveHelper.bodyStyle(c, color: theme.textTheme.bodyMedium?.color),
+            cons.maxWidth,
+            // [DU285 FL3a] 기본 배율에서도 넘치는 줄만 단어 단위로 묶는다 — 360·1.0 에서 '삭제하시겠습니 | 까?'·
+            //   '요청하세 | 요.' 처럼 음절에서 끊겼다(lib/ 문구 46개 중 본문 23곳). 한 줄에 들어가면 원문 그대로다.
           ),
         ),
         actions: [
-          _confirmBtn(dialogContext, () => Navigator.pop(dialogContext), buttonText, accentColor),
+          // [DU299 AC1] 알림 닫기는 주 행동 — 버튼은 brand(theme.primaryColor). 의미색은 머리 아이콘(accentColor)에만(감사298·후속299)
+          _confirmBtn(dialogContext, () => Navigator.pop(dialogContext), buttonText, theme.primaryColor),
         ],
       ),
     );
@@ -359,9 +429,8 @@ class DialogHelper {
       title: '로그아웃',
       message: '로그아웃 하시겠습니까?',
       confirmText: '로그아웃',
-      confirmColor: AppColors.error,
+      // [DU309] 세션 종료는 일반 행동: 버튼과 머리 아이콘은 기본 brand.
       icon: Icons.logout,
-      iconColor: AppColors.error,
     );
   }
 
@@ -394,6 +463,21 @@ class DialogHelper {
       title: title,
       message: message,
       confirmText: '취소하기',
+      // [DU309] 세 소비처는 미확정 지원 철회: 버튼 brand, 주의 아이콘은 유지. 확정 취소는 별도 경로.
+      icon: Icons.cancel_outlined,
+      iconColor: AppColors.warning,
+    );
+  }
+
+  /// [INVITE-DECLINE-COPY 10-23] 근로자의 초대 거절 확인. 확인 버튼이 `취소하기` 이면
+  ///   "거절을 취소한다"로도 읽혔다 — 확인은 `초대 거절`, 창만 닫는 버튼은 `닫기`.
+  static Future<bool> showDeclineInviteConfirm(BuildContext context) {
+    return showConfirm(
+      context,
+      title: '초대 거절',
+      message: '초대를 거절하시겠습니까?',
+      confirmText: '초대 거절',
+      cancelText: '닫기',
       confirmColor: AppColors.warning,
       icon: Icons.cancel_outlined,
       iconColor: AppColors.warning,
@@ -506,8 +590,10 @@ class DialogHelper {
   }) async {
     final controller = TextEditingController(text: initialValue);
     final theme = Theme.of(context);
-    
-    final accentColor = confirmColor ?? iconColor ?? theme.primaryColor;
+
+    // [DU309] showConfirm 과 같은 분리 — 아이콘 = iconColor ?? confirmColor ?? brand, 버튼 = confirmColor ?? brand.
+    final iconAccent = iconColor ?? confirmColor ?? theme.primaryColor;
+    final buttonColor = confirmColor ?? theme.primaryColor;
 
     final result = await showDialog<String>(
       context: context,
@@ -516,7 +602,7 @@ class DialogHelper {
         dialogContext,
         title: title,
         icon: icon ?? Icons.edit_outlined,
-        accentColor: accentColor,
+        accentColor: iconAccent,
         body: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -565,7 +651,7 @@ class DialogHelper {
               Navigator.pop(dialogContext, value);
             },
             confirmText,
-            accentColor,
+            buttonColor,
           ),
         ],
       ),
@@ -582,21 +668,55 @@ class DialogHelper {
     required String title,
     String? targetName,
     String? message,
+  }) =>
+      _showReasonPicker(
+        context,
+        title: title,
+        subtitle: message ?? (targetName != null ? '$targetName님의 지원을 거절합니다' : '거절 사유를 선택해주세요'),
+        reasons: const ['경력/경험 부족', '일정 불가', '다른 지원자 확정', '인원 충원 완료', '서류 미비', '기타'],
+        defaultCustomText: '지원해 주셔서 감사합니다. 이번에는 인연이 닿지 않았지만, 다음에 또 지원 부탁드립니다.',
+        hintText: '거절 사유를 입력하세요',
+        cancelText: '취소',
+        confirmText: '거절',
+        selectWarning: '거절 사유를 선택해주세요',
+        inputWarning: '거절 사유를 입력해주세요',
+      );
+
+  /// [CONFIRM-CANCEL-COPY] 이미 **확정된 근무**를 사업장이 취소할 때의 사유 선택.
+  ///   지원 거절 창을 그대로 쓰면 '거절' 버튼과 "이번에는 인연이 닿지 않았지만…" 문구가
+  ///   확정 취소에 붙었다(Pixel 5 10-23). 취소 결과·권한·벌점 계약은 호출부 그대로다.
+  ///   창을 닫는 버튼은 `닫기` — 같은 창에 '취소'가 두 뜻으로 있지 않게 한다.
+  static Future<String?> showConfirmCancelReasonPicker(
+    BuildContext context, {
+    String? message,
+  }) =>
+      _showReasonPicker(
+        context,
+        title: '확정 취소',
+        subtitle: message ?? '확정된 근무를 취소합니다. 취소 사유를 선택해 주세요.',
+        reasons: const ['근무 일정 변경', '업무 취소·축소', '인원 조정', '근무자 요청', '기타'],
+        defaultCustomText: '사업장 사정으로 확정된 근무를 취소하게 되었습니다. 불편을 드려 죄송합니다.',
+        hintText: '취소 사유를 입력하세요',
+        cancelText: '닫기',
+        confirmText: '확정 취소',
+        selectWarning: '취소 사유를 선택해주세요',
+        inputWarning: '취소 사유를 입력해주세요',
+      );
+
+  static Future<String?> _showReasonPicker(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required List<String> reasons,
+    required String defaultCustomText,
+    required String hintText,
+    required String cancelText,
+    required String confirmText,
+    required String selectWarning,
+    required String inputWarning,
   }) async {
-    // 거절 사유 옵션
-    final reasons = [
-      '경력/경험 부족',
-      '일정 불가',
-      '다른 지원자 확정',
-      '인원 충원 완료',
-      '서류 미비',
-      '기타',
-    ];
-    
     String? selectedReason;
-    final customController = TextEditingController(
-      text: '지원해 주셔서 감사합니다. 이번에는 인연이 닿지 않았지만, 다음에 또 지원 부탁드립니다.',
-    );
+    final customController = TextEditingController(text: defaultCustomText);
     
     final result = await showDialog<String>(
       context: context,
@@ -608,7 +728,7 @@ class DialogHelper {
             
             return StyledDialog(
               title: title,
-              subtitle: message ?? (targetName != null ? '$targetName님의 지원을 거절합니다' : '거절 사유를 선택해주세요'),
+              subtitle: subtitle,
               icon: Icons.cancel,
               headerColor: AppColors.error,
               content: Column(
@@ -644,7 +764,7 @@ class DialogHelper {
                       maxLength: 100,
                       style: ResponsiveHelper.bodyStyle(context),
                       decoration: InputDecoration(
-                        hintText: '거절 사유를 입력하세요',
+                        hintText: hintText,
                         hintStyle: ResponsiveHelper.bodyStyle(
                           context,
                           color: AppColors.grey400,
@@ -665,20 +785,21 @@ class DialogHelper {
               ),
               actions: [
                 StyledDialogButton.cancel(
+                  text: cancelText,
                   onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(dialogContext); },
                 ),
                 StyledDialogButton.danger(
-                  text: '거절',
+                  text: confirmText,
                   onPressed: selectedReason == null
                       ? () {
-                          ToastHelper.showWarning('거절 사유를 선택해주세요');
+                          ToastHelper.showWarning(selectWarning);
                         }
                       : () {
                           String finalReason;
                           if (isCustom) {
                             final customText = customController.text.trim();
                             if (customText.isEmpty) {
-                              ToastHelper.showWarning('거절 사유를 입력해주세요');
+                              ToastHelper.showWarning(inputWarning);
                               return;
                             }
                             finalReason = customText;
@@ -846,7 +967,12 @@ class DialogHelper {
     return Dialog(
       backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+      // [DU284 FL4] 큰 글자(배율>1.0)에서 좌우 바깥 여백 32 → 16(기준 §간격 '작은 320dp 16'). 키운 글자를 줄이지 않고
+      //   폭을 준다 — 320·2.0 본문 폭 222 → 254 로 '계속하시겠습니까?'(237px) 같은 한 낱말이 한 줄에 든다. 기본 배율은 그대로.
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: MediaQuery.textScalerOf(context).scale(1) > 1.0 ? 16 : 32,
+        vertical: 24,
+      ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 380),
         child: Column(
@@ -861,33 +987,50 @@ class DialogHelper {
                 ResponsiveHelper.spacing(context, 20),
                 0,
               ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: accentColor.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(
-                      icon,
-                      color: accentColor,
-                      size: ResponsiveHelper.iconSize(context, 22),
-                    ),
+              // [DU1 구현49 F48-1] 큰 글자(배율>1.0)에서 제목이 아이콘 옆 좁은 폭에 갇혀 '변경사항 취/소' 로 음절에서
+              //   끊겼다(320·2.0). 그때 제목이 아이콘 옆 한 줄에 안 들어가면 아이콘을 제목 **위**로 올려 전체 폭을 주고,
+              //   그래도 넘치면 단어 단위로 묶는다. 기본 배율·들어가는 제목은 기존 가로 배치 그대로.
+              child: LayoutBuilder(builder: (c, cons) {
+                // [DU287 RF2] 머리 아이콘·10% 면 — 밝은 의미색은 읽히는 짝으로(아이콘 3:1, AppDialogColors)
+                final accent = AppDialogColors.readableFill(accentColor);
+                final iconBox = Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: const Color(0xFF111827),
-                      ),
-                    ),
+                  child: Icon(
+                    icon,
+                    color: accent,
+                    size: ResponsiveHelper.iconSize(c, 22),
                   ),
-                ],
-              ),
+                );
+                final gap = ResponsiveHelper.spacing(c, 12);
+                final style = _titleStyle(c);
+                final enlarged = MediaQuery.textScalerOf(c).scale(1) > 1.0;
+                final besideW = cons.maxWidth - 44 - gap;
+                if (!enlarged || _fitsLine(c, title, style, besideW)) {
+                  return Row(
+                    children: [
+                      iconBox,
+                      SizedBox(width: gap),
+                      // [DU285 FL3b] 기본 배율에서 아이콘 옆 한 줄에 안 들어가는 제목이 '그만둘 | 까요?'·'못했 | 어요' 로 음절에서
+                      //   끊겼다 — 같은 자리에서 단어 단위로 묶는다. 들어가면 원문 그대로, 큰 글자 세로 전환 판정은 그대로다.
+                      Expanded(child: _wordSafeText(c, title, style, besideW)),
+                    ],
+                  );
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    iconBox,
+                    SizedBox(height: gap),
+                    _wordSafeText(c, title, style, cons.maxWidth),
+                  ],
+                );
+              }),
             ),
             // 본문
             //
@@ -915,22 +1058,51 @@ class DialogHelper {
             // 버튼 행 — 구분선 제거, 여백만으로 콘텐츠와 분리
             Padding(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-              child: Row(
-                children: actions
-                    .asMap()
-                    .entries
-                    .map((e) => Expanded(
-                          child: Padding(
-                            padding: EdgeInsets.only(
-                              left: e.key > 0
-                                  ? ResponsiveHelper.spacing(context, 8)
-                                  : 0,
+              // [DU1 구현49 F48-1] 큰 글자(배율>1.0)에서 가로 두 칸에 행동 글이 안 들어가 '계속 수/정' 으로 음절에서
+              //   끊겼다(320·2.0). 역할을 아는 공용 행동(_confirmBtn/_cancelBtn)만일 때, 한 칸에 안 들어가는 글이 있으면
+              //   **세로 전체 폭**으로 쌓고 주 행동을 위에 둔다(반환값·label 연결은 각 행동이 그대로 가진다).
+              //   임의 actions(showCustom)·기본 배율·들어가는 글은 기존 가로 배치 그대로.
+              child: LayoutBuilder(builder: (c, cons) {
+                final gap = ResponsiveHelper.spacing(c, 8);
+                final roles = actions.whereType<_DialogAction>().toList();
+                final enlarged = MediaQuery.textScalerOf(c).scale(1) > 1.0;
+                TextStyle styleOf(_DialogAction a) => a.primary ? _confirmStyle(c) : _cancelStyle(c);
+                // 글 좌우 숨 쉴 틈(버튼 안쪽) — 이보다 좁으면 줄이 갈린다
+                const inner = 16.0;
+                Widget shown(_DialogAction a, double w) {
+                  if (!enlarged || _fitsLine(c, a.label, styleOf(a), w - inner)) return a;
+                  return a.builder(TextLayout.keepWords(a.label));
+                }
+                if (enlarged && roles.length == actions.length && actions.length >= 2) {
+                  final per = (cons.maxWidth - gap * (actions.length - 1)) / actions.length;
+                  if (roles.any((a) => !_fitsLine(c, a.label, styleOf(a), per - inner))) {
+                    final ordered = [...roles.where((a) => a.primary), ...roles.where((a) => !a.primary)];
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (var i = 0; i < ordered.length; i++) ...[
+                          if (i > 0) SizedBox(height: gap),
+                          shown(ordered[i], cons.maxWidth),
+                        ],
+                      ],
+                    );
+                  }
+                }
+                final per = (cons.maxWidth - gap * (actions.length - 1)) / actions.length;
+                return Row(
+                  children: actions
+                      .asMap()
+                      .entries
+                      .map((e) => Expanded(
+                            child: Padding(
+                              padding: EdgeInsets.only(left: e.key > 0 ? gap : 0),
+                              child: e.value is _DialogAction ? shown(e.value as _DialogAction, per) : e.value,
                             ),
-                            child: e.value,
-                          ),
-                        ))
-                    .toList(),
-              ),
+                          ))
+                      .toList(),
+                );
+              }),
             ),
           ],
         ),
@@ -944,26 +1116,28 @@ class DialogHelper {
     VoidCallback onPressed,
     String text,
   ) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(10),
-        child: InkWell(
-          onTap: onPressed,
+    return _DialogAction(
+      label: text,
+      primary: false,
+      builder: (shown) => DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white,
           borderRadius: BorderRadius.circular(10),
-          child: Padding(
-            padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 13)),
-            child: Center(
-              child: Text(
-                text,
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: const Color(0xFF4B5563),
-                  fontWeight: FontWeight.w600,
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            onTap: onPressed,
+            borderRadius: BorderRadius.circular(10),
+            // [DU1 구현49 F48-1] 실측 44.4(360·1.0) — 공통 기준 행동 최소 52(고정 높이 아님, 글이 커지면 늘어난다)
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 52),
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 13)),
+                child: Center(
+                  child: _actionLabel(text, shown, _cancelStyle(context)),
                 ),
               ),
             ),
@@ -973,6 +1147,13 @@ class DialogHelper {
     );
   }
 
+  /// 행동 글 — 단어 묶기로 표시 문자열이 바뀌면 접근성 이름은 원문으로 남긴다.
+  static Widget _actionLabel(String raw, String shown, TextStyle style) {
+    final t = Text(shown, style: style, textAlign: TextAlign.center);
+    if (shown == raw) return t;
+    return Semantics(label: raw, child: ExcludeSemantics(child: t));
+  }
+
   /// 확인 버튼
   static Widget _confirmBtn(
     BuildContext context,
@@ -980,20 +1161,23 @@ class DialogHelper {
     String text,
     Color color,
   ) {
-    return Material(
-      color: color,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        onTap: onPressed,
+    return _DialogAction(
+      label: text,
+      primary: true,
+      // [DU287 RF2] 흰 글 채움 — 밝은 의미색은 읽히는 짝으로(error 3.68·warning 2.16 등 → 4.5 이상)
+      builder: (shown) => Material(
+        color: AppDialogColors.readableFill(color),
         borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 13)),
-          child: Center(
-            child: Text(
-              text,
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(10),
+          // [DU1 구현49 F48-1] 주 행동 최소 52(공통 기준)
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 52),
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 13)),
+              child: Center(
+                child: _actionLabel(text, shown, _confirmStyle(context)),
               ),
             ),
           ),

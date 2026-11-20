@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 
 /// 앱 공통 캘린더 베이스 위젯
 ///
@@ -30,6 +32,10 @@ class AppCalendar extends StatelessWidget {
   final double rowHeight;
   /// 헤더(월 선택 영역) 상하 내부 패딩. 기본 8. 공간을 줄이려면 4 등 소값 전달.
   final double headerVerticalPadding;
+  /// [DU193] 달력이 받는 제스처. 기본 all(기존 동작 그대로). 세로 스크롤 부모 안에서 세로 drag 를 부모에 넘기려면 horizontalSwipe.
+  final AvailableGestures availableGestures;
+  /// [DU194] 날짜 칸 바깥 여백. null 이면 패키지 기본(기존 표현 그대로). 큰 글자에서 두 자리 날짜가 칸 안에서 줄바뀜되지 않게 호출부가 좁힐 수 있다.
+  final EdgeInsets? cellMargin;
   /// selectedDayPredicate 재정의.
   ///
   /// null이면 기본값(`DateUtils.isSameDay(selectedDay, day)`) 사용.
@@ -52,23 +58,44 @@ class AppCalendar extends StatelessWidget {
     this.selectedDayPredicateOverride,
     this.rowHeight = 40,
     this.headerVerticalPadding = 8,
+    this.availableGestures = AvailableGestures.all,
+    this.cellMargin,
   });
+
+  /// [SCALE-BALANCE.34] 달력 칸 높이 — 기본 높이 + **글자가 커진 만큼의 줄 높이**.
+  ///   고정 높이(40·28)에서 사용자 글자 2.0 이면 날짜 숫자 줄끼리 겹치고 아래가 잘렸다(근로자 일정 기기).
+  ///   글자를 줄이지 않고 칸을 늘린다. 배율 1.0 이면 기본 높이 그대로. TableCalendar 를 직접 쓰는 곳도 이 식을 쓴다.
+  static double scaledHeight(BuildContext context, double base, {double fontSize = 15}) {
+    final grow = MediaQuery.textScalerOf(context).scale(fontSize) - fontSize;
+    return grow <= 0 ? base : base + grow * 1.3;
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    // [E1-KSTDAY] 달력의 '오늘'은 **기기 날짜가 아니라 KST 날짜**다.
+    //
+    //   `TableCalendar` 는 `currentDay` 를 주지 않으면 `DateTime.now()` 로
+    //   today 를 정한다(패키지 284행). 그러면 기기 시간대에 따라 하루가
+    //   밀리는데, 이 앱의 근무일·가능일·저장 필터는 전부 KST day key 로
+    //   판정한다 — 한 화면에서 두 자를 섞으면 "오늘"이 서로 달라진다.
+    //
+    //   `isSameDay` 는 연·월·일 **성분만** 비교하므로(패키지 51행),
+    //   KST 날짜의 성분을 그대로 넘기면 기기 시간대와 무관하게 맞는다.
+    final kstToday = FormatHelper.toKstDate(DateTime.now());
+    final today = DateTime(kstToday.year, kstToday.month, kstToday.day);
 
     return TableCalendar(
       locale: 'ko_KR',
+      currentDay: today,
       firstDay: _firstDay,
       lastDay: _lastDay,
       focusedDay: focusedDay,
       calendarFormat: CalendarFormat.month,
+      availableGestures: availableGestures,
       sixWeekMonthsEnforced: true, // 항상 6행 → 달 전환 시 높이 고정
-      daysOfWeekHeight: 28,
-      rowHeight: rowHeight,
+      daysOfWeekHeight: scaledHeight(context, 28, fontSize: 13),
+      rowHeight: scaledHeight(context, rowHeight),
       selectedDayPredicate: selectedDayPredicateOverride ??
           (day) => DateUtils.isSameDay(selectedDay, day),
       enabledDayPredicate: enabledDayPredicate,
@@ -91,6 +118,19 @@ class AppCalendar extends StatelessWidget {
           );
         },
         markerBuilder: markerBuilder,
+        // [DU293 WM4] 머리 '2026년 11월' 이 큰 글자에서 '11 | 월' 로 끊겼다 — 낱말 단위(읽기 이름은 원문).
+        //   글은 table_calendar 기본(ko_KR yMMMM)과 같은 '연년 월월', 받은 날짜 성분 그대로다.
+        headerTitleBuilder: (context, day) {
+          final title = '${day.year}년 ${day.month}월';
+          return Text(
+            TextLayout.keepWords(title),
+            semanticsLabel: title,
+            textAlign: TextAlign.center,
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          );
+        },
       ),
       daysOfWeekStyle: DaysOfWeekStyle(
         weekdayStyle: ResponsiveHelper.smallStyle(context).copyWith(
@@ -104,6 +144,7 @@ class AppCalendar extends StatelessWidget {
       ),
       calendarStyle: CalendarStyle(
         outsideDaysVisible: false,
+        cellMargin: cellMargin ?? const CalendarStyle().cellMargin,
         markersMaxCount: 3,
         weekendTextStyle: const TextStyle(
           color: AppColors.errorFaded,

@@ -15,6 +15,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ALfit/services/tax_identity_service.dart';
+import 'package:ALfit/services/contract_service.dart';
 import 'package:ALfit/models/core/application_model.dart';
 import 'package:ALfit/models/core/attendance_model.dart';
 import 'package:ALfit/models/ui/invite_capacity_state.dart';
@@ -236,7 +237,7 @@ DayApplicantsReads _adminReads({
       slotWorkDetails: (toId, slotId) async => <WorkDetailData>[],
       to: (toId) async => null,
       contractStatusBatch: (ids, {required businessId}) async =>
-          <String, String?>{},
+          const ContractStatusBatch(),
     );
 
 Future<void> _pumpAdmin(
@@ -287,9 +288,15 @@ MyApplicationsReads _workerReads(List<ApplicationModel> apps) =>
       toOrFailure: (toId) async => (to: _to(), failed: false),
       contractsByWorker: (uid) async => const [],
       autoExpirePending: (uid) async {},
+      monthlyAttendances: (
+              {required String userId,
+              required int year,
+              required int month}) async =>
+          const [],
       // [R7-PREDEVICE-DISCLOSURE-RENDER.1] 수락이 지나는 세무 축이
       //   읽기 경계로 옮겨졌다. production 실패 경로와 같은 "모름" 을 준다
       //   (`loadFailed` 이므로 판정이 막지 않는다).
+      reviewById: (key) async => null,
       taxStatus: () async => const TaxIdentityStatus.unknown(),
     );
 

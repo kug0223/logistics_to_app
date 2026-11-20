@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import '../../../../utils/responsive_helper.dart';
+import '../../../../utils/text_layout.dart';
 import 'to_section_container.dart';
 import '../../../../theme/app_colors.dart';
 
@@ -34,10 +35,12 @@ class TODescriptionSection extends StatelessWidget {
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          // [DU319] 320·2.0 에서 '안내 / 할' 로 끊겼다 — 낱말 단위 · grey500(2.68) → textTertiary(5.25)
           Text(
-            '모든 업무에 공통으로 안내할 내용을 입력하세요',
+            TextLayout.keepWords('모든 업무에 공통으로 안내할 내용을 입력하세요'),
+            semanticsLabel: '모든 업무에 공통으로 안내할 내용을 입력하세요',
             style: ResponsiveHelper.captionStyle(context).copyWith(
-              color: AppColors.grey500,
+              color: AppColors.textTertiary,
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -50,7 +53,7 @@ class TODescriptionSection extends StatelessWidget {
               hintText: hintText ?? '준비물, 복장, 출입·집합 안내 등을 입력하세요',
               hintStyle: ResponsiveHelper.smallStyle(
                 context,
-                color: AppColors.grey400,
+                color: AppColors.textTertiary, // [DU319] grey400 → textTertiary
               ),
               alignLabelWithHint: true,
               border: OutlineInputBorder(

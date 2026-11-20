@@ -210,6 +210,9 @@ class BadgeDisplayWidget extends StatelessWidget {
 
 // ── BadgeDetailDialog ─────────────────────────────────────────────
 
+/// [.61] 배지 혜택 문구 노출 — 실제로 구현된 혜택이 생길 때까지 끈다(위 '혜택' 주석).
+const bool _kShowBenefits = false;
+
 /// 배지 상세 다이얼로그
 class BadgeDetailDialog extends StatelessWidget {
   final BadgeModel badge;
@@ -327,7 +330,10 @@ class BadgeDetailDialog extends StatelessWidget {
           ),
 
           // ── 혜택 ──
-          if (badge.benefit != null && badge.benefit!.isNotEmpty) ...[
+          // [.61] 근로자에게 보이지 않는다. 기본 배지 혜택 문구가 '관리자 목록에 배지 표시 · 자동확정 공고 우선 배정 ·
+          //   매칭 최우선 추천 · …공식 인증' 을 약속하는데, 앱·서버 어디에도 그 소비자가 없다(관리자 화면은 배지를 그리지
+          //   않고, 정렬·추천·확정 판정에 배지를 쓰는 코드가 없다 — LOCAL 확인). 실현된 혜택만 다시 보이게 하는 것은 정책 결정.
+          if (_kShowBenefits && badge.benefit != null && badge.benefit!.isNotEmpty) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Container(
               padding: ResponsiveHelper.cardPadding(context),

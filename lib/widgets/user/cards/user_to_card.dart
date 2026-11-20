@@ -5,6 +5,7 @@ import '../../../models/core/work_detail_model.dart';
 import '../../../models/core/application_model.dart';
 import '../../../models/core/slot_model.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/text_layout.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/toast_helper.dart';
@@ -12,9 +13,11 @@ import '../../../theme/app_colors.dart';
 import '../../../providers/user_provider.dart';
 import '../../work_type_icon.dart';
 import '../../common/tax_deduction_badge.dart';
+import '../../common/first_line_icon.dart';
 import '../../common/loading_widget.dart';
 import '../../../screens/common/job_posting_screen.dart';
 import '../../dialogs/apply/apply_work_dialog.dart';
+import '../../dialogs/apply/application_relation.dart';
 
 /// 지원자용 TO 카드
 ///
@@ -130,8 +133,8 @@ class _UserTOCardState extends State<UserTOCard> {
     final slotIds = <String>{};
     final dateKeys = <String>{};
     for (final app in widget.myApplications) {
-      if (AppStatus.inactiveStates.contains(app.status)) continue;
-      if (app.isLongTermApplication && app.isTerminationApproved) continue;
+      // [SIM-EXPIRED-JOB-CARD] 관계 판정은 공용 resolver 가 한다(EXPIRED·종료 결정 = 관계 아님).
+      if (!ApplicationRelationResolver.holdsRelation(app)) continue;
       if (app.toId?.isNotEmpty == true && app.toId != widget.to.id) continue;
       if (app.slotId?.isNotEmpty == true) {
         slotIds.add(app.slotId!);
@@ -145,8 +148,7 @@ class _UserTOCardState extends State<UserTOCard> {
   }
 
   bool _computeHasApplied() => widget.myApplications.any((app) {
-        if (AppStatus.inactiveStates.contains(app.status)) return false;
-        if (app.isLongTermApplication && app.isTerminationApproved) return false;
+        if (!ApplicationRelationResolver.holdsRelation(app)) return false;
         if (app.toId?.isNotEmpty == true) return app.toId == widget.to.id;
         return _legacyMatch(app);
       });
@@ -232,8 +234,7 @@ class _UserTOCardState extends State<UserTOCard> {
         if (app.selectedWorkType != work.workType || app.startTime != work.startTime) {
           return false;
         }
-        if (AppStatus.inactiveStates.contains(app.status)) return false;
-        if (app.isLongTermApplication && app.isTerminationApproved) return false;
+        if (!ApplicationRelationResolver.holdsRelation(app)) return false;
         if (app.toId?.isNotEmpty == true) return app.toId == widget.to.id;
         return _legacyMatch(app);
       });
@@ -498,6 +499,35 @@ class _UserTOCardState extends State<UserTOCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // ── 상단 행: 위치·사업장명 / 시간ago + 상태칩 + ♡ ──
+              // [SCALE-BALANCE.34] 큰 글자에서 위치가 '위치 …'·'강남구 강남구 · [...' 로 사라졌다 —
+              //   기본 배치가 안 들어가면 위치 줄을 넓게, 상태·시각·찜은 다음 줄로.
+              if (!_rowFits(context, 330))
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    // [SCALE-BALANCE.34] 핀은 위치 첫 줄 높이 가운데에.
+                    Padding(padding: EdgeInsets.only(top: ((MediaQuery.textScalerOf(context).scale(13) * 1.4 - ResponsiveHelper.iconSize(context, 12)) / 2).clamp(0.0, 30.0)), child: Icon(Icons.location_on,
+                        size: ResponsiveHelper.iconSize(context, 12), color: theme.primaryColor)),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                    Expanded(
+                      child: Text(TextLayout.phrases(locationBiz),
+                          semanticsLabel: locationBiz,
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
+                    ),
+                  ]),
+                  Row(children: [
+                    ..._statusBadgeWidgets(context).skip(1),
+                    if (_hasApplied || _isUrgent) SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                    // [DU458] 게시 시각 grey500(2.68) → textTertiary — 전체 카드 머리와 같은 보조 글자.
+                    Flexible(
+                      child: Text(_timeAgo,
+                          style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary)),
+                    ),
+                    const Spacer(),
+                    _buildFavoriteButton(context),
+                  ]),
+                ])
+              else
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
@@ -521,8 +551,9 @@ class _UserTOCardState extends State<UserTOCard> {
                   SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                   Text(
                     _timeAgo,
+                    // [DU458] grey500(2.68) → textTertiary.
                     style: ResponsiveHelper.tinyStyle(context,
-                        color: AppColors.grey500),
+                        color: AppColors.textTertiary),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                   _buildFavoriteButton(context),
@@ -548,8 +579,9 @@ class _UserTOCardState extends State<UserTOCard> {
               // ── 근무유형 · 급여유형 ──
               Text(
                 '$typeStr · $_wageLabel',
+                // [DU464] 작은 카드 메타 grey500(2.68) → textTertiary — 큰 카드 요약 · 인원(DU450)과 같은 보조 글자.
                 style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.grey500),
+                    color: AppColors.textTertiary),
               ),
 
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -557,6 +589,19 @@ class _UserTOCardState extends State<UserTOCard> {
               // ── 날짜 · 시간/업무종류 행 ──
               // flex TO 복수 날파: "8/12(수) 외 9일"
               // 시간이 다른 업무: 시간 대신 "업무 N종" 표시
+              // [SCALE-BALANCE.34] 큰 글자에서 '09:00 ~ 13:…' 로 잘렸다 — 덩어리째 줄바꿈.
+              if (!_rowFits(context, 300))
+                _chunkWrap(context, [
+                  _chunk(context, Icons.calendar_today, _compactDateText,
+                      ResponsiveHelper.smallStyle(context, color: AppColors.grey700, fontWeight: FontWeight.w500)),
+                  if (compactTime != null)
+                    _chunk(context, Icons.schedule, compactTime,
+                        ResponsiveHelper.smallStyle(context, color: AppColors.grey600))
+                  else if (workSuffix != null)
+                    // [DU464] grey500 → textTertiary(가로 배치와 같다).
+                    _chunk(context, null, workSuffix, ResponsiveHelper.smallStyle(context, color: AppColors.textTertiary)),
+                ])
+              else
               Row(
                 children: [
                   Icon(Icons.calendar_today,
@@ -590,8 +635,9 @@ class _UserTOCardState extends State<UserTOCard> {
                     _divider(context),
                     Text(
                       workSuffix,
+                      // [DU464] grey500 → textTertiary.
                       style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.grey500),
+                          color: AppColors.textTertiary),
                     ),
                   ],
                 ],
@@ -606,18 +652,19 @@ class _UserTOCardState extends State<UserTOCard> {
               // 모집현황: "잔여 N명" / "모집 마감" (contract TO만, flex TO는 날짜로 표현)
               Row(
                 children: [
-                  Flexible(
+                  // [DU465] B(320 · 2.0)에서 급여가 '12,00…'로 잘렸다 — Flexible + Spacer 가 남는 폭을 반씩 나눴다.
+                  //   Expanded 로 남는 폭을 모두 쓰고, 말줄임 대신 쉼표 뒤에서만 줄바꿈(읽기는 원문). 모집 현황은 오른쪽 끝 그대로.
+                  Expanded(
                     child: Text(
-                      _compactWageAmount,
+                      TextLayout.amount(_compactWageAmount),
+                      semanticsLabel: _compactWageAmount,
                       style: ResponsiveHelper.subtitleStyle(context).copyWith(
                         fontWeight: FontWeight.w700,
                         color: AppColors.textPrimary,
                         letterSpacing: -0.3,
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  const Spacer(),
                   if (recruitText != null) ...[
                     Icon(Icons.people_outline,
                         size: ResponsiveHelper.iconSize(context, 12),
@@ -625,10 +672,9 @@ class _UserTOCardState extends State<UserTOCard> {
                     SizedBox(width: ResponsiveHelper.spacing(context, 2)),
                     Text(
                       recruitText,
+                      // [DU464] '잔여 N명' grey500 · '모집 마감' grey400 → textTertiary(큰 카드 인원 · DU450). 문구가 상태를 말한다.
                       style: ResponsiveHelper.tinyStyle(context,
-                          color: recruitText == '모집 마감'
-                              ? AppColors.grey400
-                              : AppColors.grey500),
+                          color: AppColors.textTertiary),
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                   ],
@@ -752,8 +798,10 @@ class _UserTOCardState extends State<UserTOCard> {
       children: [
         _buildTopRow(context, theme),
         SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+        // [DU450] B 에서 '물류센터 장기 근 / 무'처럼 음절에서 끊겼다 — 이름 규칙(낱말 단위 · 긴 낱말은 가운데에서만 · 읽기는 원문).
         Text(
-          widget.to.title,
+          TextLayout.identity(widget.to.title),
+          semanticsLabel: widget.to.title,
           style: ResponsiveHelper.titleStyle(context).copyWith(
             fontWeight: FontWeight.bold,
             height: 1.3,
@@ -779,6 +827,39 @@ class _UserTOCardState extends State<UserTOCard> {
     final loc = _location.isNotEmpty ? _location : '위치 미정';
     final biz = widget.to.businessName;
     final locationBiz = biz.isNotEmpty ? '$loc · $biz' : loc;
+
+    // [SCALE-BALANCE.34] 큰 글자에서 한 줄에 위치·등록시각·지원완료·찜을 다 넣어 위치가 '위치 …' 로 사라졌다(392·2.0 기기).
+    //   기본 배치가 들어가지 않으면 위치 줄을 넓게 쓰고(낱말 단위 줄바꿈), 나머지는 다음 줄로.
+    if (!_rowFits(context, 330)) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _typeBadge(context),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          // [SCALE-BALANCE.34] 핀은 위치 첫 줄 높이 가운데에.
+          Padding(padding: EdgeInsets.only(top: ((MediaQuery.textScalerOf(context).scale(13) * 1.4 - ResponsiveHelper.iconSize(context, 13)) / 2).clamp(0.0, 30.0)), child: Icon(Icons.location_on,
+              size: ResponsiveHelper.iconSize(context, 13), color: theme.primaryColor)),
+          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+          Expanded(
+            child: Text(
+              TextLayout.phrases(locationBiz),
+              semanticsLabel: locationBiz,
+              style: ResponsiveHelper.smallStyle(context).copyWith(
+                fontWeight: FontWeight.w500, color: theme.primaryColor),
+            ),
+          ),
+        ]),
+        // [DU458] 게시 시각 grey400(1.88) → textTertiary — 같은 카드 인원 · 요약(DU450)과 같은 보조 글자.
+        Row(children: [
+          Flexible(
+            child: Text(_timeAgo,
+                style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary)),
+          ),
+          ..._statusBadgeWidgets(context),
+          const Spacer(),
+          _buildFavoriteButton(context),
+        ]),
+      ]);
+    }
 
     return Row(
       children: [
@@ -806,7 +887,8 @@ class _UserTOCardState extends State<UserTOCard> {
           fit: FlexFit.loose,
           child: Text(
             _timeAgo,
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+            // [DU458] grey400(1.88) → textTertiary(좁은 배치와 같다).
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary),
             overflow: TextOverflow.ellipsis,
           ),
         ),
@@ -830,7 +912,8 @@ class _UserTOCardState extends State<UserTOCard> {
             child: Icon(
               isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
               size: ResponsiveHelper.iconSize(ctx, 18),
-              color: isFav ? AppColors.error : AppColors.grey300,
+              // [DU458] 비활성 하트 grey300(누를 수 있는 아이콘인데 거의 안 보임) → textSecondary(DU310 user_job_tab 비활성 하트와 같다).
+              color: isFav ? AppColors.error : AppColors.textSecondary,
             ),
           ),
         ),
@@ -842,7 +925,8 @@ class _UserTOCardState extends State<UserTOCard> {
     return [
       if (_hasApplied) ...[
         SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-        _pill(context, '지원완료', AppColors.success, Colors.white),
+        // [DU457] success 채움 + 흰 글자(2.78) → 지원 대화 업무 카드(WorkSelectionCard · DU274 WC3)의 '지원완료'와 같은 infoBg/infoDeep(7.56).
+        _pill(context, '지원완료', AppColors.infoBg, AppColors.infoDeep),
       ],
       if (_isUrgent) ...[
         SizedBox(width: ResponsiveHelper.spacing(context, 6)),
@@ -851,9 +935,43 @@ class _UserTOCardState extends State<UserTOCard> {
     ];
   }
 
+  /// [SCALE-BALANCE.34] 기본 배치(한 줄)가 들어가는가 — 카드 일반·compact 가 같은 기준을 쓴다.
+  bool _rowFits(BuildContext context, double base) =>
+      TextLayout.fits(context, MediaQuery.sizeOf(context).width - 56, base);
+
+  /// [SCALE-BALANCE.34] 아이콘 + 한 덩어리 글자(안에서는 줄을 바꾸지 않는다).
+  Widget _chunk(BuildContext context, IconData? icon, String text, TextStyle style) =>
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        if (icon != null) ...[
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 13), color: AppColors.grey500),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+        ],
+        Flexible(child: Text(TextLayout.unit(text), semanticsLabel: text, style: style)),
+      ]);
+
+  /// [SCALE-BALANCE.34] 덩어리들을 한 줄에, 모자라면 덩어리째 다음 줄로 — 말줄임 없음.
+  Widget _chunkWrap(BuildContext context, List<Widget> chunks) => Wrap(
+        spacing: ResponsiveHelper.spacing(context, 10),
+        runSpacing: ResponsiveHelper.spacing(context, 2),
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: chunks,
+      );
+
   Widget _buildDateTimeRow(BuildContext context) {
     final timeRange = widget.to.timeRange;
     final showTime = !timeRange.startsWith('--');
+
+    // [SCALE-BALANCE.34] 큰 글자에서 '09:00 ~ 13:…' 으로 시간이 잘렸다 — 날짜·시간·요일을 각각 한 덩어리로 두고
+    //   한 줄에 안 들어가면 덩어리째 다음 줄로(말줄임 없음). 기본 배치가 들어가면 예전 그대로.
+    if (!_rowFits(context, 300)) {
+      final st = ResponsiveHelper.smallStyle(context, color: AppColors.grey700);
+      return _chunkWrap(context, [
+        _chunk(context, Icons.calendar_today, _dateText, st.copyWith(fontWeight: FontWeight.w500)),
+        if (showTime) _chunk(context, Icons.schedule, timeRange, st),
+        if (widget.to.isLongTerm && widget.to.workDays.isNotEmpty)
+          _chunk(context, null, widget.to.workDaysLabel, ResponsiveHelper.smallStyle(context, color: AppColors.grey600)),
+      ]);
+    }
 
     return Row(
       children: [
@@ -898,77 +1016,121 @@ class _UserTOCardState extends State<UserTOCard> {
   }
 
 
+  // [DU450] B 에서 업무 요약이 '분…'으로 말줄임되고 인원 '0/9명'이 카드 끝에 걸렸다 — 옆 칸이 모자라면 두 줄(금액 / 요약 + 인원).
+  //   요약 · 인원 grey500(2.68) → textTertiary, 인원 아이콘 grey400 → grey600. 넓으면 한 줄 그대로다.
   Widget _buildWageRow(BuildContext context) {
     final hint = _workHint;
     final recruit = _recruitText;
-    return Row(
-      children: [
-        _pill(context, _wageLabel, AppColors.successBg, AppColors.successDark,
-            border: AppColors.successLight),
-        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-        Flexible(
-          child: Text(
-            _wageAmount,
-            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-              color: AppColors.successDark,
-              fontWeight: FontWeight.bold,
-            ),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        if (hint != null) ...[
-          Padding(
-            padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 6)),
-            child: Text('·',
-                style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.grey300)),
-          ),
-          Expanded(
-            child: Text(
-              hint,
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-              maxLines: 1,
+    final pill = _pill(context, _wageLabel, AppColors.successBg, AppColors.successDark,
+        border: AppColors.successLight);
+    final amount = Text(
+      _wageAmount,
+      style: ResponsiveHelper.subtitleStyle(context).copyWith(
+        color: AppColors.successDark,
+        fontWeight: FontWeight.bold,
+      ),
+      overflow: TextOverflow.ellipsis,
+    );
+    final people = recruit == null
+        ? const <Widget>[]
+        : <Widget>[
+            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+            Icon(Icons.people_outline,
+                size: ResponsiveHelper.iconSize(context, 13),
+                color: AppColors.grey600),
+            SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+            Text(
+              recruit,
+              style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary),
               overflow: TextOverflow.ellipsis,
             ),
-          ),
-        ] else
-          const Spacer(),
-        if (recruit != null) ...[
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Icon(Icons.people_outline,
-              size: ResponsiveHelper.iconSize(context, 13),
-              color: AppColors.grey400),
-          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-          Text(
-            recruit,
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
-            overflow: TextOverflow.ellipsis,
-          ),
+          ];
+    return LayoutBuilder(builder: (_, box) {
+      if (TextLayout.fits(context, box.maxWidth, 300)) {
+        return Row(
+          children: [
+            pill,
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Flexible(child: amount),
+            if (hint != null) ...[
+              Padding(
+                padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 6)),
+                child: Text('·',
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.grey300)),
+              ),
+              Expanded(
+                child: Text(
+                  hint,
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.textTertiary),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ] else
+              const Spacer(),
+            ...people,
+          ],
+        );
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [pill, SizedBox(width: ResponsiveHelper.spacing(context, 6)), Flexible(child: amount)]),
+          if (hint != null || recruit != null) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (hint != null)
+                  Expanded(
+                    child: Text(
+                      TextLayout.keepWords(hint),
+                      semanticsLabel: hint,
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.textTertiary),
+                    ),
+                  )
+                else
+                  const Spacer(),
+                ...people,
+              ],
+            ),
+          ],
         ],
-      ],
-    );
+      );
+    });
   }
 
+  // [DU450] B 에서 두 버튼이 카드 밖으로 넘쳤다('지원관' 뒤) — 옆 칸이 모자라면 두 버튼을 위아래 전체 폭으로(순서 · 동작 그대로).
   Widget _buildActionRow(BuildContext context, ThemeData theme) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        _actionBtn(context,
-            label: '상세보기',
-            icon: Icons.article_outlined,
-            onTap: _goToDetail,
-            primary: false),
-        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-        _isApplyLoading
-            ? _loadingBtn(context, theme)
-            : _actionBtn(context,
-                label: _hasApplied ? '지원관리' : '지원하기',
-                icon: _hasApplied ? Icons.manage_accounts_outlined : Icons.send,
-                onTap: _openApplyDialog,
-                primary: !_hasApplied),
-      ],
-    );
+    return LayoutBuilder(builder: (_, box) {
+      final wide = TextLayout.fits(context, box.maxWidth, 230);
+      final detail = _actionBtn(context,
+          label: '상세보기',
+          icon: Icons.article_outlined,
+          onTap: _goToDetail,
+          primary: false,
+          expand: !wide);
+      final apply = _isApplyLoading
+          ? _loadingBtn(context, theme)
+          : _actionBtn(context,
+              label: _hasApplied ? '지원관리' : '지원하기',
+              icon: _hasApplied ? Icons.manage_accounts_outlined : Icons.send,
+              onTap: _openApplyDialog,
+              primary: !_hasApplied,
+              expand: !wide);
+      if (wide) {
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [detail, SizedBox(width: ResponsiveHelper.spacing(context, 8)), apply],
+        );
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [detail, SizedBox(height: ResponsiveHelper.spacing(context, 8)), apply],
+      );
+    });
   }
 
   Widget _buildExpandBar(BuildContext context, bool isSelected) {
@@ -995,13 +1157,15 @@ class _UserTOCardState extends State<UserTOCard> {
                     ? Icons.calendar_today_outlined
                     : Icons.expand_more,
             size: ResponsiveHelper.iconSize(context, 13),
-            color: isSelected ? theme.primaryColor : AppColors.grey400,
+            // [DU460] 접힌 상태 화살표 grey400 → textSecondary — 누르는 줄의 아이콘(DU458 비활성 하트와 같은 짝).
+            color: isSelected ? theme.primaryColor : AppColors.textSecondary,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
             label,
             style: ResponsiveHelper.tinyStyle(context,
-                color: isSelected ? theme.primaryColor : AppColors.grey500,
+                // [DU460] 접힌 상태 이름표 grey500(grey50 위 2.56) → textSecondary.
+                color: isSelected ? theme.primaryColor : AppColors.textSecondary,
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal),
           ),
         ],
@@ -1439,6 +1603,7 @@ class _UserTOCardState extends State<UserTOCard> {
     required IconData icon,
     required VoidCallback onTap,
     bool primary = true,
+    bool expand = false,
   }) {
     final theme = Theme.of(context);
     return InkWell(
@@ -1455,7 +1620,9 @@ class _UserTOCardState extends State<UserTOCard> {
           border: primary ? null : Border.all(color: AppColors.grey300),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          // [DU450] 전체 폭(expand)일 때만 가운데 정렬 — 기본(false)은 예전과 같다.
+          mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+          mainAxisAlignment: expand ? MainAxisAlignment.center : MainAxisAlignment.start,
           children: [
             Icon(icon,
                 size: ResponsiveHelper.iconSize(context, 13),
@@ -1687,56 +1854,46 @@ class _WorkItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasApplied = application != null && application!.id.isNotEmpty;
     final isConfirmed = AppStatus.confirmedStatuses.contains(application?.status);
-    final isClosed = !hasApplied && (work.isClosed || work.isTimeExpired || work.isFull);
 
-    return Opacity(
-      opacity: isClosed ? 0.5 : 1.0,
-      child: Container(
-        margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 11)),
-        decoration: BoxDecoration(
-          color: isConfirmed
-              ? AppColors.successBg
-              : hasApplied
-                  ? AppColors.infoBg
-                  : AppColors.grey50,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: isConfirmed
-                ? AppColors.successLight
-                : hasApplied
-                    ? AppColors.infoLight
-                    : AppColors.grey200,
+    // [DU443] 마감 행을 Opacity(0.5)로 통째로 흐리게 하던 것을 뺐다 — 글자 · 칩 대비가 반으로 떨어졌다(DU429 와 같은 이유).
+    //   마감은 '마감' 칩(지원 대화 업무 카드와 같은 중립 짝)으로 말한다.
+    return Container(
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 11)),
+      // [DU443e · 후속116b N116-1] 행 전체를 상태색(확정 초록 · 대기 파랑)으로 칠하던 것을 중립 면 · 약한 선으로 —
+      //   상태는 오른쪽 칩(엷은 면 + 진한 글자)이 말한다. 행 면 = 칩 면이 되어 칩이 사라지던 것도 풀린다(시안: 흰 행 + 작은 상태 칩).
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.borderLight),
+      ),
+      child: Row(
+        children: [
+          WorkTypeIcon.buildWithBackground(
+            iconString: work.workTypeIcon,
+            iconColor: work.workTypeColor,
+            backgroundColor: work.workTypeBackgroundColor,
+            containerSize: ResponsiveHelper.spacing(context, 36),
+            size: ResponsiveHelper.iconSize(context, 18),
           ),
-        ),
-        child: Row(
-          children: [
-            WorkTypeIcon.buildWithBackground(
-              iconString: work.workTypeIcon,
-              iconColor: work.workTypeColor,
-              backgroundColor: work.workTypeBackgroundColor,
-              containerSize: ResponsiveHelper.spacing(context, 36),
-              size: ResponsiveHelper.iconSize(context, 18),
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(work.workType,
+                    style: ResponsiveHelper.bodyStyle(context)
+                        .copyWith(fontWeight: FontWeight.w600),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+                SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+                _infoRow(context),
+              ],
             ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(work.workType,
-                      style: ResponsiveHelper.bodyStyle(context)
-                          .copyWith(fontWeight: FontWeight.w600),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 3)),
-                  _infoRow(context),
-                ],
-              ),
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            _statusBadge(context, hasApplied, isConfirmed),
-          ],
-        ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          _statusBadge(context, hasApplied, isConfirmed),
+        ],
       ),
     );
   }
@@ -1762,15 +1919,24 @@ class _WorkItem extends StatelessWidget {
                     color: AppColors.info, fontWeight: FontWeight.bold)),
           )
         else
+          // [DU444] B(320 · 2.0)에서 '10:00~14:00' 한 덩어리가 행 글 칸보다 넓어 행마다 넘쳤다.
+          //   글을 Flexible 로 두고 줄을 바꿔야 하면 '~' 뒤에서만 바꾼다(공용 TextLayout.range — 카드 머리 '09:00 ~ 17:00' 과 같은 띄어쓰기).
+          //   아이콘은 첫 줄에 맞춘다(공용 FirstLineIcon · 크기 그대로). 화면 읽기는 원문 시각 범위.
+          //   글자 grey600(옅은 파랑 · 초록 행 위 4.03 · 4.18) → textSecondary(5.18 · 5.37).
           Row(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.access_time,
+              FirstLineIcon(Icons.access_time,
                   size: ResponsiveHelper.iconSize(context, 12),
-                  color: AppColors.grey500),
+                  color: AppColors.grey500,
+                  textStyle: ResponsiveHelper.tinyStyle(context)),
               SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-              Text('${work.startTime}~${work.endTime}',
-                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600)),
+              Flexible(
+                child: Text(TextLayout.range(work.startTime, work.endTime),
+                    semanticsLabel: '${work.startTime}~${work.endTime}',
+                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary)),
+              ),
             ],
           ),
         Text(
@@ -1788,29 +1954,32 @@ class _WorkItem extends StatelessWidget {
   // _WorkItem은 _buildWorkList 전용 — contract TO (!isFlexType) 에서만 호출됨.
   // contract TO는 isLongTerm=true이므로 아래 !isLongTerm 분기는 단기 단일날짜 레거시 TO 대응용.
   Widget _statusBadge(BuildContext context, bool hasApplied, bool isConfirmed) {
+    // [DU443] 채움 + 흰 글자(확정 2.78 · 대기중 3.12 · 긴급 3.68 · 마감 1.88)를 지원 대화 업무 카드(WorkSelectionCard · DU274 WC3)와
+    //   같은 짝으로 바꿨다: 확정 successBg/successDark · 대기중 · 모집중 infoBg/infoDeep · 마감 grey100/textSecondary · 긴급 errorBg/errorDark.
+    //   상태 판정 · 문구는 그대로다.
     if (hasApplied) {
       return _chip(context,
           isConfirmed ? '확정' : '대기중',
-          isConfirmed ? AppColors.success : AppColors.info,
-          Colors.white);
+          isConfirmed ? AppColors.successBg : AppColors.infoBg,
+          isConfirmed ? AppColors.successDark : AppColors.infoDeep);
     }
     if (to.isLongTerm) {
       // contract TO: TO 레벨 마감(수동/게시만료) → 업무별 마감 순으로 판단
       if (to.isManualClosed || to.isDeadlinePassed) {
-        return _chip(context, '마감', AppColors.grey400, Colors.white);
+        return _chip(context, '마감', AppColors.grey100, AppColors.textSecondary);
       }
-      if (work.isFull) return _chip(context, '마감', AppColors.grey400, Colors.white);
-      if (work.isEmergencyOpen) return _chip(context, '긴급', AppColors.error, Colors.white);
+      if (work.isFull) return _chip(context, '마감', AppColors.grey100, AppColors.textSecondary);
+      if (work.isEmergencyOpen) return _chip(context, '긴급', AppColors.errorBg, AppColors.errorDark);
       // [R7-P1-2] 모집중 = 진행. green 은 확정·충족에만.
-      return _chip(context, '모집중', AppColors.infoBg, AppColors.infoDark);
+      return _chip(context, '모집중', AppColors.infoBg, AppColors.infoDeep);
     }
     // 단기 단일날짜 레거시 TO: 업무 레벨 상태만 체크
     if (work.isClosed || work.isTimeExpired || work.isFull) {
-      return _chip(context, '마감', AppColors.grey400, Colors.white);
+      return _chip(context, '마감', AppColors.grey100, AppColors.textSecondary);
     }
-    if (work.isEmergencyOpen) return _chip(context, '긴급', AppColors.error, Colors.white);
+    if (work.isEmergencyOpen) return _chip(context, '긴급', AppColors.errorBg, AppColors.errorDark);
     // [R7-P1-2] 모집중 = 진행. green 은 확정·충족에만.
-    return _chip(context, '모집중', AppColors.infoBg, AppColors.infoDark);
+    return _chip(context, '모집중', AppColors.infoBg, AppColors.infoDeep);
   }
 
   Widget _chip(BuildContext context, String label, Color bg, Color text) =>

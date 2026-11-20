@@ -11,9 +11,15 @@ import '../../models/core/help_faq_model.dart';
 import '../../services/help_faq_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
+import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/loading_widget.dart';
 
 class HelpScreen extends StatefulWidget {
-  const HelpScreen({super.key});
+  const HelpScreen({super.key, this.load});
+
+  /// 시험용 — 역할별 FAQ 읽기. production 은 null → [HelpFaqService.loadForReader].
+  final Future<HelpFaqLoad> Function(String role)? load;
 
   @override
   State<HelpScreen> createState() => _HelpScreenState();
@@ -22,7 +28,9 @@ class HelpScreen extends StatefulWidget {
 class _HelpScreenState extends State<HelpScreen> {
   final _service = HelpFaqService();
   late bool _isAdmin;
-  List<HelpFaqModel>? _items; // null = 로딩 중 (로컬 폴백 표시)
+  // [.65] null = 로딩 중. 이전에는 로딩 중·읽기 실패·0건 모두 앱 내장 FAQ 를 보였다.
+  HelpFaqLoad? _load;
+  Object? _error;
 
   @override
   void initState() {
@@ -36,27 +44,27 @@ class _HelpScreenState extends State<HelpScreen> {
   }
 
   Future<void> _loadFaqs() async {
-    final items = await _service.getItems(_isAdmin ? 'admin' : 'user');
-    if (!mounted) return;
-    // Firestore에 데이터 없으면 로컬 폴백 유지
-    if (items.isNotEmpty) {
-      setState(() => _items = items);
-    } else {
-      setState(() => _items = []); // 빈 리스트 = 로컬 폴백으로 전환
+    if (mounted) setState(() { _load = null; _error = null; });
+    final role = _isAdmin ? 'admin' : 'user';
+    try {
+      final load = await (widget.load ?? _service.loadForReader)(role);
+      if (!mounted) return;
+      setState(() => _load = load);
+    } catch (e) {
+      debugPrint('[HelpScreen] FAQ 읽기 실패: $e');
+      if (mounted) setState(() => _error = e);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Firestore 응답 전이거나 비어있으면 로컬 폴백
-    final useLocal = _items == null || _items!.isEmpty;
-    final flat = useLocal
-        ? (_isAdmin ? _adminFaqs : _userFaqs)
-        : _items!
-            .map((m) => m.isHeader
-                ? _FaqItem.header(m.question)
-                : _FaqItem(question: m.question, answer: m.answer))
-            .toList();
+    final load = _load;
+    // [.65] 내장 FAQ 는 이 역할의 FAQ 문서가 아예 없을 때만(기존 계약). 실패·로딩은 따로 보인다.
+    final List<_FaqItem>? flat = load == null
+        ? null
+        : !load.configured
+            ? (_isAdmin ? _adminFaqs : _userFaqs)
+            : _flatFromServer(load.items);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -79,8 +87,48 @@ class _HelpScreenState extends State<HelpScreen> {
           child: Container(height: 1, color: AppColors.borderLight),
         ),
       ),
-      body: _buildGroupedList(context, flat),
+      body: _error != null
+          ? AppEmptyState(
+              icon: Icons.cloud_off_outlined,
+              title: '도움말을 불러오지 못했습니다',
+              subtitle: '연결을 확인한 뒤 다시 시도해 주세요.',
+              subtitleColor: AppColors.textSecondary, // [DU246] 기본 grey400(1.8)은 안 읽힌다
+              action: TextButton(onPressed: _loadFaqs, child: const Text('다시 시도')),
+            )
+          : flat == null
+              ? const LoadingWidget()
+              : flat.where((f) => !f.isHeader).isEmpty
+                  ? const AppEmptyState(
+                      icon: Icons.help_outline,
+                      title: '등록된 도움말이 없습니다',
+                    )
+                  : _buildGroupedList(context, flat),
     );
+  }
+
+  /// [.65] 서버 항목을 **저장된 분류(category)** 로 묶는다.
+  ///   이전에는 순서상 바로 앞 헤더 아래에 붙였다 — SA 가 '공고 & 지원'으로 추가한 질문이
+  ///   맨 끝 순서라 '계정 & 서류' 아래에 보였다(기기 반례). 헤더 순서가 분류 순서다.
+  ///   헤더가 없는(또는 비활성) 분류의 질문은 그 분류 이름으로 뒤에 모은다.
+  static List<_FaqItem> _flatFromServer(List<HelpFaqModel> items) {
+    final sorted = [...items]..sort((a, b) => a.order.compareTo(b.order));
+    final headers = <String>[];
+    final byCat = <String, List<HelpFaqModel>>{};
+    for (final m in sorted) {
+      if (m.isHeader) {
+        if (!headers.contains(m.category)) headers.add(m.category);
+      } else {
+        byCat.putIfAbsent(m.category, () => []).add(m);
+      }
+    }
+    final cats = [...headers, ...byCat.keys.where((c) => !headers.contains(c))];
+    return [
+      for (final c in cats)
+        if ((byCat[c] ?? const []).isNotEmpty) ...[
+          _FaqItem.header(c),
+          for (final m in byCat[c]!) _FaqItem(question: m.question, answer: m.answer),
+        ],
+    ];
   }
 
   // ── 그룹 렌더링 ───────────────────────────────────────────────────
@@ -91,63 +139,55 @@ class _HelpScreenState extends State<HelpScreen> {
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
       itemCount: groups.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 14),
+      separatorBuilder: (_, __) => const SizedBox(height: 20), // [DU246] 카드 → 다음 제목 20(S082 와 같음)
       itemBuilder: (ctx, i) => _buildCategorySection(ctx, groups[i]),
     );
   }
 
   /// 카테고리 섹션: 레이블 + 질문 그룹 카드
   Widget _buildCategorySection(BuildContext context, _FaqGroup group) {
-    final theme = Theme.of(context);
     final items = group.items;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 섹션 레이블 — Material 아이콘 + ALfit Blue 제목
+        // [DU246] 섹션 제목 — 관리자 홈(S010)·설정(S045·S082)과 같은 16 bold 본문색, 글자만.
+        //   [group.icon] 은 남겨 두고 그리지 않는다(시안의 섹션 제목은 아이콘이 없다).
+        //   [.65] SA 가 만든 긴 분류 이름도 낱말 단위로 줄을 바꾼다.
         Padding(
           padding: EdgeInsets.only(
               left: ResponsiveHelper.spacing(context, 4)),
-          child: Row(children: [
-            Icon(group.icon,
-                size: ResponsiveHelper.iconSize(context, 14),
-                color: theme.primaryColor),
-            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-            Text(
-              group.title,
-              style: ResponsiveHelper.smallStyle(context,
-                  color: theme.primaryColor, fontWeight: FontWeight.w700),
-            ),
-          ]),
+          child: Text(
+            TextLayout.keepWords(group.title),
+            style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textPrimary),
+          ),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-        // 그룹 카드 — 여러 질문을 하나의 Card 안에 묶음
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.borderLight),
+        // [DU246] 그룹 카드 — S010·S062·S082 와 같은 흰 면·반경 16·grey200 선. Material 이라 눌림 표시가 카드 위에 보이고 모서리에서 잘린다.
+        Material(
+          color: AppColors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: AppColors.grey200),
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Material(
-              color: Colors.transparent,
-              child: Column(
-                children: [
-                  for (int i = 0; i < items.length; i++) ...[
-                    _FaqAccordionRow(
-                      key: ValueKey(items[i].question),
-                      question: items[i].question,
-                      answer: items[i].answer,
-                    ),
-                    if (i < items.length - 1)
-                      const Divider(
-                          height: 1, indent: 16, thickness: 0.5,
-                          color: AppColors.borderLight),
-                  ],
-                ],
-              ),
-            ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              for (int i = 0; i < items.length; i++) ...[
+                _FaqAccordionRow(
+                  key: ValueKey(items[i].question),
+                  question: items[i].question,
+                  answer: items[i].answer,
+                ),
+                if (i < items.length - 1)
+                  const Divider(
+                      height: 1, indent: 16, thickness: 1,
+                      color: AppColors.grey100),
+              ],
+            ],
           ),
         ),
       ],
@@ -444,8 +484,15 @@ class _FaqAccordionRowState extends State<_FaqAccordionRow> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // 질문 Row — 텍스트 + chevron, 파란 ? 아이콘 없음
-        InkWell(
+        // [.65] 질문 행 전체가 조작점이고, 펼침 상태를 낭독으로도 알린다(화살표 모양만으로 알리지 않는다).
+        Semantics(
+          button: true,
+          expanded: _expanded,
+          child: InkWell(
           onTap: () => setState(() => _expanded = !_expanded),
+          // [DU246] 질문 행 터치 높이 48 이상(보통 폭에서 46.2 였다).
+          child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
           child: Padding(
             padding: EdgeInsets.symmetric(
               horizontal: ResponsiveHelper.spacing(context, 16),
@@ -454,11 +501,12 @@ class _FaqAccordionRowState extends State<_FaqAccordionRow> {
             child: Row(
               children: [
                 Expanded(
+                  // [DU246] 질문은 목록 행 제목 위계 — 본문색 w600(이전 grey700 w500). 답변은 보조색.
                   child: Text(
-                    widget.question,
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      fontWeight: FontWeight.w500,
-                    ),
+                    TextLayout.keepWords(widget.question),
+                    style: ResponsiveHelper.bodyStyle(context,
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.w600),
                   ),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -472,6 +520,8 @@ class _FaqAccordionRowState extends State<_FaqAccordionRow> {
               ],
             ),
           ),
+          ),
+        ),
         ),
         // 답변 영역 — 연한 grey50 배경, 파란 강조 없음
         if (_expanded)
@@ -485,9 +535,9 @@ class _FaqAccordionRowState extends State<_FaqAccordionRow> {
               ResponsiveHelper.spacing(context, 14),
             ),
             child: Text(
-              widget.answer,
+              TextLayout.keepWords(widget.answer),
               style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.grey700)
+                      color: AppColors.textSecondary) // [DU246]
                   .copyWith(height: 1.6),
             ),
           ),

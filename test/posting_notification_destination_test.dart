@@ -629,8 +629,9 @@ void main() {
     test('09-d read scope / empty state / scope label 무변경', () {
       // [POSTING-V2-03N.1] scope 결정은 _scopeOf로 옮겨졌다 — 내용은 그대로.
       final ctrl = _flat(_codeOf(
-          _bodyOf(_src(_ctrlPath), 'List<String>? _scopeOf(UserModel user)')));
-      expect(ctrl.contains('if (user.isSubAdmin) return user.subAdminBusinessIds;'),
+          _bodyOf(_src(_ctrlPath), '({List<String>? ids, List<String> unresolved}) _scopeOf(')));
+      expect(ctrl.contains('final s = up.subAdminBusinessesFor((p) => p.canManageTo); '
+          'return (ids: s.allowed, unresolved: s.unresolved);'),
           true);
       final list = _codeOf(_src(_listPath));
       expect(list.contains('_PostingEmptyKind.root'), true);

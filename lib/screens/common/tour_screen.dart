@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 
 /// 역할에 따라 적합한 투어 화면을 push하는 헬퍼
 Future<void> pushTourScreen(BuildContext context, {required String role}) async {
@@ -86,37 +87,25 @@ class _TourScreenState extends State<TourScreen>
       body: SafeArea(
         child: Column(
           children: [
-            // 상단 바 (태그 + 건너뛰기)
+            // 상단 바 — 건너뛰기만(온보딩과 같다)
+            // [DU314 ①] 카테고리 칩을 뺐다. 320·2.0 뒷페이지에서 칩 + 건너뛰기가 한 줄에 들어가지 않아
+            //   13 / 7.8px 넘쳤고 건너뛰기가 화면 밖으로 밀렸다. 칩의 뜻은 바로 아래 제목이 말한다(S043 온보딩과 같은 처리).
             Padding(
               padding: EdgeInsets.symmetric(
                 horizontal: ResponsiveHelper.spacing(context, 8),
                 vertical: ResponsiveHelper.spacing(context, 4),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: page.bgColor,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      page.tag,
-                      style: ResponsiveHelper.tinyStyle(context,
-                          color: page.color, fontWeight: FontWeight.w600),
-                    ),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: _complete,
+                  child: Text(
+                    '건너뛰기',
+                    // [DU314 ②] grey500 은 흰 바탕 2.68:1 — 읽기용 보조색(온보딩 DU80 과 같다)
+                    style: ResponsiveHelper.bodyStyle(context,
+                        color: AppColors.textSecondary, fontWeight: FontWeight.w500),
                   ),
-                  TextButton(
-                    onPressed: _complete,
-                    child: Text(
-                      '건너뛰기',
-                      style: ResponsiveHelper.bodyStyle(context,
-                          color: AppColors.grey500, fontWeight: FontWeight.w500),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
 
@@ -205,6 +194,9 @@ class _TourScreenState extends State<TourScreen>
   }
 
   Widget _buildContent(BuildContext context, TourPage page) {
+    // [DU314 ④] CTA(버튼 면 · 활성 진행점 · 그림자)는 brand 하나 — 페이지마다 색이 바뀌면 같은 주 행동이 다른 버튼처럼 보인다
+    //   (온보딩 DU109 와 같다). 일러스트 · 기능 아이콘의 페이지 의미색은 그대로다.
+    const ctaColor = AppColors.brand;
     return Padding(
       key: ValueKey(_currentPage),
       padding: EdgeInsets.fromLTRB(
@@ -224,8 +216,10 @@ class _TourScreenState extends State<TourScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
           // 제목
+          // [DU314 ③] 320·2.0 에서 '근무지 근 / 처에서' · '원스톱 관 / 리' 로 끊겼다 — 낱말 단위(줄바꿈 문자 유지, 원문은 낭독용)
           Text(
-            page.title,
+            TextLayout.phrases(page.title),
+            semanticsLabel: page.title,
             style: TextStyle(
               fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.5,
               fontWeight: FontWeight.w800,
@@ -237,9 +231,11 @@ class _TourScreenState extends State<TourScreen>
           SizedBox(height: ResponsiveHelper.spacing(context, 10)),
 
           // 설명
+          // [DU314 ②③] 설명 grey500(2.68) → textSecondary(5.92) · 낱말 단위(온보딩 DU80 과 같은 색)
           Text(
-            page.description,
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500)
+            TextLayout.phrases(page.description),
+            semanticsLabel: page.description,
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary)
                 .copyWith(height: 1.6),
           ),
 
@@ -260,8 +256,10 @@ class _TourScreenState extends State<TourScreen>
                     ),
                     const SizedBox(width: 12),
                     Expanded(
+                      // [DU314 ③] '관리자 확정 후 알 / 림' 방지 — 기능 문구는 낱말 단위(온보딩 DU80 과 같다)
                       child: Text(
-                        f.label,
+                        TextLayout.keepWords(f.label),
+                        semanticsLabel: f.label,
                         style: ResponsiveHelper.bodyStyle(context,
                             color: AppColors.grey800, fontWeight: FontWeight.w500),
                       ),
@@ -289,42 +287,53 @@ class _TourScreenState extends State<TourScreen>
                     width: active ? 24 : 7,
                     height: 7,
                     decoration: BoxDecoration(
-                      color: active ? page.color : AppColors.grey300,
+                      color: active ? ctaColor : AppColors.grey300,
                       borderRadius: BorderRadius.circular(4),
                     ),
                   );
                 }),
               ),
-              const Spacer(),
-              GestureDetector(
-                onTap: _nextPage,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-                  decoration: BoxDecoration(
-                    color: page.color,
-                    borderRadius: BorderRadius.circular(50),
-                    boxShadow: [
-                      BoxShadow(
-                        color: page.color.withValues(alpha: 0.35),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
+              // [DU314 ⑥] Spacer + 고정 폭 대신 남은 폭 안 오른쪽 정렬(온보딩 DU83) — 모자라면 글자가 줄바꿈된다
+              const SizedBox(width: 12),
+              Flexible(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: GestureDetector(
+                    onTap: _nextPage,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 300),
+                      // [DU314 ⑤] 상하 14 → 16 — 공통 주 버튼 최소 52(온보딩 DU80 과 같다)
+                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+                      decoration: BoxDecoration(
+                        color: ctaColor,
+                        borderRadius: BorderRadius.circular(50),
+                        // [DU314 ⑤] 그림자 .35/16/6 → .12/8/3(온보딩 DU109 와 같다)
+                        boxShadow: [
+                          BoxShadow(
+                            color: ctaColor.withValues(alpha: 0.12),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _currentPage == widget.pages.length - 1 ? '확인' : '다음',
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          color: Colors.white, fontWeight: FontWeight.w700,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              _currentPage == widget.pages.length - 1 ? '확인' : '다음',
+                              textAlign: TextAlign.center,
+                              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                color: Colors.white, fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          const Icon(Icons.arrow_forward_rounded,
+                              color: Colors.white, size: 17),
+                        ],
                       ),
-                      const SizedBox(width: 6),
-                      const Icon(Icons.arrow_forward_rounded,
-                          color: Colors.white, size: 17),
-                    ],
+                    ),
                   ),
                 ),
               ),

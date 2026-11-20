@@ -68,6 +68,7 @@ class TOListDialogs {
         // [POSTING-V2-01C.2] 실패 시 deleteTO가 서버 메시지를 그대로 토스트한다.
         // 여기서 다시 generic 토스트를 띄우면 그 안내를 덮는다.
         // 낙관적 제거도 하지 않는다 — 성공한 경우에만 onChanged로 목록을 갱신한다.
+        // [POSTING-AUTH-45] 권한 회수로 앞 단계만 반영된 거절도 true 다(목록 새로 읽기).
         final success = await firestoreService.deleteTO(to.id);
         if (success) {
           if (!context.mounted) return;

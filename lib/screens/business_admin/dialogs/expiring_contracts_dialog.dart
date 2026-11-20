@@ -87,7 +87,10 @@ class _ExpiringContractsDialogState extends State<ExpiringContractsDialog>
 
           return inWindow.map((app) {
             final end = app.actualResignDate ?? app.workEndDate;
-            final endOnly = DateTime(end!.year, end.month, end.day);
+            // [DU347] 남은 날은 공용 판정과 같은 자(KST 달력 날짜 키)로 잰다. 예전에는 기기 로컬 자정
+            //   DateTime(end.y, m, d) 에서 UTC 키 todayOnly 를 빼, KST 기기에서 앞으로 n일 남은 계약이 n−1(내일 = D-Day)로
+            //   보이고 오늘 · 내일 행이 같은 0 으로 사업장 사이 순서가 섞였다. UTC 로 표현된 같은 instant 도 같은 날이 된다.
+            final endOnly = FormatHelper.toKstDate(end!);
             final diff = endOnly.difference(todayOnly).inDays;
             return _ExpiringItem(
               application: app,
@@ -225,7 +228,7 @@ class _ExpiringContractsDialogState extends State<ExpiringContractsDialog>
     final bizName = item.business?.name ?? '';
     final endDate = item.application.actualResignDate ?? item.application.workEndDate;
     final dateStr = endDate != null
-        ? DateFormat('M/d(E)', 'ko_KR').format(endDate)
+        ? DateFormat('M/d(E)', 'ko_KR').format(FormatHelper.toKstDate(endDate)) // [DU347] KST 달력 날짜
         : '-';
     final dayLabel =
         item.daysRemaining == 0 ? 'D-Day' : 'D-${item.daysRemaining}';

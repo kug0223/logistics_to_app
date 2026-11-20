@@ -378,11 +378,12 @@ void main() {
       expect(apply.contains('expectedAttendancePolicy !== applyFreshFp'), isTrue);
       expect(apply.contains('expectedAttendancePolicy === applyFreshFp'), isFalse);
       // [R7-PAYROLL-POLICY.4D] 거부가 셋이 됐다 — 기준 없음·미고지·변경.
+      // [ARCHIVE-CASCADE-PAGINATION] + 운영 종료(같은 사업장 읽기) 하나 — 넷.
       expect('throw new HttpsError('
               .allMatches(_slice(apply, 'const applyTxBizSnap =',
                   'const applyTxPolicy ='))
               .length,
-          3);
+          4);
       // 반올림 산술 변경 0.
       final ci = _code(_slice(cfRaw, 'function _processCheckin(', '\n/**'));
       expect(ci.contains('Math.ceil(offsetMinutes / lateUnit) * lateUnit'),

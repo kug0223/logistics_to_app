@@ -18,6 +18,8 @@ class PayrollOverviewReads {
     required this.workerSummaries,
     required this.repairSummary,
     required this.todayPaymentCount,
+    this.personLabels,
+    this.monthLedgerCounts,
   });
 
   /// 관리 사업장 목록(SubAdmin 은 선택 사업장 하나).
@@ -58,9 +60,25 @@ class PayrollOverviewReads {
   /// 오늘 지급 대상 건수. 모르면 null.
   final Future<int?> Function(String businessId) todayPaymentCount;
 
+  /// [PAYROLL-ANNUAL-READ.48] CF `callableGetPayrollMonthLedgerCounts` — 한 달 원장을 서버가 끝까지 세어
+  ///   숫자만 돌려준다(읽기 전용, **서버 후보 — 미배포**). 한 달이 10,000건을 넘어 원장 응답이 잘렸을
+  ///   때만 부른다. 함수가 없으면 throw — 그 달은 '확인 못함'으로 남는다. null 이면 부르지 않는다.
+  final Future<Object?> Function({
+    required String businessId,
+    required String yearMonth,
+  })? monthLedgerCounts;
+
+  /// [PAYROLL-DETAIL.32] 사업장 안 인력번호(uid → 'P-301'). 근무자 목록에 **같은 이름이 있을 때만**
+  ///   부른다 — 이름만으로는 누구의 상세로 들어가는지 가를 수 없다. null 이면 번호 없이 그린다.
+  final Future<Map<String, String>> Function({
+    required String businessId,
+    required List<String> uids,
+  })? personLabels;
+
   factory PayrollOverviewReads.of({
     FirestoreService? firestoreService,
     PayrollPaymentService? paymentService,
+    FirebaseFirestore? firestore,
   }) {
     final svc = firestoreService ?? FirestoreService();
     final pay = paymentService ?? PayrollPaymentService();
@@ -83,8 +101,11 @@ class PayrollOverviewReads {
         return svc.getBusinessesByIds(managedIds);
       },
       payrollSummaries: ({required String businessId, required int year}) async {
+        // [PAYROLL-ANNUAL-READ.48] 화면 대기 30초(.39-A1) — 연결이 안 되면 플러그인 timeout 이
+        //   적용되지 않아 기기에서 3분 넘게 스피너가 돌았다.
         final r = await callable('callableGetPayrollSummaries', 30)
-            .call<Map<String, dynamic>>({'businessId': businessId, 'year': year});
+            .call<Map<String, dynamic>>({'businessId': businessId, 'year': year})
+            .timeout(PayrollPaymentService.readWait);
         return ((r.data['items'] as List<dynamic>?) ?? const [])
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
@@ -95,12 +116,14 @@ class PayrollOverviewReads {
         required String yearMonthGte,
         required String yearMonthLte,
       }) async {
+        // [PAYROLL-ANNUAL-READ.48] 화면 쪽 대기도 .39-A1 과 같은 30초(연결이 안 되면 플러그인
+        //   timeout 이 적용되지 않는다). 읽기 전용이라 늦은 응답은 버린다.
         final r = await callable('callableGetAdminAttendances', 60)
             .call<Map<String, dynamic>>({
           'businessId': businessId,
           'yearMonthGte': yearMonthGte,
           'yearMonthLte': yearMonthLte,
-        });
+        }).timeout(PayrollPaymentService.readWait);
         final items = ((r.data['items'] as List<dynamic>?) ?? const [])
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
@@ -111,11 +134,14 @@ class PayrollOverviewReads {
         );
       },
       workerSummaries: (summaryId) async {
-        final snap = await FirebaseFirestore.instance
+        // [DU1 MONTH-READ-SOURCE] 서버 조회만 쓴다. 기본 get 은 서버 불가 시 캐시로 대체하고
+        //   빈 캐시면 **빈 결과를 성공으로** 준다 — 그러면 화면이 조회 불가를 '확정 0'·'집계 누락(복원)'으로
+        //   말했다. 서버 불가는 오류(unavailable)로 올라와 '불러오지 못했습니다·다시 시도'가 된다.
+        final snap = await (firestore ?? FirebaseFirestore.instance)
             .collection('payroll_summaries')
             .doc(summaryId)
             .collection('workers')
-            .get();
+            .get(const GetOptions(source: Source.server));
         return snap.docs
             .map((d) => (id: d.id, data: d.data()))
             .toList();
@@ -130,6 +156,20 @@ class PayrollOverviewReads {
       },
       todayPaymentCount: (businessId) =>
           pay.getTodayPaymentCount(businessId: businessId),
+      monthLedgerCounts: ({required String businessId, required String yearMonth}) async {
+        final r = await callable('callableGetPayrollMonthLedgerCounts', 30)
+            .call<Map<String, dynamic>>({'businessId': businessId, 'yearMonth': yearMonth})
+            .timeout(PayrollPaymentService.readWait);
+        return r.data;
+      },
+      personLabels: ({required String businessId, required List<String> uids}) async {
+        final users = await svc.getUsersBatch(uids,
+            businessId: businessId, purpose: FirestoreService.purposeWorkerDirectory);
+        return {
+          for (final e in users.entries)
+            if (e.value.personLabel != null) e.key: e.value.personLabel!,
+        };
+      },
     );
   }
 }

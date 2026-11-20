@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../../models/core/to_model.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../pickers/date_picker_bottom_sheet.dart';
 import '../dialogs/styled_dialog.dart';
 
@@ -201,23 +202,25 @@ class _FilterDialogState extends State<FilterDialog> {
           const Spacer(),
           TextButton(
             onPressed: _resetFilters,
+            // [DU294 FD3] 초기화 grey500(2.68) → 보조색, 최소 높이 48
             style: TextButton.styleFrom(
-              foregroundColor: AppColors.grey500,
+              foregroundColor: AppColors.textSecondary,
               padding: const EdgeInsets.symmetric(horizontal: 6),
-              minimumSize: const Size(0, 36),
+              minimumSize: const Size(0, 48),
             ),
             child: Text(
               '초기화',
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
             ),
           ),
           IconButton(
             tooltip: '닫기',
             onPressed: () => Navigator.pop(context),
             icon: const Icon(Icons.close, size: 20),
-            color: AppColors.grey400,
+            // [DU294 FD4] 닫기 grey400(1.88) → 보조색, 누름 48
+            color: AppColors.textSecondary,
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           ),
         ],
       ),
@@ -237,13 +240,17 @@ class _FilterDialogState extends State<FilterDialog> {
       children: [
         Row(
           children: [
-            Icon(icon, size: ResponsiveHelper.iconSize(context, 15), color: AppColors.grey500),
+            // [DU294 FD1] 구역 제목 16 bold 본문색(DU289 와 같다), 아이콘 grey500(2.68) → 보조색
+            Icon(icon, size: ResponsiveHelper.iconSize(context, 15), color: AppColors.textSecondary),
             const SizedBox(width: 5),
-            Text(
-              label,
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600).copyWith(
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.2,
+            Flexible(
+              child: Text(
+                label,
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
               ),
             ),
           ],
@@ -284,6 +291,7 @@ class _FilterDialogState extends State<FilterDialog> {
         ...sortedEntries.map((entry) => _chip(
               context,
               label: entry.value, // businessName (display only)
+              identity: true, // [DU294 FD6] 사업장명 — 식별 단위 줄바꿈
               isSelected: _tempBusiness == entry.key, // compare by businessId
               primary: primary,
               onTap: () => setState(() =>
@@ -429,11 +437,14 @@ class _FilterDialogState extends State<FilterDialog> {
     required Color primary,
     required VoidCallback onTap,
     IconData? icon,
+    bool identity = false,
   }) {
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
+        // [DU294 FD2] 칩 터치 48(전에는 약 30)
+        constraints: const BoxConstraints(minHeight: 48),
         padding: EdgeInsets.symmetric(
           horizontal: ResponsiveHelper.spacing(context, 10),
           vertical: ResponsiveHelper.spacing(context, 5),
@@ -450,16 +461,20 @@ class _FilterDialogState extends State<FilterDialog> {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (icon != null) ...[
-              Icon(icon, size: ResponsiveHelper.iconSize(context, 13), color: isSelected ? primary : AppColors.grey500),
+              Icon(icon, size: ResponsiveHelper.iconSize(context, 13), color: isSelected ? primary : AppColors.textSecondary),
               const SizedBox(width: 4),
             ],
-            Text(
-              label,
-              style: ResponsiveHelper.smallStyle(
-                context,
-                color: isSelected ? primary : AppColors.grey700,
-              ).copyWith(
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            // [DU294 FD6] 칩 글이 칸보다 길면(큰 글자의 긴 사업장명) 칸 안에서 줄을 바꾼다 — 전에는 오른쪽으로 109px 넘쳤다.
+            Flexible(
+              child: Text(
+                identity ? TextLayout.identity(label) : label,
+                semanticsLabel: identity ? label : null,
+                style: ResponsiveHelper.smallStyle(
+                  context,
+                  color: isSelected ? primary : AppColors.grey700,
+                ).copyWith(
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                ),
               ),
             ),
           ],
@@ -490,6 +505,7 @@ class _FilterDialogState extends State<FilterDialog> {
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.grey700,
                 side: BorderSide(color: AppColors.grey300),
+                minimumSize: const Size.fromHeight(52), // [DU294 FD5]
                 padding: const EdgeInsets.symmetric(vertical: 13),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
@@ -505,6 +521,7 @@ class _FilterDialogState extends State<FilterDialog> {
                 backgroundColor: primary,
                 foregroundColor: Colors.white,
                 elevation: 0,
+                minimumSize: const Size.fromHeight(52), // [DU294 FD5]
                 padding: const EdgeInsets.symmetric(vertical: 13),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),

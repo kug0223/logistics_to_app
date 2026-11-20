@@ -182,12 +182,19 @@ void main() {
     });
 
     test('NO_SHOW·결근은 finalWage 0으로 마감된다', () {
-      expect(flat.contains('status: "NO_SHOW", wageStatus: "confirmed", finalWage: 0'),
-          true);
+      // [.11 C2 2026-10-27] 자동 노쇼 writer(.7 근무 단위 거래)는 필드 순서가 바뀌었다 — 순서가 아니라 값을 본다.
       expect(
-        flat.contains('status: "absent", finalWage: 0, wageStatus: "confirmed"'),
+        RegExp(r'status: "NO_SHOW",[^}]*finalWage: 0,[^}]*wageStatus: "confirmed"').hasMatch(flat) ||
+            flat.contains('status: "NO_SHOW", wageStatus: "confirmed", finalWage: 0'),
         true,
       );
+      // 'absent + finalWage 0 + confirmed' writer 는 레거시 자동 결근뿐이었고 .6(SCHED-LEGACY-RETIRE)에서 폐기됐다.
+      //   지금 남은 absent writer(취소·탈퇴 정리)는 status 만 쓴다. 그래서 "결근은 급여가 되지 않는다"는 지금
+      //   지급 판정(reader)이 지킨다: absent·NO_SHOW 이고 finalWage 가 없거나 0 이면 비지급이다.
+      expect(flat.contains('return (status === "NO_SHOW" || status === "absent") && ((finalWage ?? 0) === 0);'),
+          true, reason: 'finalWage 가 없는 결근이 지급 대상으로 보이면 안 된다');
+      // 남은 absent writer 가 양수 finalWage 를 쓰지 않는다.
+      expect(RegExp(r'status: "absent",[^}]*finalWage: [1-9]').hasMatch(flat), false);
     });
 
     test('미이체 집계에서 0원 비지급 건을 제외한다', () {

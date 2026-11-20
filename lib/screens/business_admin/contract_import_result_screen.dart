@@ -6,6 +6,7 @@ import '../../utils/contract_article_parser.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../common/notification_screen.dart';
@@ -173,16 +174,22 @@ class _ContractImportResultScreenState
             style: ElevatedButton.styleFrom(
               backgroundColor: Theme.of(context).primaryColor,
               foregroundColor: Colors.white,
+              // [DU336] 320 · 2.0 에서 두 줄 글자가 버튼 가장자리에 붙었다(가로 여백 0) — 가로 16 · 가운데 · 낱말 단위
               padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 16)),
+                  vertical: ResponsiveHelper.spacing(context, 16),
+                  horizontal: ResponsiveHelper.spacing(context, 16)),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
               elevation: 0,
             ),
             child: Text(
-              _includedCount > 0
+              TextLayout.keepWords(_includedCount > 0
+                  ? '선택한 조항 $_includedCount개로 편집 시작'
+                  : '빈 템플릿으로 편집 시작'),
+              semanticsLabel: _includedCount > 0
                   ? '선택한 조항 $_includedCount개로 편집 시작'
                   : '빈 템플릿으로 편집 시작',
+              textAlign: TextAlign.center,
               style: ResponsiveHelper.bodyStyle(context).copyWith(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
@@ -209,10 +216,14 @@ class _ContractImportResultScreenState
           ],
 
           // ─── 편집 안내 ──────────────────────────────────────────
+          // [DU336] 읽어야 하는 안내 — grey500(2.68) → textSecondary, 낱말 단위
           Text(
-            '가져올 조항을 선택하세요. 편집 화면에서 내용을 수정하거나 조항을 추가/삭제할 수 있습니다.',
+            TextLayout.keepWords(
+                '가져올 조항을 선택하세요. 편집 화면에서 내용을 수정하거나 조항을 추가/삭제할 수 있습니다.'),
+            semanticsLabel:
+                '가져올 조항을 선택하세요. 편집 화면에서 내용을 수정하거나 조항을 추가/삭제할 수 있습니다.',
             style: ResponsiveHelper.smallStyle(context,
-                color: AppColors.grey500),
+                color: AppColors.textSecondary),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
@@ -263,32 +274,40 @@ class _SummaryHeader extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // [DU336] 320 · 2.0 에서 제목이 48px 넘쳤다(고정 Row 안 Text) — 남은 폭 안에서 낱말 단위로 줄바꿈, 아이콘은 첫 줄
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(Icons.check_circle_outline,
                   color: AppColors.success,
                   size: ResponsiveHelper.iconSize(context, 18)),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Text(
-                '$total개 조항을 찾았습니다.',
-                style: ResponsiveHelper.bodyStyle(context)
-                    .copyWith(fontWeight: FontWeight.bold),
+              Expanded(
+                child: Text(
+                  TextLayout.keepWords('$total개 조항을 찾았습니다.'),
+                  semanticsLabel: '$total개 조항을 찾았습니다.',
+                  style: ResponsiveHelper.bodyStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold),
+                ),
               ),
             ],
           ),
           if (systemCount > 0) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+            // [DU336] info(흰 바탕 3.12) → infoDeep(공통 안내 본문, Standards 감사04), 낱말 단위, 아이콘 첫 줄
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Icon(Icons.info_outline,
-                    color: AppColors.info,
+                    color: AppColors.infoDeep,
                     size: ResponsiveHelper.iconSize(context, 14)),
                 SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                 Expanded(
                   child: Text(
-                    '$systemCount개 항목은 ALfit이 자동 작성합니다. (제1~3조)',
+                    TextLayout.keepWords('$systemCount개 항목은 ALfit이 자동 작성합니다. (제1~3조)'),
+                    semanticsLabel: '$systemCount개 항목은 ALfit이 자동 작성합니다. (제1~3조)',
                     style: ResponsiveHelper.tinyStyle(context,
-                        color: AppColors.info),
+                        color: AppColors.infoDeep),
                   ),
                 ),
               ],
@@ -296,17 +315,20 @@ class _SummaryHeader extends StatelessWidget {
           ],
           if (warnCount > 0) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            // [DU336] warning(흰 바탕 2.16) → warningDark, 낱말 단위, 아이콘 첫 줄
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Icon(Icons.warning_amber_outlined,
-                    color: AppColors.warning,
+                    color: AppColors.warningDark,
                     size: ResponsiveHelper.iconSize(context, 14)),
                 SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                 Expanded(
                   child: Text(
-                    '$warnCount개 조항이 ALfit 자동 작성 내용과 겹칠 수 있습니다.',
+                    TextLayout.keepWords('$warnCount개 조항이 ALfit 자동 작성 내용과 겹칠 수 있습니다.'),
+                    semanticsLabel: '$warnCount개 조항이 ALfit 자동 작성 내용과 겹칠 수 있습니다.',
                     style: ResponsiveHelper.tinyStyle(context,
-                        color: AppColors.warning),
+                        color: AppColors.warningDark),
                   ),
                 ),
               ],
@@ -336,14 +358,15 @@ class _PiiBanner extends StatelessWidget {
         children: [
           Icon(Icons.person_search_outlined,
               size: ResponsiveHelper.iconSize(context, 16),
-              color: AppColors.warning),
+              color: AppColors.warningDark), // [DU336] warning(2.1:1) → warningDark
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '개인정보로 보이는 내용이 있습니다.',
+                  TextLayout.keepWords('개인정보로 보이는 내용이 있습니다.'),
+                  semanticsLabel: '개인정보로 보이는 내용이 있습니다.',
                   style: ResponsiveHelper.smallStyle(context)
                       .copyWith(
                           color: AppColors.warningDark,
@@ -351,8 +374,10 @@ class _PiiBanner extends StatelessWidget {
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                 Text(
-                  '특정 근로자의 정보가 포함되어 있다면 '
-                  '템플릿 저장 전에 확인해 주세요.',
+                  TextLayout.keepWords('특정 근로자의 정보가 포함되어 있다면 '
+                      '템플릿 저장 전에 확인해 주세요.'),
+                  semanticsLabel: '특정 근로자의 정보가 포함되어 있다면 '
+                      '템플릿 저장 전에 확인해 주세요.',
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.warningDark),
                 ),
@@ -399,19 +424,21 @@ class ImportArticleCard extends StatelessWidget {
 
   /// 제외된 조항도 펼쳤을 때는 본문이 읽혀야 한다 —
   /// 카드/칩은 muted로 두되 본문 텍스트는 가독 수준을 유지한다.
+  // [DU336] 읽어야 하는 본문 — grey500(2.68) → textSecondary, 제외 grey400(1.88) → textTertiary(5.25, 여전히 한 단계 옅다)
   Color _contentColor() =>
-      (article.included || expanded) ? AppColors.grey500 : AppColors.grey400;
+      (article.included || expanded) ? AppColors.textSecondary : AppColors.textTertiary;
 
   Widget _buildContent(BuildContext context) {
     final style = ResponsiveHelper.tinyStyle(context, color: _contentColor());
+    // [DU336] 본문 낱말 단위(줄바꿈 · 원문 그대로, 낭독은 원문). 2줄 넘침 판정도 **화면에 그리는 같은 문자열**로 잰다.
+    final shown = TextLayout.phrases(article.content);
 
     // 펼친 상태: 전문 + [접기]. overflow 계산 불필요.
     if (expanded) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(article.content, style: style),
-          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          Text(shown, semanticsLabel: article.content, style: style),
           _ExpandControl(expanded: true, onTap: onToggleExpand),
         ],
       );
@@ -422,7 +449,7 @@ class ImportArticleCard extends StatelessWidget {
     return LayoutBuilder(
       builder: (ctx, constraints) {
         final painter = TextPainter(
-          text: TextSpan(text: article.content, style: style),
+          text: TextSpan(text: shown, style: style),
           maxLines: 2,
           textDirection: Directionality.of(ctx),
           textScaler: MediaQuery.textScalerOf(ctx),
@@ -433,16 +460,15 @@ class ImportArticleCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              article.content,
+              shown,
+              semanticsLabel: article.content,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: style,
             ),
             // 2줄 안에 다 보이면 컨트롤을 띄우지 않는다.
-            if (overflows) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-              _ExpandControl(expanded: false, onTap: onToggleExpand),
-            ],
+            // [DU336] 컨트롤이 48 높이라 위아래 여백을 품는다 — 앞의 6 간격은 뺐다.
+            if (overflows) _ExpandControl(expanded: false, onTap: onToggleExpand),
           ],
         );
       },
@@ -492,7 +518,7 @@ class ImportArticleCard extends StatelessWidget {
                     : Icons.check_box_outline_blank,
                 color: article.included
                     ? Theme.of(context).primaryColor
-                    : AppColors.grey400,
+                    : AppColors.grey600, // [DU336] grey400(1.88) → grey600
                 size: ResponsiveHelper.iconSize(context, 22),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -502,15 +528,19 @@ class ImportArticleCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // 제목
+                    // [DU336] 제목 낱말 단위('제4조 (연장·야간 / 근로 수당)'), 제외 grey400(1.88) → textTertiary
                     Text(
-                      article.title.isEmpty
+                      TextLayout.keepWords(article.title.isEmpty
+                          ? '(제목 없음)'
+                          : article.title),
+                      semanticsLabel: article.title.isEmpty
                           ? '(제목 없음)'
                           : article.title,
                       style: ResponsiveHelper.bodyStyle(context).copyWith(
                         fontWeight: FontWeight.w600,
                         color: article.included
                             ? null
-                            : AppColors.grey400,
+                            : AppColors.textTertiary,
                       ),
                     ),
 
@@ -525,21 +555,24 @@ class ImportArticleCard extends StatelessWidget {
                       SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                       _WarningChip(
                         icon: Icons.info_outline,
-                        color: AppColors.info,
+                        color: AppColors.infoDeep, // [DU336] info(infoBg 위 2.8) → infoDeep
                         bgColor: AppColors.infoBg,
                         label: 'ALfit에서 자동 작성되는 항목과 겹칩니다.',
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                       Text(
-                        '계약 당사자, 근무조건, 임금은 공고·지원서 정보를 이용해 자동 작성됩니다.',
+                        TextLayout.keepWords(
+                            '계약 당사자, 근무조건, 임금은 공고·지원서 정보를 이용해 자동 작성됩니다.'),
+                        semanticsLabel:
+                            '계약 당사자, 근무조건, 임금은 공고·지원서 정보를 이용해 자동 작성됩니다.',
                         style: ResponsiveHelper.tinyStyle(context,
-                            color: AppColors.grey500),
+                            color: AppColors.textSecondary), // [DU336] grey500 → textSecondary
                       ),
                     ] else if (isWarn) ...[
                       SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                       _WarningChip(
                         icon: Icons.warning_amber_outlined,
-                        color: AppColors.warning,
+                        color: AppColors.warningDark, // [DU336] warning(2.0) → warningDark
                         bgColor: AppColors.warningBg,
                         label: 'ALfit에서 자동 작성되는 근로조건과 내용이 겹칠 수 있습니다.',
                       ),
@@ -547,10 +580,11 @@ class ImportArticleCard extends StatelessWidget {
 
                     if (article.hasPii) ...[
                       SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                      // [DU336] 빨강(흰 바탕 4.23) → 위 개인정보 배너와 같은 경고 톤. 확인 요청이지 손실 행동이 아니다
                       _WarningChip(
                         icon: Icons.person_outlined,
-                        color: AppColors.errorMedium,
-                        bgColor: AppColors.error.withValues(alpha: 0.08),
+                        color: AppColors.warningDark,
+                        bgColor: AppColors.warningBg,
                         label: '개인정보가 있을 수 있습니다. 저장 전 확인해 주세요.',
                       ),
                     ],
@@ -586,11 +620,9 @@ class _ExpandControl extends StatelessWidget {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        child: Padding(
-          // 탭 영역 확보 — 본문과 붙어 오탭되지 않도록 세로 여백을 둔다.
-          padding: EdgeInsets.symmetric(
-            vertical: ResponsiveHelper.spacing(context, 4),
-          ),
+        // [DU336] 탭 영역 — 세로 여백 4(W 실측 24.2 · B 40.8) → 최소 높이 48. 글자 · 아이콘 크기 그대로, 가운데 정렬
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -641,6 +673,7 @@ class _WarningChip extends StatelessWidget {
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start, // [DU336] 여러 줄일 때 아이콘은 첫 줄
         children: [
           Icon(icon,
               size: ResponsiveHelper.iconSize(context, 12),
@@ -648,7 +681,8 @@ class _WarningChip extends StatelessWidget {
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Flexible(
             child: Text(
-              label,
+              TextLayout.keepWords(label),
+              semanticsLabel: label,
               style: ResponsiveHelper.tinyStyle(context, color: color),
             ),
           ),

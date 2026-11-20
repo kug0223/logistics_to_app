@@ -15,6 +15,7 @@ import '../../models/core/legal_terms_model.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/terms_consent_plan.dart';
+import '../../utils/text_layout.dart';
 import 'terms_viewer_screen.dart';
 
 class LegalConsentList extends StatelessWidget {
@@ -58,9 +59,12 @@ class LegalConsentList extends StatelessWidget {
     final checked = choices[item.id] == true;
     final changed = highlightIds.contains(item.id);
 
+    // [DU1 구현151 ⑤] 제목이 Checkbox · 배지 · 보기와 한 줄 폭을 나눠 좁은 열(B 약 95dp)에 갇혔다 —
+    //   Checkbox 옆 넓은 내용 열에 제목을 먼저, 필수/선택 배지와 보기를 그 아래 보조 줄로 둔다(한 항목 = 바깥 Row 하나).
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Checkbox(
             value: checked,
@@ -77,36 +81,52 @@ class LegalConsentList extends StatelessWidget {
                     onChanged(item.id, on);
                   },
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: item.isRequired ? AppColors.errorBg : AppColors.grey100,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              item.isRequired ? '필수' : '선택',
-              style: ResponsiveHelper.tinyStyle(
-                context,
-                color: item.isRequired ? AppColors.error : AppColors.grey500,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              settled
-                  ? '${item.title} (동의함)'
-                  : (changed ? '${item.title} (변경됨)' : item.title),
-              style: ResponsiveHelper.smallStyle(
-                context,
-                color: settled ? AppColors.grey500 : AppColors.grey900,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // [.54] 큰 글자에서 '서비스 이|용약관' 으로 끊겼다 — 낱말 단위(표시만).
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Text(
+                    TextLayout.keepWords(settled
+                        ? '${item.title} (동의함)'
+                        : (changed ? '${item.title} (변경됨)' : item.title)),
+                    semanticsLabel: settled
+                        ? '${item.title} (동의함)'
+                        : (changed ? '${item.title} (변경됨)' : item.title),
+                    style: ResponsiveHelper.smallStyle(
+                      context,
+                      color: settled ? AppColors.textSecondary : AppColors.grey900,
+                    ),
+                  ),
+                ),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: item.isRequired ? AppColors.errorBg : AppColors.grey100,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        item.isRequired ? '필수' : '선택',
+                        style: ResponsiveHelper.tinyStyle(
+                          context,
+                          color: item.isRequired ? AppColors.errorDark : AppColors.textSecondary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: enabled ? () => _open(context, item) : null,
+                      child: Text('보기', style: ResponsiveHelper.smallStyle(context, color: enabled ? AppColors.textSecondary : null)),
+                    ),
+                  ],
+                ),
+              ],
             ),
-          ),
-          TextButton(
-            onPressed: enabled ? () => _open(context, item) : null,
-            child: Text('보기', style: ResponsiveHelper.smallStyle(context)),
           ),
         ],
       ),

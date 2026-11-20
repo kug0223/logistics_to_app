@@ -2,6 +2,7 @@
 import '../../../../models/work_detail_input.dart';
 import '../../../../models/core/work_detail_model.dart';
 import '../../../../utils/responsive_helper.dart';
+import '../../../../utils/text_layout.dart';
 import 'to_section_container.dart';
 import 'to_work_detail_card.dart';
 import '../../../../theme/app_colors.dart';
@@ -83,17 +84,27 @@ class TOWorkDetailsSection extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 헤더
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                '업무 목록 ($_workCount개)',
-                style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
+          // [DU1 구현48 C1 S031] 320·2.0 에서 제목+업무 추가 버튼 한 줄이 오른쪽으로 122px 넘쳤다 —
+          //   폭이 모자라면 버튼을 다음 줄로 내린다(Wrap).
+          // [DU1 구현49 · 감사49 §2] 부모 Column 이 start 정렬이라 Wrap 이 내용 폭으로 접혀 넓은 한 줄에서 spaceBetween 이
+          //   양 끝으로 벌리지 못했다 — 전체 폭을 주어 넓은 폭은 기존처럼 양 끝(제목 왼쪽·버튼 오른쪽) 배치를 지킨다.
+          SizedBox(
+            width: double.infinity,
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: ResponsiveHelper.spacing(context, 8),
+              runSpacing: ResponsiveHelper.spacing(context, 8),
+              children: [
+                Text(
+                  TextLayout.keepWords('업무 목록 ($_workCount개)'),
+                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-              _buildAddButton(context, theme),
-            ],
+                _buildAddButton(context, theme),
+              ],
+            ),
           ),
           
           // 업무 유형 없음 경고
@@ -119,34 +130,41 @@ class TOWorkDetailsSection extends StatelessWidget {
   }
 
   Widget _buildAddButton(BuildContext context, ThemeData theme) {
+    // [DU319] '업무 추가' 는 일반 진행 행동 — 성공색(successBg · successDark) 대신 brand 톤(Standards §304)
     return Material(
-      color: AppColors.successBg,
+      color: AppColors.brandSurface,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onAddWork,
         borderRadius: BorderRadius.circular(12),
-        child: Padding(
+        // [DU1 구현49] 실측 39(360·1.0) — 공통 기준 터치 최소 48
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Padding(
           padding: EdgeInsets.symmetric(
             horizontal: ResponsiveHelper.spacing(context, 16),
             vertical: ResponsiveHelper.spacing(context, 10),
           ),
+          // [DU1 구현48] Wrap 안에서 버튼이 줄 전체로 늘지 않게 내용 폭만 쓴다
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
                 Icons.add_circle_outline,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.successDark,
+                color: AppColors.brand,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text(
                 '업무 추가',
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: AppColors.successDark,
+                  color: AppColors.brand,
                   fontWeight: FontWeight.bold,
                 ),
               ),
             ],
           ),
+        ),
         ),
       ),
     );
@@ -194,8 +212,10 @@ class TOWorkDetailsSection extends StatelessWidget {
             color: AppColors.grey400,
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          // [DU319] 320·2.0 에서 '없습니 / 다' 로 끊겼다 — 낱말 단위
           Text(
-            '등록된 업무가 없습니다',
+            TextLayout.keepWords('등록된 업무가 없습니다'),
+            semanticsLabel: '등록된 업무가 없습니다',
             style: ResponsiveHelper.bodyStyle(
               context,
               color: AppColors.grey600,

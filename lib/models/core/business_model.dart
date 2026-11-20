@@ -325,6 +325,11 @@ class BusinessModel {
   /// 슈퍼관리자 또는 단독 관리자 탈퇴로 비활성화된 시각
   final DateTime? deactivatedAt;
 
+  /// [BUSINESS-ARCHIVE] 소유자가 운영을 종료한 시각(callableArchiveOwnBusiness 전용).
+  ///   읽기 전용 — toMap 에 넣지 않는다(클라이언트 쓰기 대상이 아니다).
+  ///   재활성화 뒤에도 이력으로 남으므로 "지금 종료 상태"는 [isClosedByOwner] 로 본다.
+  final DateTime? archivedAt;
+
   // ── 근태 처리 규칙 ────────────────────────────────────────
   /// null이면 AttendanceRules.defaults() 로 폴백
   final AttendanceRules? attendanceRules;
@@ -350,6 +355,17 @@ class BusinessModel {
   final String? businessLicenseImageUrl;
 
   bool get isDeactivated => deactivatedAt != null;
+
+  /// [BUSINESS-ARCHIVE] 지금 소유자가 운영을 종료한 상태인가(재활성화되면 false).
+  bool get isClosedByOwner => isDeactivated && archivedAt != null;
+
+  /// [BUSINESS-ARCHIVE] 목록·배지용 상태 이름. `isApproved:false` 를 승인 대기로
+  ///   뭉뚱그리지 않는다 — 운영 종료·운영 중지·승인 대기는 다른 사건이다.
+  String get operationStatusLabel => isClosedByOwner
+      ? '운영 종료'
+      : isDeactivated
+          ? '운영 중지'
+          : (isApproved ? '승인됨' : '승인대기');
 
   BusinessModel({
     required this.id,
@@ -402,6 +418,7 @@ class BusinessModel {
     this.wagePaymentDay,
     this.sealType = 'stamp',
     this.deactivatedAt,
+    this.archivedAt,
     this.attendanceRules,
     this.attendancePolicyConfirmation,
     this.businessLicenseImageUrl,
@@ -473,6 +490,7 @@ class BusinessModel {
       wagePaymentDay: (map['wagePaymentDay'] as num?)?.toInt(),
       sealType: map['sealType'] as String? ?? 'stamp',
       deactivatedAt: _parseTimestamp(map['deactivatedAt']),
+      archivedAt: _parseTimestamp(map['archivedAt']),
       attendanceRules: map['attendanceRules'] != null
           ? AttendanceRules.fromMap(
               Map<String, dynamic>.from(map['attendanceRules'] as Map))
@@ -668,6 +686,7 @@ class BusinessModel {
       beaconMinor: beaconMinor ?? this.beaconMinor,
       beaconRssiThreshold: beaconRssiThreshold ?? this.beaconRssiThreshold,
       deactivatedAt: clearDeactivatedAt ? null : (deactivatedAt ?? this.deactivatedAt),
+      archivedAt: archivedAt,
       attendanceRules: attendanceRules ?? this.attendanceRules,
       attendancePolicyConfirmation:
           attendancePolicyConfirmation ?? this.attendancePolicyConfirmation,

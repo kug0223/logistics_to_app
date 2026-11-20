@@ -344,7 +344,10 @@ void main() {
     test('36 근로자가 지급 보류를 볼 수 있다', () {
       final s = _src(_wageScreen);
       expect(s, contains('wageAccountReviewRequired == true'));
-      expect(s, contains('지급정보 확인 필요'));
+      // [SIM-WORKER-WAGE-VIEW] 상태 라벨은 목록·상세 공용 판정으로 옮겼다.
+      expect(s, contains('WorkerWageStatus.of(att)'));
+      expect(_src('lib/utils/worker_wage_status.dart'),
+          contains('지급정보 확인 필요'));
       expect(s, contains('급여 금액은 그대로 확정되어 있습니다'));
       expect(s, contains('PayrollReadinessReason.workerActionOf'));
     });

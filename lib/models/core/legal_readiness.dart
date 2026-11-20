@@ -18,6 +18,17 @@
 //   **조회 실패는 미동의가 아니다.** 모르는 것을 "동의하지 않았다" 로
 //   그리면 서버 장애가 곧 전원 차단이 된다.
 
+import 'package:flutter/foundation.dart';
+
+/// [.55] 서버가 "새 약관에 아직 동의하지 않았다" 고 거절한 사건(지원 거절 등).
+///   홈 할 일 카드는 진입할 때만 판정을 읽었다 — 홈을 연 채 시행 시각이 지나면 지원은 막히는데
+///   카드는 계속 숨어 있었다. 이 신호와 앱 복귀 때 카드가 **서버 판정을 다시 읽는다**(스스로 판정하지 않는다).
+class LegalReadinessSignal {
+  LegalReadinessSignal._();
+  static final ValueNotifier<int> changed = ValueNotifier<int>(0);
+  static void bump() => changed.value++;
+}
+
 enum LegalReadinessStatus {
   loading,
   current,

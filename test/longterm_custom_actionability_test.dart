@@ -40,6 +40,7 @@ import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/utils/format_helper.dart';
 import 'package:ALfit/widgets/dialogs/apply/commitment_conflict.dart';
 import 'package:ALfit/widgets/dialogs/apply/longterm_apply_sheet.dart';
+import 'support/visible_text.dart'; // [DU272] CTA·이유 문구가 keepWords 라 보이는 글자로 찾는다
 
 const kUid = 'worker1';
 
@@ -636,7 +637,7 @@ void main() {
     /// CTA 버튼의 활성 여부 — `onPressed == null` 이면 누를 수 없다.
     bool ctaEnabled(WidgetTester tester, String label) {
       final btn = tester.widget<ElevatedButton>(find.ancestor(
-        of: find.text(label),
+        of: findVisibleText(label),
         matching: find.byType(ElevatedButton),
       ));
       return btn.onPressed != null;
@@ -646,11 +647,11 @@ void main() {
       // 기존 약속 월~금 09:00~18:00 ↔ custom 후보 월~금 13:00~22:00.
       await _pumpSheet(tester, source: () async => [commitment()]);
 
-      expect(find.textContaining('확정된 일정'), findsOneWidget,
+      expect(findVisibleTextContaining('확정된 일정'), findsOneWidget,
           reason: '색만으로 말하지 않는다');
-      expect(find.text('확정 일정과 겹쳐 지원할 수 없어요'), findsOneWidget);
+      expect(findVisibleText('확정 일정과 겹쳐 지원할 수 없어요'), findsOneWidget);
       expect(ctaEnabled(tester, '확정 일정과 겹쳐 지원할 수 없어요'), isFalse);
-      expect(find.text('이 조건으로 지원하기'), findsNothing);
+      expect(findVisibleText('이 조건으로 지원하기'), findsNothing);
     });
 
     testWidgets('R2 겹치지 않으면 제출할 수 있다', (tester) async {
@@ -661,9 +662,9 @@ void main() {
         to: _customTo(workDays: const ['토']),
       );
 
-      expect(find.text('이 조건으로 지원하기'), findsOneWidget);
+      expect(findVisibleText('이 조건으로 지원하기'), findsOneWidget);
       expect(ctaEnabled(tester, '이 조건으로 지원하기'), isTrue);
-      expect(find.textContaining('확정된 일정'), findsNothing);
+      expect(findVisibleTextContaining('확정된 일정'), findsNothing);
     });
 
     testWidgets('R3 추가근무 하루 때문에 막히면 그 날짜를 말한다', (tester) async {
@@ -676,7 +677,7 @@ void main() {
         to: _customTo(workDays: const ['토']),
       );
 
-      expect(find.textContaining('10/10'), findsOneWidget);
+      expect(findVisibleTextContaining('10/10'), findsOneWidget);
       expect(ctaEnabled(tester, '확정 일정과 겹쳐 지원할 수 없어요'), isFalse);
     });
 
@@ -700,7 +701,7 @@ void main() {
       await _pumpSheet(tester,
           source: () async => throw StateError('읽기 실패'));
 
-      expect(find.textContaining('내 일정을 확인할 수 없어요'), findsOneWidget);
+      expect(findVisibleTextContaining('내 일정을 확인할 수 없어요'), findsOneWidget);
       // 조용히 "가능" 으로 광고하지 않지만, 제출 자체는 서버가 최종 판정한다.
       expect(ctaEnabled(tester, '이 조건으로 지원하기'), isTrue);
     });

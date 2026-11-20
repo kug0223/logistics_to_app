@@ -447,7 +447,10 @@ void main() {
       //   실패→재시도·순서 역전·dispose 를 실행으로 증명하기 위해서다.
       //   계약은 그대로: 부모 snapshot 이 아니라 자기 상태를 본다.
       expect(dlg, contains('Future<void> _loadCapacity()'));
-      expect(dlg, contains('_firestoreService.loadTOWorkDetails('),
+      // [E2-INVITED-SEAT] 이 창의 읽기는 WorkApplicantsReads 경계를 지난다(테스트 seam).
+      //   계약은 그대로다 — 창이 목적·인자를 넘기고, 경계가 같은 서비스로 전달한다.
+      expect(dlg, contains('loader: () => _reads.capacity('));
+      expect(_codeOf(_read('lib/screens/business_admin/dialogs/work_applicants_reads.dart')), contains('svc.loadTOWorkDetails(to,'),
           reason: '새 API 를 만들지 않는다 — 카드와 같은 경로');
       expect(dlg, contains('CapacityLoadState('));
       expect(dlg, contains('_capacity.confirmedFor(widget.work)'),
@@ -511,12 +514,19 @@ void main() {
     });
 
     test('DLG-W9 좌석 아님과 계약 종료를 구분한다 (§4)', () {
-      expect(dlg, contains('staffingRelationOf(app, DateTime.now()).resolvedEnded'),
+      // [E1-FIXTURE-CLOCK] "지금"은 이 창의 공용 시계(`_workApplicantsNow` → `StaffingClock.now()`)
+      //   가 준다. production 은 `DateTime.now()` 그대로다 — 아래 두 줄이 그것을 고정한다.
+      expect(dlg, contains('staffingRelationOf(app, _workApplicantsNow()).resolvedEnded'),
           reason: '만료+미결정을 종료로 단정하지 않는다');
       expect(dlg, contains("'계약 확인 필요'"), reason: '결정이 남은 섹션');
       expect(dlg, contains("'좌석 반납'"), reason: '자리 해제 != 관계 종료');
-      expect(dlg, contains('staffingRelationLabel(app, DateTime.now())'),
+      expect(dlg, contains('staffingRelationLabel(app, _workApplicantsNow())'),
           reason: '라벨도 canonical 조합이 정한다');
+      expect(dlg, contains('DateTime _workApplicantsNow() => StaffingClock.now();'),
+          reason: '창의 판정은 한 시계를 쓴다');
+      expect(_codeOf(_read('lib/utils/staffing_clock.dart')),
+          contains('debugOverride?.call() ?? DateTime.now()'),
+          reason: 'production 의 지금은 현재 시각이다');
     });
 
     test('DLG-W10 끝난 관계의 신분증 요구형 강조만 내린다 (§5)', () {

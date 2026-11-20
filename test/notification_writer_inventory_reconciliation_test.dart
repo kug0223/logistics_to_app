@@ -22,7 +22,8 @@
 //   INV-SUM-*    네 분류 합계 reconciliation
 //   INV-SET-*    source-contract approved set ↔ inventory 1:1
 //   INV-DOM-*    domain transaction 3곳의 write field 집합
-//   INV-POST-*   post-commit 분리 4곳
+//   INV-POST-*   (2026-10-27 RETRY-OVERLAP 부터) 예전 post-commit 분리 4곳이 같은 transaction 으로 옮겨졌다
+//                — 알림 쓰기가 실패하면 그 사건의 domain 전이도 이번 실행에서 커밋되지 않고 다음 실행이 다시 한다
 //   INV-DUP-*    deterministic ALREADY_EXISTS 가 domain 을 깨지 않는다
 //   INV-LOST-*   알림이 유실돼도 domain 상태는 화면에 남는다
 import 'dart:io';
@@ -241,12 +242,16 @@ void main() {
       expect(_sum(path), total, reason: 'persistence path 합계 불일치');
       expect(_sum(coupling), total, reason: 'coupling 합계 불일치');
       // 한 callsite 가 coupling 하나에만 속한다 — 분류가 상호배타임을 보장.
+      // [RETRY-OVERLAP 2026-10-27] 'post-commit-separated' 가 비었다 — 마감 세 함수와 장기 게시 만료가
+      //   알림을 업무 전이와 같은 transaction(in-TX helper)으로 옮겼다(INV-TXN). 그 분류가 다시 생기면
+      //   commit 뒤 중단 시 알림 유실·겹친 실행 중복이 돌아온 것이므로 여기서 잡는다.
       expect(coupling.keys.toSet(), {
         'standalone',
         'notification-only-fanout',
-        'post-commit-separated',
         'domain-transaction',
       });
+      expect(inv.creates.where((s) => _postCommitFns.contains(s.fn)), isEmpty,
+          reason: '마감 함수에 commit 뒤 helper 발송이 다시 생겼다');
     });
 
     test('INV-SUM-02 persistence path 는 helper 와 승인된 raw-in-TX 뿐이다', () {
@@ -461,25 +466,21 @@ void main() {
     });
   });
 
-  group('INV-POST — post-commit 분리 4곳', () {
-    test('INV-POST-01 알림 발송이 domain commit 뒤에 있다', () {
-      final dispatches = <String>[
-        'await Promise.allSettled(pendingNotifs.map(',
-        'await Promise.allSettled(expiryNotifs.map(',
-      ];
-      // pendingNotifs 3곳 + expiryNotifs 1곳 = 4.
-      expect(_count(raw, dispatches[0]), 3);
-      expect(_count(raw, dispatches[1]), 1);
-      for (final d in dispatches) {
-        var i = 0;
-        while (true) {
-          final k = raw.indexOf(d, i);
-          if (k < 0) break;
-          final before = raw.substring(k - 160 < 0 ? 0 : k - 160, k);
-          expect(before, contains('.commit();'),
-              reason: '알림 발송이 domain commit 뒤에 와야 한다');
-          i = k + d.length;
-        }
+  // [RETRY-OVERLAP 2026-10-27] 예전 'INV-POST — post-commit 분리 4곳' 을 대체한다.
+  //   분리(domain batch commit → 따로 알림)는 commit 직후 중단되면 알림을 영구히 잃었고
+  //   (재실행은 이미 바뀐 상태를 보고 보내지 않는다), 겹친 실행에서는 같은 사건을 두 번 보냈다.
+  //   지금은 사건마다 transaction 하나가 현재 상태를 다시 읽고, 전이와 결정적 id 알림 문서를
+  //   같이 쓴다. 알림 쓰기가 실패하면 그 사건은 이번 실행에서 커밋되지 않고 다음 실행이 다시 한다.
+  group('INV-TXN — 마감·게시만료 알림은 전이와 같은 transaction 이다', () {
+    test('INV-POST-01 예전 post-commit 발송 4곳이 남아 있지 않다 (부정 대조)', () {
+      expect(_count(raw, 'await Promise.allSettled(pendingNotifs.map('), 0);
+      expect(_count(raw, 'await Promise.allSettled(expiryNotifs.map('), 0);
+      // 대신 공용 취소 거래 helper 가 있고, 세 마감 함수가 그것을 지난다.
+      // [.11] 공고 신청 마감 본문은 processTOExpiry 에서 srvTOApplicationDeadlineExpiry 로 옮겨졌다(POSTING-EXPIRY-CALL)
+      for (final fn in ['processWorkDetailExpiry', 'processSlotWorkDetailExpiry', 'srvTOApplicationDeadlineExpiry']) {
+        final b = _between(raw, 'async function $fn(', '\n}\n');
+        expect(b.contains('srvCancelPendingForExpiredTypes(') || b.contains('srvExpiryCancelPending('), isTrue,
+            reason: fn);
       }
     });
 
@@ -493,10 +494,22 @@ void main() {
       }
     });
 
-    test('INV-POST-03 domain batch 는 business truth 를 그대로 쓴다', () {
-      // 분리로 domain 쪽이 약해지지 않았음을 확인한다.
-      expect(_flat(raw), contains('cancelBatch.update(appDoc.ref, { status: "AUTO_CANCELED",'));
-      expect(_flat(raw), contains('contractBatch.update(doc.ref, { status: "CLOSED",'));
+    test('INV-POST-03 transaction 은 business truth 를 그대로 쓰고, 현재 상태를 먼저 다시 본다', () {
+      // 자동취소 — 지금도 PENDING 일 때만, barrier 읽기 → 전이 → 알림 순서.
+      final cancel = _txBlockOf(raw, 'cancelReason: reason,');
+      expect(_flat(cancel), contains('if (!cur || cur.status !== "PENDING") return false;'));
+      expect(_flat(cancel), contains('tx.update(appDoc.ref, { status: "AUTO_CANCELED", canceledAt: now, cancelReason: reason, });'));
+      expect(cancel.indexOf('srvDeletionBarrierExistsInTx('), lessThan(cancel.indexOf('tx.update(')));
+      expect(cancel.indexOf('tx.update('), lessThan(cancel.indexOf('srvPersistNotificationInTx(')));
+      // 장기 게시 만료 — 지금도 ACTIVE·만료일 지남일 때만, 같은 순서.
+      final post = _txBlockOf(raw, 'closedReason: "POSTING_EXPIRED",');
+      expect(_flat(post), contains('d.status !== "ACTIVE"'));
+      expect(_flat(post), contains('status: "CLOSED",'));
+      expect(post.indexOf('srvDeletionBarrierExistsInTx('), lessThan(post.indexOf('tx.update(')));
+      expect(post.indexOf('tx.update('), lessThan(post.indexOf('srvPersistNotificationInTx(')));
+      // 사건 id 는 결정적이다 — 재실행·겹친 실행이 같은 문서로 수렴한다.
+      expect(_flat(cancel), contains('srvSchedulerEventNotificationId(`expiry_autocancel_\${reason}`, appDoc.id, `g\${srvActivationGeneration(cur)}`)'));
+      expect(_flat(post), contains('srvSchedulerEventNotificationId("to_posting_expired", doc.id, String(d.postingExpiryDate.toMillis()))'));
     });
   });
 

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -11,13 +13,18 @@ import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_menu_sheet.dart';
 import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/common/common_widgets.dart';
+import '../../widgets/common/first_line_icon.dart';
+import '../../widgets/common/keep_words_text.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../common/notification_screen.dart';
+import 'member_management_reads.dart';
 
 // 사업장별 멤버/초대 데이터 묶음
 class _BizSection {
@@ -35,7 +42,10 @@ class _BizSection {
 }
 
 class MemberManagementScreen extends StatefulWidget {
-  const MemberManagementScreen({super.key});
+  const MemberManagementScreen({super.key, this.reads});
+
+  /// [DU401] 읽기 경계(관측 seam). production 은 null — 아래 기존 서비스 호출 그대로.
+  final MemberManagementReads? reads;
 
   @override
   State<MemberManagementScreen> createState() => _MemberManagementScreenState();
@@ -54,6 +64,42 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
   // [ERROR-AS-EMPTY] fetch 실패 여부 — false=초기/성공, true=오류
   // _sections == [] 와 조합해 "멤버 없음" vs "로드 실패" 구분 (UNKNOWN != ZERO)
   bool _hasError = false;
+  // [H-2 E] 화면이 남는 새로고침 실패 — overlay 토스트 대신 화면 안 결과 띠 하나(목록 위 N2′ · 성공 EMPTY 부제 아래 N3).
+  //   원문 · 오류 의미색/아이콘 · 4s · 재실패 교체 · 성공 로드/이탈 시 정리. 첫/재시도 실패의 오류 본문 정책은 그대로다.
+  String? _refreshError;
+  Timer? _refreshErrorTimer;
+
+  void _showRefreshError(String message) {
+    _refreshErrorTimer?.cancel();
+    setState(() => _refreshError = message);
+    _refreshErrorTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _refreshError = null);
+    });
+  }
+
+  // [판정51] 옅은 의미 바탕 + 진한 글 · 아이콘(원문 label 1) — Standards §12.2 넓은 면은 진한 의미색으로 채우지 않는다. 본문 안에 놓여 다른 내용을 덮지 않는다.
+  //   errorDark / errorBg 5.80:1. 반경 · 패딩 · 아이콘 · 간격 · 글 · 줄바꿈은 그대로(테두리 추가 0).
+  Widget _refreshErrorBand(BuildContext context, String message) {
+    const style = TextStyle(color: AppColors.errorDark, fontSize: 14, fontWeight: FontWeight.w500);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(color: AppColors.errorBg, borderRadius: BorderRadius.circular(12)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const FirstLineIcon(Icons.error_outline, size: 20, color: AppColors.errorDark, textStyle: style),
+          const SizedBox(width: 12),
+          Expanded(child: KeepWordsText(message, style: style)),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _refreshErrorTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -91,7 +137,7 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
       }
 
       // 사업장 이름 병렬 조회
-      final businesses = await _firestoreService.getBusinessesByIds(bizIds);
+      final businesses = await (widget.reads?.businessesByIds ?? _firestoreService.getBusinessesByIds)(bizIds); // [DU401] null = 기존 관대한 조회 그대로
       final bizNameMap = {for (final b in businesses) b.id: b.name};
       // 조기 저장 — 이후 CF 오류가 나도 _buildEmpty에서 초대 버튼 표시 가능
       if (mounted) setState(() { _bizIds = bizIds; _bizNameMap = bizNameMap; _isSubAdmin = isSubAdmin; });
@@ -103,10 +149,10 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
       sectionResults = await Future.wait(
         bizIds.map((id) async {
           final pair = await Future.wait([
-            _service.getMembers(id),
+            (widget.reads?.members ?? _service.getMembers)(id), // [DU401] null = 기존 그대로
             isSubAdmin
                 ? Future.value(<MemberInvitationModel>[])
-                : _service.getSentPendingInvitations(id),
+                : (widget.reads?.sentPendingInvitations ?? _service.getSentPendingInvitations)(id), // [DU401] null = 기존 CF 읽기 그대로
           ]);
           return _BizSection(
             id: id,
@@ -119,10 +165,14 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
 
       // M2: 이전 setState(() => _sections) + finally setState(() => _loading=false) 병합
       if (!mounted) return;
-      setState(() { _sections = sectionResults; _loading = false; _hasError = false; });
+      _refreshErrorTimer?.cancel(); // [H-2 E] 성공 로드면 남은 결과 띠를 지운다
+      setState(() { _sections = sectionResults; _loading = false; _hasError = false; _refreshError = null; });
     } catch (e) {
       if (mounted) {
-        ToastHelper.showError('멤버 목록을 불러오지 못했습니다');
+        // [DU407 후보] 오류 본문이 같은 사실을 말하는 첫/재시도 로드 실패(_sections 비어 있음)에는 토스트를 겹쳐 띄우지 않는다.
+        //   오류 본문 없이 성공 섹션 화면(비어 있지 않은 목록 · 성공 EMPTY)이 남는 새로고침 실패만 토스트로 알린다.
+        //   [H-2 E] 화면이 남는 새로고침 실패는 overlay 토스트 대신 화면 안 결과 띠로 같은 문장을 보인다(FAB · 멤버 · 초대 가림 0).
+        if (_sections.isNotEmpty) _showRefreshError('멤버 목록을 불러오지 못했어요'); // [DU406 후보] 해요체(오류 본문과 같은 문장)
         setState(() { _loading = false; _hasError = true; });
       }
     }
@@ -130,10 +180,14 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
 
   Future<void> _cancelInvitation(MemberInvitationModel invitation) async {
     if (_isProcessing) return;
-    final ok = await DialogHelper.showDeleteConfirm(
+    // [판정52 §6 · 54 §5-4 · DU417] 초대 취소 확인 — 공용 삭제 결합 문구('초대을(를) 삭제') 대신 이 업무의 말(제목 · 최종 '초대 취소' · 닫기 '닫기').
+    //   위험 확인창 형식 · 최종 위험색 · ok 이후 writer 는 그대로. 공용 showDeleteConfirm 은 바꾸지 않는다.
+    final ok = await DialogHelper.showDangerConfirm(
       context,
-      itemName: '"${invitation.targetName}" 초대',
-      additionalMessage: '취소하면 상대방이 더 이상 수락할 수 없습니다.',
+      title: '초대 취소',
+      message: '${invitation.targetName}님에게 보낸 초대를 취소하시겠습니까?\n\n취소하면 상대방이 더 이상 수락할 수 없습니다.',
+      confirmText: '초대 취소',
+      cancelText: '닫기',
     );
     if (ok != true || !mounted) return;
     setState(() => _isProcessing = true);
@@ -195,9 +249,14 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
     if (_isProcessing) return;
     setState(() => _isProcessing = true);
     try {
-      final ok = await DialogHelper.showDeleteConfirm(
+      // [판정54 §5-4 · DU417] 멤버 제거 확인 — 공용 삭제 결합 문구('멤버을(를) 삭제') 대신 실제 업무 '제거'(결과 토스트 '멤버가 제거되었습니다' 와 같은 동사).
+      //   위험 확인창 형식 · 최종 위험색 · ok 이후 writer 는 그대로. 공용 showDeleteConfirm 은 바꾸지 않는다.
+      final ok = await DialogHelper.showDangerConfirm(
         context,
-        itemName: '"${member.name}" 멤버',
+        title: '멤버 제거',
+        message: '${member.name}님을 멤버에서 제거하시겠습니까?',
+        confirmText: '멤버 제거',
+        cancelText: '닫기',
       );
       if (ok != true || !mounted) return;
       await _service.removeMember(
@@ -223,7 +282,7 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
   Widget build(BuildContext context) {
     final isEmpty = _isEmpty; // L2: build() 내 2회 중복 평가 방지
     return AppPageScaffold(
-      title: '멤버 관리',
+      title: '팀원 관리', // [DU406 후보] 실제 진입 이름(설정 '팀원 관리')에 맞춤 — 멤버 도메인명 · 서버 필드 · 다른 caller 무변경
       actions: [
         // GradientScaffold.onRefresh 대응 — empty 상태에서도 수동 새로고침 가능하도록 유지
         IconButton(
@@ -250,17 +309,18 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
           ),
         ),
       ],
-      // 사업장 1개일 때만 FAB — 멤버가 있어야 표시 (empty 상태는 _buildEmpty의 버튼 사용)
-      // SubAdmin은 초대 권한 없음
-      floatingActionButton: !_isSubAdmin && _isSingleBiz && _sections.isNotEmpty && !isEmpty
-          ? FloatingActionButton.extended(
-              onPressed: () =>
-                  _invite(_sections.first.id, _sections.first.name),
-              icon: const Icon(Icons.person_add_outlined),
-              label: const Text('멤버 초대'),
-            )
-          : null,
-      body: _loading
+      // [S024 초대 · 감사48 (가)] 떠 있는 FAB 를 두지 않는다 — 단일 사업장 목록은 사업장 머리 옆 '+ 멤버 초대' 글자 행동(_buildSingleBizHeader),
+      //   정상 단일 빈 화면은 내용 안 공용 주 버튼(_buildEmpty). SubAdmin 무초대 · 다중 사업장 머리 '초대' 는 그대로다.
+      // [H-2 E N2′] 본문 트리는 늘 Column[결과 띠?, Expanded(기존 본문)] — 띠가 들고 나도 목록이 다시 붙지 않는다(스크롤 유지).
+      body: Column(
+        children: [
+          if (_refreshError != null && !_loading && _sections.isNotEmpty && !isEmpty)
+            Padding(
+              padding: EdgeInsets.fromLTRB(ResponsiveHelper.spacing(context, 16), ResponsiveHelper.spacing(context, 8), ResponsiveHelper.spacing(context, 16), 0),
+              child: _refreshErrorBand(context, _refreshError!),
+            ),
+          Expanded(
+            child: _loading
           ? const LoadingWidget()
           : _sections.isEmpty || isEmpty
               ? _buildEmpty(context)
@@ -274,7 +334,11 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
                     // GradientScaffold 내장 SafeArea 제거분을 보상하기 위해
                     // listPadding의 bottom에 기기 하단 인셋을 추가한다.
                     final lp = ResponsiveHelper.listPadding(context);
+                    // [S024 초대] FAB 를 없애 FAB 전용 말단 여백(+72)도 없앤다 — 기본 목록 padding · 하단 inset 은 그대로.
+                    // [H-2 E] 목록 identity/스크롤 보존 — 새로고침 중 LoadingWidget 로 목록이 다시 붙어도 PageStorage 가 이전 offset 을 되살린다
+                    //   (새 내용 길이에 clamp · 위쪽 기준). 결과 띠가 들고 날 때는 같은 목록이라 offset(pixels) 그대로 · 띠 높이만큼 아래로 밀렸다 돌아온다.
                     return ListView.builder(
+                      key: const PageStorageKey<String>('member_management_list'),
                       padding: lp.copyWith(
                         bottom: lp.bottom + MediaQuery.paddingOf(context).bottom,
                       ),
@@ -283,6 +347,9 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
                     );
                   }),
                 ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -320,7 +387,6 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
         _buildSectionHeader(
           context,
           '초대 대기 중 (${section.pendingInvitations.length}건)',
-          AppColors.warningDark,
         ),
         ...section.pendingInvitations.map((inv) => _PendingInvitationCard(
               invitation: inv,
@@ -333,7 +399,6 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
           _buildSectionHeader(
             context,
             '등록된 멤버 (${section.members.length}명)',
-            AppColors.successDark,
           ),
         ...section.members.map((m) => _MemberCard(
               member: m,
@@ -349,29 +414,62 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
   }
 
   // 단일 사업장 시 간결한 사업장 이름 표시 (섹션 헤더 없이 맥락 제공)
+  // [S024 초대 · 감사48 (가)] 같은 맥락 머리 옆 '+ 멤버 초대' 글자 행동(시안 '+ 근무 요청 등록' 형식 · 다중 사업장 머리 '초대' 와 같은 TextButton 계열).
+  //   한 줄에 모자라면(큰 글자 · 좁은 폭) 같은 묶음의 다음 줄로 내려간다 — 이름 · 행동 글자를 줄이거나 자르지 않는다(이름 말줄임은 기존 그대로).
   Widget _buildSingleBizHeader(BuildContext context, _BizSection section) {
-    return Padding(
-      padding: EdgeInsets.only(
-        top: ResponsiveHelper.spacing(context, 4),
-        bottom: ResponsiveHelper.spacing(context, 10),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.storefront_outlined,
-            size: ResponsiveHelper.iconSize(context, 13),
-            color: AppColors.grey500,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-          Flexible(
-            child: Text(
-              section.name,
-              style: ResponsiveHelper.smallStyle(context,
-                  color: AppColors.grey600),
-              overflow: TextOverflow.ellipsis,
+    final theme = Theme.of(context);
+    final padding = EdgeInsets.only(
+      top: ResponsiveHelper.spacing(context, 4),
+      bottom: ResponsiveHelper.spacing(context, 10),
+    );
+    Widget nameRow(MainAxisSize size) => Row(
+          mainAxisSize: size,
+          children: [
+            Icon(
+              Icons.storefront_outlined,
+              size: ResponsiveHelper.iconSize(context, 13),
+              color: AppColors.grey500,
             ),
-          ),
-        ],
+            SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+            Flexible(
+              child: Text(
+                section.name,
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.textSecondary), // [DU406 후보] grey600 4.30 → 5.52(화면 바탕)
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        );
+    if (_isSubAdmin) {
+      return Padding(padding: padding, child: nameRow(MainAxisSize.max)); // SubAdmin 무초대 — 기존 머리 그대로
+    }
+    return Padding(
+      padding: padding,
+      child: LayoutBuilder(
+        builder: (context, c) => Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          runSpacing: ResponsiveHelper.spacing(context, 4),
+          children: [
+            ConstrainedBox(constraints: BoxConstraints(maxWidth: c.maxWidth), child: nameRow(MainAxisSize.min)),
+            TextButton.icon(
+              onPressed: () => _invite(section.id, section.name),
+              icon: Icon(Icons.add, size: ResponsiveHelper.iconSize(context, 16)),
+              label: Text('멤버 초대',
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: theme.primaryColor,
+                      fontWeight: FontWeight.w600)),
+              style: TextButton.styleFrom(
+                foregroundColor: theme.primaryColor,
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 10),
+                  vertical: ResponsiveHelper.spacing(context, 4),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -427,32 +525,19 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
     );
   }
 
-  Widget _buildSectionHeader(
-      BuildContext context, String title, Color color) {
+  // [판정51] 섹션 제목은 중립 진한 글(시안 '오늘의 근무' · '처리할 일' 과 같은 위계) — 의미색 글 · 색 막대 제거. 문구 · 수 · 굵기 · 크기 · 간격 그대로.
+  Widget _buildSectionHeader(BuildContext context, String title) {
     return Padding(
       padding: EdgeInsets.only(
         bottom: ResponsiveHelper.spacing(context, 8),
         top: ResponsiveHelper.spacing(context, 4),
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 3,
-            height: 14,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          Text(
-            title,
-            style: ResponsiveHelper.smallStyle(context).copyWith(
-              fontWeight: FontWeight.w700,
-              color: color,
-            ),
-          ),
-        ],
+      child: Text(
+        title,
+        style: ResponsiveHelper.smallStyle(context).copyWith(
+          fontWeight: FontWeight.w700,
+          color: AppColors.textPrimary,
+        ),
       ),
     );
   }
@@ -467,13 +552,25 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
             .map((id) => (id: id, name: _bizNameMap[id] ?? id))
             .toList();
 
+    // [ERROR-AS-EMPTY] 오류 시 "멤버 없음"이 아닌 "로드 실패" 표시 (UNKNOWN != ZERO) — [S024 초대] 진입 선택에도 쓰려고 위로 옮겼다
+    final bool isError = _hasError && _sections.isEmpty;
     Widget? action;
     if (_isSubAdmin) {
       // SubAdmin은 초대 권한 없음 — 버튼 미표시
     } else if (bizList.length == 1) {
-      // 단일 사업장 — 기존 전체폭 버튼
+      // 단일 사업장 — [S024 초대 · 감사48 (가)] 정상 빈 화면 = 다음 주행동 → 공용 전체 폭 주 버튼. 오류 화면은 기존 테두리형 진입 그대로.
       final biz = bizList.first;
-      action = Padding(
+      action = !isError
+          ? Padding(
+              padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 16)),
+              child: CommonWidgets.primaryButton(
+                context: context,
+                text: '멤버 초대',
+                icon: Icons.person_add_outlined,
+                onPressed: () => _invite(biz.id, biz.name),
+              ),
+            )
+          : Padding(
         padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 16)),
         child: Material(
           color: Colors.transparent,
@@ -543,12 +640,25 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
       );
     }
 
-    // [ERROR-AS-EMPTY] 오류 시 "멤버 없음"이 아닌 "로드 실패" 표시 (UNKNOWN != ZERO)
-    final bool isError = _hasError && _sections.isEmpty;
+    // [ERROR-AS-EMPTY] isError 는 위(진입 선택)에서 계산했다
+    // [H-2 E N3] 정상 빈 화면(제목 · 안내)은 그대로 두고, 새로고침 실패만 부제 아래 · 초대 진입 위에 결과 띠(공용 AppEmptyState 변경 0).
+    if (!isError && _refreshError != null) {
+      final band = Padding(
+        padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 16)),
+        child: _refreshErrorBand(context, _refreshError!),
+      );
+      action = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          band,
+          if (action != null) ...[SizedBox(height: ResponsiveHelper.spacing(context, 12)), action],
+        ],
+      );
+    }
     return AppEmptyState(
       icon: isError ? Icons.cloud_off_rounded : Icons.group_outlined,
       title: isError
-          ? '멤버 목록을 불러오지 못했습니다'
+          ? '멤버 목록을 불러오지 못했어요' // [DU406 후보] 해요체
           : '등록된 멤버가 없습니다',
       subtitle: isError
           ? (bizList.isNotEmpty
@@ -633,29 +743,72 @@ class _MemberCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // [DU406 후보 r2] 이름 줄 = [이름 · 메뉴 48](초대 카드와 같은 구조) — 전화 · 칩 행이 메뉴 폭만큼 넓어져 B 에서 전화 전문이 한 줄에 들어간다.
+                  //   이름은 말줄임 없이 자연 분할(긴 한 낱말은 가운데에서만), 전화는 별도 행에서 전문(번호 안 줄바꿈 0) · 읽기 색.
                   Row(
                     children: [
-                      Flexible(
+                      Expanded(
                         child: Text(
-                          member.name,
+                          TextLayout.identity(member.name),
+                          semanticsLabel: member.name,
                           style: ResponsiveHelper.bodyStyle(context)
                               .copyWith(fontWeight: FontWeight.w700),
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      if (member.phone != null) ...[
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        Flexible(
-                          child: Text(
-                            FormatHelper.formatPhone(member.phone!),
-                            style: ResponsiveHelper.tinyStyle(context,
-                                color: AppColors.grey500),
-                            overflow: TextOverflow.ellipsis,
+                      if (canEdit)
+                        InkWell(
+                          onTap: () => AppMenuSheet.show(
+                            context: context,
+                            headerTitle: member.name,
+                            headerSubtitle: member.phone != null
+                                ? FormatHelper.formatPhone(member.phone!)
+                                : null,
+                            headerAvatarLetter:
+                                member.name.isNotEmpty ? member.name[0] : '?',
+                            headerAvatarColor: theme.primaryColor,
+                            itemGroups: [
+                              [
+                                AppMenuSheetItem(
+                                  icon: Icons.tune,
+                                  label: '권한 수정',
+                                  color: theme.primaryColor,
+                                  onTap: onEdit,
+                                ),
+                              ],
+                              [
+                                AppMenuSheetItem(
+                                  icon: Icons.person_remove_outlined,
+                                  label: '멤버 제거',
+                                  color: AppColors.error,
+                                  isDanger: true,
+                                  onTap: onRemove,
+                                ),
+                              ],
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                          // [DU406 후보] 누르는 영역 48×48(아이콘 크기 · 중앙 그대로), 아이콘 색 grey400 → textTertiary(흰 카드 5.25)
+                          child: SizedBox(
+                            width: 48,
+                            height: 48,
+                            child: Center(
+                              child: Icon(Icons.more_vert,
+                                  color: AppColors.textTertiary,
+                                  size: ResponsiveHelper.iconSize(context, 20)),
+                            ),
                           ),
                         ),
-                      ],
                     ],
                   ),
+                  if (member.phone != null) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                    Text(
+                      TextLayout.unit(FormatHelper.formatPhone(member.phone!)),
+                      semanticsLabel: FormatHelper.formatPhone(member.phone!),
+                      style: ResponsiveHelper.tinyStyle(context,
+                          color: AppColors.textSecondary),
+                    ),
+                  ],
                   if (businessName != null) ...[
                     SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                     Row(
@@ -711,50 +864,11 @@ class _MemberCard extends StatelessWidget {
                     Text(
                       '권한 없음',
                       style: ResponsiveHelper.tinyStyle(context,
-                          color: AppColors.grey400),
+                          color: AppColors.textTertiary), // [DU406 후보] grey400 1.88 → 5.25(흰 카드)
                     ),
                 ],
               ),
             ),
-            if (canEdit)
-              InkWell(
-                onTap: () => AppMenuSheet.show(
-                  context: context,
-                  headerTitle: member.name,
-                  headerSubtitle: member.phone != null
-                      ? FormatHelper.formatPhone(member.phone!)
-                      : null,
-                  headerAvatarLetter:
-                      member.name.isNotEmpty ? member.name[0] : '?',
-                  headerAvatarColor: theme.primaryColor,
-                  itemGroups: [
-                    [
-                      AppMenuSheetItem(
-                        icon: Icons.tune,
-                        label: '권한 수정',
-                        color: theme.primaryColor,
-                        onTap: onEdit,
-                      ),
-                    ],
-                    [
-                      AppMenuSheetItem(
-                        icon: Icons.person_remove_outlined,
-                        label: '멤버 제거',
-                        color: AppColors.error,
-                        isDanger: true,
-                        onTap: onRemove,
-                      ),
-                    ],
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(8),
-                child: Padding(
-                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                  child: Icon(Icons.more_vert,
-                      color: AppColors.grey400,
-                      size: ResponsiveHelper.iconSize(context, 20)),
-                ),
-              ),
           ],
         ),
       ),
@@ -784,11 +898,11 @@ class _PendingInvitationCard extends StatelessWidget {
 
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+      // [판정51] 초대 대기 카드 = 흰 면 · 중립 테두리(같은 화면 멤버 카드와 같음) — 노란 전체 면 대신 작은 시계 칸 · 안내 글만 따뜻한 경고 강조
       decoration: BoxDecoration(
-        color: AppColors.warningBg,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-            color: AppColors.warningDark.withValues(alpha: 0.3)),
+        border: Border.all(color: AppColors.grey200),
       ),
       child: Padding(
         padding: EdgeInsets.symmetric(
@@ -799,50 +913,59 @@ class _PendingInvitationCard extends StatelessWidget {
           children: [
             CircleAvatar(
               radius: 18,
-              backgroundColor:
-                  AppColors.warningDark.withValues(alpha: 0.15),
+              backgroundColor: AppColors.conceptAmberSurface,
               child: Icon(
                 Icons.schedule,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.warningDark,
+                color: AppColors.conceptAmberInk,
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+            // [DU406 후보] 이름 줄 = [이름 · '취소'], 전화 · 안내는 아래에서 넓은 폭(취소 동작 · 색 · 크기 그대로)
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    invitation.targetName,
-                    style: ResponsiveHelper.bodyStyle(context)
-                        .copyWith(fontWeight: FontWeight.w600),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          TextLayout.identity(invitation.targetName),
+                          semanticsLabel: invitation.targetName,
+                          style: ResponsiveHelper.bodyStyle(context)
+                              .copyWith(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: onCancel,
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.textSecondary, // [판정52] 확인창 진입 = 중립(흰 위 5.92) — 위험색은 확인창 최종 실행에만
+                          padding: EdgeInsets.symmetric(
+                            horizontal: ResponsiveHelper.spacing(context, 8),
+                          ),
+                        ),
+                        child: Text('취소',
+                            style: ResponsiveHelper.smallStyle(context,
+                                    color: AppColors.textSecondary)
+                                .copyWith(fontWeight: FontWeight.w600)),
+                      ),
+                    ],
                   ),
                   if (invitation.targetPhone != null)
                     Text(
-                      FormatHelper.formatPhone(invitation.targetPhone!),
+                      TextLayout.unit(FormatHelper.formatPhone(invitation.targetPhone!)),
+                      semanticsLabel: FormatHelper.formatPhone(invitation.targetPhone!),
                       style: ResponsiveHelper.tinyStyle(context,
-                          color: AppColors.grey500),
+                          color: AppColors.textSecondary),
                     ),
                   Text(
-                    '초대 발송 $elapsedLabel · 3일 내 미수락 시 자동 만료',
+                    TextLayout.keepWords('초대 발송 $elapsedLabel · 3일 내 미수락 시 자동 만료'),
+                    semanticsLabel: '초대 발송 $elapsedLabel · 3일 내 미수락 시 자동 만료',
                     style: ResponsiveHelper.tinyStyle(context,
-                        color: AppColors.warningDark),
+                        color: AppColors.conceptAmberInk), // [판정51] 발송 · 자동 만료 안내 = 작은 따뜻한 경고 강조
                   ),
                 ],
               ),
-            ),
-            TextButton(
-              onPressed: onCancel,
-              style: TextButton.styleFrom(
-                foregroundColor: AppColors.errorMedium,
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 8),
-                ),
-              ),
-              child: Text('취소',
-                  style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.errorMedium)
-                      .copyWith(fontWeight: FontWeight.w600)),
             ),
           ],
         ),
@@ -969,6 +1092,10 @@ class _InviteDialogState extends State<_InviteDialog> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // ── 헤더 ──
+              // [DU436 · 후속113 N2 · DU433 선례] 넓은 그라데이션 띠 · 흰 제목을 걷었다.
+              //   흰 면 · 작은 brand 타일 · 진한 제목 · 사업장명 textSecondary(전문 · 말줄임 없음) · 중립 닫기(grey600) ·
+              //   아래 옅은 구분선(공용 AppModalHeader 와 같은 grey200). 좁거나 큰 글자에서 제목 옆 칸이 모자라면
+              //   타일 · 닫기 줄 아래로 제목 · 사업장명을 내린다(DU433 과 같은 기준). 닫기 동작(unfocus → pop false)은 그대로다.
               Container(
                 padding: EdgeInsets.fromLTRB(
                   ResponsiveHelper.spacing(context, 20),
@@ -976,66 +1103,69 @@ class _InviteDialogState extends State<_InviteDialog> {
                   ResponsiveHelper.spacing(context, 16),
                   ResponsiveHelper.spacing(context, 18),
                 ),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      theme.primaryColor,
-                      theme.colorScheme.secondary
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
+                decoration: const BoxDecoration(
+                  color: AppColors.surface,
+                  border: Border(bottom: BorderSide(color: AppColors.grey200)),
                 ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: EdgeInsets.all(
-                          ResponsiveHelper.spacing(context, 8)),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(Icons.person_add_outlined,
-                          color: Colors.white,
-                          size: ResponsiveHelper.iconSize(context, 20)),
+                child: LayoutBuilder(builder: (_, box) {
+                  final tilePad = ResponsiveHelper.spacing(context, 8);
+                  final tileIcon = ResponsiveHelper.iconSize(context, 20);
+                  final gap = ResponsiveHelper.spacing(context, 12);
+                  final closePad = ResponsiveHelper.spacing(context, 6);
+                  final closeIcon = ResponsiveHelper.iconSize(context, 18);
+                  final tile = Container(
+                    padding: EdgeInsets.all(tilePad),
+                    decoration: BoxDecoration(
+                      color: AppColors.brandSurface,
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('멤버 초대',
-                              style: ResponsiveHelper.subtitleStyle(context)
-                                  .copyWith(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold)),
-                          Text(widget.businessName,
-                              style: ResponsiveHelper.tinyStyle(context,
-                                  color: Colors.white
-                                      .withValues(alpha: 0.85))),
-                        ],
-                      ),
-                    ),
-                    Material(
-                      color: Colors.white.withValues(alpha: 0.15),
+                    child: Icon(Icons.person_add_outlined,
+                        color: AppColors.brand, size: tileIcon),
+                  );
+                  final close = Material(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                    child: InkWell(
+                      onTap: () {
+                        FocusManager.instance.primaryFocus?.unfocus();
+                        Navigator.pop(context, false);
+                      },
                       borderRadius: BorderRadius.circular(8),
-                      child: InkWell(
-                        onTap: () {
-                          FocusManager.instance.primaryFocus?.unfocus();
-                          Navigator.pop(context, false);
-                        },
-                        borderRadius: BorderRadius.circular(8),
-                        child: Padding(
-                          padding: EdgeInsets.all(
-                              ResponsiveHelper.spacing(context, 6)),
-                          child: Icon(Icons.close,
-                              color: Colors.white,
-                              size: ResponsiveHelper.iconSize(context, 18)),
-                        ),
+                      child: Padding(
+                        padding: EdgeInsets.all(closePad),
+                        child: Icon(Icons.close,
+                            color: AppColors.grey600, size: closeIcon),
                       ),
                     ),
-                  ],
-                ),
+                  );
+                  final titles = Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(TextLayout.keepWords('멤버 초대'),
+                          semanticsLabel: '멤버 초대',
+                          style: ResponsiveHelper.subtitleStyle(context)
+                              .copyWith(
+                                  color: AppColors.textPrimary,
+                                  fontWeight: FontWeight.bold)),
+                      Text(TextLayout.keepWords(widget.businessName),
+                          semanticsLabel: widget.businessName,
+                          style: ResponsiveHelper.tinyStyle(context,
+                              color: AppColors.textSecondary)),
+                    ],
+                  );
+                  final side = box.maxWidth - tilePad * 2 - tileIcon - gap - closePad * 2 - closeIcon;
+                  if (TextLayout.fits(context, side, 120)) {
+                    return Row(children: [tile, SizedBox(width: gap), Expanded(child: titles), close]);
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [tile, const Spacer(), close]),
+                      SizedBox(height: gap),
+                      titles,
+                    ],
+                  );
+                }),
               ),
 
               // ── 본문 ──
@@ -1047,86 +1177,109 @@ class _InviteDialogState extends State<_InviteDialog> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // 전화번호 검색
-                      Container(
-                        decoration: BoxDecoration(
-                          color: AppColors.surface,
-                          borderRadius: BorderRadius.circular(14),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.06),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            Padding(
-                              padding: EdgeInsets.only(
-                                  left: ResponsiveHelper.spacing(context, 14),
-                                  right:
-                                      ResponsiveHelper.spacing(context, 8)),
-                              child: Icon(Icons.phone_outlined,
-                                  color: AppColors.grey400,
-                                  size:
-                                      ResponsiveHelper.iconSize(context, 18)),
-                            ),
-                            Expanded(
-                              child: TextField(
-                                controller: _phoneCtrl,
-                                keyboardType: TextInputType.phone,
-                                inputFormatters: [_phoneFmt],
-                                style: ResponsiveHelper.bodyStyle(context),
-                                decoration: InputDecoration(
-                                  hintText: '010-0000-0000',
-                                  hintStyle: ResponsiveHelper.bodyStyle(
-                                      context,
-                                      color: AppColors.grey400),
-                                  border: InputBorder.none,
-                                  contentPadding: EdgeInsets.symmetric(
-                                      vertical: ResponsiveHelper.spacing(
-                                          context, 14)),
-                                ),
-                                onSubmitted: (_) {
-                                  if (!_searching) _search();
-                                },
-                              ),
-                            ),
-                            Padding(
-                              padding: EdgeInsets.symmetric(
-                                  horizontal:
-                                      ResponsiveHelper.spacing(context, 8)),
-                              child: Material(
-                                color: _searching
-                                    ? AppColors.grey200
-                                    : theme.primaryColor,
-                                borderRadius: BorderRadius.circular(10),
-                                child: InkWell(
-                                  onTap: _searching ? null : _search,
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: Padding(
-                                    padding: EdgeInsets.all(
-                                        ResponsiveHelper.spacing(
-                                            context, 10)),
-                                    child: _searching
-                                        ? const SizedBox(
-                                            width: 18,
-                                            height: 18,
-                                            child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                color: Colors.white))
-                                        : Icon(Icons.search_rounded,
+                      // [DU441] 그림자 카드 안에 테마 입력 테두리가 한 겹 더 그려져 틀이 이중이었다(W · B).
+                      //   B(320 · 2.0)는 안내 '010-0000-0000'이 '010-000…'으로 잘렸다. 다음처럼 바꾼다.
+                      //   - 입력 칸 하나가 틀이다(흰 면 + 테마 테두리 · 포커스 테두리). 그림자 카드는 걷었다.
+                      //   - 안내 grey400(흰 위 1.88) → textTertiary, 전화 아이콘 grey400 → grey600(공용 AppSearchBar 와 같다).
+                      //   - 칸 안 글 자리가 안내 폭(배율 1.0 · 102)보다 좁으면 전화 아이콘을 빼고 검색 버튼을 칸 아래 줄(전체 폭 · '검색')로 내린다.
+                      //   검색 동작 · 입력 형식 · 진행 표시 · 활성 조건은 그대로다.
+                      LayoutBuilder(builder: (_, box) {
+                        final iconPadL = ResponsiveHelper.spacing(context, 14);
+                        final iconPadR = ResponsiveHelper.spacing(context, 8);
+                        final phoneIcon = ResponsiveHelper.iconSize(context, 18);
+                        final btnGap = ResponsiveHelper.spacing(context, 8);
+                        final btnPad = ResponsiveHelper.spacing(context, 10);
+                        final searchIcon = ResponsiveHelper.iconSize(context, 20);
+                        final textRoom = box.maxWidth -
+                            (iconPadL + phoneIcon + iconPadR) -
+                            (btnGap * 2 + btnPad * 2 + searchIcon);
+                        final inline = TextLayout.fits(context, textRoom, 102);
+                        final searchBtn = Material(
+                          color: _searching
+                              ? AppColors.grey200
+                              : theme.primaryColor,
+                          borderRadius: BorderRadius.circular(10),
+                          child: InkWell(
+                            onTap: _searching ? null : _search,
+                            borderRadius: BorderRadius.circular(10),
+                            child: Padding(
+                              padding: EdgeInsets.all(btnPad),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  _searching
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white))
+                                      : Icon(Icons.search_rounded,
+                                          color: Colors.white,
+                                          size: searchIcon),
+                                  if (!inline) ...[
+                                    SizedBox(
+                                        width: ResponsiveHelper.spacing(
+                                            context, 6)),
+                                    Text('검색',
+                                        style: ResponsiveHelper.bodyStyle(
+                                            context,
                                             color: Colors.white,
-                                            size: ResponsiveHelper.iconSize(
-                                                context, 20)),
-                                  ),
-                                ),
+                                            fontWeight: FontWeight.w600)),
+                                  ],
+                                ],
                               ),
                             ),
+                          ),
+                        );
+                        final field = TextField(
+                          controller: _phoneCtrl,
+                          keyboardType: TextInputType.phone,
+                          inputFormatters: [_phoneFmt],
+                          style: ResponsiveHelper.bodyStyle(context),
+                          decoration: InputDecoration(
+                            hintText: '010-0000-0000',
+                            hintStyle: ResponsiveHelper.bodyStyle(context,
+                                color: AppColors.textTertiary),
+                            filled: true,
+                            fillColor: AppColors.surface,
+                            prefixIcon: inline
+                                ? Padding(
+                                    padding: EdgeInsets.only(
+                                        left: iconPadL, right: iconPadR),
+                                    child: Icon(Icons.phone_outlined,
+                                        color: AppColors.grey600,
+                                        size: phoneIcon),
+                                  )
+                                : null,
+                            prefixIconConstraints: const BoxConstraints(),
+                            suffixIcon: inline
+                                ? Padding(
+                                    padding: EdgeInsets.symmetric(
+                                        horizontal: btnGap),
+                                    child: searchBtn,
+                                  )
+                                : null,
+                            suffixIconConstraints: const BoxConstraints(),
+                            contentPadding: EdgeInsets.symmetric(
+                                vertical: ResponsiveHelper.spacing(context, 14),
+                                horizontal: inline ? 0 : iconPadL),
+                          ),
+                          onSubmitted: (_) {
+                            if (!_searching) _search();
+                          },
+                        );
+                        if (inline) return field;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            field,
+                            SizedBox(height: btnGap),
+                            searchBtn,
                           ],
-                        ),
-                      ),
-
+                        );
+                      }),
                       if (_found == null && !_searching) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 24)),
                         Center(
@@ -1140,10 +1293,11 @@ class _InviteDialogState extends State<_InviteDialog> {
                                 SizedBox(
                                     height: ResponsiveHelper.spacing(
                                         context, 8)),
+                                // [DU441] 안내 grey400(옅은 면 위 1.8) → textTertiary.
                                 Text('전화번호를 입력하고 검색하세요',
                                     style: ResponsiveHelper.smallStyle(
                                         context,
-                                        color: AppColors.grey400)),
+                                        color: AppColors.textTertiary)),
                               ]),
                         ),
                         SizedBox(height: ResponsiveHelper.spacing(context, 16)),
@@ -1253,50 +1407,24 @@ class _InviteDialogState extends State<_InviteDialog> {
                         padding: EdgeInsets.only(
                             top: ResponsiveHelper.spacing(context, 12)),
                         child: Column(children: [
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton.icon(
-                              onPressed: canSend ? _send : null,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: theme.primaryColor,
-                                foregroundColor: Colors.white,
-                                disabledBackgroundColor: AppColors.grey200,
-                                disabledForegroundColor: AppColors.grey400,
-                                elevation: 0,
-                                padding: EdgeInsets.symmetric(
-                                    vertical: ResponsiveHelper.spacing(
-                                        context, 15)),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius:
-                                        BorderRadius.circular(14)),
-                              ),
-                              icon: _sending
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white))
-                                  : Icon(Icons.send_rounded,
-                                      size: ResponsiveHelper.iconSize(
-                                          context, 16)),
-                              label: Text(
-                                _sending ? '발송 중...' : '초대 발송',
-                                style: ResponsiveHelper.bodyStyle(context)
-                                    .copyWith(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold),
-                              ),
-                            ),
+                          // [DU449] 비활성 라벨을 흰색으로 직접 지정해 grey200 위 흰 글(≈ 1.2)이었다 · 반경 14 · 패딩 15 → 공용 주 버튼
+                          //   (평면 brand · 최소 52 · 반경 12 · 비활성 grey200/grey500 · 진행 중 회전 표시). 눌림 조건 · 동작 · 아이콘은 그대로다.
+                          CommonWidgets.primaryButton(
+                            context: context,
+                            text: '초대 발송',
+                            icon: Icons.send_rounded,
+                            isLoading: _sending,
+                            onPressed: canSend ? _send : null,
                           ),
                           TextButton(
                             onPressed: () {
                               FocusManager.instance.primaryFocus?.unfocus();
                               Navigator.pop(context, false);
                             },
+                            // [DU441] '취소' grey400(옅은 면 위 1.8) → textSecondary(보조 행동 글자 · DU437 하단 바와 같다).
                             child: Text('취소',
                                 style: ResponsiveHelper.smallStyle(context,
-                                    color: AppColors.grey400)),
+                                    color: AppColors.textSecondary)),
                           ),
                         ]),
                       ),

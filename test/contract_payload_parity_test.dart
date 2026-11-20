@@ -37,7 +37,8 @@ String _src(String p) {
 const _devDocKeys = <String>{
   'applicationId', 'applicationIds', 'articles', 'businessId',
   'createdAt', 'employerSignatureHash', 'employerSignatureUrl',
-  'employerSignedAt', 'isLongTerm', 'pdfHash', 'pdfUrl', 'slots',
+  'employerSignedAt', 'isLongTerm', 'pdfHash', 'pdfUrl', 'pdfStoragePath',
+  'slots',
   'snapshot', 'status', 'templateId', 'toId', 'updatedAt',
   'workDetailId', 'workerId', 'workerSignatureHash', 'workerSignatureUrl',
   'workerSignedAt',
@@ -48,7 +49,7 @@ const _serverOwned = <String>{
   'status',
   'employerSignatureUrl', 'employerSignatureHash', 'employerSignedAt',
   'workerSignatureUrl', 'workerSignatureHash', 'workerSignedAt',
-  'pdfUrl', 'pdfHash',
+  'pdfUrl', 'pdfStoragePath', 'pdfHash',
   'createdAt', 'updatedAt',
 };
 
@@ -129,7 +130,7 @@ void main() {
           'applicationId', 'businessId', 'workerId', 'isLongTerm', 'toId',
           'workDetailId', 'slots', 'applicationIds', 'status',
           'employerSignatureUrl', 'employerSignedAt',
-          'workerSignatureUrl', 'workerSignedAt', 'pdfUrl',
+          'workerSignatureUrl', 'workerSignedAt', 'pdfUrl', 'pdfStoragePath',
           'snapshot', 'articles', 'templateId', 'createdAt', 'updatedAt',
         },
         reason: '직렬화 키가 늘거나 줄면 CF 계약이 바뀐다',

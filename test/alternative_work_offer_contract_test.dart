@@ -546,7 +546,8 @@ void main() {
     });
 
     test('CTA는 [거절] [제안 조건으로 수락]이다', () {
-      expect(s.contains("label: isOffer ? '제안 조건으로 수락' : '수락하기',"), true);
+      // [INVITE-PREACCEPT] 라벨 식은 단계별 helper 로 옮겼다 — 문구는 그대로다.
+      expect(s.contains("final acceptLabel = isOffer ? '제안 조건으로 수락' : '수락하기';"), true);
       expect(s.contains("label: '거절',"), true);
     });
 
@@ -562,8 +563,9 @@ void main() {
 
     test('동의는 이 건에 대해 지금 받는다', () {
       expect(
-          s.contains("'documentAccessConsentVersion': DocumentAccessConsent.version,"),
+          s.contains("'documentAccessConsentVersion': DocumentAccessConsent.inviteVersion,"),
           true);
+      // [.29-A1] 버튼 글자는 띄어쓰기에서만 줄바꿈(keepWords) — 두 문구 자체는 그대로다.
       expect(s.contains("isOfferAccept ? '동의하고 제안 수락' : '동의하고 초대 수락'"), true);
     });
   });
@@ -793,10 +795,10 @@ void main() {
     });
 
     test('상세 화면도 이 건에 대한 동의를 받는다', () {
-      expect(posting.contains('DocumentAccessConsent.card(app.businessName),'), true);
+      expect(posting.contains('DocumentAccessConsent.inviteCard(app.businessName),'), true);
       expect(
           posting.contains("'documentAccessConsentGiven': true, "
-              "'documentAccessConsentVersion': DocumentAccessConsent.version,"),
+              "'documentAccessConsentVersion': DocumentAccessConsent.inviteVersion,"),
           true,
           reason: 'R5.2 이후 applicationId만 보내면 서버가 거부한다');
     });

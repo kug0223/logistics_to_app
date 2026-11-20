@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import '../../../../utils/format_helper.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../theme/app_colors.dart';
+import '../../../../utils/text_layout.dart';
+import '../../../../services/schedule_conflict_service.dart';
 import '../styled_dialog.dart';
 
 /// 확정 취소 다이얼로그 결과
@@ -58,37 +60,29 @@ class ConfirmCancelDialog extends StatelessWidget {
     required String businessName,
     required int currentNoShowCount,
     String? scheduledStartTime,
+    // [SIM-RECONFIRM-DECLINE-ALIGN] 판정 시각 — 화면이 쓰는 시계를 그대로 넘길 수 있게.
+    //   기본값은 지금이다(기존 호출부 동작 그대로).
+    DateTime? now,
   }) async {
     // [GAP-1] canonical 5-minute policy: 근무 시작 5분 전 이후 취소 → 패널티
-    // scheduledStartTime(HH:mm)이 있으면 정확한 cutoff 계산, 없으면 당일 기준 fallback
-    final now = DateTime.now();
-    bool hasPenalty;
-    if (scheduledStartTime != null) {
-      final parts = scheduledStartTime.split(':');
-      if (parts.length == 2) {
-        final hh = int.tryParse(parts[0]);
-        final mm = int.tryParse(parts[1]);
-        if (hh != null && mm != null) {
+    //
+    // [E1-CUTOFF] 서버(`callableCancelConfirmedApplication`)와 **같은 식**을
+    //   쓴다. 예전에는 `toKstDate()` 가 돌려준 **UTC 자정**에 근무 시각을
+    //   더해 시작이 9시간 늦게 잡혔고(기기 시간대 무관), 그 구간에서는
+    //   이 확인창이 **경고 없이** 취소를 진행시켰다 — 사용자는 노쇼가
+    //   기록되는 줄 모르고 결정하게 된다.
+    //   시각을 못 읽으면 기존 당일 기준 fallback 그대로다.
+    final at = now ?? DateTime.now();
+    final hasPenalty = ScheduleConflictService().isNoShowEquivalentCancel(
+          workDate: workDate,
+          startTime: scheduledStartTime ?? '',
+          now: at,
+        ) ??
+        (() {
           final workDay = FormatHelper.toKstDate(workDate);
-          final scheduledStart = workDay.add(Duration(hours: hh, minutes: mm));
-          final cutoff = scheduledStart.subtract(const Duration(minutes: 5));
-          hasPenalty = now.isAfter(cutoff) || now.isAtSameMomentAs(cutoff);
-        } else {
-          // 파싱 실패 시 당일 fallback
-          final workDay = FormatHelper.toKstDate(workDate);
-          final today = FormatHelper.toKstDate(now);
-          hasPenalty = workDay.isAtSameMomentAs(today) || workDay.isBefore(today);
-        }
-      } else {
-        final workDay = FormatHelper.toKstDate(workDate);
-        final today = FormatHelper.toKstDate(now);
-        hasPenalty = workDay.isAtSameMomentAs(today) || workDay.isBefore(today);
-      }
-    } else {
-      final workDay = FormatHelper.toKstDate(workDate);
-      final today = FormatHelper.toKstDate(now);
-      hasPenalty = workDay.isAtSameMomentAs(today) || workDay.isBefore(today);
-    }
+          final today = FormatHelper.toKstDate(at);
+          return workDay.isAtSameMomentAs(today) || workDay.isBefore(today);
+        })();
 
     return showDialog<ConfirmCancelResult>(
       context: context,
@@ -108,9 +102,9 @@ class ConfirmCancelDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return StyledDialog(
-      title: '확정 취소 안내',
+      title: TextLayout.keepWords('확정 취소 안내'), // [DU265] B320 '안/내' 끊김(공용 StyledDialog 제목)
       icon: Icons.warning_amber_rounded,
-      headerColor: AppColors.error,
+      headerColor: AppColors.errorDark, // [DU265] 확인 순간의 위험색은 유지하되 읽히게(아이콘 상자)
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -139,7 +133,8 @@ class ConfirmCancelDialog extends StatelessWidget {
         // 취소 진행 버튼
         StyledDialogButton(
           text: '취소 진행',
-          backgroundColor: AppColors.error,
+          // [DU265] error(#F44336, 흰 글자 3.68) → errorDark(약 6.6)
+          backgroundColor: AppColors.errorDark,
           foregroundColor: Colors.white,
           onPressed: () => Navigator.pop(context, ConfirmCancelResult.proceed),
         ),
@@ -167,41 +162,58 @@ class ConfirmCancelDialog extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 사업장명
+          // [DU265] 이름 단위 줄바꿈·본문색 명시
           Text(
-            businessName,
+            TextLayout.identity(businessName),
+            semanticsLabel: businessName,
             style: ResponsiveHelper.subtitleStyle(context).copyWith(
               fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
             ),
           ),
           
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           
           // 날짜 + 업무명
-          Row(
+          // [DU265] Row → Wrap(좁은 폭·큰 글자에서 업무명이 다음 줄로), 업무명 말줄임 제거·낱말 단위.
+          //   아이콘 grey600 → textSecondary, 글자 grey700 → 본문색.
+          Wrap(
+            spacing: ResponsiveHelper.spacing(context, 16),
+            runSpacing: ResponsiveHelper.spacing(context, 4),
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Icon(
-                Icons.calendar_today,
-                size: ResponsiveHelper.iconSize(context, 16),
-                color: AppColors.grey600,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.calendar_today,
+                    size: ResponsiveHelper.iconSize(context, 16),
+                    color: AppColors.textSecondary,
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                  Text(
+                    FormatHelper.formatDate(workDate),
+                    style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary),
+                  ),
+                ],
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                FormatHelper.formatDate(workDate),
-                style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-              Icon(
-                Icons.work_outline,
-                size: ResponsiveHelper.iconSize(context, 16),
-                color: AppColors.grey600,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Flexible(
-                child: Text(
-                  workType,
-                  overflow: TextOverflow.ellipsis,
-                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
-                ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.work_outline,
+                    size: ResponsiveHelper.iconSize(context, 16),
+                    color: AppColors.textSecondary,
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                  Flexible(
+                    child: Text(
+                      TextLayout.keepWords(workType),
+                      semanticsLabel: workType,
+                      style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -214,12 +226,12 @@ class ConfirmCancelDialog extends StatelessWidget {
               Icon(
                 Icons.access_time,
                 size: ResponsiveHelper.iconSize(context, 16),
-                color: AppColors.grey600,
+                color: AppColors.textSecondary, // [DU265] grey600
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Text(
                 timeRange,
-                style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
+                style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary), // [DU265] grey700
               ),
             ],
           ),
@@ -270,7 +282,8 @@ class ConfirmCancelDialog extends StatelessWidget {
           _buildPolicyItem(
             context,
             icon: Icons.check_circle,
-            iconColor: AppColors.success,
+            iconColor: AppColors.successDark, // [DU265] success(2.78)
+            bg: AppColors.successBg,
             title: '근무 1일 전까지',
             description: '패널티 없음',
             isHighlighted: !hasPenalty,
@@ -282,7 +295,8 @@ class ConfirmCancelDialog extends StatelessWidget {
           _buildPolicyItem(
             context,
             icon: Icons.warning,
-            iconColor: AppColors.error,
+            iconColor: AppColors.errorDark, // [DU265] error
+            bg: AppColors.errorBg,
             title: '근무 시작 5분 전부터 취소',
             description: '노쇼 1회 기록\n→ 3회 누적 시 1일 지원 제한',
             isHighlighted: hasPenalty,
@@ -296,6 +310,7 @@ class ConfirmCancelDialog extends StatelessWidget {
     BuildContext context, {
     required IconData icon,
     required Color iconColor,
+    required Color bg,
     required String title,
     required String description,
     required bool isHighlighted,
@@ -303,9 +318,8 @@ class ConfirmCancelDialog extends StatelessWidget {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
       decoration: BoxDecoration(
-        color: isHighlighted 
-            ? iconColor.withValues(alpha: 0.1)
-            : Colors.transparent,
+        // [DU265] 아이콘색 알파 10% → 의미 토큰 면(successBg/errorBg)
+        color: isHighlighted ? bg : Colors.transparent,
         borderRadius: BorderRadius.circular(
           ResponsiveHelper.spacing(context, 8),
         ),
@@ -326,18 +340,21 @@ class ConfirmCancelDialog extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // [DU265] 낱말 단위 줄바꿈(B320 '전까/지'), 제목 본문색 명시
                 Text(
-                  title,
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  TextLayout.keepWords(title),
+                  semanticsLabel: title,
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary).copyWith(
                     fontWeight: FontWeight.w600,
                   ),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                 Text(
-                  description,
+                  TextLayout.keepWords(description),
+                  semanticsLabel: description,
                   style: ResponsiveHelper.smallStyle(
                     context,
-                    color: AppColors.grey600,
+                    color: AppColors.textSecondary, // [DU265] grey600
                   ),
                 ),
               ],
@@ -353,6 +370,9 @@ class ConfirmCancelDialog extends StatelessWidget {
   // ═══════════════════════════════════════════════════════════
 
   Widget _buildCurrentStatus(BuildContext context, ThemeData theme) {
+    final statusText = hasPenalty
+        ? '현재 시점: 패널티 적용 구간'
+        : '현재 시점: 패널티 없이 취소 가능';
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
@@ -375,14 +395,13 @@ class ConfirmCancelDialog extends StatelessWidget {
               Icon(
                 hasPenalty ? Icons.error : Icons.info,
                 size: ResponsiveHelper.iconSize(context, 20),
-                color: hasPenalty ? AppColors.error : AppColors.success,
+                color: hasPenalty ? AppColors.errorDark : AppColors.successDark, // [DU265]
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Expanded(
                 child: Text(
-                  hasPenalty
-                      ? '현재 시점: 패널티 적용 구간'
-                      : '현재 시점: 패널티 없이 취소 가능',
+                  TextLayout.keepWords(statusText), // [DU265] B320 '패널/티' 끊김
+                  semanticsLabel: statusText,
                   style: ResponsiveHelper.bodyStyle(context).copyWith(
                     fontWeight: FontWeight.bold,
                     color: hasPenalty ? AppColors.errorDark : AppColors.successDark,
@@ -397,7 +416,8 @@ class ConfirmCancelDialog extends StatelessWidget {
             
             // 경고 메시지
             Text(
-              '이 취소는 패널티가 적용됩니다.',
+              TextLayout.keepWords('이 취소는 패널티가 적용됩니다.'), // [DU265]
+              semanticsLabel: '이 취소는 패널티가 적용됩니다.',
               style: ResponsiveHelper.bodyStyle(
                 context,
                 color: AppColors.errorDark,
@@ -431,12 +451,13 @@ class ConfirmCancelDialog extends StatelessWidget {
                     '$currentNoShowCount회',
                     style: ResponsiveHelper.smallStyle(context).copyWith(
                       fontWeight: FontWeight.bold,
-                      color: currentNoShowCount >= 2 ? AppColors.error : AppColors.grey700,
+                      // [DU265] error(3.68) → errorDark, 그 밖 본문색
+                      color: currentNoShowCount >= 2 ? AppColors.errorDark : AppColors.textPrimary,
                     ),
                   ),
                   Text(
                     ' / 3회',
-                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary), // [DU265] grey500(2.68)
                   ),
                   if (currentNoShowCount >= 2) ...[
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -446,7 +467,7 @@ class ConfirmCancelDialog extends StatelessWidget {
                         vertical: ResponsiveHelper.spacing(context, 2),
                       ),
                       decoration: BoxDecoration(
-                        color: AppColors.error,
+                        color: AppColors.errorDark, // [DU265] 흰 글자 3.68 → 약 6.6
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
@@ -463,10 +484,11 @@ class ConfirmCancelDialog extends StatelessWidget {
             if (currentNoShowCount == 2) ...[
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               Text(
-                '⚠️ 이 취소 후 90일 기준 3회가 되어 1일간 지원이 제한됩니다!',
+                TextLayout.keepWords('⚠️ 이 취소 후 90일 기준 3회가 되어 1일간 지원이 제한됩니다!'), // [DU265]
+                semanticsLabel: '⚠️ 이 취소 후 90일 기준 3회가 되어 1일간 지원이 제한됩니다!',
                 style: ResponsiveHelper.smallStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
-                  color: AppColors.error,
+                  color: AppColors.errorDark, // [DU265] error(3.68)
                 ),
               ),
             ],

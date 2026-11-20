@@ -1,13 +1,21 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:firebase_remote_config/firebase_remote_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../main.dart' show AuthWrapper;
+import '../../utils/dialog_helper.dart';
+import '../../utils/navigation_key.dart';
 import '../../services/app_version_service.dart';
+import 'forced_update_screen.dart';
 
 class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key});
+  /// [VERSION-GATE] 테스트가 실제 Navigation 까지 돌릴 수 있게 판정만 주입한다.
+  ///   production 은 null — `AppVersionService.evaluate()` 를 그대로 쓴다.
+  final Future<VersionGateResult> Function()? versionEvaluator;
+
+  const SplashScreen({super.key, this.versionEvaluator});
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
@@ -20,9 +28,6 @@ class _SplashScreenState extends State<SplashScreen>
   late Animation<double> _logoFade;
   late Animation<Offset> _logoSlide;
   late Animation<double> _taglineFade;
-
-  // 애니메이션과 버전 체크를 병렬 실행 — 둘 다 끝나면 바로 이동
-  late final Future<bool> _versionFuture;
 
   @override
   void initState() {
@@ -57,95 +62,123 @@ class _SplashScreenState extends State<SplashScreen>
       curve: const Interval(0.4, 1.0, curve: Curves.easeOut),
     );
 
-    // 버전 체크: 애니메이션(750ms)과 동시에 시작
-    // 네트워크가 느릴 경우 최대 1초만 추가 대기 후 통과 처리
-    _versionFuture = _checkVersion().timeout(
-      const Duration(milliseconds: 500),
-      onTimeout: () => true,
-    );
-
-    _entryController.forward().whenComplete(() {
-      // 애니메이션 완료 후 버전 체크 결과 대기 (이미 끝났으면 즉시)
-      _versionFuture.then((canProceed) {
-        if (mounted && canProceed) _navigateToHome();
-      }).catchError((e) {
-        debugPrint('⚠️ [Splash] 버전 체크 실패, 홈으로 진행: $e');
-        if (mounted) _navigateToHome();
-      });
-    });
+    // [VERSION-GATE] 버전 판정과 애니메이션을 **함께** 시작하되,
+    //   판정이 끝나기 전에는 어디로도 가지 않는다.
+    //
+    //   예전에는 `timeout(500ms, onTimeout: () => true)` 였다. Remote Config
+    //   fetch 는 콜드 스타트에서 그보다 느린 일이 흔하고, 그때마다 **확인되지
+    //   않은 채 홈으로 들어갔다.** 늦게 끝난 판정은 `mounted` 가 false 라
+    //   차단 화면을 띄우지도 못했다 — 게이트가 사실상 없었다.
+    //
+    //   이제 타임아웃은 "통과"가 아니라 **UNKNOWN** 이다. 무한 대기도 아니다.
+    _entryController.forward();
+    _runGate();
   }
 
-  Future<bool> _checkVersion() async {
-    final result = await AppVersionService.check();
-    if (!mounted) return false;
+  /// 늦게 도착한 이전 요청이 지금 상태를 덮지 않도록 세는 표.
+  int _gateSeq = 0;
+  bool _navigated = false;
 
-    if (result == VersionCheckResult.forceUpdate) {
-      _showForceUpdateDialog();
-      return false;
-    } else if (result == VersionCheckResult.recommendUpdate) {
-      await _showRecommendUpdateDialog();
+  Future<void> _runGate() async {
+    final seq = ++_gateSeq;
+    final evaluate = widget.versionEvaluator ?? AppVersionService.evaluate;
+
+    VersionGateResult result;
+    try {
+      result = await evaluate().timeout(
+        _gateTimeout,
+        onTimeout: () => const VersionGateResult(
+          status: VersionGateStatus.unknown,
+          source: VersionPolicySource.localDefault,
+          fromCache: true,
+          currentVersion: '',
+          minVersion: '',
+        ),
+      );
+    } catch (e) {
+      // 예외도 "최신"이 아니다 — 모르는 것은 모른다고 말한다.
+      debugPrint('⚠️ [Splash] 버전 판정 실패: $e');
+      result = const VersionGateResult(
+        status: VersionGateStatus.unknown,
+        source: VersionPolicySource.localDefault,
+        fromCache: true,
+        currentVersion: '',
+        minVersion: '',
+      );
     }
-    return true;
+
+    if (!mounted || seq != _gateSeq) return;
+
+    // 애니메이션이 아직이면 조금 기다렸다 보낸다(시각적 점프 방지).
+    if (_entryController.status != AnimationStatus.completed) {
+      await _entryController.forward().orCancel.catchError((_) => 0.0);
+      if (!mounted || seq != _gateSeq) return;
+    }
+
+    if (result.status == VersionGateStatus.supported) {
+      if (result.recommendUpdate) await _showRecommendUpdateDialog();
+      if (!mounted || seq != _gateSeq) return;
+      _navigateToHome();
+      return;
+    }
+    _showGateScreen(result);
   }
 
-  void _showForceUpdateDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) {
-        final rawUrl = Theme.of(ctx).platform == TargetPlatform.iOS
-            ? FirebaseRemoteConfig.instance.getString('update_url_ios')
-            : FirebaseRemoteConfig.instance.getString('update_url_android');
-        return PopScope(
-          canPop: false,
-          child: AlertDialog(
-            title: const Text('업데이트 필요'),
-            content: const Text('앱을 최신 버전으로 업데이트해야 합니다.\n업데이트 후 다시 실행해주세요.'),
-            actions: [
-              TextButton(
-                onPressed: rawUrl.isEmpty
-                    ? null
-                    : () async {
-                        final url = Uri.parse(rawUrl);
-                        if (await canLaunchUrl(url)) {
-                          await launchUrl(url, mode: LaunchMode.externalApplication);
-                        }
-                      },
-                child: const Text('스토어로 이동'),
-              ),
-            ],
-          ),
-        );
-      },
+  /// Remote Config `fetchTimeout` 이 10초다 — 그보다 조금 길게 기다린 뒤
+  ///   UNKNOWN 으로 넘긴다. 무기한 로딩을 만들지 않는다.
+  static const Duration _gateTimeout = Duration(seconds: 12);
+
+  /// 차단 화면으로 **라우트를 대체**한다. 다이얼로그가 아니다 —
+  ///   다이얼로그는 뒤의 화면이 살아 있어 다른 push 가 그 위로 올라온다.
+  void _showGateScreen(VersionGateResult result) {
+    if (_navigated) return;
+    _navigated = true;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ForcedUpdateScreen(
+          result: result,
+          // [DU313 r3] 새 판정을 차단 화면에 돌려준다 — 막힌 그대로면 화면이 그 판정(업데이트 필요 / 확인 실패)으로 바뀐다.
+          //   forceFetch 는 Remote Config 설정 간격(release 1시간)을 따른다 — 바로 새 정책을 받는다고 보증하지 않는다.
+          onRetry: () async {
+            final again = await AppVersionService.evaluate(forceFetch: true);
+            if (again.status != VersionGateStatus.supported) return again;
+            if (!navigatorKey.currentState!.mounted) return again;
+            navigatorKey.currentState!.pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const AuthWrapper()),
+              (route) => false,
+            );
+            return again;
+          },
+        ),
+      ),
     );
   }
 
   Future<void> _showRecommendUpdateDialog() async {
-    await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('업데이트 안내'),
-        content: const Text('새 버전이 출시됐습니다. 업데이트를 권장합니다.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('나중에'),
-          ),
-          TextButton(
-            onPressed: () async {
-              final rawUrl = Theme.of(ctx).platform == TargetPlatform.iOS
-                  ? FirebaseRemoteConfig.instance.getString('update_url_ios')
-                  : FirebaseRemoteConfig.instance.getString('update_url_android');
-              Navigator.pop(ctx);
-              if (rawUrl.isEmpty) return;
-              final url = Uri.parse(rawUrl);
-              if (await canLaunchUrl(url)) await launchUrl(url, mode: LaunchMode.externalApplication);
-            },
-            child: const Text('업데이트'),
-          ),
-        ],
-      ),
+    // [DU316] 원시 AlertDialog → 공용 확인창 셸. 예전 창은 Material 기본 보라빛 면 · 24 보통 제목 · 글자 버튼 둘이라
+    //   앱의 다른 확인창(흰 면 · 아이콘 머리 · brand 주 버튼)과 달랐고, 320·2.0 에서 버튼이 세로로 쌓이고
+    //   '출시됐습 / 니다' 로 끊겼다. 문구 · 버튼 이름 · 동작은 그대로다(바깥 탭 · 나중에 = false → 홈).
+    final update = await DialogHelper.showConfirm(
+      context,
+      title: '업데이트 안내',
+      message: '새 버전이 출시됐습니다. 업데이트를 권장합니다.',
+      confirmText: '업데이트',
+      cancelText: '나중에',
+      icon: Icons.system_update_alt,
     );
+    if (!update || !mounted) return;
+    final rawUrl = Theme.of(context).platform == TargetPlatform.iOS
+        ? FirebaseRemoteConfig.instance.getString('update_url_ios')
+        : FirebaseRemoteConfig.instance.getString('update_url_android');
+    if (rawUrl.isEmpty) return;
+    // 예전처럼 스토어 열기를 기다리지 않는다 — 창이 닫히면 _runGate 가 곧바로 홈으로 간다.
+    unawaited(() async {
+      final url = Uri.parse(rawUrl);
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url, mode: LaunchMode.externalApplication);
+      }
+    }());
   }
 
   void _navigateToHome() {

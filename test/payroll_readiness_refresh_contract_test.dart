@@ -81,7 +81,8 @@ void main() {
         'Future<void> _loadPayrollReadiness(');
 
     test('PR-20 판정만 다시 읽는 별도 경로가 있다', () {
-      expect(_flat(reload), contains('_loadPayrollReadiness(uids, guard:'));
+      // [PAYROLL-V3-RECOVERY 갱신] 예전: '_loadPayrollReadiness(uids, guard:'. 늦은 응답 순번을 안쪽으로 옮겼다(PR-51).
+      expect(_flat(reload), contains('await _loadPayrollReadiness(uids);'));
     });
 
     test('PR-21 그 경로는 이름 캐시를 보지 않는다', () {
@@ -91,14 +92,21 @@ void main() {
 
     test('PR-22 이름 캐시는 여전히 유효하다 — 캐시 미스일 때만 조회', () {
       expect(_flat(bank), contains('uids.where((u) => !_userBankCache.containsKey(u))'));
-      expect(_flat(bank), contains('if (uncached.isEmpty) return;'));
+      // [PAYROLL-V3-RECOVERY 갱신] 예전: bank 에도 'if (uncached.isEmpty) return;' — 그 줄이 지급 준비까지
+      //   건너뛰었다. 캐시 미스일 때만 묻는 가드는 아래 _loadWorkerNames 하나로 충분하다.
+      final bankOnly = _sliceOf(code, 'Future<void> _loadBankInfo(Set<String> uids) async {',
+          'Future<void> _loadWorkerNames(');
+      expect(_flat(bankOnly), isNot(contains('if (uncached.isEmpty) return;')));
       final names = _sliceOf(code, 'Future<void> _loadWorkerNames(',
           'Set<String> get _visibleWorkerUids');
       expect(_flat(names), contains('if (uncached.isEmpty) return;'));
     });
 
     test('PR-23 P1A 병렬 구조가 그대로다', () {
-      expect(f, contains('await Future.wait([ _loadWorkerNames(uncached), _loadPayrollReadiness(uids), ])'));
+      // [PAYROLL-ALL-UNTRANSFERRED] 두 조회는 여전히 같은 Future.wait 안에서 함께 출발한다.
+      //   '전체 미이체' 모드에서만 월 경로가 지급 준비를 쓰지 않는다(그 모드의 지급 준비는
+      //   _loadAllOutstanding 하나가 쓴다). 실제 동작은 payroll_all_outstanding_critical_path_test PAO-M1·PAO-1.
+      expect(f, contains('await Future.wait([ _loadWorkerNames(uncached), if (!widget.showAllOutstanding) _loadPayrollReadiness(uids), ])'));
     });
   });
 
@@ -136,13 +144,17 @@ void main() {
   });
 
   group('PR-4 — 실패는 UNKNOWN 으로 남는다', () {
-    final load = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids,',
+    final load = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids)' /* [PAYROLL-V3-RECOVERY] guard 인자 제거 */,
         'bool _needsSnapshotRefresh(');
     final lf = _flat(load);
 
     test('PR-40 조회 실패를 READY 로 바꾸지 않는다', () {
-      expect(lf, contains('batch = PayrollReadinessBatch.failed;'));
-      expect(lf, contains('_readinessUnknown = batch.loadFailed ? uids.toSet() : batch.failedUids.toSet()'));
+      // [PAYROLL-V3-RECOVERY 갱신] 월 경로도 200명 분할 조회(_fetchReadinessAll)를 쓴다 — 같은 계약을 그 함수에서 본다.
+      //   예전: batch = PayrollReadinessBatch.failed; / _readinessUnknown = batch.loadFailed ? uids.toSet() : batch.failedUids.toSet()
+      expect(lf, contains('return PayrollReadinessBatch.failed;'));
+      expect(lf, contains('if (b.loadFailed) { unknown.addAll(chunks[i]); continue; }'));
+      expect(lf, contains('if (failed.contains(u) || info == null) { unknown.add(u);'), reason: '답에 없는 사람도 모름');
+      expect(lf, contains('_readinessUnknown = r.unknown;'));
       expect(load.contains('ready: true'), false);
     });
 
@@ -162,7 +174,7 @@ void main() {
   group('PR-5 — 갱신이 화면을 빼앗지 않는다', () {
     final reload = _sliceOf(code, 'Future<void> _reloadReadiness() async {',
         'Future<void> _loadPayrollReadiness(');
-    final load = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids,',
+    final load = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids)' /* [PAYROLL-V3-RECOVERY] guard 인자 제거 */,
         'bool _needsSnapshotRefresh(');
 
     test('PR-50 전체 스피너를 띄우지 않는다', () {
@@ -173,14 +185,18 @@ void main() {
     });
 
     test('PR-51 늦게 온 응답이 최신 판정을 덮지 않는다', () {
-      expect(_flat(reload), contains('final seq = ++_readinessSeq;'));
-      expect(_flat(reload), contains('guard: () => seq == _readinessSeq'));
-      expect(_flat(load), contains('if (guard != null && !guard()) return;'));
+      // [PAYROLL-V3-RECOVERY 갱신] 예전: 재조회 쪽이 순번을 매기고 guard 로 넘겼다. 이제 월 조회 경로(_loadBankInfo)도
+      //   같은 보호가 필요해(월 이동 중 늦은 응답) 순번을 _loadPayrollReadiness 안에서 매긴다. 같은 계약이다.
+      expect(_flat(load), contains('final seq = ++_readinessSeq;'));
+      expect(_flat(load), contains('if (seq != _readinessSeq) return;'));
+      expect(_flat(reload).contains('guard:'), false, reason: '바깥에서 한 번 더 순번을 올리면 안쪽 결과가 늘 버려진다');
     });
 
     test('PR-52 판정은 화면이 보여주는 근로자 전부를 함께 읽는다', () {
       // 부분 목록으로 부르면 clear 때문에 나머지 판정이 사라진다
-      expect(_flat(load), contains('_readiness ..clear() ..addAll(batch.byUid)'));
+      // [PAYROLL-V3-RECOVERY 갱신] 예전: addAll(batch.byUid) — 한 번에 묻고 take(200) 으로 잘렸다. 이제 200명씩 나눈 결과.
+      expect(_flat(load), contains('_readiness ..clear() ..addAll(r.byUid)'));
+      expect(_flat(load), contains('final r = await _fetchReadinessAll(uids);'));
       expect(_flat(reload), contains('final uids = _visibleWorkerUids;'));
       expect(f, contains('Set<String> get _visibleWorkerUids => { ..._allRecords.map((r) => r.userId), ..._outstandingAll.map((r) => r.userId), };'));
     });
@@ -188,7 +204,8 @@ void main() {
 
   group('PR-6 — 사업장 스코프와 서버 권위', () {
     test('PR-60 판정 조회는 이 화면의 businessId 로만 한다', () {
-      expect(f, contains('PayrollReadinessService.loadBatch( businessId: widget.businessId, workerUids: uids.toList())'));
+      // [PAYROLL-V3-RECOVERY 갱신] 월 경로도 200명 분할 조회(_fetchReadinessAll)를 쓴다 — 같은 계약을 그 함수에서 본다. 예전: workerUids: uids.toList()
+      expect(f, contains('PayrollReadinessService.loadBatch( businessId: widget.businessId, workerUids: c)'));
     });
 
     test('PR-61 이체 허용은 여전히 서버가 정한다 — 판정은 표시용이다', () {

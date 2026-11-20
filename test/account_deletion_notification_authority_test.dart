@@ -351,8 +351,14 @@ void main() {
       // processContractRenewalChecks — 두 자리 모두
       final pc = _between(
           code, 'async function processContractRenewalChecks', 'export const');
-      expect(_count(pc, 'srvDeletionBarrierExistsInTx(tx,'), 2);
+      // [RETRY-OVERLAP 2026-10-27] D+3 퇴사·계약해지 자동 승인이 근로자·관리자 알림을
+      //   승인과 같은 transaction 에 쓴다(in-TX helper) — 그 둘이 각각 근로자 1 + 관리자 1
+      //   barrier 를 읽는다. 2(D-15·D-0) + 4 = 6.
+      expect(_count(pc, 'srvDeletionBarrierExistsInTx(tx,'), 6);
       expect(pc, isNot(contains('await notifRef.create(')));
+      // 부정 대조: 승인 뒤 transaction 밖에서 보내던 비동기 발송이 남아 있지 않다.
+      expect(pc, isNot(contains('[D+3 퇴사] 근무자 알림 실패')));
+      expect(pc, isNot(contains('[D+3 계약해지] 관리자 알림 실패')));
     });
 
     test('NOTIF-BYPASS-02b in-TX helper 의 호출자가 barrier 를 읽는다', () {
@@ -367,7 +373,52 @@ void main() {
       final callers = RegExp(r'srvPersistNotificationInTx\(')
           .allMatches(code)
           .length;
-      expect(callers, 2, reason: '정의 1 + 호출 1 — 새 호출자는 barrier 를 증명해야 한다');
+      // [SIM-RECONFIRM-NOTIF-CONTRACT] 호출자 +1: 리컨펌 H-1 관리자 경고.
+      // [RETRY-OVERLAP 2026-10-27] 호출자 +7: 스케줄러 사건 알림을 업무 전이와 같은
+      //   transaction 에 쓴다 — 마감 자동취소 helper 1 · 장기 게시 만료 1 · 리컨펌 H-2 1 ·
+      //   D+3 퇴사(근로자·관리자) 2 · D+3 계약해지(근로자·관리자) 2 ·
+      //   자정 퇴사 경고(D+1·D+2) 공용 claim helper 1.
+      expect(callers, 11, reason: '정의 1 + 호출 10 — 새 호출자는 barrier 를 증명해야 한다');
+      // 모든 호출자: 감싸는 transaction 안에서 helper 호출 **앞**에 barrier 를 읽는다.
+      //   예외는 좌석 계약 쓰기 단계 하나 — barrier 를 읽기 단계 함수에서 읽어 plan 으로 넘긴다(아래).
+      final fnHead = RegExp(r'\n(?:async function|function|export const) ');
+      var k = 0;
+      var checked = 0;
+      while (true) {
+        k = code.indexOf('srvPersistNotificationInTx(', k + 1);
+        if (k < 0) break;
+        if (code.substring(k - 9, k) == 'function ') continue; // 정의
+        final fnStart = code.lastIndexOf(fnHead, k);
+        final fnName = code.substring(fnStart + 1, code.indexOf('(', fnStart + 1));
+        if (fnName.contains('srvApplySeatCommitOverlap')) continue;
+        final t = code.lastIndexOf('runTransaction(async (tx) => {', k);
+        expect(t, greaterThan(fnStart), reason: '$fnName — helper 호출이 transaction 밖이다');
+        final seg = code.substring(t, k);
+        expect(seg, contains('srvDeletionBarrierExistsInTx('),
+            reason: '$fnName — 같은 transaction 에서 barrier 를 helper 앞에 읽지 않았다');
+        checked++;
+      }
+      expect(checked, 9, reason: 'H-1 1 + 스케줄러 사건 8');
+
+      // 리컨펌 H-1 — 같은 transaction 의 읽기 구간에서 barrier 를 읽고, 막힌 수신자는
+      //   건너뛴 뒤에만 helper 를 부른다. 발송 표식도 같은 transaction 에서 쓴다.
+      final rc = _between(code, 'async function sendReconfirmNotifications(',
+          '\n}');
+      final rcTx = _txBlock(rc, 'srvDeletionBarrierExistsInTx(tx, u)');
+      expect(rcTx, contains('srvDeletionBarrierExistsInTx(tx, u)'));
+      expect(rcTx, contains('if (blocked[i]) return;'));
+      expect(_at(rcTx, 'srvDeletionBarrierExistsInTx(tx, u)'),
+          lessThan(_at(rcTx, 'srvPersistNotificationInTx(')));
+      // [RETRY-OVERLAP 2026-10-27] 표식은 **그 회차**(reconfirmSentAt) 이후일 때만 '이미 경고함'이다.
+      expect(rcTx, contains('f.reconfirmAdminWarnedAt instanceof Timestamp'));
+      expect(rcTx, contains('warnedAt.toMillis() >= sentAt.toMillis()'));
+      // 발송 표식은 그 transaction 의 쓰기 구간(helper 호출 뒤, transaction 반환 전)에 있다.
+      final txStart = rc.lastIndexOf(
+          'runTransaction(async (tx) => {', _at(rc, 'srvDeletionBarrierExistsInTx(tx, u)'));
+      final h1Call = rc.indexOf('srvPersistNotificationInTx(', txStart);
+      final mark = _at(rc, 'tx.update(doc.ref, {reconfirmAdminWarnedAt: serverNow});');
+      expect(mark, greaterThan(h1Call));
+      expect(mark, lessThan(rc.indexOf('if (warned) h1Count++;', txStart)));
 
       final collect = _between(
           code, 'async function srvCollectSeatCommitOverlap(',
@@ -455,21 +506,31 @@ void main() {
       }
     });
 
-    test('NOTIF-REG-05 domain mutation 이 알림 때문에 롤백되지 않는다 (§1·§22·§25)', () {
-      // cancelBatch 3곳: 알림은 commit **이후** allSettled 다.
-      //
-      //   `cancelBatch.commit()` 는 파일 전체에 7곳이다(다른 함수 포함).
-      //   그래서 commit 쪽에서 세지 않고, 알림 발송 쪽에서 "바로 앞이
-      //   domain commit 인가"를 묻는다 — 그것이 실제 불변식이다.
-      final dispatches = RegExp(r'await Promise\.allSettled\(pendingNotifs\.map\(')
-          .allMatches(code)
-          .toList();
-      expect(dispatches.length, 3);
-      for (final m in dispatches) {
-        final before = code.substring(
-            m.start - 120 < 0 ? 0 : m.start - 120, m.start);
-        expect(before, contains('await cancelBatch.commit();'),
-            reason: '알림 발송이 domain commit 뒤에 와야 한다');
+    test('NOTIF-REG-05 마감 자동취소 — 전이와 알림 문서가 한 transaction 이다 (§1·§22·§25 → RETRY-OVERLAP)', () {
+      // [RETRY-OVERLAP 2026-10-27] 이전 불변식은 "알림은 cancelBatch commit **이후** 따로"였다.
+      //   그 분리 때문에 commit 직후 중단되면 알림이 영구 유실됐고(재실행은 이미 AUTO_CANCELED 를
+      //   보므로 다시 보내지 않는다), 겹친 실행은 같은 지원서를 두 번 취소·알림했다(LOCAL 재현).
+      //   지금은 지원서별 transaction 하나가 현재 상태를 다시 읽고 전이와 알림 문서를 같이 쓴다.
+      //   알림 쓰기가 실패하면 그 지원서는 이번 실행에서 취소되지 않고 다음 실행이 다시 한다
+      //   (domain 이 '알림 없는 취소'로 커밋되지 않는다). 마감(부모)은 취소가 전부 성공한 뒤에만.
+      // 부정 대조: 예전 post-commit 발송 경로가 남아 있지 않다.
+      expect(
+          RegExp(r'await Promise\.allSettled\(pendingNotifs\.map\(').allMatches(code).length,
+          0);
+      expect(code, isNot(contains('cancelBatch.update(appDoc.ref')));
+      final h = _helper(code, 'srvExpiryCancelPending');
+      final tx = _txBlock(h, 'srvPersistNotificationInTx(');
+      expect(tx, contains('if (!cur || cur.status !== "PENDING") return false;'));
+      expect(tx, contains('status: "AUTO_CANCELED"'));
+      expect(_at(tx, 'srvDeletionBarrierExistsInTx('), lessThan(_at(tx, 'tx.update(')));
+      expect(_at(tx, 'tx.update('), lessThan(_at(tx, 'srvPersistNotificationInTx(')));
+      // 세 마감 경로가 모두 이 helper 를 지나고, 부모 마감은 실패 0 일 때만이다.
+      // [.11] 공고 신청 마감 본문은 processTOExpiry 에서 srvTOApplicationDeadlineExpiry 로 옮겨졌다(POSTING-EXPIRY-CALL)
+      for (final fn in ['processWorkDetailExpiry', 'processSlotWorkDetailExpiry', 'srvTOApplicationDeadlineExpiry']) {
+        final b = _between(code, 'async function $fn(', '\n}\n');
+        expect(b.contains('srvCancelPendingForExpiredTypes(') || b.contains('srvExpiryCancelPending('), isTrue,
+            reason: '$fn 이 공용 취소 거래를 지나지 않는다');
+        expect(b, contains('failed > 0'), reason: '$fn — 취소 실패 뒤에도 부모를 닫는다');
       }
     });
 

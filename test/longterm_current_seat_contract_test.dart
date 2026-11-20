@@ -262,7 +262,9 @@ void main() {
     test('LCS-W1 집계가 좌석 판정을 쓴다', () {
       final svc = _codeOf(_read('lib/services/firestore_service.dart'));
       expect(svc, contains('a.occupiesSeatOn(seatDay)'));
-      expect(svc, contains("const activeStatuses = {'PENDING', 'CONFIRMED', 'CONTRACT_PENDING'}"));
+      // [E2-INVITED-SEAT] 상태 집합은 서버 PENDING_STATUSES 와 같은 한 벌로 옮겼다
+      //   (INVITED 가 `대기` 로 들어간다). 장기 좌석 축은 그대로다.
+      expect(svc, contains('countedStatuses ?? AppStatus.seatCountedStatuses.toSet()'));
       expect(svc, contains('!a.isStaffingReleased'),
           reason: '기존 축을 지우지 않는다');
     });

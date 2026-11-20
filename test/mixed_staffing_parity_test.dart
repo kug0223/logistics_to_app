@@ -921,7 +921,9 @@ void _inviteSnapshot() {
     });
 
     test('18-b 임금은 양쪽 모두 서버가 파생한다 — 클라이언트가 싣지 않는다', () {
-      final i = invite.indexOf('await callable.call({');
+      // [E1-AMBIGUOUS-INVITE] 호출은 `_callInvite` 를 거친다(테스트 seam).
+      final i = invite.indexOf('await _callInvite({');
+      expect(i, greaterThan(0));
       final body = invite.substring(i, (i + 2200).clamp(0, invite.length));
       expect(body.contains("'wage'"), false);
       expect(body.contains("'wageType'"), false);

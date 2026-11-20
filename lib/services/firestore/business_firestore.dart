@@ -288,6 +288,21 @@ extension BusinessFirestore on FirestoreService {
     }
   }
 
+  /// [WORKTYPE-IDENTITY] 사업장 업무유형 전체(비활성 포함) — 기존 공고·일정의 안내 원천.
+  ///   새 공고 선택 목록은 [getBusinessWorkTypes](활성만)를 쓴다. 실패는 그대로 던진다.
+  Future<WorkTypeCatalog> getBusinessWorkTypeCatalog(String businessId) {
+    final col = _firestore.collection('businesses').doc(businessId).collection('workTypes');
+    return WorkTypeCatalog.load(
+      businessId: businessId,
+      fetchPage: (afterId, pageSize) async {
+        Query<Map<String, dynamic>> q = col.orderBy(FieldPath.documentId).limit(pageSize);
+        if (afterId != null) q = q.startAfter([afterId]);
+        final snap = await q.get();
+        return [for (final d in snap.docs) (d.id, d.data())];
+      },
+    );
+  }
+
   /// 업무 유형 추가
   Future<String?> addBusinessWorkType({
     required String businessId,
@@ -411,7 +426,7 @@ extension BusinessFirestore on FirestoreService {
     }
   }
 
-  /// 업무 유형 삭제 (소프트 삭제 + Storage 이미지 삭제)
+  /// 업무 유형 삭제 = 비활성화(isActive:false) — 새 공고 선택 목록에서만 빠진다.
   Future<bool> deleteBusinessWorkType({
     required String businessId,
     required String workTypeId,
@@ -429,35 +444,16 @@ extension BusinessFirestore on FirestoreService {
           .get();
       
       if (doc.exists) {
-        final data = doc.data()!;
-
-        // ✅ 2. Firestore 소프트 삭제 먼저 (실패 시 Storage는 건드리지 않음)
+        // [WORKTYPE-IDENTITY] 사진은 지우지 않는다. 이 업무로 만든 기존 공고·예정 근무가 계속 이
+        //   문서의 최신 설명·사진을 보여 준다 — 비활성화가 그 사진을 끊으면 안 된다.
+        //   (서버 callableDeleteBusinessImage 도 업무유형 문서가 아직 참조하는 사진은 지우지 않는다 —
+        //   이전 버전 앱이 비활성화 뒤 사진 삭제를 요청해도 막힌다.)
         await _firestore
             .collection('businesses')
             .doc(businessId)
             .collection('workTypes')
             .doc(workTypeId)
             .update({'isActive': false});
-
-        // ✅ 3. Firestore 성공 후 Storage 정리 — CF callableDeleteBusinessImage 경유
-        // businesses/ 경로는 storage.rules에서 클라이언트 직접 삭제 차단
-        final urlsToDelete = <String>[
-          if (data['thumbnailUrl'] != null) data['thumbnailUrl'] as String,
-          ...(data['images'] as List? ?? []).whereType<String>(),
-        ];
-        if (urlsToDelete.isNotEmpty) {
-          final cf = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-              .httpsCallable('callableDeleteBusinessImage');
-          await Future.wait(
-            urlsToDelete.map((url) async {
-              try {
-                await cf.call({'imageUrl': url});
-              } catch (e) {
-                debugPrint('⚠️ 업무유형 이미지 삭제 실패 (계속 진행): $url — $e');
-              }
-            }),
-          );
-        }
         ToastHelper.showSuccess('업무 유형이 삭제되었습니다');
         return true;
       }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../theme/app_colors.dart';
 import '../dialogs/styled_dialog.dart';
 
@@ -700,6 +701,9 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
     // _dependents.isEmpty assertion 크래시 방지
     return DialogFocusSafeArea(
       child: Dialog(
+        // [DU511 · NDB-2 · DU-O001 판정 O038 범위] 바탕을 지정하지 않아 M3 기본 면(fromSeed surfaceContainerHigh · 연보라)이 깔렸다 —
+        //   공용 StyledDialog 와 같은 흰 면만 명시한다(셸 이주 · 전역 테마 변경 없음).
+        backgroundColor: AppColors.surface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
         ),
@@ -741,35 +745,27 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
     );   // DialogFocusSafeArea
   }
 
-  /// ✨ 세련된 헤더
+  /// ✨ 머리
+  ///
+  /// [DU435 · 후속113 N3 · DU433 선례] 넓은 brand 그라데이션 띠 · 흰 제목을 걷었다.
+  ///   창과 같은 면 · 작은 brand 타일(brandSurface/brand) · 진한 제목 · 보조 글 textSecondary · 중립 닫기(grey600).
+  ///   제목 · 개수는 낱말 사이에서만 줄을 바꾸고, 화면 읽기는 원문이다. 닫기 동작(unfocus → pop)은 그대로다.
   Widget _buildHeader() {
+    const title = '아이콘 선택';
+    final count = '${_filteredIcons.length}개 아이콘';
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            widget.theme.primaryColor,
-            widget.theme.primaryColor.withValues(alpha: 0.8),
-          ],
-        ),
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(24),
-          topRight: Radius.circular(24),
-        ),
-      ),
       child: Row(
         children: [
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
             decoration: BoxDecoration(
-              color: AppColors.surface.withValues(alpha: 0.2),
+              color: AppColors.brandSurface,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
               Icons.auto_awesome,
-              color: AppColors.surface,
+              color: AppColors.brand,
               size: ResponsiveHelper.iconSize(context, 24),
             ),
           ),
@@ -779,24 +775,26 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '아이콘 선택',
+                  TextLayout.keepWords(title),
+                  semanticsLabel: title,
                   style: ResponsiveHelper.titleStyle(context).copyWith(
-                    color: AppColors.surface,
+                    color: AppColors.textPrimary,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                 Text(
-                  '${_filteredIcons.length}개 아이콘',
+                  TextLayout.keepWords(count),
+                  semanticsLabel: count,
                   style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: AppColors.surface.withValues(alpha: 0.9),
+                    color: AppColors.textSecondary,
                   ),
                 ),
               ],
             ),
           ),
           Material(
-            color: AppColors.surface.withValues(alpha: 0.2),
+            color: Colors.transparent,
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
               // [FC-04 FIX] X 버튼 — pop 전 unfocus
@@ -809,7 +807,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
                 child: Icon(
                   Icons.close,
-                  color: AppColors.surface,
+                  color: AppColors.grey600,
                   size: ResponsiveHelper.iconSize(context, 20),
                 ),
               ),
@@ -856,25 +854,32 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
-          height: 40,
-          child: ListView.builder(
-            controller: _categoryScrollController,
-            scrollDirection: Axis.horizontal,
-            padding: EdgeInsets.symmetric(horizontal: h),
-            itemCount: _categories.length,
-            itemBuilder: (context, index) {
-              final category = _categories[index];
+        // [DU438c · 후속117 438 분류칩] 고정 높이 40 상자가 큰 글자(B 2.0)에서 칩 글자를 위아래로 잘랐다(줄 상자 + 위아래 여백 > 40).
+        //   높이는 칩 내용(글자 줄 상자 + 여백 + 테두리)이 정하고, 누르는 자리는 최소 48 이다. 15개라 한 번에 그려도 된다(가로 스크롤 그대로).
+        SingleChildScrollView(
+          controller: _categoryScrollController,
+          scrollDirection: Axis.horizontal,
+          padding: EdgeInsets.symmetric(horizontal: h),
+          child: Row(
+            children: [
+              for (final category in _categories)
+                Builder(builder: (context) {
               final isSelected = _selectedCategory == category;
 
               return Padding(
                 padding: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
                 child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
                   onTap: () => setState(() {
                     _selectedCategory = category;
                     _filterIcons();
                   }),
-                  child: AnimatedContainer(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 48),
+                    child: Align(
+                      widthFactor: 1,
+                      heightFactor: 1,
+                      child: AnimatedContainer(
                     duration: const Duration(milliseconds: 150),
                     padding: EdgeInsets.symmetric(
                       horizontal: ResponsiveHelper.spacing(context, 14),
@@ -902,9 +907,12 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                       ),
                     ),
                   ),
+                    ),
+                  ),
                 ),
               );
-            },
+                }),
+            ],
           ),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -943,12 +951,18 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
     // 그리드 높이 계산 (반응형)
     final iconSize = ResponsiveHelper.iconSize(context, 56);
     final gapSize = ResponsiveHelper.spacing(context, 8);
-    final labelHeight = 30.0;
     final rows = (_filteredIcons.length / 5).ceil();
-    final itemHeight = iconSize + gapSize + labelHeight;
     final mainSpacing = ResponsiveHelper.spacing(context, 8);
+
+    // [DU438] 큰 글자 · 좁은 칸에서 이름이 한두 글자만 보였다(320@2.0 '재 · 창 · 배'). 칸이 이름에 모자라면
+    //   이름 줄을 접고 아이콘만 보인다 — 이름은 화면 읽기(Semantics label)와 아래 '… 선택됨' 줄이 말한다(배치 전환).
+    return LayoutBuilder(builder: (_, box) {
+    final cellW = (box.maxWidth - ResponsiveHelper.spacing(context, 16) * 2 - ResponsiveHelper.spacing(context, 8) * 4) / 5;
+    final showLabels = TextLayout.fits(context, cellW, 44);
+    final labelHeight = showLabels ? 30.0 : 0.0;
+    final itemHeight = iconSize + (showLabels ? gapSize + labelHeight : 0.0);
     final gridHeight = (rows * itemHeight) + (rows - 1) * mainSpacing + 16.0;
-    
+
     return Container(
       height: gridHeight,
       padding: EdgeInsets.symmetric(
@@ -968,7 +982,11 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
           final iconItem = _filteredIcons[index];
           final isSelected = _selectedIcon == iconItem.icon;
           
-          return GestureDetector(
+          return Semantics(
+            label: showLabels ? null : iconItem.label,
+            button: true,
+            selected: isSelected,
+            child: GestureDetector(
             onTap: () {
               setState(() {
                 _selectedIcon = iconItem.icon;
@@ -1004,6 +1022,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                     size: ResponsiveHelper.iconSize(context, 28),
                   ),
                 ),
+                if (showLabels) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 // 라벨
                 SizedBox(
@@ -1022,12 +1041,15 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                     ),
                   ),
                 ),
+                ],
               ],
+            ),
             ),
           );
         },
       ),
     );
+    });
   }
 
   /// ✨ 액션 버튼
@@ -1060,46 +1082,58 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                 color: widget.theme.primaryColor.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: widget.theme.primaryColor,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(_selectedIcon, color: Colors.white, size: ResponsiveHelper.iconSize(context, 18)),
+              // [DU439] 320@2.0 에서 '선택 해제'가 자리를 차지해 '재고관리 선택됨'이 한 글자씩 세로로 쌓이고 하단이 창 밖으로 넘쳤다.
+              //   옆 칸이 모자라면(TextLayout.fits(…, 200)) '선택 해제'를 아래 줄로 내린다. 선택 이름은 낱말 사이에서만 줄바꿈(읽기는 원문).
+              //   '선택 해제' 글자 grey500(옅은 면 위 ≈ 2.5) → textSecondary(보조 글 토큰).
+              child: LayoutBuilder(builder: (_, box) {
+                final gap = ResponsiveHelper.spacing(context, 10);
+                final chosen = selectedItem?.label.isNotEmpty == true
+                    ? '${selectedItem!.label} 선택됨'
+                    : '아이콘 선택됨';
+                final chip = Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: widget.theme.primaryColor,
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-                  Expanded(
-                    child: Text(
-                      selectedItem?.label.isNotEmpty == true
-                          ? '${selectedItem!.label} 선택됨'
-                          : '아이콘 선택됨',
-                      style: ResponsiveHelper.smallStyle(context).copyWith(
-                        color: widget.theme.primaryColor,
-                        fontWeight: FontWeight.w600,
-                      ),
+                  child: Icon(_selectedIcon, color: Colors.white, size: ResponsiveHelper.iconSize(context, 18)),
+                );
+                final label = Text(
+                  TextLayout.keepWords(chosen),
+                  semanticsLabel: chosen,
+                  style: ResponsiveHelper.smallStyle(context).copyWith(
+                    color: widget.theme.primaryColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                );
+                final clear = TextButton(
+                  onPressed: () => setState(() => _selectedIcon = null),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Text(
+                    '선택 해제',
+                    style: ResponsiveHelper.smallStyle(
+                      context,
+                      color: AppColors.textSecondary,
                     ),
                   ),
-                  TextButton(
-                    onPressed: () => setState(() => _selectedIcon = null),
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: Text(
-                      '선택 해제',
-                      style: ResponsiveHelper.smallStyle(
-                        context,
-                        color: AppColors.grey500,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                );
+                if (TextLayout.fits(context, box.maxWidth - 32 - gap, 200)) {
+                  return Row(children: [chip, SizedBox(width: gap), Expanded(child: label), clear]);
+                }
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(children: [chip, SizedBox(width: gap), Expanded(child: label)]),
+                    Align(alignment: Alignment.centerRight, child: clear),
+                  ],
+                );
+              }),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 10)),
           ],
@@ -1139,8 +1173,10 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
                     disabledBackgroundColor: AppColors.grey200,
                   ),
                   icon: const Icon(Icons.check_circle, size: 18),
+                  // [DU438] 320@2.0 '선택 완 / 료' — 낱말 사이에서만 줄바꿈(읽기 이름은 원문)
                   label: Text(
-                    '선택 완료',
+                    TextLayout.keepWords('선택 완료'),
+                    semanticsLabel: '선택 완료',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
                       color: _selectedIcon == null ? AppColors.grey400 : Colors.white,
                       fontWeight: FontWeight.bold,

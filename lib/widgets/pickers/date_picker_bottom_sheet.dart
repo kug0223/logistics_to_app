@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../theme/app_colors.dart';
 import '../calendar/carrot_style_calendar.dart';
 
@@ -117,26 +118,37 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
           // 헤더
           _buildHeader(context, theme),
 
-          // 선택된 날짜 표시
-          if (_selectedDate != null)
-            _buildSelectedDateDisplay(context, theme),
+          // [DU290 DP3] 가운데(선택 표시 + 달력)만 스크롤한다 — 큰 글자(320·2.0)에서 시트가 화면보다 길어
+          //   아래로 넘치고 취소·선택 완료가 화면 밖으로 나갔다. 손잡이·머리와 버튼 줄은 고정이다.
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // 선택된 날짜 표시
+                  if (_selectedDate != null)
+                    _buildSelectedDateDisplay(context, theme),
 
-          // 캘린더
-          Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 16),
-            ),
-            child: CarrotStyleCalendar(
-              mode: CalendarMode.single,
-              selectedDate: _selectedDate,
-              minDate: widget.minDate,
-              maxDate: widget.maxDate,
-              allowPastDates: widget.allowPastDates,
-              disabledDates: widget.disabledDates,
-              enabledDayPredicate: widget.enabledDayPredicate,
-              onDateSelected: (date) {
-                setState(() => _selectedDate = date);
-              },
+                  // 캘린더
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 16),
+                    ),
+                    child: CarrotStyleCalendar(
+                      mode: CalendarMode.single,
+                      selectedDate: _selectedDate,
+                      minDate: widget.minDate,
+                      maxDate: widget.maxDate,
+                      allowPastDates: widget.allowPastDates,
+                      disabledDates: widget.disabledDates,
+                      enabledDayPredicate: widget.enabledDayPredicate,
+                      onDateSelected: (date) {
+                        setState(() => _selectedDate = date);
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
 
@@ -187,8 +199,10 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // [DU290 DP4] 제목·부제목은 낱말 단위 줄바꿈(읽기 이름은 원문)
                 Text(
-                  widget.title,
+                  TextLayout.keepWords(widget.title),
+                  semanticsLabel: widget.title,
                   style: ResponsiveHelper.subtitleStyle(context).copyWith(
                     fontWeight: FontWeight.bold,
                   ),
@@ -196,7 +210,8 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
                 if (widget.subtitle != null) ...[
                   SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                   Text(
-                    widget.subtitle!,
+                    TextLayout.keepWords(widget.subtitle!),
+                    semanticsLabel: widget.subtitle!,
                     style: ResponsiveHelper.smallStyle(
                       context,
                       color: AppColors.textSecondary,
@@ -250,11 +265,17 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
             size: ResponsiveHelper.iconSize(context, 20),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          Text(
-            FormatHelper.formatDateLong(_selectedDate!),
-            style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: theme.primaryColor,
-              fontWeight: FontWeight.bold,
+          // [DU290 DP5] 큰 글자에서 아이콘 + 날짜 줄이 64px 넘쳤다 — 남는 폭 안에서 줄바꿈
+          Flexible(
+            child: Text(
+              // [DU290 r1] 날짜·단위 사이에서 끊기지 않게 낱말 단위(읽기 이름은 원문)
+              TextLayout.keepWords(FormatHelper.formatDateLong(_selectedDate!)),
+              semanticsLabel: FormatHelper.formatDateLong(_selectedDate!),
+              textAlign: TextAlign.center,
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                color: theme.primaryColor,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
         ],
@@ -305,6 +326,9 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: theme.primaryColor,
                 foregroundColor: AppColors.surface,
+                // [DU290 DP1] 비활성 — 흰 글 on 회색 1.27 이라 안 보였다 → 보조색 글 on grey200
+                disabledBackgroundColor: AppColors.grey200,
+                disabledForegroundColor: AppColors.textSecondary,
                 padding: EdgeInsets.symmetric(
                   vertical: ResponsiveHelper.spacing(context, 16),
                 ),
@@ -316,7 +340,7 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
               child: Text(
                 '선택 완료',
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: AppColors.surface,
+                  color: _selectedDate != null ? AppColors.surface : AppColors.textSecondary,
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -419,29 +443,40 @@ class _DateRangePickerBottomSheetState extends State<DateRangePickerBottomSheet>
           // 헤더
           _buildHeader(context, theme),
 
-          // 선택된 범위 표시
-          _buildSelectedRangeDisplay(context, theme),
+          // [DU290 DP3] 가운데(선택 표시 + 달력)만 스크롤한다 — 큰 글자(320·2.0)에서 시트가 화면보다 길어
+          //   아래로 넘치고 취소·선택 완료가 화면 밖으로 나갔다. 손잡이·머리와 버튼 줄은 고정이다.
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // 선택된 범위 표시
+                  _buildSelectedRangeDisplay(context, theme),
 
-          // 캘린더
-          Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 16),
-            ),
-            child: CarrotStyleCalendar(
-              mode: CalendarMode.range,
-              rangeStart: _rangeStart,
-              rangeEnd: _rangeEnd,
-              minDate: widget.minDate,
-              maxDate: widget.maxDate,
-              allowPastDates: widget.allowPastDates,
-              disabledDates: widget.disabledDates,
-              enabledDayPredicate: widget.enabledDayPredicate,
-              onRangeChanged: (start, end) {
-                setState(() {
-                  _rangeStart = start;
-                  _rangeEnd = end;
-                });
-              },
+                  // 캘린더
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 16),
+                    ),
+                    child: CarrotStyleCalendar(
+                      mode: CalendarMode.range,
+                      rangeStart: _rangeStart,
+                      rangeEnd: _rangeEnd,
+                      minDate: widget.minDate,
+                      maxDate: widget.maxDate,
+                      allowPastDates: widget.allowPastDates,
+                      disabledDates: widget.disabledDates,
+                      enabledDayPredicate: widget.enabledDayPredicate,
+                      onRangeChanged: (start, end) {
+                        setState(() {
+                          _rangeStart = start;
+                          _rangeEnd = end;
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
 
@@ -490,8 +525,10 @@ class _DateRangePickerBottomSheetState extends State<DateRangePickerBottomSheet>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // [DU290 DP4] 제목·부제목은 낱말 단위 줄바꿈(읽기 이름은 원문)
                 Text(
-                  widget.title,
+                  TextLayout.keepWords(widget.title),
+                  semanticsLabel: widget.title,
                   style: ResponsiveHelper.subtitleStyle(context).copyWith(
                     fontWeight: FontWeight.bold,
                   ),
@@ -499,7 +536,8 @@ class _DateRangePickerBottomSheetState extends State<DateRangePickerBottomSheet>
                 if (widget.subtitle != null) ...[
                   SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                   Text(
-                    widget.subtitle!,
+                    TextLayout.keepWords(widget.subtitle!),
+                    semanticsLabel: widget.subtitle!,
                     style: ResponsiveHelper.smallStyle(
                       context,
                       color: AppColors.textSecondary,
@@ -607,7 +645,8 @@ class _DateRangePickerBottomSheetState extends State<DateRangePickerBottomSheet>
           Text(
             date != null ? dateFormat.format(date) : '선택',
             style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: date != null ? AppColors.textPrimary : AppColors.textHint,
+              // [DU290 DP2] 빈칸 grey400(1.88) → textTertiary
+              color: date != null ? AppColors.textPrimary : AppColors.textTertiary,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -659,6 +698,9 @@ class _DateRangePickerBottomSheetState extends State<DateRangePickerBottomSheet>
               style: ElevatedButton.styleFrom(
                 backgroundColor: theme.primaryColor,
                 foregroundColor: AppColors.surface,
+                // [DU290 DP1] 비활성 — 흰 글 on 회색 1.27 이라 안 보였다 → 보조색 글 on grey200
+                disabledBackgroundColor: AppColors.grey200,
+                disabledForegroundColor: AppColors.textSecondary,
                 padding: EdgeInsets.symmetric(
                   vertical: ResponsiveHelper.spacing(context, 16),
                 ),
@@ -670,7 +712,7 @@ class _DateRangePickerBottomSheetState extends State<DateRangePickerBottomSheet>
               child: Text(
                 '선택 완료',
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: AppColors.surface,
+                  color: isValid ? AppColors.surface : AppColors.textSecondary,
                   fontWeight: FontWeight.bold,
                 ),
               ),

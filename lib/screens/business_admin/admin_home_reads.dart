@@ -11,6 +11,7 @@ import '../../services/firestore_service.dart';
 import '../../services/staffing_readiness_service.dart';
 import '../../services/work_detail_time_service.dart';
 import '../../utils/tour_helper.dart';
+import '../../models/core/legal_readiness.dart';
 
 /// [R7-P1-4 H4] 관리자 홈의 **원시 외부 읽기 경계**.
 ///
@@ -31,7 +32,15 @@ class AdminHomeReads {
     required this.postingReadiness,
     required this.contractTemplates,
     required this.tourCompleted,
+    this.clock,
+    this.legalReadiness,
   });
+
+  /// [DU1 VQ] 오늘 기준 시각. null 이면 DateTime.now — production 은 넘기지 않는다(LOCAL 렌더 동일 조건용).
+  final DateTime Function()? clock;
+
+  /// [DU1 VQ] 약관 할 일 카드 읽기. null 이면 카드 기본 reader — production 은 넘기지 않는다.
+  final Future<LegalReadiness> Function()? legalReadiness;
 
   /// CF `callableGetAdminHomeSummary` — 처리할 일 canonical.
   final Future<AdminHomeSummaryModel> Function({String? selectedBusinessId})

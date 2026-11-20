@@ -84,7 +84,9 @@ void main() {
     test('SL-31 딥링크가 미방문 탭에서 fail closed 되지 않는다', () {
       expect(f, contains('final firstOpen = !_visitedTabs.contains(index)'));
       expect(f, contains('if (!firstOpen && targetNav == null) return false'));
-      expect(f, contains('targetNav?.popUntil((r) => r.isFirst)'));
+      // [DU1 R8-TAB-RESELECT] popUntil → popTabToRoot(화면 PopScope 존중, 거절 시 push 취소)
+      expect(f, contains('popTabToRoot(targetNav)'));
+      expect(f, isNot(contains('targetNav?.popUntil((r) => r.isFirst)')));
     });
 
     test('SL-32 딥링크도 방문 처리 후 전환한다', () {

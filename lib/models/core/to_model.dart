@@ -129,6 +129,10 @@ class TOModel {
   final String creatorUID;
   final DateTime createdAt;
 
+  /// [WORKTYPE-IDENTITY] 저장 문서에 **실제로 있던** createdAt. [createdAt] 은 누락 시 현재 시각으로
+  ///   채워지므로 "이 공고보다 먼저 만든 업무유형인가" 같은 판정에 쓰면 안 된다 — 그 판정은 이 값만 본다.
+  final DateTime? storedCreatedAt;
+
   TOModel({
     required this.id,
     required this.businessId,
@@ -176,6 +180,7 @@ class TOModel {
     this.deletedAt,
     required this.creatorUID,
     required this.createdAt,
+    this.storedCreatedAt,
   });
 
   // ── 직렬화 ────────────────────────────────────────
@@ -251,6 +256,7 @@ class TOModel {
       creatorUID: data['creatorUID'] as String? ?? '',
       // createdAt 누락 시 DateTime.now() 폴백 — 서버 미저장 임시 객체나 마이그레이션 전 문서에서 발생 가능
       createdAt: parseTimestampNullable(data['createdAt']) ?? DateTime.now(),
+      storedCreatedAt: parseTimestampNullable(data['createdAt']),
     );
   }
 
@@ -403,6 +409,7 @@ class TOModel {
       workStartAvailableUntil: clearWorkStartAvailableUntil ? null : (workStartAvailableUntil ?? this.workStartAvailableUntil),
       creatorUID: creatorUID ?? this.creatorUID,
       createdAt: createdAt ?? this.createdAt,
+      storedCreatedAt: storedCreatedAt,
       isDeleted: isDeleted ?? this.isDeleted,
       deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
     );
@@ -459,7 +466,17 @@ class TOModel {
 
   // totalRequired=0 이면 isFull=false (항상 모집 중) — "인원 제한 없음" 의도한 설계
   // TO 생성 시 totalRequired=0으로 저장하면 슬롯 수 무제한으로 운영 가능
-  bool get isFull => totalRequired > 0 && totalConfirmed >= totalRequired;
+  //
+  // [INVITE-CAPACITY] 슬롯(flex) 공고는 **합계로 판정하지 않는다**.
+  //   totalRequired 는 만료된 날짜의 필요 인원이 빠진 값(서버 TO-M-06)이고
+  //   totalConfirmed 는 모든 날짜를 센다 — 모집단이 다르다. 그래서
+  //     닫힌 날 2/2 확정(필요 차감) + 열린 날 0/2  →  합계 2 ≥ 2  →  "꽉 참"
+  //   이 되어 열린 날의 확정 버튼이 숨고 근로자 화면은 "모집 종료"라고 했다.
+  //   서버가 슬롯 status 에서 정한 FULL(열린 슬롯이 모두 찼다)을 그대로 따른다.
+  //   FULL ≠ DONE: 닫힌 날짜의 미충원은 이 값으로 말하지 않는다(날짜 행은 slot.isFull).
+  bool get isFull => isFlexType
+      ? status == TOStatus.full
+      : totalRequired > 0 && totalConfirmed >= totalRequired;
   bool get isActive => status == TOStatus.active;
   bool get isScheduledPublish => publishMode == 'scheduled';
 

@@ -1,6 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 // Models
 import '../../models/core/business_model.dart';
@@ -9,16 +11,18 @@ import '../../models/core/business_model.dart';
 import '../../providers/user_provider.dart';
 
 // Services
-import '../../services/storage_service.dart';
 
 // Utils
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/image_helper.dart';
+import '../../utils/text_layout.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
+import '../../widgets/common/first_line_icon.dart';
+import '../../widgets/common/keep_words_text.dart';
 import '../../utils/navigation_helper.dart';
 
 // Screen
@@ -28,6 +32,7 @@ import 'business_list_reads.dart';
 import 'to_management/create_to_screen.dart';
 import '../../widgets/common/app_menu_sheet.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/concept_tokens.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../../widgets/common/app_empty_state.dart';
@@ -36,6 +41,98 @@ import '../common/notification_screen.dart';
 
 /// 📋 내 사업장 관리 화면 (관리자 전용)
 class BusinessListScreen extends StatefulWidget {
+  /// [BUSINESS-ARCHIVE] 서버 운영 종료 호출 — 테스트가 바꿔 끼울 수 있다.
+  ///   두 번째 인자는 사용자가 확인한 사전 조회다. 서버는 실행 직전 원장을 다시 세어
+  ///   이것과 다르면 종료하지 않는다.
+  @visibleForTesting
+  static Future<void> Function(String businessId, Map<String, dynamic> expected)?
+      debugArchive;
+
+  /// [BUSINESS-ARCHIVE] 서버 사전 조회(preview) — 테스트가 바꿔 끼울 수 있다.
+  @visibleForTesting
+  static Future<Map<String, dynamic>> Function(String businessId)? debugPreview;
+
+  /// 사전 조회의 건수 키 — 하나라도 없으면 "모른다".
+  static const _previewKeys = <String>[
+    'inProgressShifts', 'ongoingLongTerm', 'contractPendingWorked',
+    'openPostings', 'pendingApplications', 'invites', 'futureConfirmed', 'contractsVoided',
+    'keptStarted', 'contractsKept', 'unpaidWages', 'workedUncalculated',
+    'interimPending', 'interimApproved',
+  ];
+
+  static Map<String, int>? _counts(Map<String, dynamic>? preview) {
+    if (preview == null || preview['truncated'] is! bool) return null;
+    final out = <String, int>{};
+    for (final k in _previewKeys) {
+      final v = preview[k];
+      if (v is! int || v < 0) return null;
+      out[k] = v;
+    }
+    return out;
+  }
+
+  /// [BUSINESS-ARCHIVE] 사전 해결이 필요하면 그 안내, 아니면 null(순수 함수).
+  ///
+  ///   진행 중 출근(퇴근 전)과 진행 중 장기 근무는 종료가 일괄 취소하지 않는다 —
+  ///   장기 근무를 어떻게 끝낼지 정해진 규칙이 없다. 기존 경로로 먼저 정리해야 한다.
+  ///   건수를 모르면(키 누락·상한 초과) 역시 종료할 수 없다.
+  @visibleForTesting
+  static String? archiveBlockedMessage(Map<String, dynamic>? preview) {
+    final c = _counts(preview);
+    if (c == null) return '정리할 근무를 모두 확인하지 못해 지금은 종료할 수 없어요.\n잠시 후 다시 시도해 주세요.';
+    if (preview!['truncated'] == true) {
+      // [4단계 정정] 사용자가 처리할 일이 아니다 — 서버가 건수를 끝까지 세지 못한 "판정 불가"다.
+      return '기록이 많아 정리 대상을 끝까지 확인하지 못했어요.\n'
+          '확인되지 않은 상태로는 운영을 종료하지 않아요. 따로 처리하실 일은 없어요.';
+    }
+    final lines = <String>[];
+    if (c['inProgressShifts']! > 0) {
+      lines.add('· 출근 후 아직 퇴근하지 않은 근무 ${c['inProgressShifts']}건 — 퇴근 처리 후 종료할 수 있어요');
+    }
+    if (c['ongoingLongTerm']! > 0) {
+      // [4단계 정정] 기존 해지는 종료일이 계약 종료일(workEndDate)로 고정돼 앞당길 수 없다 —
+      //   실행할 수 없는 해결 경로를 안내하지 않는다. 앞당겨 끝내는 절차는 제품 결정 전이다.
+      lines.add('· 진행 중인 장기 근무 ${c['ongoingLongTerm']}건 — 지금은 계약 기간 중에 '
+          '앞당겨 끝내는 기능이 없어요. 계약 기간이 끝나거나 근로자의 퇴사가 처리된 뒤 '
+          '운영을 종료할 수 있어요');
+    }
+    if (c['contractPendingWorked']! > 0) {
+      // [ARCHIVE-CLOSED-TO-PREFLIGHT] 실제로 일했는데 계약서 서명 전(계약 대기)인 근무.
+      //   종료 뒤에는 서명·확정·취소 어느 것도 할 수 없다 — 지금 실행할 수 있는 길은
+      //   계약서를 보내 근로자 서명을 받는 것 하나다(계약 관리 → 미발송·서명 대기).
+      lines.add('· 계약서 서명 전에 이미 일한 근무 ${c['contractPendingWorked']}건 — 계약 관리에서 '
+          '계약서를 보내 근로자 서명을 받은 뒤 운영을 종료할 수 있어요');
+    }
+    if (lines.isEmpty) return null;
+    return '운영을 종료하기 전에 먼저 정리해야 할 근무가 있어요.\n\n${lines.join('\n')}';
+  }
+
+  /// [BUSINESS-ARCHIVE] 사전 조회 결과로 확인 문구를 만든다(순수 함수).
+  ///
+  ///   건수 중 하나라도 없거나 0 이상의 정수가 아니면 null — 모르는 것을 0건으로
+  ///   말하지 않는다. 사전 해결 항목이 남아 있어도 null(확인창을 띄우지 않는다).
+  @visibleForTesting
+  static String? archiveConfirmMessage(String name, Map<String, dynamic>? preview) {
+    final c = _counts(preview);
+    if (c == null || archiveBlockedMessage(preview) != null) return null;
+    final b = StringBuffer()
+      ..writeln('$name 운영을 종료할까요? 일시 정지가 아니라 앞으로의 운영을 마치는 거예요.') // [DU400 후보] 해요체
+      ..writeln()
+      ..writeln('종료하면서 정리되는 것 (근로자에게 알림)')
+      ..writeln('· 모집 중·예약 공고 ${c['openPostings']}건 마감')
+      ..writeln('· 대기 중인 지원 ${c['pendingApplications']}건 마감 (마감된 공고 포함)')
+      ..writeln('· 초대 ${c['invites']}건 철회')
+      ..writeln('· 시작 전 확정·계약 대기 근무 ${c['futureConfirmed']}건 취소')
+      ..writeln('· 취소되는 근무의 미서명 계약 ${c['contractsVoided']}건 무효')
+      ..writeln()
+      ..writeln('종료 후에도 남아 계속 처리하는 것')
+      ..writeln('· 이미 시작했거나 지난 확정 근무 ${c['keptStarted']}건 · 그 미서명 계약 ${c['contractsKept']}건')
+      ..writeln('· 미지급 급여 ${c['unpaidWages']}건 · 계산 전 근무 ${c['workedUncalculated']}건')
+      ..writeln('· 중간정산 대기 ${c['interimPending']}건 · 승인 후 미이체 ${c['interimApproved']}건')
+      ..write('기록은 지워지지 않고, 급여 탭과 계약 관리에서 계속 처리할 수 있어요.'); // [DU400 후보] 해요체
+    return b.toString();
+  }
+
   const BusinessListScreen({super.key, this.reads});
 
   /// [R7-PREDEVICE-STABILIZATION.1A] 읽기 경계. production 은 null —
@@ -60,6 +157,45 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   bool _loadFailed = false;
   bool _isDeleting = false;
   bool _fetchInProgress = false; // 중복 호출 방지 (_isLoading과 분리)
+
+  // [H-3 E N2] 운영 종료 결과 — overlay 토스트 대신 본문 위 결과 띠 하나(둘째 카드 · 버튼 가림 0).
+  //   성공 2s(successBg 면 · successDark 글 · check) / 오류 4s(errorBg 면 · errorDark 글 · error_outline) · 다음 결과가 바로 교체 · 만료 · dispose 로만 정리.
+  //   성공 뒤 재조회(로딩 · 목록 교체)는 이 결과를 지우지 않는다 — 결과는 행동의 것이지 조회의 것이 아니다.
+  ({String text, bool error})? _archiveResult;
+  Timer? _archiveResultTimer;
+
+  void _showArchiveResult(String text, {required bool error}) {
+    _archiveResultTimer?.cancel();
+    setState(() => _archiveResult = (text: text, error: error));
+    _archiveResultTimer = Timer(Duration(seconds: error ? 4 : 2), () {
+      if (mounted) setState(() => _archiveResult = null);
+    });
+  }
+
+  // [판정51] 옅은 의미 바탕 + 진한 글 · 아이콘(원문 label 1) — Standards §12.2 넓은 면은 진한 의미색으로 채우지 않는다. 본문 안이라 다른 내용을 덮지 않는다.
+  //   successDark / successBg 6.47:1 · errorDark / errorBg 5.80:1. 반경 · 패딩 · 아이콘 · 간격 · 글 · 줄바꿈 그대로(테두리 추가 0).
+  Widget _archiveResultBand(({String text, bool error}) r) {
+    final ink = r.error ? AppColors.errorDark : AppColors.successDark;
+    final style = TextStyle(color: ink, fontSize: 14, fontWeight: FontWeight.w500);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(color: r.error ? AppColors.errorBg : AppColors.successBg, borderRadius: BorderRadius.circular(12)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          FirstLineIcon(r.error ? Icons.error_outline : Icons.check_circle_outline, size: 20, color: ink, textStyle: style),
+          const SizedBox(width: 12),
+          Expanded(child: KeepWordsText(r.text, style: style)),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _archiveResultTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -114,7 +250,8 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       debugPrint('❌ 사업장 로드 실패: $e');
       if (mounted) {
         setState(() => _loadFailed = true);
-        ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다');
+        // [DU410] 토스트를 띄우지 않는다 — `_loadFailed` 면 오류 본문(제목 · 부제 · 다시 시도)이 늘 그려져
+        //   같은 말을 두 번 하게 된다. 로그인 정보를 읽지 못한 경로(위 ownerId == null)도 토스트가 없다.
       }
     } finally {
       _fetchInProgress = false;
@@ -122,62 +259,82 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     }
   }
 
-  /// 사업장 삭제
-  Future<void> _deleteBusiness(BusinessModel business) async {
+
+  /// [BUSINESS-ARCHIVE] 사업장 운영 종료(비활성화·보관).
+  ///
+  /// 이전에는 사업장 문서를 앱이 직접 지웠고, 서버 cascade 가 공고를 하드 삭제해
+  /// 모든 지원서(확정·실근무 포함)와 중간정산·급여 변경 이력까지 사라졌다. 이제
+  /// 서버(callableArchiveOwnBusiness)가 비활성화하고, 진행 중인 공고·지원·초대·
+  /// 미서명 계약은 감사 가능한 상태 전이로 정리된다. 기록은 지우지 않는다.
+  Future<void> _archiveBusiness(BusinessModel business) async {
     if (_isDeleting) return;
     setState(() => _isDeleting = true);
     try {
-    final confirmed = await DialogHelper.showDangerConfirm(
-      context,
-      title: '사업장 삭제',
-      message: '${business.name}을(를) 삭제하시겠습니까?\n모든 공고와 데이터가 함께 삭제됩니다.',
-      confirmText: '삭제',
-    );
-
-    if (confirmed != true || !mounted) return;
-
-      final bizRef = FirebaseFirestore.instance.collection('businesses').doc(business.id);
-
-      // 1. Storage URL 미리 수집 (Firestore 삭제 전에 읽어야 함)
-      final workTypesSnapshot = await bizRef.collection('workTypes').get();
-
-      // 2. Firestore 먼저 삭제 — 실패 시 Storage는 건드리지 않아 일관성 유지
-      // onBusinessDeleted Cloud Function이 tos/applications/attendance를 추가 정리함
-      final memberDocs = await bizRef.collection('members').get();
-      // 500 ops 한도 방어: workTypes + members 합이 499 초과 시 청크로 분할 커밋
-      final allSubRefs = [
-        ...workTypesSnapshot.docs.map((d) => d.reference),
-        ...memberDocs.docs.map((d) => d.reference),
-      ];
-      for (int i = 0; i < allSubRefs.length; i += 499) {
-        final chunk = allSubRefs.skip(i).take(499).toList();
-        final batch = FirebaseFirestore.instance.batch();
-        for (final ref in chunk) { batch.delete(ref); }
-        await batch.commit();
+      // 1) 사전 조회 — 실패하면 0건으로 보이지 않고 여기서 멈춘다.
+      Map<String, dynamic>? preview;
+      try {
+        final fetch = BusinessListScreen.debugPreview ??
+            (String id) async {
+              final r = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                  .httpsCallable('callableArchiveOwnBusiness')
+                  .call<Map<String, dynamic>>({'businessId': id, 'preview': true});
+              final p = r.data['preview'];
+              return p is Map ? Map<String, dynamic>.from(p) : <String, dynamic>{};
+            };
+        preview = await fetch(business.id);
+      } catch (e) {
+        debugPrint('❌ 운영 종료 사전 조회 실패: $e');
       }
-      // 서브컬렉션 삭제 완료 후 부모 문서 삭제
-      await bizRef.delete();
-
-      // 3. Firestore 삭제 성공 후 Storage 정리 — StorageService 경유(CF로 businesses/ 삭제)
-      final urlsToDelete = <String>[
-        if (business.mainImageUrl != null) business.mainImageUrl!,
-        ...?business.imageUrls,
-        ...?business.transportImageUrls,
-        for (final doc in workTypesSnapshot.docs) ...[
-          if (doc.data()['thumbnailUrl'] != null) doc.data()['thumbnailUrl'] as String,
-          ...List<String>.from(doc.data()['images'] ?? []),
-        ],
-      ];
-      if (urlsToDelete.isNotEmpty) {
-        await StorageService().deleteMultipleByUrls(urlsToDelete);
-      }
-          
       if (!mounted) return;
-      ToastHelper.showSuccess('사업장이 삭제되었습니다');
-      _loadBusinesses();
+      // 2) 확인 → 실행. 서버가 실행 직전 다시 센 결과가 다르면 새 결과로 다시 묻는다
+      //    (최대 3번 — 계속 바뀌면 멈춘다).
+      for (var round = 0; round < 3; round++) {
+        final blocked = BusinessListScreen.archiveBlockedMessage(preview);
+        if (blocked != null) {
+          await DialogHelper.showError(context, title: '사업장 운영 종료', message: blocked);
+          return;
+        }
+        final message = BusinessListScreen.archiveConfirmMessage(business.name, preview);
+        if (message == null) {
+          _showArchiveResult('정리될 공고·지원·근무를 확인하지 못했어요. 잠시 후 다시 시도해 주세요', error: true); // [H-3 E N2]
+          return;
+        }
+        final confirmed = await DialogHelper.showDangerConfirm(
+          context,
+          title: round == 0 ? '사업장 운영 종료' : '정리 대상이 바뀌었어요',
+          message: message,
+          confirmText: '운영 종료',
+        );
+        if (confirmed != true || !mounted) return;
+        final archive = BusinessListScreen.debugArchive ??
+            (String id, Map<String, dynamic> expected) =>
+                FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                    .httpsCallable('callableArchiveOwnBusiness')
+                    .call<Map<String, dynamic>>({'businessId': id, 'expected': expected});
+        try {
+          await archive(business.id, preview!);
+        } on FirebaseFunctionsException catch (e) {
+          final d = e.details;
+          final code = d is Map ? d['code'] : null;
+          final fresh = d is Map && d['preview'] is Map
+              ? Map<String, dynamic>.from(d['preview'] as Map)
+              : null;
+          if ((code == 'ARCHIVE_PREVIEW_CHANGED' || code == 'ARCHIVE_BLOCKED') && fresh != null) {
+            if (!mounted) return;
+            preview = fresh; // 새 결과로 다시 보여 준다
+            continue;
+          }
+          rethrow;
+        }
+        if (!mounted) return;
+        _showArchiveResult('사업장 운영을 종료했어요', error: false); // [H-3 E N2]
+        _loadBusinesses(forceServer: true);
+        return;
+      }
+      if (mounted) _showArchiveResult('정리 대상이 계속 바뀌고 있어요. 잠시 후 다시 시도해 주세요', error: true); // [H-3 E N2]
     } catch (e) {
-      debugPrint('❌ 사업장 삭제 실패: $e');
-      if (mounted) ToastHelper.showError('사업장 삭제에 실패했습니다');
+      debugPrint('❌ 사업장 운영 종료 실패: $e');
+      if (mounted) _showArchiveResult('사업장 운영을 종료하지 못했어요', error: true); // [H-3 E N2]
     } finally {
       if (mounted) setState(() => _isDeleting = false);
     }
@@ -217,13 +374,25 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       ],
       // [R7-PREDEVICE-STABILIZATION.1A] ERROR → SUCCESS_ZERO → 목록 순서.
       //   실패를 먼저 가려내야 "없음" 이 **정말 없음** 을 뜻한다.
-      body: _isLoading
-          ? const LoadingWidget()
-          : _loadFailed
-              ? _buildErrorState(context)
-              : _businesses.isEmpty
-                  ? _buildEmptyState(context, isSubAdmin)
-                  : _buildBusinessList(context, theme, isSubAdmin),
+      // [H-3 E N2] 본문 트리는 늘 Column[결과 띠?, Expanded(기존 본문)] — 성공 뒤 재조회 로딩 중에도 띠가 남는다.
+      body: Column(
+        children: [
+          if (_archiveResult != null)
+            Padding(
+              padding: EdgeInsets.fromLTRB(ResponsiveHelper.spacing(context, 16), ResponsiveHelper.spacing(context, 8), ResponsiveHelper.spacing(context, 16), 0),
+              child: _archiveResultBand(_archiveResult!),
+            ),
+          Expanded(
+            child: _isLoading
+                ? const LoadingWidget()
+                : _loadFailed
+                    ? _buildErrorState(context)
+                    : _businesses.isEmpty
+                        ? _buildEmptyState(context, isSubAdmin)
+                        : _buildBusinessList(context, theme, isSubAdmin),
+          ),
+        ],
+      ),
     );
   }
 
@@ -265,14 +434,14 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     if (isSubAdmin) {
       return const AppEmptyState(
         icon: Icons.business_outlined,
-        title: '배정된 사업장이 없습니다',
+        title: '배정된 사업장이 없어요',
         subtitle: '권한을 부여한 관리자에게 사업장 배정을 확인해 주세요',
       );
     }
     return AppEmptyState(
       icon: Icons.business_outlined,
-      title: '등록된 사업장이 없습니다',
-      subtitle: '사업장을 등록하고 공고를 관리해보세요',
+      title: '등록된 사업장이 없어요',
+      subtitle: '사업장을 등록하고 공고를 관리해 보세요',
       action: CommonWidgets.primaryButton(
         context: context,
         text: '사업장 등록하기',
@@ -287,6 +456,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     // SubAdmin은 사업장 추가 버튼 불필요
     final itemCount = isSubAdmin ? _businesses.length : _businesses.length + 1;
     return ListView.builder(
+      key: const PageStorageKey<String>('business_list'), // [H-3 E] 재조회로 다시 붙어도 이전 offset(위쪽 기준 · 새 길이에 clamp)
       padding: ResponsiveHelper.listPadding(context),
       itemCount: itemCount,
       itemBuilder: (context, index) {
@@ -310,30 +480,8 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       margin: EdgeInsets.only(
         bottom: ResponsiveHelper.spacing(context, 16),
       ),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-            spreadRadius: 1,
-          ),
-          BoxShadow(
-            color: theme.primaryColor.withValues(alpha: 0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-        // 승인 대기 시 테두리
-        border: business.isApproved 
-            ? null 
-            : Border.all(
-                color: theme.colorScheme.error.withValues(alpha: 0.3),
-                width: 1.5,
-              ),
-      ),
+      // [DU392] 카드 표면 = 시안 raised(흰 · 반경 16 · 옅은 테두리 1 · 낮은 그림자 1). 승인 대기는 배지가 말한다(빨강 외곽선 제거).
+      decoration: ConceptSurface.raised(),
       child: InkWell(
         onTap: () {
           NavigationHelper.push<bool>(
@@ -347,95 +495,124 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         borderRadius: BorderRadius.circular(16),
         child: Padding(
           padding: ResponsiveHelper.listPadding(context),
-          child: Row(
-            children: [
-              // 이미지
-              _buildBusinessImage(context, business),
-              
-              SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-              
-              // 정보
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // 사업장명 + 승인 상태
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            business.name,
-                            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        // 승인 상태 배지
-                        Container(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: ResponsiveHelper.spacing(context, 8),
-                            vertical: ResponsiveHelper.spacing(context, 4),
-                          ),
-                          decoration: BoxDecoration(
-                            color: business.isApproved 
-                                ? theme.colorScheme.primaryContainer
-                                : theme.colorScheme.errorContainer,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            business.isApproved ? '승인됨' : '승인대기',
-                            style: ResponsiveHelper.tinyStyle(context).copyWith(
-                              color: business.isApproved 
-                                  ? theme.colorScheme.onPrimaryContainer
-                                  : theme.colorScheme.onErrorContainer,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                    
-                    // 주소
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.location_on_outlined,
-                          size: ResponsiveHelper.iconSize(context, 14),
-                          color: AppColors.grey600,
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                        Expanded(
-                          child: Text(
-                            business.address,
-                            style: ResponsiveHelper.smallStyle(context).copyWith(
-                              color: AppColors.grey600,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                    
-                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                    
-                    // 빠른 정보 (평점, 주차, 식사)
-                    _buildQuickInfo(context, business),
-                  ],
-                ),
-              ),
-              
-              // 더보기 메뉴
-              _buildMoreMenu(context, theme, business),
-            ],
-          ),
+          // [DU387] 큰 글자(배율 ≥ 1.3)에서는 한 줄 [이미지 · 정보 · 더보기]가 정보 칸을 거의 없앴다(B 이름 폭 20–49px · 이름이 보이지 않음).
+          //   그때는 [이미지 · 더보기] 줄 아래로 정보를 카드 폭으로 쌓는다 — 글자를 줄이지 않는 배치 전환.
+          child: Builder(builder: (context) {
+            final info = _buildBusinessInfo(context, theme, business);
+            final large = MediaQuery.textScalerOf(context).scale(16) / 16 >= 1.3;
+            if (large) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildBusinessImage(context, business),
+                      const Spacer(),
+                      _buildMoreMenu(context, theme, business),
+                    ],
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                  info,
+                ],
+              );
+            }
+            return Row(
+              children: [
+                // 이미지
+                _buildBusinessImage(context, business),
+                SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+                // 정보
+                Expanded(child: info),
+                // 더보기 메뉴
+                _buildMoreMenu(context, theme, business),
+              ],
+            );
+          }),
         ),
       ),
+    );
+  }
+
+  /// [DU387] 사업장 카드 정보 — 이름 · 상태 배지 / 주소 / 빠른 정보. 글자 크기 · 색 · 문구는 그대로, 배치만 바꾼다.
+  ///   사업장명은 말줄임 없이 낱말 단위로 줄을 바꾼다(identity 표시 · 의미는 원문).
+  ///   상태 배지는 이름 뒤에 들어가면 같은 줄, 아니면 다음 줄(Wrap). 주소도 말줄임 없이 낱말 사이에서 줄을 바꾼다.
+  Widget _buildBusinessInfo(BuildContext context, ThemeData theme, BusinessModel business) {
+    final addressStyle = ResponsiveHelper.smallStyle(context).copyWith(
+      color: AppColors.grey600,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 사업장명 + 승인 상태
+        Wrap(
+          spacing: ResponsiveHelper.spacing(context, 8),
+          runSpacing: ResponsiveHelper.spacing(context, 4),
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(
+              TextLayout.identity(business.name),
+              semanticsLabel: business.name,
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            // 승인 상태 배지
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 8),
+                vertical: ResponsiveHelper.spacing(context, 4),
+              ),
+              // [DU392] 상태 필 — 반경 8 · 13/700, 의미 짝(승인 = 낮은 강조 brand · 승인 대기 = 주의 · 운영 종료/중지 = 중립)
+              decoration: BoxDecoration(
+                color: business.isDeactivated
+                    ? AppColors.grey100
+                    : business.isApproved
+                        ? AppColors.brandSurface
+                        : AppColors.warningBg,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                // [BUSINESS-ARCHIVE] 운영 종료를 '승인대기'로 말하지 않는다.
+                business.operationStatusLabel,
+                style: ConceptText.pill(business.isDeactivated
+                    ? AppColors.textSecondary
+                    : business.isApproved
+                        ? AppColors.brand
+                        : AppColors.warningDark),
+              ),
+            ),
+          ],
+        ),
+
+        SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+
+        // 주소
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            FirstLineIcon(
+              Icons.location_on_outlined,
+              size: ResponsiveHelper.iconSize(context, 14),
+              color: AppColors.grey600,
+              textStyle: addressStyle,
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+            Expanded(
+              child: Text(
+                TextLayout.keepWords(business.address),
+                semanticsLabel: business.address,
+                style: addressStyle,
+              ),
+            ),
+          ],
+        ),
+
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+
+        // 빠른 정보 (평점, 주차, 식사)
+        _buildQuickInfo(context, business),
+      ],
     );
   }
 
@@ -467,69 +644,96 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   }
 
   /// 빠른 정보 (평점, 주차, 식사)
+  ///   [DU395] 라벨 = '주차 가능/불가' · '식사 제공/미제공'(소급 24 §3 — 판정식 그대로). 세 항목이 한 줄에 들어가면
+  ///   구분선 있는 한 줄(원 배치), 안 들어가면(좁은 폭 · 큰 글자) 구분선 없이 항목 단위로 다음 줄로 흐른다.
+  ///   말줄임 · 글자 축소 0, 구분선이 줄 끝/처음에 혼자 남지 않는다. 라벨 안은 낱말 사이에서만 줄을 바꾼다.
   Widget _buildQuickInfo(BuildContext context, BusinessModel business) {
-    return Row(
-      children: [
-        // 평점
-        if (business.rating != null) ...[
-          Icon(
-            Icons.star,
-            size: ResponsiveHelper.iconSize(context, 14),
-            color: AppColors.amberDark,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-          Flexible(
-            child: Text(
-              business.rating!.toStringAsFixed(1),
-              overflow: TextOverflow.ellipsis,
-              style: ResponsiveHelper.smallStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          Container(
-            width: 1,
-            height: 12,
-            color: AppColors.grey300,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-        ],
-        
-        // 주차
-        Flexible(
-          child: Text(
-            business.parkingAvailable ? '주차O' : '주차X',
-            overflow: TextOverflow.ellipsis,
-            style: ResponsiveHelper.smallStyle(context).copyWith(
-              color: business.parkingAvailable ? AppColors.successDark : AppColors.grey500,
-            ),
-          ),
-        ),
+    final hasMeal = business.mealsProvided != null && business.mealsProvided!.isNotEmpty;
+    final parkingLabel = business.parkingAvailable ? '주차 가능' : '주차 불가';
+    final mealLabel = hasMeal ? '식사 제공' : '식사 미제공';
+    final ratingText = business.rating?.toStringAsFixed(1);
+    final ratingStyle = ResponsiveHelper.smallStyle(context).copyWith(
+      fontWeight: FontWeight.bold,
+    );
+    final parkingStyle = ResponsiveHelper.smallStyle(context).copyWith(
+      color: AppColors.textTertiary /* [판정55 · DU418] 단순 사실(주차 가능/불가) = 중립 메타색 — 긍정 · 부정 같은 색, 흰 카드 위 5.25 */,
+    );
+    final mealStyle = ResponsiveHelper.smallStyle(context).copyWith(
+      color: AppColors.textTertiary /* [판정55 · DU418] 단순 사실(식사 제공/미제공) = 중립 메타색 — 긍정 · 부정 같은 색, 흰 카드 위 5.25 */,
+    );
+    final iconSize = ResponsiveHelper.iconSize(context, 14);
+    final starGap = ResponsiveHelper.spacing(context, 2);
+    final gap = ResponsiveHelper.spacing(context, 8);
 
-        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-        Container(
-          width: 1,
-          height: 12,
-          color: AppColors.grey300,
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-
-        // 식사
-        Flexible(
-          child: Text(
-            business.mealsProvided != null && business.mealsProvided!.isNotEmpty
-                ? '식사O'
-                : '식사X',
-            overflow: TextOverflow.ellipsis,
-            style: ResponsiveHelper.smallStyle(context).copyWith(
-              color: business.mealsProvided != null && business.mealsProvided!.isNotEmpty
-                  ? AppColors.successDark
-                  : AppColors.grey500,
+    final items = <Widget>[
+      // 평점
+      if (ratingText != null)
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.star,
+              size: iconSize,
+              color: AppColors.amberDark,
             ),
-          ),
+            SizedBox(width: starGap),
+            Text(ratingText, style: ratingStyle),
+          ],
         ),
-      ],
+      // 주차
+      Text(TextLayout.keepWords(parkingLabel), semanticsLabel: parkingLabel, style: parkingStyle),
+      // 식사
+      Text(TextLayout.keepWords(mealLabel), semanticsLabel: mealLabel, style: mealStyle),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Text 가 그리는 기준과 같게 잰다 — 둘레 기본 글자 병합 · 실제 배율 · locale(DU284 교훈)
+        double oneLine(String text, TextStyle style) {
+          final eff = style.inherit ? DefaultTextStyle.of(context).style.merge(style) : style;
+          final tp = TextPainter(
+            text: TextSpan(text: text, style: eff),
+            textDirection: TextDirection.ltr,
+            textScaler: MediaQuery.textScalerOf(context),
+            locale: Localizations.maybeLocaleOf(context),
+          )..layout();
+          final w = tp.width;
+          tp.dispose();
+          return w;
+        }
+
+        final divider = gap * 2 + 1;
+        final need = (ratingText != null ? iconSize + starGap + oneLine(ratingText, ratingStyle) + divider : 0) +
+            oneLine(parkingLabel, parkingStyle) +
+            divider +
+            oneLine(mealLabel, mealStyle);
+        if (need + 1 <= constraints.maxWidth) {
+          // 한 줄 — 원 배치(항목 사이 구분선)
+          return Row(
+            children: [
+              for (var i = 0; i < items.length; i++) ...[
+                if (i > 0) ...[
+                  SizedBox(width: gap),
+                  Container(
+                    width: 1,
+                    height: 12,
+                    color: AppColors.grey300,
+                  ),
+                  SizedBox(width: gap),
+                ],
+                items[i],
+              ],
+            ],
+          );
+        }
+        // 줄바꿈 — 구분선 없이 항목 단위로 흐른다(혼자 남는 구분선 0)
+        return Wrap(
+          spacing: gap * 1.5,
+          runSpacing: ResponsiveHelper.spacing(context, 4),
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: items,
+        );
+      },
     );
   }
 
@@ -539,7 +743,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       icon: Icon(
         Icons.more_vert,
         size: ResponsiveHelper.iconSize(context, 24),
-        color: theme.primaryColor,
+        color: AppColors.grey600, // [DU396] 보조 행동(메뉴 열기) 중립 — 흰 위 4.61
       ),
       tooltip: '메뉴',
       onPressed: () => _showMoreMenuSheet(context, theme, business),
@@ -568,7 +772,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
           AppMenuSheetItem(
             icon: Icons.info_outline,
             label: '상세보기',
-            color: AppColors.info,
+            color: AppColors.brand, // [DU396] 탐색 = brand 계열(정보 파랑 상태색 아님)
             onTap: () => NavigationHelper.push<bool>(
               context,
               destination: BusinessDetailScreen(business: business),
@@ -581,7 +785,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
             AppMenuSheetItem(
               icon: Icons.edit,
               label: '수정',
-              color: AppColors.warning,
+              color: AppColors.brand, // [DU396] 일반 진행 = brand 계열(주의 주황 상태색 아님)
               onTap: () => NavigationHelper.push<bool>(
                 context,
                 destination: BusinessFormScreen(business: business),
@@ -591,17 +795,20 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               ),
             ),
         ],
-        if (!isSubAdmin)
+        // [BUSINESS-ARCHIVE] 소유자만(서버도 같은 주체), 이미 종료된 사업장에는 없다.
+        if (!isSubAdmin &&
+            business.ownerId == context.read<UserProvider>().currentUser?.uid &&
+            !business.isDeactivated)
           [
             AppMenuSheetItem(
-              icon: Icons.delete,
-              label: '삭제',
-              color: AppColors.error,
-              isDanger: true,
-              onTap: () => _deleteBusiness(business),
+              icon: Icons.storefront_outlined,
+              label: '운영 종료',
+              // [DU396] 진입은 중립 — 사전 조회 → 위험 확인창(최종 '운영 종료' errorDark)으로 이어진다. 확인 · 실행 경로 그대로
+              color: AppColors.grey600,
+              isDanger: false,
+              onTap: () => _archiveBusiness(business),
             ),
-          ],
-      ],
+          ],      ],
     );
   }
 
@@ -655,7 +862,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
                 Text(
                   '새 사업장 추가',
                   style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    color: theme.primaryColor,
+                    color: AppColors.brandDark, // [DU396] 읽는 라벨 = brandDark(아이콘 · outline 은 brand 그대로)
                     fontWeight: FontWeight.bold,
                   ),
                 ),

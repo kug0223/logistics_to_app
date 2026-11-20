@@ -10,12 +10,14 @@ import '../../providers/user_provider.dart';
 
 // Utils
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/image_helper.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
+import '../../widgets/common/first_line_icon.dart';
 import '../../widgets/maps/kakao_map_widget.dart';
 import '../../widgets/maps/full_map_dialog.dart';
 
@@ -735,7 +737,10 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                             Clipboard.setData(ClipboardData(text: fullAddress));
                             ToastHelper.showSuccess('주소가 복사되었습니다');
                           },
-                          child: Row(
+                          // [DU1 구현91 S012] 실측 터치 68.2×19.0 — 공통 최소 48 높이 미만. 모양(아이콘+글자)은 그대로, 받는 높이만 48.
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(minHeight: 48),
+                            child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
@@ -751,6 +756,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                                 ),
                               ),
                             ],
+                          ),
                           ),
                         ),
                       ],
@@ -924,11 +930,36 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
           icon: Icons.warning_amber_outlined,
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-        CommonWidgets.infoCard(
-          context: context,
-          message: _currentBusiness.precautions!,
-          icon: Icons.info_outline,
-          color: AppColors.warningDark,
+        // [DU321] S033 업무 상세 '준비사항'과 같은 형식 — 흰 카드 · 경고 아이콘(warningDark) · 본문색 · 낱말 단위.
+        //   이전(DU1 구현91)은 공용 infoCard 의 카키 면 · 정보 아이콘 · yellowWarnText 라 같은 '준비사항'이 두 화면에서 달랐다.
+        Container(
+          width: double.infinity,
+          padding: ResponsiveHelper.cardPadding(context),
+          decoration: CommonWidgets.cardDecoration(),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // [DU452] 위 여백 1 · 고정 크기라 큰 글자에서 아이콘이 첫 줄 가운데보다 위에 떴다(B ≈ 13).
+              //   공용 FirstLineIcon 으로 본문(같은 스타일 · 줄 높이 1.5) 첫 줄 가운데에 둔다 — 크기는 그대로(DU361).
+              FirstLineIcon(
+                Icons.warning_amber_rounded,
+                size: ResponsiveHelper.iconSize(context, 20),
+                color: AppColors.warningDark,
+                textStyle: ResponsiveHelper.bodyStyle(context).copyWith(height: 1.5),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+              Expanded(
+                child: Text(
+                  TextLayout.phrases(_currentBusiness.precautions!),
+                  semanticsLabel: _currentBusiness.precautions!,
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                    color: AppColors.textPrimary,
+                    height: 1.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );

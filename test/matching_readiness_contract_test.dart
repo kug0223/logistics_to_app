@@ -93,8 +93,12 @@ void main() {
       expect(helper, contains('manualDecision: manualDec'));
       final gate = _flat(_codeOf(
           _sliceOf(rawCf, 'const confirmReviewGate =', '};')));
-      expect(gate, contains('matchingReadinessState: readiness.state'));
-      expect(gate, contains('matchingAutoMatchStatus: readiness.autoMatchStatus'));
+      // [INVITE-PARITY] 확정과 초대 수락이 같은 근거 함수를 쓴다.
+      expect(gate, contains('srvBuildMatchingProvenance('));
+      final builder = _flat(_codeOf(_sliceOf(rawCf,
+          'function srvBuildMatchingProvenance(', 'matchingAutoMatchStatus: readiness.autoMatchStatus')));
+      expect(builder, contains('matchingReadinessState: readiness.state'));
+      expect(rawCf, contains('matchingAutoMatchStatus: readiness.autoMatchStatus'));
     });
 
     test('07 assurance를 과장하지 않는다', () {
@@ -108,8 +112,10 @@ void main() {
     test('08 직접 확정이 새 helper를 쓴다', () {
       final gate = _flat(_codeOf(
           _sliceOf(rawCf, 'const confirmReviewGate =', '};')));
-      expect(gate,
-          contains('srvResolveMatchingReadiness(workerSnap.data(), reviewSnap.data())'));
+      // [DOC-LATE-DELETE.7] 예전 단언: srvResolveMatchingReadiness(workerSnap.data(), reviewSnap.data()).
+      //   같은 판정 함수를 쓰되, 객체 상태 필드가 없는 예전 문서는 지금 객체 확인 결과를 덧씌워 넘긴다.
+      expect(gate, contains('srvResolveMatchingReadiness('));
+      expect(gate, contains('srvWithLegacyIdCardObject(workerSnap.data(), confirmLegacy)'));
       // 옛 helper는 더 이상 확정을 막지 않는다.
       expect(gate, isNot(contains('srvResolveReviewReadiness')));
     });
@@ -117,7 +123,9 @@ void main() {
     test('09 초대 수락도 같은 helper를 쓴다', () {
       final accept = _flat(_codeOf(_sliceOf(rawCf,
           'export const callableAcceptTOInvitation = onCall(', '\n);')));
-      expect(accept, contains('srvResolveMatchingReadiness(freshUserData,'));
+      // [DOC-LATE-DELETE.7] 예전 단언: srvResolveMatchingReadiness(freshUserData, …). 판정 입력이 예전 문서 확인을 덧씌운 사본이 됐다.
+      expect(accept, contains('srvWithLegacyIdCardObject(freshUserData,'));
+      expect(accept, contains('srvResolveMatchingReadiness( acceptUserForReadiness,'));
       expect(accept, contains('acceptReadiness.ready'));
     });
 
@@ -154,15 +162,24 @@ void main() {
 
     test('13 초대 수락 게이트도 마찬가지', () {
       final slice = _flat(_codeOf(_sliceOf(rawCf,
-          'const acceptReviewSnap = await tx.get(', 'acceptReadiness.reason')));
+          'const acceptReviewSnap = await tx.get(',
+          // [INVITE-PREACCEPT] 관리자용 reason 대신 근로자용 코드로 끝난다.
+          '{inviteAcceptReadiness: acceptReadinessCode}')));
       expect(slice, isNot(contains('bankDecision')));
       expect(slice, isNot(contains('bankbookMatch')));
     });
 
     test('15 확정 차단 사유는 matchingReason 하나다', () {
       final d = _flat(_codeOf(_src(_detailPath)));
-      expect(d, contains('if (!r.matchingReady && r.matchingReason != null)'));
-      expect(d, contains('급여정보는 지급 전까지 확인하면 됩니다'));
+      // [ADMIN-DOC-REVIEW-UX] 차단 사유는 matchingReadiness 에서만 나온다 —
+      //   서버 matchingReason 원문(“지원자 상세에서…”)은 상세 안에서 자기
+      //   참조라, 같은 matchingState 로 상세용 문장(approvalBlockText)을 쓴다.
+      // [E2-INVITE-NEXT-ACTION] 초대는 기한이 지나면 ready 가 아니다 — 판정 원천은 그대로 matchingReady.
+      expect(d, contains('final ready = r.matchingReady && !inviteExpired;'));
+      expect(d, contains('r.inviteNextActionText('));
+      expect(d, contains('r.approvalBlockText'));
+      expect(d, contains('급여계좌는 지급 전까지 확인하면 돼요.'));
+      expect(d, isNot(contains('Text(r.matchingReason!')));
       // 옛 문장(사람 검토 기반 reason)은 확정 사유로 쓰지 않는다.
       expect(d, isNot(contains('if (!r.ready && r.reason != null)')));
     });
@@ -219,7 +236,8 @@ void main() {
       final dto = _flat(_codeOf(_sliceOf(rawCf,
           'export const callableGetApplicantDocumentReview = onCall(', '\n);')));
       expect(dto, contains('readiness: {'));
-      expect(dto, contains('matchingReadiness: srvResolveMatchingReadiness(u, reviewSnap.data())'));
+      // [DOC-LATE-DELETE.7] 예전 단언: matchingReadiness: srvResolveMatchingReadiness(u, reviewSnap.data()).
+      expect(dto, contains('matchingReadiness: srvResolveMatchingReadiness( srvWithLegacyIdCardObject(u, reviewLegacy), reviewSnap.data())'));
     });
 
     test('22 클라이언트도 두 값을 따로 담는다', () {
@@ -300,7 +318,8 @@ void main() {
       expect(accept, contains('freshUserData.passVerifiedAt'));
       expect(accept, contains('freshUserData.idCardImagePath'));
       expect(accept, contains('freshUserData.isIdVerified !== true'));
-      expect(accept, contains('srvResolveMatchingReadiness(freshUserData,'));
+      // [DOC-LATE-DELETE.7] 예전 단언: srvResolveMatchingReadiness(freshUserData, …).
+      expect(accept, contains('srvWithLegacyIdCardObject(freshUserData,'));
     });
 
     test('29 general integrity 검사도 그대로다', () {

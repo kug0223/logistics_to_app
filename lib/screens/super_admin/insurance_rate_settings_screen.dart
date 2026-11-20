@@ -10,7 +10,9 @@ import '../../providers/user_provider.dart';
 import '../../services/insurance_rate_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
+import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
@@ -19,7 +21,11 @@ import '../../widgets/dialogs/styled_dialog.dart';
 ///
 /// Firestore settings/wage_config.insuranceRates 에 저장
 class InsuranceRateSettingsScreen extends StatefulWidget {
-  const InsuranceRateSettingsScreen({super.key});
+  const InsuranceRateSettingsScreen({super.key, this.loadStored, this.save});
+
+  /// [.59] 시험용 경계 — null 이면 [InsuranceRateService.fetchStored] / [InsuranceRateService.saveRates].
+  final Future<Map<int, InsuranceRateModel>> Function()? loadStored;
+  final Future<void> Function(InsuranceRateModel rates, InsuranceRateModel? expected)? save;
 
   @override
   State<InsuranceRateSettingsScreen> createState() =>
@@ -30,6 +36,10 @@ class _InsuranceRateSettingsScreenState
     extends State<InsuranceRateSettingsScreen> {
   bool _isLoading = true;
   bool _isSaving = false;
+  /// [.59] 저장값을 읽지 못했다 — 내장값을 현재값처럼 보이거나 저장하지 않는다.
+  Object? _loadError;
+  /// [.59] 서버에 저장된 연도별 값(화면을 연 시점). 저장 직전 대조 기준이다.
+  Map<int, InsuranceRateModel> _stored = {};
 
   /// 연도별 데이터 (화면 편집용)
   Map<int, InsuranceRateModel> _rates = {};
@@ -59,15 +69,17 @@ class _InsuranceRateSettingsScreenState
   }
 
   Future<void> _load() async {
-    setState(() => _isLoading = true);
+    setState(() { _isLoading = true; _loadError = null; });
     try {
-      _rates = await InsuranceRateService.fetchAll();
+      final stored = await (widget.loadStored ?? InsuranceRateService.fetchStored)();
       if (!mounted) return;
-      // 현재 연도가 없으면 기본값 추가
+      _stored = Map.of(stored);
+      _rates = {...InsuranceRateService.builtinDefaults, ...stored};
+      // 현재 연도가 없으면 기본값 추가(저장값 없음 안내와 함께 보인다)
       _rates.putIfAbsent(_selectedYear, InsuranceRateModel.defaults2026);
       _updateControllers();
     } catch (e) {
-      if (mounted) ToastHelper.showError('데이터 로드 실패: $e');
+      if (mounted) setState(() => _loadError = e);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -87,19 +99,30 @@ class _InsuranceRateSettingsScreenState
   }
 
   Future<void> _save() async {
+    if (_loadError != null) return;
     final parsed = _ctrl.parse(_selectedYear);
     if (parsed == null) {
-      ToastHelper.showWarning('요율 값을 확인해주세요\n(0% 이상 100% 미만의 숫자만 입력 가능)');
+      // [.59] 범위는 앱 계산(InsuranceRateModel.fromMap)이 실제로 쓰는 상한과 같다 — 넘는 값은 앱이 잘라 쓰고
+      //   서버는 그대로 써서 미리보기와 확정액이 갈렸다(시험 25% → 앱 20% / 서버 25%).
+      ToastHelper.showWarning(TextLayout.keepWords('요율 값을 확인해주세요\n'
+          '국민연금·건강·고용 0~20%, 그 밖의 요율 0~30%, 비과세 한도 0~500,000원'));
       return;
     }
     setState(() => _isSaving = true);
     try {
-      await InsuranceRateService.saveRates(parsed);
+      await (widget.save ?? ((r, e) => InsuranceRateService.saveRates(r, expected: e)))(parsed, _stored[_selectedYear]);
       if (!mounted) return; // [BUG-수정] async gap 후 mounted 체크
       _rates[_selectedYear] = parsed;
+      _stored[_selectedYear] = parsed;
       ToastHelper.showSuccess('$_selectedYear년 보험료율 저장 완료');
+    } on InsuranceRatesChangedException catch (e) {
+      if (!mounted) return;
+      ToastHelper.showError(TextLayout.keepWords('${e.year}년 보험료율이 이 화면을 연 뒤 다른 곳에서 바뀌었습니다. 다시 불러온 값을 확인한 뒤 저장해 주세요'));
+      await _load();
     } catch (e) {
-      if (mounted) ToastHelper.showError('저장 실패: $e'); // [BUG-수정] catch Toast mounted 가드
+      // 저장 결과를 모른다 — 실패라고 단정하지 않고 다시 읽어 보인다.
+      if (mounted) ToastHelper.showError('저장 결과를 확인하지 못했습니다. 다시 불러온 값을 확인해 주세요');
+      if (mounted) await _load();
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -145,28 +168,91 @@ class _InsuranceRateSettingsScreenState
           icon: const Icon(Icons.add, color: Colors.white),
           tooltip: '연도 추가',
           // 저장 중 탭 시 _selectedYear 변경 → 저장 데이터 덮어쓰기 방지
-          onPressed: _isSaving ? null : _addYear,
+          onPressed: _isSaving || _isLoading || _loadError != null ? null : _addYear,
         ),
       ],
       body: _isLoading
           ? const LoadingWidget()
-          : Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 연도 목록
-                _buildYearList(theme),
-                const VerticalDivider(width: 1),
-                // 요율 편집
-                Expanded(child: _buildEditor(theme)),
-              ],
+          : _loadError != null
+              // [.59] 읽지 못했으면 내장값을 현재값처럼 보이거나 저장 버튼을 열지 않는다.
+              ? AppEmptyState(
+                  icon: Icons.cloud_off_outlined,
+                  title: '보험료율을 불러오지 못했습니다',
+                  subtitle: '저장된 값을 모르는 상태라 편집과 저장을 막았습니다.',
+                  action: TextButton(
+                    onPressed: _load,
+                    child: const Text('다시 시도'),
+                  ),
+                )
+              : _railWidth() <= MediaQuery.sizeOf(context).width / 3
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // 연도 목록
+                        _buildYearList(theme),
+                        const VerticalDivider(width: 1),
+                        // 요율 편집
+                        Expanded(child: _buildEditor(theme)),
+                      ],
+                    )
+                  // [.59] 글자가 커서 왼쪽 목록이 화면 1/3 을 넘으면 연도를 위쪽 가로 목록으로 옮긴다(글자를 줄이지 않는다).
+                  : Column(
+                      children: [
+                        _buildYearChips(theme),
+                        const Divider(height: 1),
+                        Expanded(child: _buildEditor(theme)),
+                      ],
+                    ),
+    );
+  }
+
+  TextStyle _yearStyle(bool selected, ThemeData theme) => ResponsiveHelper.bodyStyle(
+        context,
+        color: selected ? theme.primaryColor : null,
+      ).copyWith(fontWeight: selected ? FontWeight.bold : FontWeight.normal);
+
+  static const double _railPad = 12;
+
+  /// [.59] '2026/년' 처럼 숫자와 단위가 갈렸다(Pixel 5 392·1.0, 고정 폭 90). 가장 긴 연도 글자를 실제로 재서 폭을 정한다.
+  double _railWidth() {
+    final tp = TextPainter(
+      text: TextSpan(text: TextLayout.keepWords('${_rates.keys.fold<int>(0, (m, y) => y > m ? y : m)}년'), style: _yearStyle(true, Theme.of(context))),
+      textScaler: MediaQuery.textScalerOf(context),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    // ListTile 이 물려주는 글자 간격 등은 여기서 재지 못한다 — 8% 여유(시험 실측: 4.5px 모자람).
+    return (tp.width * 1.08 + _railPad * 2 + 4).clamp(90.0, double.infinity);
+  }
+
+  Widget _buildYearChips(ThemeData theme) {
+    final years = _rates.keys.toList()..sort((a, b) => b.compareTo(a));
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 12),
+          vertical: ResponsiveHelper.spacing(context, 8)),
+      child: Row(
+        children: [
+          for (final y in years)
+            Padding(
+              padding: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
+              child: ChoiceChip(
+                label: Text(TextLayout.keepWords('$y년'), semanticsLabel: '$y년',
+                    style: _yearStyle(y == _selectedYear, theme)),
+                selected: y == _selectedYear,
+                onSelected: (_) => _selectYear(y),
+              ),
             ),
+        ],
+      ),
     );
   }
 
   Widget _buildYearList(ThemeData theme) {
     final years = _rates.keys.toList()..sort((a, b) => b.compareTo(a));
     return SizedBox(
-      width: 90,
+      width: _railWidth(),
       child: ListView.builder(
         itemCount: years.length,
         itemBuilder: (_, i) {
@@ -174,16 +260,13 @@ class _InsuranceRateSettingsScreenState
           final selected = y == _selectedYear;
           return ListTile(
             dense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: _railPad),
             selected: selected,
             selectedTileColor: theme.primaryColor.withValues(alpha: 0.1),
             title: Text(
-              '$y년',
-              style: ResponsiveHelper.bodyStyle(
-                context,
-                color: selected ? theme.primaryColor : null,
-              ).copyWith(
-                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-              ),
+              TextLayout.keepWords('$y년'),
+              semanticsLabel: '$y년',
+              style: _yearStyle(selected, theme),
             ),
             onTap: () => _selectYear(y),
           );
@@ -199,15 +282,26 @@ class _InsuranceRateSettingsScreenState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '$_selectedYear년 보험료율',
+            TextLayout.keepWords('$_selectedYear년 보험료율'),
             style: ResponsiveHelper.subtitleStyle(context)
                 .copyWith(fontWeight: FontWeight.bold),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
           Text(
-            '근로자 부담분 기준. 사업주 부담분은 별도.',
+            // [.59] 320·1.3 에서 '사업/주' 로 갈렸다(기기) — 낱말로 묶는다.
+            TextLayout.keepWords('근로자 부담분 기준. 사업주 부담분은 별도.'),
             style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
           ),
+          if (!_stored.containsKey(_selectedYear)) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            // [.59] 저장값이 없는데 내장값을 저장값처럼 보였다. 서버 급여 확정은 저장값이 없으면 서버 내장값을 쓴다
+            //   — 앱 내장값과 다를 수 있다(LOCAL 확인: 2026 서버 내장 4.5% / 앱 4.75%).
+            Text(
+              TextLayout.keepWords('저장된 $_selectedYear년 요율이 없습니다. 아래는 앱 내장 기본값입니다. '
+                  '저장값이 없으면 서버 급여 확정은 서버 내장값을 써서 금액이 다를 수 있습니다. 확인 후 저장해 주세요.'),
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark),
+            ),
+          ],
           SizedBox(height: ResponsiveHelper.spacing(context, 20)),
           _buildSection('4대보험 요율 (%) — $_selectedYear년 기준', [
             _field('국민연금', _ctrl.pension, '4.75'),   // 2026: 9.5% × 1/2
@@ -253,7 +347,7 @@ class _InsuranceRateSettingsScreenState
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          title,
+          TextLayout.keepWords(title),
           style: ResponsiveHelper.bodyStyle(context).copyWith(
             fontWeight: FontWeight.bold,
             color: theme.primaryColor,
@@ -265,40 +359,51 @@ class _InsuranceRateSettingsScreenState
     );
   }
 
-  Widget _field(String label, TextEditingController ctrl, String hint) {
+  // [.59] 칸 이름은 칸 위의 글자로 둔다 — 떠 있는 라벨은 한 줄이라 큰 글자에서 '장기요양 (건보료 대…' 처럼 잘렸다
+  //   (Pixel 5 392·2.0). 이름은 줄을 바꿔 다 보이고, 칸은 이름을 접근성 라벨로 갖는다.
+  Widget _labeled(String label, Widget field) {
     return Padding(
       padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-      child: TextField(
-        controller: ctrl,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
-        decoration: InputDecoration(
-          labelText: label,
-          hintText: hint,
-          border: const OutlineInputBorder(),
-          isDense: true,
-          suffixText: '%',
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(TextLayout.keepWords(label), semanticsLabel: label,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700)),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Semantics(label: label, child: field),
+        ],
       ),
     );
   }
 
-  Widget _fieldInt(String label, TextEditingController ctrl, String hint) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-      child: TextField(
-        controller: ctrl,
-        keyboardType: TextInputType.number,
-        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        decoration: InputDecoration(
-          labelText: label,
-          hintText: hint,
-          border: const OutlineInputBorder(),
-          isDense: true,
-          suffixText: '원',
-        ),
+  Widget _field(String label, TextEditingController ctrl, String hint) {
+    return _labeled(label, TextField(
+      key: ValueKey('rate-$label'),
+      controller: ctrl,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+      decoration: InputDecoration(
+        hintText: hint,
+        border: const OutlineInputBorder(),
+        isDense: true,
+        suffixText: '%',
       ),
-    );
+    ));
+  }
+
+  Widget _fieldInt(String label, TextEditingController ctrl, String hint) {
+    return _labeled(label, TextField(
+      key: ValueKey('rate-$label'),
+      controller: ctrl,
+      keyboardType: TextInputType.number,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      decoration: InputDecoration(
+        hintText: hint,
+        border: const OutlineInputBorder(),
+        isDense: true,
+        suffixText: '원',
+      ),
+    ));
   }
 }
 
@@ -340,9 +445,11 @@ class _RateControllers {
         ex == null || dt == null || lt == null || bi == null || bl == null) {
       return null;
     }
-    // 범위 검증: 요율은 0% 이상 100% 미만, 면제금액은 0 이상
-    if ([p, h, l, e, dt, lt, bi, bl].any((v) => v < 0 || v >= 100)) return null;
-    if (ex < 0) return null;
+    // [.59] 범위 = 앱 계산(InsuranceRateModel.fromMap clamp)이 실제로 쓰는 상한. 예전 '0~100% 미만' 은
+    //   앱이 잘라 쓰는 값(예: 25% → 20%)까지 저장해 서버 확정액과 갈렸다.
+    if ([p, h, e].any((v) => v < 0 || v > 20)) return null;
+    if ([l, dt, lt, bi, bl].any((v) => v < 0 || v > 30)) return null;
+    if (ex < 0 || ex > 500000) return null;
     return InsuranceRateModel(
       year: year,
       nationalPensionRate: p,

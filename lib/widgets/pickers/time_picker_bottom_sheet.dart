@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../theme/app_colors.dart';
 import '../dialogs/styled_dialog.dart';
 import '../calendar/carrot_style_calendar.dart';
@@ -138,16 +139,27 @@ class _TimePickerBottomSheetState extends State<TimePickerBottomSheet> {
           // 헤더
           _buildHeader(context, theme),
 
-          // 선택된 시간 표시
-          _buildSelectedTimeDisplay(context, theme),
+          // [DU291 TP3] 가운데(선택 표시·휠·빠른 선택)만 스크롤한다 — 큰 글자(320·2.0)에서 아래로 넘치고
+          //   '선택 완료' 가 화면 밖으로 나갔다. 손잡이·머리와 버튼 줄은 고정이다.
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // 선택된 시간 표시
+                  _buildSelectedTimeDisplay(context, theme),
 
-          // 시간 선택 휠
-          _buildTimePicker(context, theme),
+                  // 시간 선택 휠
+                  _buildTimePicker(context, theme),
 
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-          // 빠른 선택 버튼
-          _buildQuickSelectButtons(context, theme),
+                  // 빠른 선택 버튼
+                  _buildQuickSelectButtons(context, theme),
+                ],
+              ),
+            ),
+          ),
 
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
@@ -196,8 +208,10 @@ class _TimePickerBottomSheetState extends State<TimePickerBottomSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // [DU291 TP1] 제목·부제목은 낱말 단위 줄바꿈(읽기 이름은 원문)
                 Text(
-                  widget.title,
+                  TextLayout.keepWords(widget.title),
+                  semanticsLabel: widget.title,
                   style: ResponsiveHelper.subtitleStyle(context).copyWith(
                     fontWeight: FontWeight.bold,
                   ),
@@ -205,7 +219,8 @@ class _TimePickerBottomSheetState extends State<TimePickerBottomSheet> {
                 if (widget.subtitle != null) ...[
                   SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                   Text(
-                    widget.subtitle!,
+                    TextLayout.keepWords(widget.subtitle!),
+                    semanticsLabel: widget.subtitle!,
                     style: ResponsiveHelper.smallStyle(
                       context,
                       color: AppColors.textSecondary,
@@ -258,12 +273,17 @@ class _TimePickerBottomSheetState extends State<TimePickerBottomSheet> {
             size: ResponsiveHelper.iconSize(context, 28),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Text(
-            displayTime,
-            style: ResponsiveHelper.titleStyle(context).copyWith(
-              color: theme.primaryColor,
-              fontWeight: FontWeight.bold,
-              fontSize: ResponsiveHelper.getFontSize(context, 28),
+          // [DU291 TP5] 큰 글자에서 '오후 02:30' 줄이 오른쪽으로 넘쳤다 — 남는 폭 안에서 낱말 단위로 줄바꿈
+          Flexible(
+            child: Text(
+              TextLayout.keepWords(displayTime),
+              semanticsLabel: displayTime,
+              textAlign: TextAlign.center,
+              style: ResponsiveHelper.titleStyle(context).copyWith(
+                color: theme.primaryColor,
+                fontWeight: FontWeight.bold,
+                fontSize: ResponsiveHelper.getFontSize(context, 28),
+              ),
             ),
           ),
         ],
@@ -273,8 +293,24 @@ class _TimePickerBottomSheetState extends State<TimePickerBottomSheet> {
 
   /// 시간 선택 휠
   Widget _buildTimePicker(BuildContext context, ThemeData theme) {
-    final wheelHeight = ResponsiveHelper.spacing(context, 180);
-    final itemExtent = ResponsiveHelper.spacing(context, 50);
+    // [DU291 TP4] 휠 칸 높이가 글자 배율을 따르지 않아 큰 글자에서 숫자가 칸 밖으로 잘렸다(320·2.0 필요 63 > 칸 42.5).
+    //   선택 글(22 bold) 한 줄 높이 + 4 와 기존 값 중 큰 쪽을 쓴다. 휠 높이는 칸 3.6개분이다(기본 배율은 그대로).
+    final lineStyle = DefaultTextStyle.of(context).style.merge(ResponsiveHelper.subtitleStyle(context).copyWith(
+      fontWeight: FontWeight.bold,
+      fontSize: ResponsiveHelper.getFontSize(context, 22),
+    ));
+    final tp = TextPainter(
+      text: TextSpan(text: '00', style: lineStyle),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
+    )..layout();
+    final lineH = tp.height;
+    tp.dispose();
+    final base = ResponsiveHelper.spacing(context, 50);
+    final itemExtent = lineH + 4 > base ? lineH + 4 : base;
+    final baseWheel = ResponsiveHelper.spacing(context, 180);
+    final wheelHeight = itemExtent * 3.6 > baseWheel ? itemExtent * 3.6 : baseWheel;
     
     return Container(
       height: wheelHeight,
@@ -451,8 +487,20 @@ class _TimePickerBottomSheetState extends State<TimePickerBottomSheet> {
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          Row(
-            children: quickTimes.map((time) {
+          // [DU291 TP6] 칩 한 칸에 시각이 한 줄로 안 들어가면(큰 글자) 2열 × 2줄로 놓는다 — 전에는 '09:0 / 0' 로 쪼개졌다.
+          LayoutBuilder(builder: (context, cons) {
+            final label = DefaultTextStyle.of(context).style.merge(
+                ResponsiveHelper.smallStyle(context).copyWith(fontWeight: FontWeight.w600));
+            final tp = TextPainter(
+              text: TextSpan(text: '18:00', style: label),
+              textDirection: Directionality.of(context),
+              textScaler: MediaQuery.textScalerOf(context),
+              locale: Localizations.maybeLocaleOf(context),
+            )..layout();
+            final need = tp.width + ResponsiveHelper.spacing(context, 16);
+            tp.dispose();
+            final cols = cons.maxWidth / 4 - ResponsiveHelper.spacing(context, 8) >= need ? 4 : 2;
+            final chips = quickTimes.map((time) {
               final isSelected = widget.use24HourFormat
                   ? _selectedHour == time.$2 && _selectedMinute == time.$3
                   : false;
@@ -470,7 +518,10 @@ class _TimePickerBottomSheetState extends State<TimePickerBottomSheet> {
                     child: InkWell(
                       onTap: () => _setQuickTime(time.$2, time.$3),
                       borderRadius: BorderRadius.circular(10),
-                      child: Padding(
+                      // [DU291 TP2] 터치 48
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 48),
+                        child: Padding(
                         padding: EdgeInsets.symmetric(
                           vertical: ResponsiveHelper.spacing(context, 10),
                         ),
@@ -485,13 +536,22 @@ class _TimePickerBottomSheetState extends State<TimePickerBottomSheet> {
                             ),
                           ),
                         ),
+                        ),
                       ),
                     ),
                   ),
                 ),
               );
-            }).toList(),
-          ),
+            }).toList();
+            return Column(
+              children: [
+                for (var i = 0; i < chips.length; i += cols) ...[
+                  if (i > 0) SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                  Row(children: chips.sublist(i, i + cols)),
+                ],
+              ],
+            );
+          }),
         ],
       ),
     );

@@ -26,6 +26,8 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/visible_text.dart';
+
 import 'package:ALfit/models/core/business_model.dart';
 import 'package:ALfit/models/core/user_model.dart';
 import 'package:ALfit/providers/notification_provider.dart';
@@ -176,9 +178,10 @@ void main() {
       expect(tester.takeException(), isNull);
       // 수정 모드 제목과 단계 라벨이 실제로 있다 — 빈 화면을 통과로 세지 않는다.
       expect(find.text('사업장 수정'), findsWidgets);
-      expect(find.text('업종 선택'), findsWidgets);
-      expect(find.text('기본 정보'), findsWidgets);
-      expect(find.text('상세 정보'), findsWidgets);
+      // [DU322] 단계 라벨이 낱말 묶음 표시라 보이는 글자로 찾는다(DU255)
+      expect(findVisibleText('업종 선택'), findsWidgets);
+      expect(findVisibleText('기본 정보'), findsWidgets);
+      expect(findVisibleText('상세 정보'), findsWidgets);
     });
 
     testWidgets('BF-R-01 세 단계 전부에 도달한다', (tester) async {
@@ -234,7 +237,8 @@ void main() {
       await _pumpForm(tester,
           size: const Size(320, 820), textScale: 2.0, newMode: true);
       expect(tester.takeException(), isNull);
-      expect(find.text('사업장 등록'), findsWidgets,
+      // [UI-INTEGRATION.33] .28 부터 앱바 제목은 낱말 단위 표시 문자를 품는다 — 보이는 글자로 찾는다.
+      expect(findVisibleText('사업장 등록'), findsWidgets,
           reason: '신규 경로가 실제로 그려졌는지 — 제목으로 확인한다');
     });
   });

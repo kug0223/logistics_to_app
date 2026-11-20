@@ -1,7 +1,9 @@
+// [RETIRED 10-23] 일회성 작업이 끝난 스크립트다 — 다시 실행하지 않는다(키 교체 때 옛 자격증명 경로도 지웠다).
+console.error('폐기된 스크립트입니다 — 실행하지 않습니다.'); process.exit(1);
 const admin = require('../functions/node_modules/firebase-admin');
 const path = require('path');
 
-const serviceAccount = require(path.join(__dirname, 'alfit-89567-firebase-adminsdk-fbsvc-d22e7faef3.json'));
+const serviceAccount = require('');
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),

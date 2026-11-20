@@ -544,8 +544,9 @@ void main() {
           _codeOf(_bodyOf(card, 'Future<void> _showInviteWorkerDialog('));
       expect(body.contains('notifyDataChanged'), isFalse,
           reason: 'Home staffing은 confirmed 기준이라 초대로 바뀌지 않는다');
-      // 대신 local refresh는 복구됐다
-      expect(body.contains('if (invited == true && mounted) widget.onChanged();'),
+      // 대신 local refresh는 복구됐다 — [E1-AMBIGUOUS-INVITE] 저장이 확인된
+      //   경우(성공 또는 다시 읽어 확인)에만.
+      expect(body.contains('if (resolved.outcome.propagate) widget.onChanged();'),
           isTrue);
     });
 
@@ -576,7 +577,9 @@ void main() {
       // [POSTING-V2-03R.1] + _openApplicants — collapsed `지원 현황` CTA의
       //   CONTRACT 경로. 확정·거절이 Home 인력 현황을 바꾸는 것은
       //   WorkDetailRow._showApplicantsDialog와 같은 이유다.
-      expect('notifyDataChanged'.allMatches(cardCode).length, 5);
+      // [POSTING-AUTH-45] + batchClose 의 부분 반영 거절 분기 — 날짜 일부가 이미 닫혔으므로
+      //   성공 분기와 같은 이유로 Home 인력 현황에 알린다. 같은 action 안이다.
+      expect('notifyDataChanged'.allMatches(cardCode).length, 6);
       // 새로 늘어난 자리가 실제로 지원자 처리 경로인지 확인한다.
       final opened = _codeOf(_bodyOf(card, 'Future<void> _openApplicants('));
       expect(opened.contains('WorkApplicantsDialog('), isTrue);
@@ -591,17 +594,24 @@ void main() {
     test('초대 성공 시에만 local refresh가 돈다', () {
       final body =
           _flat(_codeOf(_bodyOf(card, 'Future<void> _showInviteWorkerDialog(')));
-      expect(body.contains('final invited = await showDialog<bool>('), isTrue,
+      expect(body.contains('final invited = await showDialog<InviteDialogResult>('),
+          isTrue,
           reason: '결과를 await하지 않으면 성공을 알 수 없다');
-      expect(body.contains('if (invited == true && mounted) widget.onChanged();'),
+      expect(body.contains('inviteDialogOutcome(invited)'), isTrue);
+      expect(body.contains('if (resolved.outcome.propagate) widget.onChanged();'),
           isTrue);
     });
 
     test('InviteWorkerDialog가 성공 결과를 반환한다 (기존 계약)', () {
       final d = _codeOf(_src(_inviteDialogPath));
-      expect(d.contains('Navigator.pop(context, true);'), isTrue);
-      // 취소는 false
-      expect(d.contains('Navigator.pop(context, false);'), isTrue);
+      expect(d.contains('Navigator.pop(context, const InviteDialogResult.sent());'),
+          isTrue);
+      // 취소는 canceled — 단, 불명확한 시도 뒤에는 unconfirmed
+      expect(d.contains('? const InviteDialogResult.canceled()'), isTrue);
+      expect(d.contains(': InviteDialogResult.unconfirmed(_ambiguousTarget!)'),
+          isTrue);
+      expect(d.contains('Navigator.pop(context, false);'), isFalse,
+          reason: '시도 뒤 닫힘을 취소로 돌려주던 경로');
     });
 
     test('다시 모집 성공 시 local refresh + Home invalidation', () {
@@ -771,7 +781,8 @@ void main() {
     test('POSTING-V2-01B 회귀 없음', () {
       expect(ctrlCode.contains('_loadError = e;'), isTrue);
       expect(ctrlCode.contains('Object? get loadError => _loadError;'), isTrue);
-      expect(_codeOf(_src(_listPath)).contains('return _buildErrorState();'),
+      // [DU243 — DU231 S023 추종] 오류 상태는 요약 카드와 함께 그린다(_withSummary). 실패 시 오류 본문이라는 계약은 같다.
+      expect(_codeOf(_src(_listPath)).contains('return _withSummary(_buildErrorState());'),
           isTrue);
     });
 

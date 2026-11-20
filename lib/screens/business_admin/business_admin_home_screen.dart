@@ -10,6 +10,7 @@ import '../../providers/user_provider.dart';
 
 // Utils
 import '../../utils/format_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 
 // Services
@@ -25,10 +26,12 @@ import '../common/settings_screen.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/legal_task_card.dart';
 import '../../widgets/common/notification_badge.dart';
+import '../../widgets/common/alfit_wordmark.dart';
 import 'admin_contract_management_screen.dart';
 import 'payroll/payroll_payment_dashboard_screen.dart';
 // payroll_payment_service.dart — home screen에서 직접 사용 없음 (canonical summary로 대체됨)
 import '../../theme/app_colors.dart';
+import '../../theme/concept_tokens.dart';
 import '../../models/core/business_member_model.dart'; // [R5.1F.5] MemberPermissions
 import '../../models/core/business_model.dart';
 import 'support_review_queue_screen.dart';
@@ -126,6 +129,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   int _summarySeq = 0;
   int _staffingSeq = 0;
   int _attendanceSeq = 0;
+  // [SUBADMIN-SCOPE.40] 준비 상태도 사업장 전환·권한 변경으로 겹쳐 돈다 — 같은 가드.
+  int _readinessSeq = 0;
+
+  // [SUBADMIN-SCOPE.40] 권한이 필요한 두 loader 가 **마지막으로 출발할 때 본 권한.**
+  //   null = 아직 한 번도 출발하지 않았다. 권한 상태가 이 값과 달라지면 그 loader
+  //   하나만 다시 돈다(허용이 되면 읽고, 거부가 되면 이전 값을 지운다).
+  PermissionCheck? _attendanceGateRun;
+  PermissionCheck? _readinessGateRun;
   bool? _hasApprovedBusiness;
   List<BusinessModel> _businesses = [];
   bool _isNavigating = false;
@@ -183,6 +194,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
   /// 오늘 근무의 사업장·업무·시간 요약. 하나로 확정되지 않으면 개수로 말한다.
   String? _todayWorkSummary;
+  /// [DU-VQ-03] 같은 로스터의 **업무·시간만**(사업장명 제외) — Hero 를 부족 행에 합칠 때 오늘 그룹 보조 줄에 쓴다.
+  String? _todayWorkTimeSummary;
 
   // 새로고침 동시 실행 방어 + 자동 쿨다운
   bool _isRefreshing = false;
@@ -312,7 +325,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   void _onBusinessSwitchCheck() {
     if (!mounted) return;
     final newBizId = _cachedUp?.effectiveBusinessId;
-    if (newBizId == _renderedEffectiveBizId) return;
+    if (newBizId == _renderedEffectiveBizId) {
+      _rerunIfPermissionChanged();
+      return;
+    }
     _renderedEffectiveBizId = newBizId;
     // _businesses 캐시 초기화 → 새 사업장 기준 재조회
     setState(() => _businesses = []);
@@ -321,6 +337,43 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     unawaited(_loadTodayAttendance());
     unawaited(_loadPostingReadiness());
     unawaited(_loadCanonicalSummary());
+  }
+
+  // ── [SUBADMIN-SCOPE.40] 선택 사업장 권한으로 출발 여부가 갈리는 loader ──────
+  //
+  // 서버는 오늘 출근의 확정 명단(`workerOperation`)에 canManageWorkers 를,
+  // 준비 상태의 날인 조회에 canManageTo 또는 canManageContract 를 요구한다.
+  // 권한이 없는 사업장(예: 급여만 허용)에서 이 loader 들이 그대로 출발해
+  // 거절될 조회 4건을 보냈다. 화면은 이미 그 구역을 그리지 않는다
+  // (`_buildTodayOps` 의 canSeeAttendance, 서브관리자 준비 카드 없음) —
+  // 조회만 화면과 같은 판정을 따르게 한다. 판정은 `checkCurrentBusiness` 하나다.
+
+  /// 오늘 출근 — 확정 명단이 없으면 근태 기록(급여 권한으로도 읽힘)만으로는
+  /// 출근 수를 셀 수 없다. 그래서 명단 권한이 이 loader 의 권한이다.
+  ///
+  /// 서브관리자만 판정한다 — 소유자는 사업장별 권한이 없다(`_canCreatePosting` 과
+  /// 같은 모양).
+  PermissionCheck _attendanceGate(UserProvider up) =>
+      up.currentUser?.isSubAdmin != true
+          ? PermissionCheck.allowed
+          : up.checkCurrentBusiness((p) => p.canManageWorkers);
+
+  /// 준비 상태 — 서브관리자에게 이 값의 소비자는 공고 탭과 공고 등록뿐이다
+  /// (홈 준비 카드는 서브관리자에게 그리지 않는다). 둘 다 canManageTo 다.
+  PermissionCheck _readinessGate(UserProvider up) =>
+      up.currentUser?.isSubAdmin != true
+          ? PermissionCheck.allowed
+          : up.checkCurrentBusiness((p) => p.canManageTo);
+
+  /// 권한이 바뀌었으면 그 권한이 막던 loader 만 다시 돈다. 같은 사업장 안의
+  /// 변화다 — 사업장 전환은 위에서 전부 다시 읽는다.
+  void _rerunIfPermissionChanged() {
+    final up = _cachedUp;
+    if (up == null) return;
+    final a = _attendanceGateRun;
+    if (a != null && _attendanceGate(up) != a) unawaited(_loadTodayAttendance());
+    final r = _readinessGateRun;
+    if (r != null && _readinessGate(up) != r) unawaited(_loadPostingReadiness());
   }
 
   // 자동 트리거(FCM·앱 복귀)용 — 30초 쿨다운 + 동시 실행 방어
@@ -399,7 +452,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   // 미준비(로딩 중 / 실패)이면 에러 UX 표시 후 false 반환.
   bool _ensureCanonicalSummary(BuildContext ctx) {
     if (_canonicalSummaryLoading) {
-      ToastHelper.showInfo('데이터를 불러오는 중입니다...');
+      ToastHelper.showInfo('업무 정보를 불러오고 있어요');
       return false;
     }
     if (_canonicalSummary != null) return true;
@@ -444,7 +497,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       }
     } catch (e) {
       debugPrint('❌ 사업장 조회 실패: $e');
-      if (mounted) ToastHelper.showError('사업장 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.');
+      if (mounted) ToastHelper.showError('사업장 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요');
     }
   }
 
@@ -469,6 +522,22 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final scopeKey =
         FirstPostingReadinessStore.scopeKeyOf(_businesses.map((b) => b.id));
 
+    // [SUBADMIN-SCOPE.40] 공고 권한이 확인된 경우에만 계산한다(소유자는 언제나 허용).
+    //   허용이 아니면 날인·사업주 문서를 묻지 않는다. 준비 값은 비워 둔다 —
+    //   이전 사업장의 값이 남지 않게. 모름이면 아직 끝난 것이 아니다.
+    final seq = ++_readinessSeq;
+    final gate = _readinessGate(up);
+    _readinessGateRun = gate;
+    if (gate != PermissionCheck.allowed) {
+      if (!mounted) return;
+      setState(() {
+        _readinessMap = const {};
+        _firstPosting = null;
+        _readinessLoaded = gate != PermissionCheck.unknown;
+      });
+      return;
+    }
+
     late final FirstPostingReadinessResult result;
     try {
       result = await FirstPostingReadinessResolver.resolve(
@@ -483,11 +552,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       );
     } catch (e) {
       debugPrint('❌ [readiness] 준비 상태 계산 실패: ');
+      if (seq != _readinessSeq) return;
       FirstPostingReadinessStore.markFailed(uid: uid, scopeKey: scopeKey);
       return;
     }
 
-    if (!mounted) return;
+    if (!mounted || seq != _readinessSeq) return;
     setState(() {
       _readinessMap = result.readinessMap;
       _firstPosting = result.readiness;
@@ -551,7 +621,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       await action();
     } catch (e) {
       debugPrint('❌ 탐색 오류: $e');
-      if (mounted) ToastHelper.showError('처리 중 오류가 발생했습니다.');
+      if (mounted) ToastHelper.showError('처리 중 오류가 발생했어요');
     } finally {
       _isNavigating = false;
     }
@@ -618,6 +688,25 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   Future<void> _loadTodayAttendance() async {
     if (!mounted) return;
     final seq = ++_attendanceSeq;
+    // [SUBADMIN-SCOPE.40] 인력 권한이 확인된 경우에만 읽는다(소유자는 언제나 허용).
+    //   거부·확인 실패면 묻지 않고 값을 비운다 — 숫자를 0으로 주장하지 않고
+    //   (ERROR≠ZERO), 이전 사업장 값도 남기지 않는다. 화면은 이미 이 구역을
+    //   그리지 않는다. 모름이면 확인될 때까지 기다린다(spinner 유지).
+    final gate = _attendanceGate(context.read<UserProvider>());
+    _attendanceGateRun = gate;
+    if (gate != PermissionCheck.allowed) {
+      setState(() {
+        _todayCheckedIn      = null;
+        _todayDueNow         = null;
+        _todayNeedsAttention = null;
+        _hasTodayRoster      = null;
+        _todayFirstStart     = null;
+        _todayWorkSummary    = null;
+        _todayWorkTimeSummary = null;
+        _attendanceLoading   = gate == PermissionCheck.unknown;
+      });
+      return;
+    }
     setState(() => _attendanceLoading = true);
     try {
       // [AH-V2-01] 여기 도달했다는 것은 사업장 조회가 성공했다는 뜻이다.
@@ -637,8 +726,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         return;
       }
 
-      final today    = FormatHelper.toKstDate(DateTime.now());
-      final nowLocal = DateTime.now(); // 한국 디바이스에서 local = KST
+      // [DU1 VQ] 주입 clock(LOCAL 렌더 전용) 우선, 없으면 실제 now — production 동작 동일
+      final today    = FormatHelper.toKstDate((_reads.clock ?? DateTime.now)());
+      final nowLocal = (_reads.clock ?? DateTime.now)(); // 한국 디바이스에서 local = KST
 
       // 병렬 로드 — 두 Future를 미리 생성해 동시에 실행
       final attFuture = Future.wait(
@@ -739,6 +829,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         _hasTodayRoster      = allConfirmed.isNotEmpty;
         _todayFirstStart     = firstStart;
         _todayWorkSummary    = _summarizeWork(bizNames, workTypes, ranges);
+        _todayWorkTimeSummary = _summarizeWork(const <String>{}, workTypes, ranges);
         _attendanceLoading   = false;
       });
     } catch (e) {
@@ -753,6 +844,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         _hasTodayRoster      = null;
         _todayFirstStart     = null;
         _todayWorkSummary    = null;
+        _todayWorkTimeSummary = null;
         _attendanceLoading   = false;
       });
     }
@@ -812,18 +904,28 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     return businesses;
   }
 
+  /// [BUSINESS-ARCHIVE] 관리 사업장이 모두 운영 종료·중지 상태인가.
+  ///   `isApproved:false` 만 보면 승인 대기와 구별되지 않는다.
+  bool get _allBusinessesClosed =>
+      _businesses.isNotEmpty && _businesses.every((b) => b.isDeactivated);
+
+  /// [BUSINESS-ARCHIVE] 종료 뒤에도 남는 일 — 지나간 근무의 기록·급여 처리 위치.
+  static const String _closedBusinessGuide =
+      '새 공고와 모집은 할 수 없어요. 지난 근무의 급여·정산은 급여 탭에서, '
+      '계약은 관리 탭의 계약 관리에서 계속 처리할 수 있어요';
+
   /// STATE P/A/B/C 체크 — 모든 기능 진입 전 공통 게이트
   Future<void> _requireApprovedBusiness(
       BuildContext context, Future<void> Function() proceed) async {
     final up = context.read<UserProvider>();
     // STATE P: 계정 확인 대기 (외국인)
     if (up.currentUser?.accountStatus == 'pending') {
-      ToastHelper.showWarning('계정 확인이 완료되면 이용하실 수 있어요.');
+      ToastHelper.showWarning('계정 확인이 완료되면 이용할 수 있어요');
       return;
     }
     // 사업장 정보 로딩 중
     if (_hasApprovedBusiness == null) {
-      ToastHelper.showWarning('사업장 정보를 불러오는 중입니다. 잠시 후 다시 시도해주세요.');
+      ToastHelper.showWarning('사업장 정보를 불러오고 있어요. 잠시 후 다시 시도해 주세요');
       return;
     }
     // STATE A: 사업장 없음
@@ -831,14 +933,19 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       // SUB_ADMIN은 사업장을 직접 등록하지 않음 — 배정 정보 확인 안내
       ToastHelper.showWarning(
         up.currentUser?.isSubAdmin == true
-            ? '사업장 정보를 확인할 수 없습니다. 관리자에게 문의해주세요.'
-            : '먼저 사업장을 등록해주세요.',
+            ? '사업장 정보를 확인할 수 없어요. 사업장 관리자에게 문의해 주세요'
+            : '먼저 사업장을 등록해 주세요',
       );
+      return;
+    }
+    // [BUSINESS-ARCHIVE] STATE D: 모든 사업장이 운영 종료·중지 — 승인 대기가 아니다.
+    if (!_hasApprovedBusiness! && _allBusinessesClosed) {
+      ToastHelper.showWarning(_closedBusinessGuide);
       return;
     }
     // STATE B: 사업장 승인 대기
     if (!_hasApprovedBusiness!) {
-      ToastHelper.showWarning('사업장이 승인 완료되면 이용하실 수 있어요.');
+      ToastHelper.showWarning('사업장이 승인되면 이용할 수 있어요');
       return;
     }
     // STATE C: 정상
@@ -857,7 +964,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           icon: Icons.access_time,
           iconColor: AppColors.warning,
           title: '계정 확인 중',
-          subtitle: '신분증 확인 완료 후 모든 기능을 이용할 수 있어요.',
+          subtitle: '신분증 확인이 완료되면 이용할 수 있어요',
           bgColor: AppColors.warning.withValues(alpha: 0.08),
           borderColor: AppColors.warning.withValues(alpha: 0.30));
     }
@@ -872,13 +979,26 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       return _stateABanner(context, s, theme);
     }
 
+    // [BUSINESS-ARCHIVE] STATE D: 모든 사업장이 운영 종료·중지
+    if (!_hasApprovedBusiness! && _allBusinessesClosed) {
+      return _stateBannerCard(context, s,
+          icon: Icons.storefront_outlined,
+          iconColor: AppColors.grey600,
+          title: _businesses.every((b) => b.isClosedByOwner)
+              ? '운영을 종료한 사업장이에요'
+              : '운영이 중지된 사업장이에요',
+          subtitle: _closedBusinessGuide,
+          bgColor: AppColors.grey100,
+          borderColor: AppColors.grey300);
+    }
+
     // STATE B: 사업장 승인 대기
     if (!_hasApprovedBusiness!) {
       return _stateBannerCard(context, s,
           icon: Icons.hourglass_top,
           iconColor: theme.primaryColor,
-          title: '사업장 승인 대기 중',
-          subtitle: '운영팀이 사업장을 검토하고 있어요. 승인 완료 후 모든 기능을 이용할 수 있어요.',
+          title: '사업장 승인 대기',
+          subtitle: '운영팀이 사업장을 검토하고 있어요. 승인되면 이용할 수 있어요',
           bgColor: theme.primaryColor.withValues(alpha: 0.06),
           borderColor: theme.primaryColor.withValues(alpha: 0.20));
     }
@@ -913,13 +1033,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               SizedBox(width: 10 * s),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('사업장을 등록하세요',
+                  Text('사업장 등록',
                       style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
                           color: AppColors.textPrimary)),
                   const SizedBox(height: 2),
-                  Text('사업장 등록 후 공고·계약·급여 관리를 시작하세요.',
+                  Text('사업장을 등록하면 공고·계약·급여 관리를 시작할 수 있어요',
                       style: TextStyle(
                           fontSize: 12, color: AppColors.textSecondary)),
                 ]),
@@ -930,7 +1050,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               width: double.infinity,
               child: ElevatedButton.icon(
                 icon: Icon(Icons.add_business, size: 16 * s),
-                label: Text('사업장 등록하기',
+                label: Text('사업장 등록',
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: theme.primaryColor,
@@ -1035,7 +1155,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   }) async {
     final up = context.read<UserProvider>();
     if (!_verified(up, (p) => p.canManageWage)) {
-      ToastHelper.showWarning('급여 관리 권한이 없습니다.');
+      ToastHelper.showWarning('급여 관리 권한이 없어요');
       return;
     }
     final now = DateTime.now();
@@ -1131,7 +1251,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         final theme = Theme.of(context);
         final up = context.read<UserProvider>();
         return Scaffold(
-          backgroundColor: AppColors.grey50,
+          // [CP04] 정밀 §6 — 두 홈 배경은 white 로 정돈(전역 Scaffold 기본값은 그대로). 최상위 그룹은 raised 한 겹.
+          backgroundColor: AppColors.surface,
           body: SafeArea(
             bottom: false,
             child: RefreshIndicator(
@@ -1143,17 +1264,20 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _buildHeader(context, s, data.userName, up),
-                    SizedBox(height: 12 * s),
+                    // [CP04] 정밀 §9 — 머리/사업장 scope → 큰 운영 머리·KST 날짜·(허용 시) 등록 → 법적·준비 상태 → Hero → 섹션.
+                    _buildOpsHead(context, up),
+                    const SizedBox(height: 16),
                     _buildStateBanner(context, s, theme, up),
-                    // [HOME-V2-08D.2] Adaptive Hero — 지금 가장 먼저 알아야
-                    //   하는 상태 하나를 해석한다. 준비 미완료 카드도 여기로
-                    //   들어왔다(state = setup).
-                    _buildAdaptiveHero(context, s, theme, up),
                     // [R7-LEGAL.1B.1] 약관 재동의 할 일.
                     //   약관 동의는 **개인 계정의 법적 상태**다 — 사업장
                     //   소유 설정(등록증·인감)과 성격이 다르므로 하위관리자
                     //   에게도 그대로 보인다. 해당 없으면 스스로 사라진다.
-                    LegalTaskCard(scale: s),
+                    // [CP04] 법적·준비 상태는 Hero(운영 상태) 앞에 둔다(정밀 §9 순서).
+                    LegalTaskCard(scale: s, loadReadiness: _reads.legalReadiness),
+                    // [HOME-V2-08D.2] Adaptive Hero — 지금 가장 먼저 알아야
+                    //   하는 상태 하나를 해석한다. 준비 미완료 카드도 여기로
+                    //   들어왔다(state = setup).
+                    _buildAdaptiveHero(context, s, theme, up),
                     // [AH-V2-05B] TODAY → TASK → NEXT.
                     //   오늘 상황을 본 다음 바로 지금 처리할 일이 오고,
                     //   다음 운영 준비(향후 인력 부족)가 마지막이다.
@@ -1185,26 +1309,29 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       // [HOME-V2-08D.1] page header bar — grouped surface가 아니므로
       //   border/radius 없이 surface 토큰만 쓴다.
       color: AppColors.surface,
-      padding: EdgeInsets.fromLTRB(20 * s, 8 * s, 16 * s, 12 * s),
+      // [CP04] 왼쪽 여백은 큰 운영 머리·섹션과 같은 gutter(<360 16, 그 외 20) — 같은 세로선에 맞춘다.
+      // [DU307 Standards §12.1] 아래 0. 마지막 머리 묶음(사업장 줄·권한 요약, SubAdmin 이면 뒤 역할 전환까지) → 큰 운영 머리 합계 8 은
+      //   _buildOpsHead 의 위 여백 [_kHeadToHero] 하나가 맡는다(이전 아래 12*s + 16 = W 약 26.8 / B 26.2).
+      //   [DU307 L2] 위 8 → 0(배율 s 를 곱하지 않는다 — 지원자 홈과 같은 값). 로고 잉크 top = 머리 시작 + (행 높이 − 28)/2 + 2 —
+      //   배너 숨김·행 48 이면 SafeArea top + 12.
+      padding: EdgeInsets.fromLTRB(_gutter(context), 0, 16 * s, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 상단: 로고 + 알림/프로필 버튼
+          // [DU1 후속37 §2 S010] 브랜드 표시를 지원자 홈과 같은 한 벌로 — 지원자는 그라데이션 원(32)+전경 아이콘·브랜드색 20/w900,
+          //   관리자는 다른 asset(24, 배경 없음)·본문색 17/w800 이라 같은 앱의 두 홈이 다른 로고로 읽혔다.
+          //   역할 구별은 아래 '관리자'/SubAdmin 배지와 사업장 줄이 맡는다(이름·배지·사업장 범위는 그대로).
+          // [CP01] 로고 = 공용 글자 로고(고정 그림, 정본 DU_concept_precise_spec_audit §3) — 지원자 홈과 같은 한 벌.
+          //   원형 앱 아이콘 장식·예전 파랑(infoDark) 글자를 대체한다.
           Row(children: [
-            ClipOval(
-              child: Image.asset('assets/icons/app_icon.png',
-                  width: 24 * s, height: 24 * s, fit: BoxFit.cover),
-            ),
-            SizedBox(width: 7 * s),
-            Text('ALfit',
-                style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.textPrimary,
-                    letterSpacing: 0.5)),
+            const AlfitWordmark(),
             const Spacer(),
+            // [DU307 L2] 머리 위 여백 0 → 배지 위 끝도 버튼 위(0)에 둔다(기본 −4 는 SafeArea 위로 4 돌출). 지원자 홈과 같다.
             NotificationBadge(
+              badgeTop: 0,
               child: _headerBtn(context, s, Icons.notifications_outlined,
+                  label: '알림',
                   onTap: () => _safeNavigate(() async {
                     await Navigator.push(context,
                         MaterialPageRoute(builder: (_) => const NotificationScreen()));
@@ -1229,10 +1356,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             //   '관리' 탭으로 들어간 경우까지 같이 갱신된다(예전에는 이 버튼
             //   으로 들어간 경우에만 갱신됐다).
             _headerBtn(context, s, Icons.settings_outlined,
+                label: '관리',
                 onTap: () => AdminTabSwitcher.instance
                     .switchToTab(AdminTabSwitcher.settingsTab)),
           ]),
-          SizedBox(height: 10 * s),
+          // [DU307 §12.1] 행동행(로고·알림·관리 48) 아래 → 계정 메타(이름·역할) 위 8 — 지원자 홈과 같은 관계(이전 10*s).
+          const SizedBox(height: 8),
           // [HOME-V2-08D.1] 이름 + 배지 + [PH1] 사업장/권한 컨텍스트
           //
           // `안녕하세요,`를 빼고 이름을 22px bold → 15px w700로 내렸다.
@@ -1241,43 +1370,51 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           // 그보다 작아져 위계가 뒤집히는 구조였다. greeting 줄과 그 아래
           // 2px spacer도 함께 걷어내 header 높이가 실제로 줄어든다.
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-              Flexible(
-                child: Text('$name님',
+            // [CP01] 이름과 역할 배지가 한 줄에 다 들어가지 않으면(긴 이름·긴 사업장·큰 글자) 배지를 다음 줄로 내린다.
+            //   예전 Row+Flexible 은 배지 폭만큼 이름을 한 줄 말줄임으로 잘랐다. 이름은 말줄임 없이 전문·자연 높이(글자 크기 그대로).
+            // [DU307 §12.1] 메타 내부 4 — 이름↔역할 배지가 다음 줄로 내려갈 때의 줄 간격(이전 4*s).
+            Wrap(
+              spacing: 8 * s,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                // [CP04 · CP01 인계] 표시만 낱말 묶음 — 긴 이름의 마지막 낱말과 `님`이 갈리지 않게(의미 이름 원문).
+                Text(TextLayout.keepWords('$name님'),
+                    semanticsLabel: '$name님',
                     style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
                         height: 1.2,
                         color: AppColors.textPrimary,
-                        letterSpacing: -0.2),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis),
-              ),
-              SizedBox(width: 8 * s),
-              isSub ? _subAdminBadge(context, s, up, theme) : _adminBadge(s, theme),
-            ]),
+                        letterSpacing: -0.2)),
+                isSub ? _subAdminBadge(context, s, up, theme) : _adminBadge(s, theme),
+              ],
+            ),
             // [PH1] Owner: 사업장 컨텍스트 (단일 이름 or "N개 사업장 관리")
             if (!isSub && _businesses.isNotEmpty) ...[
-              SizedBox(height: 4 * s),
+              const SizedBox(height: 4), // [DU307 §12.1] 메타 내부 4(이전 4*s)
+              // [ADMIN-HOME.31] 392·2.0 에서 긴 사업장명이 한 줄 말줄임으로 사라졌다('…두 번째 물…').
+              //   이 줄이 '어느 사업장의 홈인가'를 말한다 — 낱말 단위로 두 줄까지 보이고, 그래도 넘치면
+              //   말줄임(세 줄 이상 늘려 header 가 화면을 밀지 않게). 원문은 접근성 이름.
+              // [CP04] 중요한 범위 정보는 말줄임 없이 전문·자연 높이(정밀 §8 B 규칙 1). 낱말 단위로만 줄바꿈(identity 의
+              //   긴 낱말 중간 분할을 쓰지 않는다). 메타 14/400.
               Text(
                 _businesses.length == 1
-                    ? _businesses.first.name
+                    ? TextLayout.keepWords(_businesses.first.name)
                     : '${_businesses.length}개 사업장 관리',
-                style: TextStyle(
-                    fontSize: 12,
-                    color: AppColors.grey500,
-                    fontWeight: FontWeight.w500),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                semanticsLabel: _businesses.length == 1 ? _businesses.first.name : null,
+                style: ConceptText.meta(),
               ),
             ],
             // [PH1] SubAdmin: 권한 요약 compact 1줄
             if (isSub && up.permissionsLoaded) ...[
-              SizedBox(height: 4 * s),
+              const SizedBox(height: 4), // [DU307 §12.1] 메타 내부 4(이전 4*s)
               _buildPermissionSummaryLine(s, up),
             ],
           ]),
           // SubAdmin 전용: 모드 토글 (반응형 라우팅 기반)
+          // [DU307 §12.1] 메타 → 뒤 역할 전환 사이(10*s)·토글 자체 높이·내부 간격·48 receiver 는 그대로 —
+          //   토글을 가로질러 8 을 강요하지 않는다. 토글 아래 → 큰 머리 합계 8 은 _kHeadToHero 가 맡는다.
           if (isSub) ...[
             SizedBox(height: 10 * s),
             Row(children: [
@@ -1287,6 +1424,71 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           ],
         ],
       ),
+    );
+  }
+
+  /// [CP04] 큰 운영 머리(정밀 §8·§9) — 헤더 →16→ `오늘 운영을 한눈에` 24/700 →4→ KST 오늘 날짜 14/400 + (허용 시) `+ 공고 등록`.
+  ///   등록은 기존 `_canCreatePosting`·`_openCreatePosting`(승인 게이트·root 생성 경로·복귀 갱신) 그대로, 의미 이름 `공고 등록`,
+  ///   receiver ≥48. 날짜와 한 줄에 들어가지 않으면 등록을 날짜 아래 오른쪽 줄로 내린다(말줄임·축소 없음).
+  ///   날짜는 홈의 같은 시각 기준(주입 clock, 없으면 실제 now — production 동작 그대로).
+  /// [DU307 Standards §12.1] 마지막 머리 묶음 아래 → 큰 운영 머리 위 = 합계 8(머리 아래 여백 0 + 이 값).
+  ///   지원자 홈이 같이 쓰던 ConceptSpace.headerToHero(16)는 바꾸지 않는다(다른 소비처 보존).
+  static const double _kHeadToHero = 8;
+
+  Widget _buildOpsHead(BuildContext context, UserProvider up) {
+    final g = _gutter(context);
+    final today = FormatHelper.toKstDate((_reads.clock ?? DateTime.now)());
+    const wd = ['월', '화', '수', '목', '금', '토', '일'];
+    final dateText = '${today.month}월 ${today.day}일 ${wd[today.weekday - 1]}요일';
+    const title = '오늘 운영을 한눈에';
+    final actionStyle = ConceptText.count().copyWith(height: 1.3);
+    final actionDisplay = '+${String.fromCharCode(0xA0)}${TextLayout.keepWords('공고 등록')}';
+    Widget? action;
+    if (_canCreatePosting(up)) {
+      void open() => _openCreatePosting(context);
+      action = Semantics(
+        container: true,
+        button: true,
+        label: '공고 등록',
+        excludeSemantics: true,
+        onTap: open,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: open,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: ConceptSpace.minTouch, minHeight: ConceptSpace.minTouch),
+            child: Align(
+              alignment: Alignment.topRight,
+              widthFactor: 1,
+              heightFactor: 1,
+              child: Text(actionDisplay, semanticsLabel: '공고 등록', style: actionStyle),
+            ),
+          ),
+        ),
+      );
+    }
+    final date = Text(dateText, style: ConceptText.meta());
+    final act = action;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(g, _kHeadToHero, g, 0), // [DU307 §12.1] 머리 →8→ 큰 운영 머리
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Text(TextLayout.keepWords(title), semanticsLabel: title, style: ConceptText.hero()),
+        const SizedBox(height: ConceptSpace.heroToDate),
+        if (act == null)
+          Align(alignment: Alignment.centerLeft, child: date)
+        else
+          LayoutBuilder(builder: (context, c) {
+            final need = _oneLineWidth(context, dateText, ConceptText.meta()) + 8 +
+                _oneLineWidth(context, actionDisplay, actionStyle);
+            if (need <= c.maxWidth) {
+              return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: date), const SizedBox(width: 8), act]);
+            }
+            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+              Align(alignment: Alignment.centerLeft, child: date),
+              Align(alignment: Alignment.centerRight, child: act),
+            ]);
+          }),
+      ]),
     );
   }
 
@@ -1303,8 +1505,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     VoidCallback? onCta,
     Widget? body,
   }) {
+    // [CP04] Hero 표면은 기존 평면(_groupSurface) 그대로 — conceptRaised 는 오늘/할 일/다가오는 최상위 그룹만(정밀 §6).
+    //   좌우 여백만 홈 gutter 로, 보조 문구 14/400(정밀 §8 메타), CTA 는 receiver ≥48·의미 이름(보이는 `+` 제외).
+    final cta = ctaLabel != null && ctaLabel.startsWith('+ ') ? ctaLabel.substring(2) : ctaLabel;
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16 * s),
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
       child: Container(
         decoration: _groupSurface,
         padding: EdgeInsets.fromLTRB(16 * s, 14 * s, 16 * s, 14 * s),
@@ -1322,8 +1527,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             ),
             SizedBox(width: 10 * s),
             Expanded(
+              // [ADMIN-HOME.31] Hero 문장도 낱말 단위 — 큰 글자에서 '필요|해요' 식 끊김 방지(표시만).
               child: Text(
-                message,
+                TextLayout.keepWords(message),
+                semanticsLabel: message,
                 style: TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.bold,
@@ -1338,9 +1545,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             SizedBox(height: 6 * s),
             Padding(
               padding: EdgeInsets.only(left: 32 * s),
-              child: Text(supporting,
-                  style: TextStyle(
-                      fontSize: 13, height: 1.4, color: AppColors.grey600)),
+              // [ADMIN-HOME.31] '사업장 · 업무 · 시각' — 큰 글자에서 낱말 안이 끊기지 않게(표시만, 원문은 접근성 이름).
+              child: Text(TextLayout.phrases(supporting),
+                  semanticsLabel: supporting,
+                  style: ConceptText.meta()),
             ),
           ],
           if (body != null) ...[
@@ -1350,20 +1558,29 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           // CTA는 lifecycle/error 상태에만 온다. 운영 상태에서 행동 경로는
           //   이미 아래 섹션에 있으므로 Hero가 그것을 가리키지 않는다.
           if (ctaLabel != null && onCta != null) ...[
-            SizedBox(height: 10 * s),
+            SizedBox(height: 4 * s),
             Padding(
               padding: EdgeInsets.only(left: 32 * s),
-              child: InkWell(
+              child: Semantics(
+                container: true,
+                button: true,
+                label: cta,
+                excludeSemantics: true,
                 onTap: onCta,
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text(ctaLabel,
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Theme.of(context).primaryColor)),
-                  Icon(Icons.chevron_right,
-                      size: 16 * s, color: Theme.of(context).primaryColor),
-                ]),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: onCta,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minWidth: ConceptSpace.minTouch, minHeight: ConceptSpace.minTouch),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Flexible(
+                        child: Text(TextLayout.keepWords(ctaLabel),
+                            semanticsLabel: cta, style: ConceptText.count().copyWith(height: 1.3)),
+                      ),
+                      const Icon(Icons.chevron_right, size: 18, color: AppColors.brand),
+                    ]),
+                  ),
+                ),
               ),
             ),
           ],
@@ -1383,7 +1600,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           ),
         );
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16 * s),
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
       child: Container(
         decoration: _groupSurface,
         padding: EdgeInsets.fromLTRB(16 * s, 14 * s, 16 * s, 14 * s),
@@ -1408,19 +1625,37 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     );
   }
 
+  /// [DU-VQ-03] 오늘 그룹에 '오늘 N명 부족' 행이 **실제로 그려지는가** — `_buildTodayIssueRows` 부족 행과 같은 조건.
+  bool _todayShortageRowShown(UserProvider up) {
+    if (!_showTodaySection || _staffingLoading) return false;
+    final canSeeStaffing = _verified(up, (p) => p.canManageTo) || _verified(up, (p) => p.canManageWorkers);
+    if (!canSeeStaffing) return false;
+    final day = _todayStaffingDay;
+    return day != null && day.shortageCount > 0;
+  }
+
+  /// [DU-VQ-03] 이번 build 에서 shortage Hero 를 오늘 부족 행으로 합쳤는가 — _buildAdaptiveHero 가 정하고
+  ///   바로 뒤 간격(같은 children 목록의 다음 원소)이 읽는다. 상태 derive 를 한 번 더 하지 않기 위해서다.
+  bool _heroMergedIntoRow = false;
+
   Widget _buildAdaptiveHero(
       BuildContext context, double s, ThemeData theme, UserProvider up) {
     final state = _heroStateOf(up);
+    // [DU-VQ-03] 같은 날·같은 범위의 부족 행이 보이면 상단 Hero 가 같은 숫자를 반복하지 않는다(행이 정보·행동 위치).
+    _heroMergedIntoRow = state == _HeroState.shortage && _todayShortageRowShown(up);
     switch (state) {
       case _HeroState.loading:
         return _heroSkeleton(s);
 
       case _HeroState.error:
+        // [DU307 §12.2·정밀 §4] 완전 조회 실패 = 실제 오류 안내 errorDark(작은 아이콘 원만 칠한다, 문장은 중립 그대로).
+        //   같은 실패를 아래 오늘 운영 행(`인력 정보를 불러오지 못했어요`, errorDark)이 동시에 말할 때
+        //   Hero 아이콘만 호박색이라 한 사실이 두 색으로 보였다. 부분(partialInfo)은 아래처럼 warningDark 를 유지한다.
         return _heroShell(s,
             icon: Icons.cloud_off_outlined,
-            color: AppColors.warningDark,
+            color: AppColors.errorDark,
             message: '오늘 상황을 확인하지 못했어요',
-            supporting: '인력 정보를 불러오지 못했습니다.',
+            supporting: '인력 정보를 불러오지 못했어요',
             ctaLabel: '다시 시도',
             onCta: () => unawaited(_loadStaffingReadiness()));
 
@@ -1429,7 +1664,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             icon: Icons.cloud_off_outlined,
             color: AppColors.warningDark,
             message: '오늘 상황을 일부만 확인했어요',
-            supporting: '일부 사업장 정보를 불러오지 못했습니다.',
+            supporting: '일부 사업장 정보를 불러오지 못했어요',
             ctaLabel: '다시 시도',
             onCta: () => unawaited(_loadStaffingReadiness()));
 
@@ -1440,10 +1675,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         return _heroShell(s,
             icon: Icons.post_add_outlined,
             color: AppColors.grey600,
-            message: '현재 등록된 공고가 없어요',
-            supporting: '사람이 필요한 날짜와 업무를 등록하면\n지원자를 받을 수 있어요.',
+            message: '등록된 공고가 없어요',
+            supporting: '사람이 필요한 날짜와 업무를 등록해 주세요',
             // [§31] 권한이 없으면 CTA를 숨긴다 — disabled teaser를 만들지 않는다.
-            ctaLabel: _canCreatePosting(up) ? '공고 등록' : null,
+            ctaLabel: _canCreatePosting(up) ? '+ 공고 등록' : null,
             onCta: _canCreatePosting(up) ? () => _openCreatePosting(context) : null);
 
       case _HeroState.noPostingScope:
@@ -1453,24 +1688,26 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             icon: Icons.lock_outline,
             color: AppColors.grey600,
             message: '공고 정보를 볼 수 있는 권한이 없어요',
-            supporting: '공고를 관리할 수 있는 사업장이 배정되어 있지 않습니다.\n'
-                '필요하면 사업장 관리자에게 권한을 요청하세요.');
+            supporting: '공고를 관리할 수 있는 사업장이 배정되어 있지 않아요.\n'
+                '필요하면 사업장 관리자에게 권한을 요청해 주세요');
 
       case _HeroState.draftOnly:
         return _heroShell(s,
             icon: Icons.edit_note,
             color: AppColors.grey700,
             message: '작성 중인 공고가 있어요',
-            supporting: '공개하면 지원자가 지원할 수 있어요.',
+            supporting: '공개하면 지원자가 지원할 수 있어요',
             ctaLabel: _canCreatePosting(up) ? '작성 계속하기' : null,
             onCta: _canCreatePosting(up) ? () => _openDraftPostings(context) : null);
 
       case _HeroState.shortage:
+        if (_heroMergedIntoRow) return const SizedBox.shrink();
         final n = _todayStaffingDay?.shortageCount ?? 0;
+        // [CP04 §4] 부족은 빨강 경고가 아니라 연주황 의미색(#8A4B00) — 같은 서버 shortage, 같은 문구.
         return _heroShell(s,
             icon: Icons.warning_amber_rounded,
-            color: AppColors.error,
-            message: '오늘 $n명이 더 필요해요',
+            color: AppColors.conceptStaffingNeedText,
+            message: '$n명 추가 필요',
             supporting: _todayWorkSummary);
 
       case _HeroState.attention:
@@ -1479,18 +1716,30 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             icon: Icons.pending_actions_outlined,
             color: AppColors.warningDark,
             message: '오늘 확인할 근태가 $n건 있어요',
-            supporting: '미출근·지각·미퇴근 등 확인이 필요한 근무자가 있습니다.');
+            supporting: '미출근·지각·미퇴근 등 확인이 필요한 근무자가 있어요');
 
       case _HeroState.noToday:
+        // [CP04] 문구 생성 단계만 나눈다(상태 선택·순서·로더·권한식 불변). 부재 단정은 근태 권한이 허용이고
+        //   오늘 로스터가 성공적으로 비어 있을 때(`_hasTodayRoster == false`)만. null 은 확인하지 못한 것이다.
+        final gate = _attendanceGate(up);
+        final absent = gate == PermissionCheck.allowed && _hasTodayRoster == false;
+        final message = switch (gate) {
+          PermissionCheck.allowed => _hasTodayRoster == false ? '오늘 예정된 근무는 없어요' : '오늘 근무 정보를 확인하지 못했어요',
+          PermissionCheck.denied => '근태 조회 권한이 없어요',
+          PermissionCheck.error => '근태 조회 권한을 확인하지 못했어요',
+          PermissionCheck.unknown => '근태 조회 권한을 확인하고 있어요',
+        };
+        // D+1…D+7 shortage 0 은 `추가 필요 인원 없음`까지만 말한다(전원확정 판정과 다름).
+        final allStaffedNext = absent && _upcomingAllStaffed;
         return _heroShell(s,
             icon: Icons.event_available_outlined,
-            color: _upcomingAllStaffed
+            color: allStaffedNext
                 ? AppColors.successDeep
                 : AppColors.grey600,
-            message: _upcomingAllStaffed
-                ? '오늘 근무는 없고,\n다가오는 근무는 인원이 모두 확보됐어요'
-                : '오늘 예정된 근무는 없어요',
-            supporting: _upcomingAllStaffed ? null : _nextWorkdaySupporting());
+            message: allStaffedNext
+                ? '$message\n앞으로 7일은 추가 필요 인원이 없어요'
+                : message,
+            supporting: allStaffedNext ? null : _nextWorkdaySupporting());
 
       case _HeroState.beforeStart:
         final t = _todayFirstStart;
@@ -1509,7 +1758,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             icon: Icons.check_circle_outline,
             color: AppColors.successDeep,
             message: attendanceKnown
-                ? '오늘 근무는 문제없이 진행 중이에요'
+                ? '오늘 근무 현황이에요'
                 : '오늘 근무가 예정되어 있어요',
             supporting: _todayWorkSummary);
     }
@@ -1529,14 +1778,19 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     for (final d in sr.days.skip(1)) {
       if (d.requiredCount <= 0) continue;
       final label = _futureDateLabel(d.date);
-      final biz = d.byBusiness.isNotEmpty ? d.byBusiness.first.businessName : null;
       final staffing = '${d.requiredCount}명 중 ${d.confirmedCount}명 확정';
+      // [CP04] 날짜 전체 합계(R/C)에 첫 사업장명을 붙이지 않는다 — 사업장명은 그 날짜의 상세가 1곳일 때만.
+      //   여러 곳이면 `사업장 N곳 합계`(N = 그 날짜 byBusiness 수), 상세가 비면 사업장명 없는 기존 분기.
+      if (d.byBusiness.length > 1) {
+        return '다음 근무는 $label이에요\n사업장 ${d.byBusiness.length}곳 합계 · $staffing';
+      }
+      final biz = d.byBusiness.length == 1 ? d.byBusiness.first.businessName : null;
       return biz == null
           ? '다음 근무는 $label이에요\n$staffing'
           : '다음 근무는 $label이에요\n$biz · $staffing';
     }
     // [§15] D+8 이후에만 근무가 있을 수 있다 — 아는 범위까지만 말한다.
-    return '앞으로 7일 안에도 예정된 근무가 없어요';
+    return '앞으로 7일 안에 예정된 근무가 없어요';
   }
 
   /// 공고 생성/편집 권한 — 기존 permission 계약 그대로.
@@ -1746,18 +2000,18 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final hasHealthNotice = cs == null || _unknownTaskCount(up, cs) > 0;
 
     final sections = <Widget>[
-      if (_showTodaySection) _buildTodayOps(context, s, theme, up),
+      if (_showTodaySection) _buildTodayOps(context, s, theme, up, hero: hero),
       if (_showTaskSection(hero, hasRows, hasHealthNotice))
         _buildActionDashboard(context, s, theme, up),
       if (_showUpcomingSection) _buildFutureStaffing(context, s, theme, up),
     ];
     if (sections.isEmpty) return const [];
 
-    // [§27] Hero 아래 첫 섹션까지 20, 그 뒤 섹션 사이 16.
-    //   Hero 밑에 아무것도 없으면 여백을 만들지 않는다.
-    final out = <Widget>[SizedBox(height: 20 * s)];
+    // [§27] Hero 밑에 아무것도 없으면 여백을 만들지 않는다.
+    // [CP04] 정밀 §8 리듬 — 섹션 끝→다음 제목 24. Hero 를 부족 행에 합쳤으면(빈 Hero) 앞 블록의 16 과 합쳐 24 가 되게 8.
+    final out = <Widget>[SizedBox(height: _heroMergedIntoRow ? 8 : ConceptSpace.sectionGap)];
     for (var i = 0; i < sections.length; i++) {
-      if (i > 0) out.add(SizedBox(height: 16 * s));
+      if (i > 0) out.add(const SizedBox(height: ConceptSpace.sectionGap));
       out.add(sections[i]);
     }
     return out;
@@ -1775,23 +2029,49 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     border: Border.all(color: AppColors.grey200, width: 1),
   );
 
+  // [.69] 화면 읽기에 이름·버튼 역할이 없었다(종은 배지 값 '읽지 않은 알림 N건'만) — SA 홈(.66)과 같은 방식으로 이름을 준다.
   Widget _headerBtn(BuildContext context, double s, IconData icon,
-      {required VoidCallback onTap}) {
-    return Material(
-      color: AppColors.grey100,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: EdgeInsets.all(8 * s),
-          child: Icon(icon, color: AppColors.textSecondary, size: 22 * s),
+      {required VoidCallback onTap, required String label}) {
+    // [CP01] 누름 영역 최소 48×48(이전 회색 타일 38*s 가 곧 영역). 보이는 회색 타일·아이콘은 그대로 두고
+    //   그 바깥 투명 영역까지 누름으로 넓힌다. 물결은 Ink 로 타일 위에 그려 예전처럼 보인다.
+    return Semantics(
+      button: true,
+      label: label,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            child: Align(
+              widthFactor: 1,
+              heightFactor: 1,
+              child: Ink(
+                decoration: BoxDecoration(
+                  color: AppColors.grey100,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: EdgeInsets.all(8 * s),
+                child: Icon(icon, color: AppColors.textSecondary, size: 22 * s),
+              ),
+            ),
+          ),
         ),
       ),
     );
   }
 
   Widget _adminBadge(double s, ThemeData theme) {
+    // [SCALE-BALANCE.34] 큰 글자에서 테두리·채움 배지가 이름과 같은 무게로 커졌다(392·2.0 기기).
+    //   역할은 본인이 아는 낮은 우선순위 정보 — 헤더 폭이 모자라는 배율이면 장식 없이 글자만 둔다.
+    //   (하위관리자 배지는 사업장 이름을 말하므로 그대로 둔다.)
+    final label = Text('관리자',
+        style: TextStyle(
+            color: theme.primaryColor,
+            fontSize: 12,
+            fontWeight: FontWeight.w600));
+    if (!TextLayout.fits(context, MediaQuery.sizeOf(context).width, 360)) return label;
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 10 * s, vertical: 4 * s),
       decoration: BoxDecoration(
@@ -1802,11 +2082,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(Icons.business_outlined, color: theme.primaryColor, size: 12 * s),
         SizedBox(width: 4 * s),
-        Text('관리자',
-            style: TextStyle(
-                color: theme.primaryColor,
-                fontSize: 12,
-                fontWeight: FontWeight.w600)),
+        label,
       ]),
     );
   }
@@ -1829,10 +2105,21 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(Icons.admin_panel_settings_outlined, color: theme.primaryColor, size: 12 * s),
         SizedBox(width: 4 * s),
-        Text(
-          bizName != null ? (isMulti ? '$bizName ▼' : bizName) : '하위관리자',
-          style: TextStyle(
-              color: theme.primaryColor, fontSize: 12, fontWeight: FontWeight.w600),
+        // [CP01] 긴 사업장 이름은 배지 안에서 줄바꿈 — 말줄임 없이 전문·자연 높이(▼ 포함). 예전에는 폭 제한이 없어 머리 밖으로 넘칠 수 있었다.
+        //   배지는 이제 Wrap 안에 있어 폭 상한을 받는다.
+        // [CP04 · CP01 인계] 사업장명은 낱말 단위로만 줄을 바꾼다(B 에서 `제2물류/센터`·`창/고` 음절 분절 관측).
+        //   `▼` 는 마지막 낱말에 줄바꿈 없는 공백으로 붙인다. 의미 이름은 원문 그대로.
+        Flexible(
+          child: Text(
+            bizName != null
+                ? (isMulti
+                    ? '${TextLayout.keepWords(bizName)}${String.fromCharCode(0xA0)}▼'
+                    : TextLayout.keepWords(bizName))
+                : '하위관리자',
+            semanticsLabel: bizName != null ? (isMulti ? '$bizName ▼' : bizName) : '하위관리자',
+            style: TextStyle(
+                color: theme.primaryColor, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
         ),
       ]),
     );
@@ -1841,7 +2128,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     if (!isMulti) return badge;
 
     // [PH1D] 멀티 사업장: 배지 탭 → 공유 BusinessSelectorSheet (DialogHelper.showSheet 패턴)
+    // [CP01] 사업장 선택 배지의 누름 영역 최소 48 높이·48 폭 — 보이는 배지는 그대로, 위아래 투명 영역만 넓힌다.
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: () async {
         final selected = await DialogHelper.showSheet<String>(
           context,
@@ -1855,46 +2144,90 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         // switchToAdminMode → notifyListeners → _onBusinessSwitchCheck가 갱신 처리
         await up.switchToAdminMode(selected);
       },
-      child: badge,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        child: Align(widthFactor: 1, heightFactor: 1, child: badge),
+      ),
     );
   }
 
   // ── 하위관리자 전용 모드 토글 (지원자 ↔ 관리자) ────────────────
   Widget _buildSubAdminModeToggle(
       BuildContext context, double s, UserProvider up, ThemeData theme) {
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: AppColors.grey100,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border, width: 1),
+    // [CP01] 선택지마다 누름 영역 48×48 이상(이전 글자 높이+8*s ≈ 24). 보이는 모양은 그대로 —
+    //   테두리 띠는 선택 알약+위아래 3dp 를 감싸고, 남는 높이는 띠 바깥의 투명한 누름 영역이다.
+    final pillH = _modeTogglePillHeight(context, s);
+    final optH = pillH + 6 > 48 ? pillH + 6 : 48.0;
+    final inset = (optH - (pillH + 6)) / 2;
+    return Stack(children: [
+      Positioned.fill(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: inset),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppColors.grey100,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border, width: 1),
+            ),
+          ),
+        ),
       ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        _toggleOpt(s, theme, label: '지원자', selected: false,
-            // toggleAdminMode → notifyListeners → AuthWrapper 반응형 라우팅 → UserRootScreen
-            onTap: () => up.toggleAdminMode()),
-        _toggleOpt(s, theme, label: '관리자', selected: true, onTap: () {}),
-      ]),
-    );
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 3),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          _toggleOpt(s, theme, label: '지원자', selected: false, height: optH,
+              // toggleAdminMode → notifyListeners → AuthWrapper 반응형 라우팅 → UserRootScreen
+              onTap: () => up.toggleAdminMode()),
+          _toggleOpt(s, theme, label: '관리자', selected: true, height: optH, onTap: () {}),
+        ]),
+      ),
+    ]);
+  }
+
+  /// [CP01] 선택 알약 높이 = 글자 줄 높이(실제 글자 배율·번들 글꼴) + 위아래 4*s.
+  double _modeTogglePillHeight(BuildContext context, double s) {
+    final tp = TextPainter(
+      text: TextSpan(
+          text: '지원자',
+          style: DefaultTextStyle.of(context).style.merge(
+              const TextStyle(fontSize: 12, fontWeight: FontWeight.bold))),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
+      maxLines: 1,
+    )..layout();
+    final h = tp.height + 8 * s;
+    tp.dispose();
+    return h;
   }
 
   Widget _toggleOpt(double s, ThemeData theme,
-      {required String label, required bool selected, required VoidCallback onTap}) {
+      {required String label, required bool selected, required double height,
+      required VoidCallback onTap}) {
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: EdgeInsets.symmetric(horizontal: 10 * s, vertical: 4 * s),
-        decoration: BoxDecoration(
-          color: selected ? theme.primaryColor : Colors.transparent,
-          borderRadius: BorderRadius.circular(9),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? Colors.white : AppColors.grey500,
-            fontSize: 12,
-            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minWidth: 48, minHeight: height),
+        child: Align(
+          widthFactor: 1,
+          heightFactor: 1,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: EdgeInsets.symmetric(horizontal: 10 * s, vertical: 4 * s),
+            decoration: BoxDecoration(
+              color: selected ? theme.primaryColor : Colors.transparent,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                // [CP01] 비선택 grey500(grey100 위 2.5:1 안팎) → textSecondary — 지원자 홈 토글과 같은 값.
+                color: selected ? Colors.white : AppColors.textSecondary,
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
           ),
         ),
       ),
@@ -1902,30 +2235,79 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   }
 
   // ── 섹션 헤더 ──────────────────────────────────────────────────
+  /// [CP04] 섹션 머리(정밀 §8·§9) — 제목 20/700(표면 밖), 선택 부제(범위 등) 14/400, 행동 14/700 brand + 꺾쇠 18.
+  ///   행동 receiver ≥48, 의미 node 1개(바깥 Semantics 에 같은 콜백). 실제 사용 폭에 제목 한 줄 + 행동이 안 들어가면
+  ///   행동을 제목 아래 오른쪽 줄로 내린다(말줄임·축소 없음). 좌우 여백은 홈 gutter(<360 16, 그 밖 20).
   Widget _sectionHeader(BuildContext context, double s, String title,
-      {String? action, VoidCallback? onAction}) {
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 20 * s),
-      child: Row(children: [
-        Text(title,
-            style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary)),
-        const Spacer(),
-        if (action != null && onAction != null)
-          GestureDetector(
-            onTap: onAction,
+      {String? action, VoidCallback? onAction, String? subtitle}) {
+    final titleText = Text(TextLayout.keepWords(title), style: ConceptText.section(), semanticsLabel: title);
+    final head = subtitle == null
+        ? titleText
+        : Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            titleText,
+            const SizedBox(height: 4),
+            Text(TextLayout.keepWords(subtitle), style: ConceptText.meta(), semanticsLabel: subtitle),
+          ]);
+    final gutter = ConceptSpace.gutter(MediaQuery.sizeOf(context).width);
+    if (action == null || onAction == null) {
+      return Padding(
+          padding: EdgeInsets.symmetric(horizontal: gutter),
+          child: Align(alignment: Alignment.centerLeft, child: head));
+    }
+    Widget actionWidget({required bool wrap}) {
+      final label = Text(TextLayout.keepWords(action), style: ConceptText.count().copyWith(height: 1.3), semanticsLabel: action);
+      return Semantics(
+        container: true,
+        button: true,
+        label: action,
+        excludeSemantics: true,
+        onTap: onAction,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onAction,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: ConceptSpace.minTouch, minHeight: ConceptSpace.minTouch),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Text(action,
-                  style: TextStyle(
-                      fontSize: 12, color: AppColors.textSecondary)),
-              Icon(Icons.chevron_right,
-                  size: 16 * s, color: AppColors.textSecondary),
+              if (wrap) Flexible(child: label) else label,
+              const Icon(Icons.chevron_right, size: 18, color: AppColors.brand),
             ]),
           ),
-      ]),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: gutter),
+      child: LayoutBuilder(builder: (context, c) {
+        final need = _oneLineWidth(context, title, ConceptText.section()) + 8 +
+            _oneLineWidth(context, action, ConceptText.count().copyWith(height: 1.3)) + 18;
+        if (need <= c.maxWidth) {
+          return Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+            Expanded(child: head),
+            const SizedBox(width: 8),
+            actionWidget(wrap: false),
+          ]);
+        }
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+          head,
+          Align(alignment: Alignment.centerRight, child: actionWidget(wrap: true)),
+        ]);
+      }),
     );
+  }
+
+  /// [CP04] 한 줄 필요 폭 — 실제 글자 배율·DefaultTextStyle·locale(번들 글꼴). 지원자 홈 CP03 과 같은 측정.
+  double _oneLineWidth(BuildContext context, String text, TextStyle style) {
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: DefaultTextStyle.of(context).style.merge(style)),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
+      maxLines: 1,
+    )..layout();
+    final w = tp.width;
+    tp.dispose();
+    return w;
   }
 
   // ── [FP-01] 공고 등록 준비 checklist ─────────────────────────────
@@ -1944,6 +2326,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       return const SizedBox.shrink();
     }
     if (!_readinessLoaded) return const SizedBox.shrink();
+    // [SA-AUDIT.49] 모든 사업장이 운영 중지·종료면 준비 단계를 권하지 않는다 — 관리자가 할 수 있는
+    //   일이 아니다(위 STATE D 배너가 상황을 말한다). 기기: SA 비활성 뒤 '사업장 등록 · 승인 진행 중'.
+    if (_allBusinessesClosed) return const SizedBox.shrink();
     final r = _firstPosting;
     if (r == null || r.allReady) return const SizedBox.shrink();
 
@@ -1982,8 +2367,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                   // [HOME-V2-08D.2] Hero 문장 위계(17 bold)로 올린다 —
                   //   이 상태에서 화면이 말해야 하는 한 문장이다.
                   Expanded(
+                    // [ADMIN-HOME.31] 큰 글자에서 '남았|어요' 로 끊겼다 — 낱말 단위(표시만).
                     child: Text(
-                      '공고 등록까지 ${FirstPostingReadiness.totalTasks - done}단계 남았어요',
+                      TextLayout.keepWords('공고 등록까지 ${FirstPostingReadiness.totalTasks - done}단계 남았어요'),
+                      semanticsLabel: '공고 등록까지 ${FirstPostingReadiness.totalTasks - done}단계 남았어요',
                       style: TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.bold,
@@ -2105,7 +2492,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               //   날인을 등록하라고 권하지 않는다. 계약서 사업주란에 들어가는
               //   것은 사업장 owner 의 날인이고, 여기서 등록되는 것은 호출자
               //   자신의 날인이다 — 눌러도 그 칸은 채워지지 않는다.
-              pendingHint: r.sealUnknown ? '사업장 관리자에게 확인하세요' : null,
+              pendingHint: r.sealUnknown ? '사업장 관리자에게 확인해 주세요' : null,
               onTap: r.sealUnknown
                   ? null
                   : () => _safeNavigate(() async {
@@ -2259,7 +2646,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   // 부족: canManageTo → DayApplicantsDialog(오늘) [R6.1]
   // 근태 확인 / 당일 명단: canManageWorkers → AttendanceStatusDialog(오늘) [R5.2]
   // ERROR≠ZERO: 쿼리 실패 시 null 유지 (영역별 재시도 행 유지)
-  Widget _buildTodayOps(BuildContext context, double s, ThemeData theme, UserProvider up) {
+  // [SCALE-BALANCE.34] hero 는 _buildSections 가 한 번 derive 한 값을 받는다(§2 — 한 곳에서만 derive).
+  Widget _buildTodayOps(BuildContext context, double s, ThemeData theme, UserProvider up,
+      {_HeroState? hero}) {
     final canSeeStaffing = _verified(up, (p) => p.canManageTo)
         || _verified(up, (p) => p.canManageWorkers);
     final canSeeAttendance = _verified(up, (p) => p.canManageWorkers);
@@ -2272,10 +2661,30 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final blocks = <Widget>[];
 
     final summary = canSeeStaffing ? _buildTodayStaffingSummary(s, theme) : null;
-    if (summary != null) blocks.add(summary);
+    // [DU-VQ-03 · 후속13 §2] Hero 를 부족 행에 합치면 Hero 가 보조로 말하던 **오늘 확정 근무의 업무·시간**(_todayWorkSummary)도
+    //   함께 사라졌다. 오늘 전체 확정 근무 context 임을 밝혀 요약 덩어리 안의 보조 줄로 남긴다(부족 위치 아님 — 부족 위치는 부족 행이 말한다).
+    // [CP04] 업무·시간이 하나로 확정되면 요약 머리(20/700)가 이미 그 업무·시간을 말한다 — 같은 값을 반복하지 않는다.
+    //   여럿이면(`업무 N개`·`시간대 N개`) 기존 `확정 근무 · …` 보조 줄을 그대로 남긴다(부족 위치 아님).
+    final mergedContext = hero == _HeroState.shortage && _todayShortageRowShown(up) && !_todayWorkTimeIsSingle
+        ? _todayWorkTimeSummary
+        : null;
+    if (summary != null) {
+      blocks.add(mergedContext == null || mergedContext.isEmpty
+          ? summary
+          : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              summary,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Text(TextLayout.phrases('확정 근무 · $mergedContext'),
+                    semanticsLabel: '확정 근무 · $mergedContext', style: ConceptText.meta()),
+              ),
+            ]));
+    }
 
     final issues = _buildTodayIssueRows(context, s, up,
-        canSeeStaffing: canSeeStaffing, canSeeAttendance: canSeeAttendance);
+        canSeeStaffing: canSeeStaffing, canSeeAttendance: canSeeAttendance,
+        // [DU-VQ-03] Hero 를 이 행으로 합쳤으면 행이 기본 issue 강조(quiet 아님)
+        heroSaysShortage: hero == _HeroState.shortage && !_todayShortageRowShown(up));
     if (issues.isNotEmpty) blocks.add(Column(children: issues));
 
     final attendance =
@@ -2303,22 +2712,20 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     return Column(children: [
       // [HOME-V2-08D.4] `오늘 운영` → `오늘`. 옆에 `당일 명단`이 붙은 뒤로
       //   `운영`은 헤더를 길게만 만들고 아무것도 구분해 주지 않는다.
-      _sectionHeader(context, s, '오늘',
-          action: canOpenRoster ? '당일 명단' : null,
+      _sectionHeader(context, s, '오늘의 근무',
+          action: canOpenRoster ? '명단 보기' : null,
           onAction: canOpenRoster
               ? () => unawaited(_safeNavigate(() => _requireApprovedBusiness(
                   context, () => _openTodayAttendanceDialog(context))))
               : null),
-      SizedBox(height: 8 * s),
+      const SizedBox(height: ConceptSpace.sectionTitleToCard),
       Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16 * s),
+        padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
         child: Container(
-          // [AH-V2-05C] flat surface — 다른 관리자 화면과 같은 depth.
-          //   상태(정상/에러)에 따라 카드 깊이가 달라지던 것도 함께 사라진다.
-          // [HOME-V2-08D.1] 경계를 border로 준다 — flat인 채로 카드 범위가
-          //   보여야 grey50 배경 위에서 그룹이 읽힌다.
-          decoration: _groupSurface,
-          child: Column(children: children),
+          // [AH-V2-05C] 상태(정상/에러)에 따라 카드 깊이가 달라지지 않는다.
+          // [CP04] 최상위 그룹만 conceptRaised 한 겹(정밀 §6) — 안쪽 덩어리는 그림자 0, 구분선으로 나눈다.
+          decoration: ConceptSurface.raised(),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children),
         ),
       ),
     ]);
@@ -2342,7 +2749,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // [HOME-V2-08D.3] 실패를 `0명 중 0명 확정`으로 요약하지 않는다. ERROR≠ZERO.
     if (_staffingReadiness == null || !_staffingReadiness!.hasUsableData) {
       return _todayOpsErrorRow(s,
-        message: '인력 정보를 불러오지 못했습니다',
+        message: '인력 정보를 불러오지 못했어요',
         onRetry: () => unawaited(_loadStaffingReadiness()),
       );
     }
@@ -2394,27 +2801,61 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     //   안전하게 알 수 없고, partial notice가 이미 범위를 말해주기 때문이다.
     final scopeLabel = _staffingScopeLabel();
 
-    return Column(children: [
-      if (scopeLabel != null)
-        Padding(
-          padding: EdgeInsets.fromLTRB(16 * s, 12 * s, 16 * s, 0),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(scopeLabel,
-                style: TextStyle(fontSize: 12, color: AppColors.grey400)),
-          ),
-        ),
+    // [CP04] 정밀 §8·§9 — 인원 요약 18(확정 수만 700), 정원 N 을 다시 `필요`로 부르지 않는다.
+    //   부족은 `N명 추가 필요` 필 한 번(#FDEAC4/#8A4B00 13/700, H10/V4 r8) — 서버 shortage 그대로, hasUsableData 일 때만.
+    final lead = allStaffed ? '$required명' : '$required명 중 ';
+    final strong = allStaffed ? '' : '$confirmed명';
+    final tail = allStaffed ? ' 전원 확정' : ' 확정';
+    final staffLine = Text.rich(
+      TextSpan(children: [
+        TextSpan(text: lead, style: allStaffed ? ConceptText.adminStaffStrong() : ConceptText.adminStaffRegular()),
+        if (strong.isNotEmpty) TextSpan(text: strong, style: ConceptText.adminStaffStrong()),
+        TextSpan(text: tail, style: ConceptText.adminStaffRegular()),
+      ]),
+      semanticsLabel: summaryText,
+    );
+    final needPill = shortage > 0
+        ? Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: ConceptSurface.staffingNeed(),
+            child: Text(TextLayout.keepWords('$shortage명 추가 필요'),
+                semanticsLabel: '$shortage명 추가 필요',
+                style: ConceptText.pill(AppColors.conceptStaffingNeedText)),
+          )
+        : null;
+    final workTime = _todayWorkTimeSummary;
+    final partial = _staffingReadiness?.partial == true;
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Padding(
-        padding: EdgeInsets.fromLTRB(16 * s, 12 * s, 16 * s, 12 * s),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: Text(summaryText,
-              style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
-        ),
+        padding: EdgeInsets.fromLTRB(16, 16, 16, partial ? 8 : 12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (scopeLabel != null) ...[
+            Text(TextLayout.keepWords(scopeLabel), semanticsLabel: scopeLabel, style: ConceptText.meta()),
+            const SizedBox(height: 4),
+          ],
+          if (_todayWorkTimeIsSingle && workTime != null) ...[
+            Text(TextLayout.phrases(workTime), semanticsLabel: workTime, style: ConceptText.adminWorkTime()),
+            const SizedBox(height: 8),
+          ],
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [staffLine, if (needPill != null) needPill],
+          ),
+        ]),
       ),
       // [AH-V2-03] 부분합 고지 — 숫자를 전체 합계로 오해하지 않도록
       _partialStaffingNotice(s),
     ]);
+  }
+
+  /// [CP04] 오늘 확정 근무의 업무·시간이 **하나로 확정**됐는가 — 그때만 20/700 머리로 보인다(정밀 §8 관리자 업무·시간).
+  ///   `_summarizeWork` 는 여럿이면 `업무 N개`·`시간대 N개` 로 말한다 — 그 개수 표기가 있으면 대표 시간을 세우지 않는다.
+  bool get _todayWorkTimeIsSingle {
+    final w = _todayWorkTimeSummary;
+    return w != null && w.isNotEmpty && !RegExp(r'(업무|시간대) [0-9]+개').hasMatch(w);
   }
 
   /// [HOME-V2-08D.3] 오늘의 실제 문제 행들. 없으면 빈 목록.
@@ -2430,6 +2871,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     UserProvider up, {
     required bool canSeeStaffing,
     required bool canSeeAttendance,
+    bool heroSaysShortage = false,
   }) {
     final rows = <Widget>[];
 
@@ -2454,16 +2896,18 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         //   조건은 비교일 뿐이다 — 정원-확정을 부족으로 쓰거나 화면에 보이지 않는다.
         final scopeDiffers =
             (day.requiredCount - day.confirmedCount) != shortage;
-        rows.add(_todayIssueRow(s,
-          icon: Icons.error_outline,
-          label: where == null ? '$shortage명 부족' : '$shortage명 부족 · $where',
-          note: scopeDiffers ? '지금 모집 중인 업무만 센 숫자예요' : null,
-          color: AppColors.error,
+        // [CP04] 정밀 §4 — 부족 숫자는 요약의 `N명 추가 필요` 필이 한 번 말한다. 이 행은 같은 숫자를 다시 쓰지 않고
+        //   행동 `인원 현황 보기`(기존 권한으로 onTap 이 허용될 때만)와 범위 context(다사업장 부족 위치·집계 기준 차이)만 남긴다.
+        //   권한이 없으면 행동 없이 context 만(거짓 꺾쇠·버튼 없음). 목적지·순서는 그대로.
+        final detail = _shortageDetailRow(
+          where: where,
+          scopeDiffers: scopeDiffers,
           onTap: canManageTo
               ? () => unawaited(_safeNavigate(() => _requireApprovedBusiness(
                   context, () => _navigateToDayApplicantsForDate(context, day))))
               : null,
-        ));
+        );
+        if (detail != null) rows.add(detail);
       }
     }
 
@@ -2494,6 +2938,50 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   /// 두 issue는 같은 높이·같은 typography·같은 chevron 계약을 쓰고
   /// semantic color만 다르다 — Home은 둘을 동등한 actionable issue로 보여준다.
   /// 우선순위를 말하는 것은 Hero의 역할이다.
+  /// [CP04] 오늘 부족의 하위 행 — 숫자 없이 행동 `인원 현황 보기`(brand, 허용될 때만)와 범위 context 만.
+  ///   보여줄 것(행동·위치·집계 기준 차이)이 하나도 없으면 null(빈 행·구분선 없음).
+  static const String _shortageScopeNote = '필요·확정 인원과 추가 필요 인원은 집계 기준이 달라요';
+  Widget? _shortageDetailRow({required String? where, required bool scopeDiffers, VoidCallback? onTap}) {
+    final lines = <Widget>[
+      if (where != null)
+        Text(TextLayout.phrases(where), semanticsLabel: where, style: ConceptText.meta()),
+      if (scopeDiffers)
+        Text(TextLayout.keepWords(_shortageScopeNote), semanticsLabel: _shortageScopeNote, style: ConceptText.meta()),
+    ];
+    if (onTap == null && lines.isEmpty) return null;
+    final body = Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+      if (onTap != null) Text(TextLayout.keepWords('인원 현황 보기'), semanticsLabel: '인원 현황 보기',
+          style: ConceptText.count().copyWith(height: 1.3)),
+      for (var i = 0; i < lines.length; i++) ...[
+        if (i > 0 || onTap != null) const SizedBox(height: 4),
+        lines[i],
+      ],
+    ]);
+    final row = ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: ConceptSpace.minTouch),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(children: [
+          Expanded(child: body),
+          if (onTap != null) ...[
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right, size: 18, color: AppColors.brand),
+          ],
+        ]),
+      ),
+    );
+    if (onTap == null) return row;
+    final label = ['인원 현황 보기', if (where != null) where, if (scopeDiffers) _shortageScopeNote].join(', ');
+    return Semantics(
+      container: true,
+      button: true,
+      label: label,
+      excludeSemantics: true,
+      onTap: onTap,
+      child: InkWell(onTap: onTap, child: row),
+    );
+  }
+
   Widget _todayIssueRow(double s, {
     required IconData icon,
     required String label,
@@ -2502,40 +2990,54 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     ///   숫자를 담지 않는다 — 여기서 새 값을 계산하거나 주장하지 않는다.
     String? note,
     VoidCallback? onTap,
+    bool quiet = false,
   }) {
-    final row = Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 12 * s),
-      child: Row(children: [
-        Icon(icon, size: 17 * s, color: color),
-        SizedBox(width: 8 * s),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(label,
-                  style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis),
-              if (note != null) ...[
-                SizedBox(height: 2 * s),
-                Text(note,
-                    style: TextStyle(fontSize: 12, color: AppColors.grey500),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis),
-              ],
-            ],
+    // [CP04] 글자 16/700(조용하면 400)·note 14 전문(말줄임 제거). 행 전체 receiver ≥48·의미 node(같은 콜백).
+    final row = ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: ConceptSpace.minTouch),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        // [SCALE-BALANCE.34] 아이콘·chevron 은 여러 줄 글자의 세로 가운데가 아니라 첫 줄에 맞춘다.
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Padding(
+            padding: EdgeInsets.only(top: ((MediaQuery.textScalerOf(context).scale(16) * 1.45 - 20) / 2).clamp(0, 40)),
+            child: Icon(icon, size: 20, color: color),
           ),
-        ),
-        // chevron은 실제로 갈 곳이 있을 때만 — 권한이 없으면 상태만 남는다.
-        if (onTap != null)
-          Icon(Icons.chevron_right, size: 18 * s, color: AppColors.grey400),
-      ]),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // [ADMIN-HOME.31] 낱말 단위로 줄을 바꾸고 줄 수를 막지 않는다.
+                Text(TextLayout.phrases(label),
+                    semanticsLabel: label,
+                    style: ConceptText.body().copyWith(fontWeight: quiet ? FontWeight.w400 : FontWeight.w700)),
+                if (note != null) ...[
+                  const SizedBox(height: 4),
+                  Text(TextLayout.keepWords(note), semanticsLabel: note, style: ConceptText.meta()),
+                ],
+              ],
+            ),
+          ),
+          // chevron은 실제로 갈 곳이 있을 때만 — 권한이 없으면 상태만 남는다.
+          if (onTap != null)
+            Padding(
+              padding: EdgeInsets.only(top: ((MediaQuery.textScalerOf(context).scale(16) * 1.45 - 18) / 2).clamp(0, 40)),
+              child: const Icon(Icons.chevron_right, size: 18, color: AppColors.conceptChevron),
+            ),
+        ]),
+      ),
     );
-    return onTap == null ? row : InkWell(onTap: onTap, child: row);
+    if (onTap == null) return row;
+    return Semantics(
+      container: true,
+      button: true,
+      label: [label, if (note != null) note].join(', '),
+      excludeSemantics: true,
+      onTap: onTap,
+      child: InkWell(onTap: onTap, child: row),
+    );
   }
 
   /// [AH-V2-04B] 관리 사업장이 2곳 이상인지 — staffing 집계 범위 기준.
@@ -2543,6 +3045,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   /// _getBusinesses()가 CF와 같은 scope를 쓴다 (SubAdmin: effectiveBusinessId 1곳,
   /// OWNER: managedBusinessIds). 따라서 SubAdmin은 자연히 false가 된다.
   bool get _isMultiBusinessScope => _businesses.length > 1;
+
+  /// 'YYYY-MM-DD' → 'YYYY.MM.DD'. 형식이 다르면 받은 그대로 둔다(값을 추측하지 않는다).
+  static String _dotDate(String ymd) =>
+      RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(ymd) ? ymd.replaceAll('-', '.') : ymd;
 
   /// 오늘 운영 수치의 집계 범위 라벨. 표시할 필요가 없으면 null.
   ///
@@ -2556,6 +3062,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     return '전체 ${_businesses.length}개 사업장 합계';
   }
 
+  /// [DU307 Standards §12.2] 부분 실패 표시 — 작은 주의 아이콘 하나(상태색은 이 면적에만). 의미는 옆 문장이 말한다.
+  static const double _kPartialMarkSize = 16;
+  Widget _partialMark() => const ExcludeSemantics(
+        child: Icon(Icons.cloud_off_outlined, size: _kPartialMarkSize, color: AppColors.warningDark),
+      );
+
   /// [AH-V2-03] 일부 사업장 조회 실패 고지.
   ///
   /// 정상 사업장 데이터는 그대로 보여주되, 표시된 숫자가 전체 합계가
@@ -2564,30 +3076,42 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   Widget _partialStaffingNotice(double s) {
     final sr = _staffingReadiness;
     if (sr == null || !sr.partial) return const SizedBox.shrink();
+    // [CP04] 부분합 고지 문구·조건 그대로. `다시 시도` brand receiver ≥48·의미 node(같은 콜백).
+    // [DU307 Standards §12.2] 부분 실패 = 작은 주의 표시 + 중립 설명 + brand `다시 시도`. 문장 전체 warningDark(호박색)를
+    //   중립 메타(14/400 textSecondary)로 낮추고 앞에 작은 주의 아이콘 하나를 둔다(_partialMark). 완전 실패 행(errorDark)과 구별된다.
+    final msg = '사업장 ${sr.failedBusinessCount}곳의 정보를 불러오지 못해 나머지 사업장 기준으로 표시했어요';
+    final msgStyle = ConceptText.meta();
+    final retryStyle = ConceptText.count().copyWith(height: 1.3);
+    void retry() => unawaited(_loadStaffingReadiness());
     return Padding(
-      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 10 * s),
-      child: Row(children: [
-        Icon(Icons.info_outline, size: 13 * s, color: AppColors.warning),
-        SizedBox(width: 6 * s),
-        Expanded(
-          child: Text(
-            '사업장 ${sr.failedBusinessCount}곳의 정보를 불러오지 못해 '
-            '나머지 사업장 기준으로 표시했어요',
-            style: TextStyle(fontSize: 12, color: AppColors.warning),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+      child: Builder(builder: (context) {
+        final retryW = _oneLineWidth(context, '다시 시도', retryStyle);
+        return _rowWithTrailing(
+          context,
+          leading: _partialMark(),
+          leadingWidth: _kPartialMarkSize,
+          leadingGap: 6,
+          body: Text(TextLayout.keepWords(msg), semanticsLabel: msg, style: msgStyle),
+          bodyTexts: [(TextLayout.keepWords(msg), msgStyle)],
+          trailingWidth: retryW < ConceptSpace.minTouch ? ConceptSpace.minTouch : retryW,
+          trailing: Semantics(
+            container: true,
+            button: true,
+            label: '다시 시도',
+            excludeSemantics: true,
+            onTap: retry,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: retry,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: ConceptSpace.minTouch, minHeight: ConceptSpace.minTouch),
+                child: Center(widthFactor: 1, heightFactor: 1, child: Text('다시 시도', style: retryStyle)),
+              ),
+            ),
           ),
-        ),
-        InkWell(
-          onTap: () => unawaited(_loadStaffingReadiness()),
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 6 * s, vertical: 2 * s),
-            child: Text('재시도',
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.warning)),
-          ),
-        ),
-      ]),
+        );
+      }),
     );
   }
 
@@ -2608,7 +3132,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // 쿼리 실패 — _todayCheckedIn == null. `출근 0/0`으로 쓰지 않는다. ERROR≠ZERO.
     if (_todayCheckedIn == null) {
       return _todayOpsErrorRow(s,
-        message: '출근 현황을 불러오지 못했습니다',
+        message: '출근 현황을 불러오지 못했어요',
         onRetry: () => unawaited(_loadTodayAttendance()),
       );
     }
@@ -2621,36 +3145,70 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         ? '출근 예정 전'
         : '출근 ${_todayCheckedIn!}/$dueNow';
 
+    // [CP04] 메타 14/400(정밀 §8). 분모는 현재까지 출근 대상 그대로 — 화면 읽기는 단위를 붙인다.
     return Padding(
-      padding: EdgeInsets.fromLTRB(16 * s, 12 * s, 16 * s, 12 * s),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Align(
         alignment: Alignment.centerLeft,
         child: Text(text,
-            style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+            semanticsLabel: dueNow == 0 ? text : '출근 ${_todayCheckedIn!}명, 현재까지 출근 대상 $dueNow명',
+            style: ConceptText.meta()),
       ),
     );
   }
 
   /// 오늘 운영 영역별 에러 행 — 재시도 버튼 포함
+  /// 영역별 실패 행 — 실패 문구(정상0과 다른 상태) + 같은 영역 로더 `다시 시도`.
+  ///   [CP04] 정밀 §4 조회 실패: 실패 안내 errorDark, 재시도 brand. 재시도 receiver ≥48·의미 node(같은 콜백).
+  ///   좁으면 `다시 시도`를 아래 오른쪽 줄로(_rowWithTrailing). 문구 전문·자연 높이.
+  ///   [DU307 §12.2] [partial] = 일부만 확인하지 못함 — errorDark 문장 대신 작은 주의 아이콘 + 중립 메타(부분합 고지와 같은 표현).
+  ///   완전 실패(기본)는 정밀 §4 그대로 errorDark. 문구·로더·receiver·배치 규칙은 그대로다.
   Widget _todayOpsErrorRow(double s, {
     required String message,
     required VoidCallback onRetry,
+    bool partial = false,
   }) {
+    final msgStyle = partial
+        ? ConceptText.meta()
+        : ConceptText.meta().copyWith(color: AppColors.errorDark);
+    final retryStyle = ConceptText.count().copyWith(height: 1.3);
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 12 * s),
-      child: Row(children: [
-        Icon(Icons.info_outline, size: 14 * s, color: AppColors.grey400),
-        SizedBox(width: 6 * s),
-        Expanded(child: Text(message,
-          style: TextStyle(fontSize: 12, color: AppColors.grey400))),
-        GestureDetector(
-          onTap: onRetry,
-          child: Text('재시도', style: TextStyle(
-            fontSize: 12, color: AppColors.textSecondary,
-            decoration: TextDecoration.underline,
-          )),
-        ),
-      ]),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Builder(builder: (context) {
+        return _rowWithTrailing(
+          context,
+          // [DU307 audit] body 의 세로 8 패딩을 앞 표시에도 맞춘다. 아래행 분기에서 아이콘만 8 위로 뜨지 않게 한다.
+          //   양쪽 대칭 패딩이라 같은행 중앙 정렬과 가로 leading 폭 16 은 그대로다.
+          leading: partial
+              ? Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: _partialMark())
+              : null,
+          leadingWidth: partial ? _kPartialMarkSize : 0,
+          leadingGap: partial ? 6 : 0,
+          body: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Text(TextLayout.keepWords(message), semanticsLabel: message, style: msgStyle),
+          ),
+          bodyTexts: [(TextLayout.keepWords(message), msgStyle)],
+          trailingWidth: _oneLineWidth(context, '다시 시도', retryStyle) < ConceptSpace.minTouch
+              ? ConceptSpace.minTouch
+              : _oneLineWidth(context, '다시 시도', retryStyle),
+          trailing: Semantics(
+            container: true,
+            button: true,
+            label: '다시 시도',
+            excludeSemantics: true,
+            onTap: onRetry,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onRetry,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: ConceptSpace.minTouch, minHeight: ConceptSpace.minTouch),
+                child: Center(widthFactor: 1, heightFactor: 1, child: Text('다시 시도', style: retryStyle)),
+              ),
+            ),
+          ),
+        );
+      }),
     );
   }
 
@@ -2672,13 +3230,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // 로딩: Today Ops와 _staffingLoading 공유 (동일 fetch)
     if (_staffingLoading) {
       return Column(children: [
-        _sectionHeader(context, s, '다가오는 7일'),
-        SizedBox(height: 8 * s),
+        _sectionHeader(context, s, '다가오는 근무', subtitle: '앞으로 7일'),
+        const SizedBox(height: ConceptSpace.sectionTitleToCard),
         Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16 * s),
+          padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
           child: Container(
             height: 50 * s,
-            decoration: _groupSurface,
+            decoration: ConceptSurface.raised(),
             child: Center(
               child: SizedBox(width: 16 * s, height: 16 * s,
                 child: CircularProgressIndicator(
@@ -2692,14 +3250,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // [AH-V2-03.1] partial(부분합)은 여기서 걸리지 않고 아래로 내려간다.
     if (_staffingReadiness == null || !_staffingReadiness!.hasUsableData) {
       return Column(children: [
-        _sectionHeader(context, s, '다가오는 7일'),
-        SizedBox(height: 8 * s),
+        _sectionHeader(context, s, '다가오는 근무', subtitle: '앞으로 7일'),
+        const SizedBox(height: ConceptSpace.sectionTitleToCard),
         Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16 * s),
+          padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
           child: Container(
-            decoration: _groupSurface,
+            decoration: ConceptSurface.raised(),
             child: _todayOpsErrorRow(s,
-              message: '향후 인력 현황을 불러오지 못했습니다',
+              message: '향후 인력 현황을 불러오지 못했어요',
               onRetry: () => unawaited(_loadStaffingReadiness())),
           ),
         ),
@@ -2726,14 +3284,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     if (futureDays.isEmpty) return const SizedBox.shrink();
 
     return Column(children: [
-      _sectionHeader(context, s, '다가오는 7일'),
-      SizedBox(height: 8 * s),
+      _sectionHeader(context, s, '다가오는 근무', subtitle: '앞으로 7일'),
+      const SizedBox(height: ConceptSpace.sectionTitleToCard),
       Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16 * s),
+        padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
         child: Container(
-          // [AH-V2-05C] flat surface — 부족 목록이 있을 때만 그림자가 생겨
-          //   같은 섹션이 상태에 따라 다른 깊이로 보이던 것을 없앤다.
-          decoration: _groupSurface,
+          // [AH-V2-05C] 상태에 따라 깊이가 달라지지 않는다 — [CP04] 최상위 그룹은 로딩·오류·목록 모두 conceptRaised 한 겹(정밀 §6).
+          decoration: ConceptSurface.raised(),
           child: Column(
             children: [
               ...futureDays.asMap().entries.map((e) =>
@@ -2808,46 +3365,42 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       bottomRight: Radius.circular(isLast  ? 16 : 0),
     );
 
+    // [CP04] 정밀 §4 다가오는 7일 — 날짜 16/700(전문, 말줄임 없음)·나머지 14/400, 부족은 `N명 추가 필요` 14/700 textSecondary(필·빨강 없음).
+    //   부족 글자·꺾쇠는 본문이 좁아지면 아래 오른쪽 줄로 내린다(_rowWithTrailing). 값·정렬·목적지·권한 그대로.
+    final detail = parts.join(' · ');
+    final dateStyle = ConceptText.body().copyWith(fontWeight: FontWeight.w700, height: 1.35);
+    final needStyle = ConceptText.meta().copyWith(fontWeight: FontWeight.w700);
+    final hasTrailing = shortage > 0 || canNavigate;
+    final trailingW = (shortage > 0 ? _oneLineWidth(context, '$shortage명 추가 필요', needStyle) : 0.0) +
+        (shortage > 0 && canNavigate ? 4 : 0) +
+        (canNavigate ? 18 : 0);
     final rowContent = Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 13 * s),
-      child: Row(children: [
-        Expanded(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 날짜가 행의 주어다 — grey metadata로 묻지 않는다.
-              Text(dateLabel,
-                  style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis),
-              SizedBox(height: 3 * s),
-              Text(parts.join(' · '),
-                  style: TextStyle(
-                      fontSize: 13, color: AppColors.textSecondary),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis),
-            ],
-          ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: _rowWithTrailing(
+        context,
+        body: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 날짜가 행의 주어다 — grey metadata로 묻지 않는다.
+            Text(TextLayout.keepWords(dateLabel), semanticsLabel: dateLabel, style: dateStyle),
+            const SizedBox(height: 4),
+            // [ADMIN-HOME.31] 320·1.3 에서 '[합|성] E7 사업장' 으로 끊겼다 — 낱말 단위, 사업장명 말줄임 없음.
+            Text(TextLayout.phrases(detail), semanticsLabel: detail, style: ConceptText.meta()),
+          ],
         ),
-        // [08C] surface는 neutral, 문제 의미에만 semantic color.
-        //   13px 본문 대비를 위해 error(#F44336)가 아닌 errorDark(#D32F2F)를 쓴다.
-        if (shortage > 0) ...[
-          SizedBox(width: 8 * s),
-          Text('$shortage명 부족',
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.errorDark)),
-        ],
-        if (canNavigate) ...[
-          SizedBox(width: 4 * s),
-          Icon(Icons.chevron_right, size: 18 * s, color: AppColors.grey400),
-        ],
-      ]),
+        bodyTexts: [(TextLayout.keepWords(dateLabel), dateStyle), (TextLayout.phrases(detail), ConceptText.meta())],
+        trailingWidth: trailingW,
+        trailing: !hasTrailing
+            ? null
+            : Row(mainAxisSize: MainAxisSize.min, children: [
+                if (shortage > 0)
+                  Text(TextLayout.keepWords('$shortage명 추가 필요'),
+                      semanticsLabel: '$shortage명 추가 필요', style: needStyle),
+                if (shortage > 0 && canNavigate) const SizedBox(width: 4),
+                if (canNavigate) const Icon(Icons.chevron_right, size: 18, color: AppColors.conceptChevron),
+              ]),
+      ),
     );
 
     return Column(mainAxisSize: MainAxisSize.min, children: [
@@ -2863,11 +3416,64 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         rowContent,
       if (!isLast)
         Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16 * s),
-          child: Container(height: 1, color: AppColors.grey100),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Container(height: 1 / MediaQuery.devicePixelRatioOf(context), color: AppColors.conceptDivider),
         ),
     ]);
   }
+
+  /// [CP04] 행 = (선택) 앞 아이콘 · 본문 · 뒤(숫자 알약·부족 글자·꺾쇠).
+  ///   같은 줄 조건은 지원자 홈 C1 r3 에서 수용된 식과 같다: 본문에 남는 폭 ≥ 본문 표시 조각(공백으로 나눈 낱말) 중
+  ///   가장 넓은 것의 한 줄 폭, 그리고 ≥ 안쪽 전체 폭의 절반. 아니면 뒤를 본문 아래 오른쪽 줄로 내린다(정밀 §5 행 기하·§8 B 규칙 5).
+  ///   말줄임·축소·고정 높이 없음. 행 탭·목적지는 호출부 그대로다.
+  Widget _rowWithTrailing(
+    BuildContext context, {
+    Widget? leading,
+    double leadingWidth = 0,
+    double leadingGap = 0,
+    required Widget body,
+    required List<(String, TextStyle)> bodyTexts,
+    Widget? trailing,
+    double trailingWidth = 0,
+    double trailingGap = 8,
+  }) {
+    if (trailing == null) {
+      return Row(children: [
+        if (leading != null) ...[leading, SizedBox(width: leadingGap)],
+        Expanded(child: body),
+      ]);
+    }
+    return LayoutBuilder(builder: (context, c) {
+      var need = 0.0;
+      for (final (text, style) in bodyTexts) {
+        for (final unit in text.split(' ')) {
+          if (unit.isEmpty) continue;
+          final w = _oneLineWidth(context, unit, style);
+          if (w > need) need = w;
+        }
+      }
+      final inlineBody = c.maxWidth - leadingWidth - leadingGap - trailingGap - trailingWidth;
+      if (inlineBody >= need && inlineBody >= c.maxWidth * 0.5) {
+        return Row(children: [
+          if (leading != null) ...[leading, SizedBox(width: leadingGap)],
+          Expanded(child: body),
+          SizedBox(width: trailingGap),
+          trailing,
+        ]);
+      }
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (leading != null) ...[leading, SizedBox(width: leadingGap)],
+          Expanded(child: body),
+        ]),
+        const SizedBox(height: 8),
+        Align(alignment: Alignment.centerRight, child: trailing),
+      ]);
+    });
+  }
+
+  /// [CP04] 화면 좌우 여백 — 폭 360 미만 16, 그 외 20(정밀 §8, 다시 s 를 곱하지 않는다).
+  double _gutter(BuildContext context) => ConceptSpace.gutter(MediaQuery.sizeOf(context).width);
 
   /// 날짜 레이블 — 내일이면 '내일', 그 외 'M/D (요일)' 포맷
   String _futureDateLabel(String dateStr) {
@@ -2878,8 +3484,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final day   = int.tryParse(parts[2]);
     if (year == null || month == null || day == null) return dateStr;
 
+    // [CP04] 지시 §3 — 같은 홈의 다른 로더와 같은 시각 기준(주입 clock, 없으면 실제 now — production 동작 그대로).
     final tomorrowKst =
-        FormatHelper.toKstDate(DateTime.now()).add(const Duration(days: 1));
+        FormatHelper.toKstDate((_reads.clock ?? DateTime.now)()).add(const Duration(days: 1));
     if (year == tomorrowKst.year &&
         month == tomorrowKst.month &&
         day == tomorrowKst.day) {
@@ -2894,7 +3501,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   Future<void> _openTodayAttendanceDialog(BuildContext context) async {
     final businesses = await _getBusinesses();
     if (!context.mounted) return;
-    final today = FormatHelper.toKstDate(DateTime.now());
+    // [CP04] 지시 §3 — 오늘 명단 날짜도 홈의 같은 시각 기준(주입 clock, 없으면 실제 now).
+    final today = FormatHelper.toKstDate((_reads.clock ?? DateTime.now)());
     final changed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -2974,12 +3582,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     if (_canonicalSummaryLoading) {
       return Column(children: [
         _sectionHeader(context, s, '처리할 일'),
-        SizedBox(height: 8 * s),
+        const SizedBox(height: ConceptSpace.sectionTitleToCard),
         Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16 * s),
+          padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
           child: Container(
             height: 56 * s,
-            decoration: _groupSurface,
+            decoration: ConceptSurface.raised(),
             child: Center(child: SizedBox(width: 18 * s, height: 18 * s,
               child: CircularProgressIndicator(strokeWidth: 2, color: theme.primaryColor))),
           ),
@@ -3003,24 +3611,23 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
     return Column(children: [
       _sectionHeader(context, s, '처리할 일'),
-      SizedBox(height: 8 * s),
+      const SizedBox(height: ConceptSpace.sectionTitleToCard),
       Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16 * s),
+        padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
         child: Container(
-          // [AH-V2-05C] flat surface — 할 일이 있을 때만 그림자가 생겨
-          //   로딩·빈 상태와 깊이가 달라지던 것을 없앤다.
-          decoration: _groupSurface,
+          // [AH-V2-05C] 상태에 따라 깊이가 달라지지 않는다 — [CP04] 최상위 그룹은 conceptRaised 한 겹, 안쪽 행은 그림자 0(정밀 §5·§6).
+          decoration: ConceptSurface.raised(),
           child: Column(children: [
             if (showReassurance)
               Padding(
-                padding:
-                    EdgeInsets.symmetric(horizontal: 16 * s, vertical: 14 * s),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 child: Row(children: [
-                  Icon(Icons.check_circle_outline,
-                      size: 18 * s, color: AppColors.grey300),
-                  SizedBox(width: 10 * s),
-                  Text('처리할 업무가 없어요',
-                      style: TextStyle(fontSize: 13, color: AppColors.grey400)),
+                  const Icon(Icons.check_circle_outline, size: 24, color: AppColors.conceptNavy),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(TextLayout.keepWords('처리할 업무가 없어요'),
+                        semanticsLabel: '처리할 업무가 없어요', style: ConceptText.taskDescription()),
+                  ),
                 ]),
               ),
             ...rows.asMap().entries.map((e) => _buildActionRowWidget(
@@ -3036,20 +3643,19 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   }
 
 
-  List<({IconData icon, String label, String? badge, String countStr,
-      Color color, int count, VoidCallback onTap})>
-  _makeActionRows(BuildContext context, double s, UserProvider up, AdminHomeSummaryModel? cs) {
-    final result = <({IconData icon, String label, String? badge, String countStr,
-        Color color, int count, VoidCallback onTap})>[];
+  List<_TaskRow> _makeActionRows(BuildContext context, double s, UserProvider up, AdminHomeSummaryModel? cs) {
+    final result = <_TaskRow>[];
     // [PH1] SUB_ADMIN 권한 게이트: 권한 없는 항목은 목록에서 제외
     // CF aggSimple()이 permCount==0(권한없음)과 실제 쿼리 실패를 모두 available:false로
     // 반환하기 때문에 클라이언트에서 먼저 권한 기반 필터링을 적용한다.
 
     // [AH-V2-05B.3] atIndex는 '이체 대기' 연체 상향 한 곳에만 쓴다.
     //   행 목록을 점수로 재정렬하는 구조가 아니라, 정해진 자리에 넣는 것이다.
+    // [CP04] 정밀 §5 — 제목·정확 일반 설명(동일 canonical N)·숫자 알약(기본 숫자만, 마감은 `N일`)·보조줄(실제 metadata).
+    //   색은 행 종류로 칠하지 않는다: 제목·숫자·아이콘 공통색, 실제 긴급·연체·만료 보조줄만 errorDark(§4).
     void add({
-      required IconData icon, required String label, required Color color,
-      String? badge, required int count, required bool available, required String countStr,
+      required IconData icon, required String label, required String desc,
+      List<_TaskSub> subs = const [], required int count, required bool available, String? pill,
       required VoidCallback onTap,
       int? atIndex,
     }) {
@@ -3067,8 +3673,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       // **조회 실패와 권한 없음이 같은 false**로 내려온다(aggSimple). 그 값 하나로
       // 사용자에게 오류를 주장할 수 없다. UNKNOWN은 section-level notice가 말한다.
       if (!available || count == 0) return;
-      final row = (icon: icon, label: label, badge: badge, countStr: countStr,
-          color: color, count: count, onTap: onTap);
+      final row = _TaskRow(icon: icon, label: label, desc: desc, pill: pill ?? '$count',
+          subs: subs, count: count, onTap: onTap);
       if (atIndex != null) {
         result.insert(atIndex, row);
       } else {
@@ -3077,21 +3683,29 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     }
 
     // 1. 퇴사 요청 — canManageWorkers
-    // [AH-V2-02B] 다른 항목과 달리 방치하면 D+3에 시스템이 자동 승인한다.
+    // [AH-V2-02B] 다른 항목과 달리 방치하면 D+3에 시스템이 자동 승인한다(소급 요청은 제외 — 수동 검토).
     //   관리자가 결정하지 않은 것과 못 본 것이 같은 결과를 내므로 최상단에 둔다.
     //   기존 발견 경로는 알림뿐이었고, 경고(D+1·D+2)도 알림이라 함께 사라졌다.
     if (_verified(up, (p) => p.canManageWorkers)) {
       final resign = cs?.actions.resignRequest;
       final soon = resign?.soonCount ?? 0;
+      // [D3-RETRO-EXCLUDE] 소급 요청은 자동 승인되지 않는다 — 서버가 따로 센 수동 검토 수.
+      //   null(구버전 서버가 보내지 않음)이면 말하지 않는다. "0건"으로 확정하지 않는다.
+      final manual = resign?.manualReviewCount;
+      final resignN = resign?.count ?? 0;
       add(
         icon: Icons.logout_outlined, label: '퇴사 요청',
-        color: AppColors.error,
-        badge: soon > 0 ? '내일 자동 승인 $soon건' : null,
-        count: resign?.count ?? 0, countStr: '${resign?.count ?? 0}건',
+        desc: '퇴사 요청 $resignN건을 검토해 주세요',
+        // [CP04 §4] soon 은 자동승인 제외가 완결되지 않은 집계 — `빠른 검토 필요 N건`/warning(확약 문구 0). 수동 검토는 가용값일 때만.
+        subs: [
+          if (manual != null && manual > 0) _TaskSub('수동 검토 $manual건'),
+          if (soon > 0) _TaskSub('빠른 검토 필요 $soon건', tone: _SubTone.warning),
+        ],
+        count: resignN,
         available: resign?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           if (!_verified(up, (p) => p.canManageWorkers)) {
-            ToastHelper.showWarning('근로자 관리 권한이 없습니다.'); return;
+            ToastHelper.showWarning('근로자 관리 권한이 없어요'); return;
           }
           if (!_ensureCanonicalSummary(context)) return;
           final sec = _canonicalSummary!.actions.resignRequest;
@@ -3128,16 +3742,19 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // 2. 지원 검토 — canManageTo
     if (_verified(up, (p) => p.canManageTo)) {
       final approval = cs?.actions.approval;
+      final approvalN = approval?.count ?? 0;
       add(
         icon: Icons.assignment_late_outlined, label: '지원 검토',
-        color: AppColors.warning,
-        badge: (approval?.overdueCount ?? 0) > 0 ? '긴급 ${approval!.overdueCount}건' : null,
+        desc: '대기 중인 지원 $approvalN건을 확인해 주세요',
+        subs: [
+          if ((approval?.overdueCount ?? 0) > 0) _TaskSub('긴급 ${approval!.overdueCount}건', tone: _SubTone.urgent),
+        ],
         // [R7-P1-4 H1] 단위는 **건**이다 — 서버(`srvHomeApproval`)가 세는 것은
         //   `applications where status == PENDING` 이고, 한 사람이 여러 공고에
         //   PENDING 을 동시에 낼 수 있다(Application = 관심 표현). `명` 이라고 하면
         //   없는 사람을 센다. 같은 행의 배지가 이미 `긴급 N건` 이고, 목적지
         //   drill-down 시트도 `총 N건` 이다.
-        count: approval?.count ?? 0, countStr: '${approval?.count ?? 0}건',
+        count: approvalN,
         available: approval?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           final businesses = await _getBusinesses();
@@ -3174,13 +3791,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     if (_verified(up, (p) => p.canManageWorkers)) {
       final sched = cs?.actions.scheduleChangeRequest;
       add(
-        icon: Icons.edit_calendar_outlined, label: '스케줄 변경 요청',
-        color: AppColors.info,
-        count: sched?.count ?? 0, countStr: '${sched?.count ?? 0}건',
+        icon: Icons.edit_calendar_outlined, label: '일정 변경 요청',
+        desc: '근로자의 일정 변경 요청 ${sched?.count ?? 0}건이 있어요',
+        count: sched?.count ?? 0,
         available: sched?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           if (!_verified(up, (p) => p.canManageWorkers)) {
-            ToastHelper.showWarning('근로자 관리 권한이 없습니다.'); return;
+            ToastHelper.showWarning('근로자 관리 권한이 없어요'); return;
           }
           if (!_ensureCanonicalSummary(context)) return;
           final sec = _canonicalSummary!.actions.scheduleChangeRequest;
@@ -3189,7 +3806,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           final affectedBiz = sec.byBusiness.where((b) => b.count > 0).toList();
           final countMap = <String, int>{for (final b in sec.byBusiness) b.businessId: b.count};
           final bizId = await _pickBizFromSummary(
-            context: context, sheetTitle: '스케줄 변경 요청', totalCount: sec.count,
+            context: context, sheetTitle: '일정 변경 요청', totalCount: sec.count,
             bizIds: affectedBiz.map((b) => b.businessId).toList(),
             countPerBiz: countMap,
           );
@@ -3214,15 +3831,15 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final unsent = cs?.actions.unsentContract;
       add(
         icon: Icons.folder_off_outlined, label: '계약 미발송',
-        color: AppColors.warning,
+        desc: '발송이 필요한 계약 ${unsent?.count ?? 0}건이 있어요',
         // [R7-P1-4 H1] 단위는 **건**이다 — 서버는 좌석을 가진 지원서를 순회하며
         //   `아직 발송되지 않은 계약서`를 센다(`CONTRACT_SEAT_STATUSES`).
         //   한 사람이 두 자리를 확정받으면 보낼 계약서도 두 건이다.
-        count: unsent?.count ?? 0, countStr: '${unsent?.count ?? 0}건',
+        count: unsent?.count ?? 0,
         available: unsent?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           if (!_verified(up, (p) => p.canManageContract)) {
-            ToastHelper.showWarning('계약서 관리 권한이 없습니다.'); return;
+            ToastHelper.showWarning('계약서 관리 권한이 없어요'); return;
           }
           if (!_ensureCanonicalSummary(context)) return;
           final sec = _canonicalSummary!.actions.unsentContract;
@@ -3250,11 +3867,16 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // 5. 마감 필요 — canManageWage
     if (_verified(up, (p) => p.canManageWage)) {
       final unclosed = cs?.actions.unclosed;
+      final unclosedN = unclosed?.count ?? 0;
       add(
         icon: Icons.lock_open_outlined, label: '마감 필요',
-        color: AppColors.error,
-        badge: unclosed?.oldestDate != null ? '가장 오래된: ${unclosed!.oldestDate}' : null,
-        count: unclosed?.count ?? 0, countStr: '${unclosed?.count ?? 0}일',
+        // [CP04 §5] 사업장×KST 근무일 합계 — 단위 `일`(알약도 `N일`). 같은 날짜여도 사업장별로 각각 센다.
+        desc: '사업장별 미마감 근무일 합계 $unclosedN일이에요',
+        // [ADMIN-HOME.31] ISO('2026-10-05') 대신 앱의 날짜 표기 — 값·기준은 그대로(연도 보존).
+        subs: [
+          if (unclosed?.oldestDate != null) _TaskSub('가장 오래된 날 ${_dotDate(unclosed!.oldestDate!)}'),
+        ],
+        count: unclosedN, pill: '$unclosedN일',
         available: unclosed?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           final changed = await Navigator.push<bool>(context, UnclosedActionQueueScreen.route());
@@ -3271,8 +3893,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final settlement = cs?.actions.settlementRequest;
       add(
         icon: Icons.payments_outlined, label: '중간정산 요청',
-        color: AppColors.info,
-        count: settlement?.count ?? 0, countStr: '${settlement?.count ?? 0}건',
+        desc: '대기 중인 중간정산 요청 ${settlement?.count ?? 0}건이 있어요',
+        count: settlement?.count ?? 0,
         available: settlement?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           if (!_ensureCanonicalSummary(context)) return;
@@ -3300,8 +3922,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final wageChange = cs?.actions.wageChangeRequest;
       add(
         icon: Icons.edit_calendar_outlined, label: '급여 변경 요청',
-        color: AppColors.info,
-        count: wageChange?.count ?? 0, countStr: '${wageChange?.count ?? 0}건',
+        // [CP04 §5] 지급방식(주기) 변경 — 지급액 변경이라고 쓰지 않는다.
+        desc: '지급방식 변경 요청 ${wageChange?.count ?? 0}건을 확인해 주세요',
+        count: wageChange?.count ?? 0,
         available: wageChange?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           if (!_ensureCanonicalSummary(context)) return;
@@ -3323,14 +3946,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // 8. 이체 대기 — canManageWage
     if (_verified(up, (p) => p.canManageWage)) {
       final wage = cs?.actions.unpaidWage;
-      final wageParts = <String>[];
-      if ((wage?.overdueCount ?? 0) > 0) wageParts.add('연체 ${wage!.overdueCount}건');
+      final wageParts = <_TaskSub>[];
+      if ((wage?.overdueCount ?? 0) > 0) wageParts.add(_TaskSub('연체 ${wage!.overdueCount}건', tone: _SubTone.urgent));
       // [R7-P1-4 H1] 단위는 **건**이다. 서버는 이 값을 고유 userId 수로 세지만
       //   (`missingUserIds.size`), 목적지 급여 화면에서 그 사람 하나가 카드
       //   하나(`userId::no_date`)이고 아래 `wageTotal` 이 그 카드 수를 `건` 으로
       //   합산한다. 같은 값이 배지에서는 `명`, 합계에서는 `건` 이면 두 숫자의
       //   관계가 끊긴다 — 처리 단위(카드=이체 묶음)로 맞춘다.
-      if ((wage?.missingDueDateCount ?? 0) > 0) wageParts.add('지급일 확인 필요 ${wage!.missingDueDateCount}건');
+      if ((wage?.missingDueDateCount ?? 0) > 0) wageParts.add(_TaskSub('지급일 확인 필요 ${wage!.missingDueDateCount}건'));
       // count(지급일 있는 그룹) + missingDueDateCount(지급일 없는 유니크 유저) 합산
       final wageTotal = (wage?.count ?? 0) + (wage?.missingDueDateCount ?? 0);
       // [AH-V2-05B.3] 지급예정일이 지난 급여가 있으면 퇴사 요청 바로 뒤로 올린다.
@@ -3343,8 +3966,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final wageOverdue = wage?.available == true && (wage?.overdueCount ?? 0) > 0;
       add(
         icon: Icons.account_balance_wallet_outlined, label: '이체 대기',
-        color: AppColors.error, badge: wageParts.isNotEmpty ? wageParts.join(' · ') : null,
-        count: wageTotal, countStr: '$wageTotal건',
+        // [CP04 §5] N = count + missingDueDateCount 처리카드 단위. 은행 입금·실지급 완료로 확약하지 않는다.
+        desc: '이체 확인이 필요한 급여 $wageTotal건이 있어요',
+        subs: wageParts,
+        count: wageTotal,
         available: wage?.available ?? false,
         atIndex: wageOverdue ? overdueWageSlot : null,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
@@ -3383,18 +4008,19 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final totalDecisions = expiring?.count ?? 0;
       add(
         icon: Icons.event_busy_outlined, label: '계약 확인 필요',
-        color: expiredCount > 0 ? AppColors.error : AppColors.warning,
-        count: totalDecisions,
         // [R7-P1-4 H1] 단위는 **건**이다 — 서버(`srvHomeExpiringContract`)는 갱신
         //   결정이 필요한 **장기 지원서(관계)**를 센다. 한 사람이 같은 사업장에서
         //   두 관계를 가지면 결정도 두 건이다.
-        countStr: expiredCount > 0
-            ? '$totalDecisions건 · 만료 $expiredCount'
-            : '$totalDecisions건',
+        // [CP04 §5] 주 알약 N(같은 집합)과 `만료 후 미결정 M건` 보조줄(expired>0)로 숫자와 사유를 나눈다.
+        desc: '연장·종료를 정할 계약 $totalDecisions건을 확인해 주세요',
+        subs: [
+          if (expiredCount > 0) _TaskSub('만료 후 미결정 $expiredCount건', tone: _SubTone.urgent),
+        ],
+        count: totalDecisions,
         available: expiring?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           if (!_verified(up, (p) => p.canManageContract)) {
-            ToastHelper.showWarning('계약서 관리 권한이 없습니다.'); return;
+            ToastHelper.showWarning('계약서 관리 권한이 없어요'); return;
           }
           if (!_ensureCanonicalSummary(context)) return;
           final sec = _canonicalSummary!.upcoming.expiringContract;
@@ -3476,69 +4102,118 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           ? '처리할 업무 상태를 확인하지 못했어요'
           : '일부 업무 상태를 확인하지 못했어요',
       onRetry: () => unawaited(_loadCanonicalSummary()),
+      // [DU307 §12.2] 일부 미확인은 부분 실패 표현(작은 주의+중립), 전체 미확인은 실패 안내 errorDark 그대로.
+      partial: !total,
     );
   }
 
+  /// [CP04] 처리할 일 한 행(정밀 §5). 상자 없는 Material outlined 아이콘 24(진남색) · 제목 17/700 · 정확 일반 설명 14 ·
+  ///   보조줄(실제 metadata, 긴급·연체·만료만 errorDark) · 숫자 알약(#E3EAFE, 기본 숫자만·99+ 없음) · 꺾쇠 18(#45474E).
+  ///   행 min 68·H16/V10, 내용이 크면 자연 확장. 뒤(알약·꺾쇠)가 본문을 압박하면 아래 오른쪽 줄(_rowWithTrailing).
+  ///   행 전체가 receiver 하나 — 의미 이름 `제목, 설명[, 보조줄], 열기`(아이콘·알약 장식, 같은 콜백). 색은 행 종류로 칠하지 않는다.
   Widget _buildActionRowWidget(
     BuildContext context, double s,
-    ({IconData icon, String label, String? badge, String countStr,
-      Color color, int count, VoidCallback onTap}) item,
+    _TaskRow item,
     {required bool isLast}
   ) {
+    final body = Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+      Text(TextLayout.keepWords(item.label), semanticsLabel: item.label, style: ConceptText.taskTitle()),
+      const SizedBox(height: 4),
+      Text(TextLayout.keepWords(item.desc), semanticsLabel: item.desc, style: ConceptText.taskDescription()),
+      for (final sub in item.subs) ...[
+        const SizedBox(height: 2),
+        Text(TextLayout.keepWords(sub.text), semanticsLabel: sub.text,
+            style: ConceptText.taskDescription().copyWith(
+                color: sub.color, fontWeight: sub.tone == _SubTone.neutral ? FontWeight.w400 : FontWeight.w700)),
+      ],
+    ]);
+    final pillStyle = ConceptText.count();
+    final pillW = _oneLineWidth(context, item.pill, pillStyle) + 20;
+    final trailing = Row(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        constraints: const BoxConstraints(minWidth: 36, minHeight: 24),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+        decoration: ConceptSurface.count(),
+        child: Center(widthFactor: 1, heightFactor: 1, child: Text(item.pill, style: pillStyle)),
+      ),
+      const SizedBox(width: 8),
+      const Icon(Icons.chevron_right, size: 18, color: AppColors.conceptChevron),
+    ]);
+    final semanticsLabel = [item.label, item.desc, for (final sub in item.subs) sub.text, '열기'].join(', ');
     return Column(children: [
-      InkWell(
+      Semantics(
+        container: true,
+        button: true,
+        label: semanticsLabel,
+        excludeSemantics: true,
         onTap: item.onTap,
-        borderRadius: BorderRadius.only(
-          topLeft:     Radius.circular(isLast ? 0 : 0),
-          bottomLeft:  Radius.circular(isLast ? 16 : 0),
-          bottomRight: Radius.circular(isLast ? 16 : 0),
-        ),
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 13 * s),
-          child: Row(children: [
-            // [HOME-V2-08D.4] icon은 중립이다.
-            //   항목마다 빨강·주황·보라를 주면 "무슨 일인가"와 "얼마나 급한가"가
-            //   같은 채널에서 섞인다. 급여가 늘 빨간 것은 급한 뜻이 아니었다.
-            //   무엇을 먼저 볼지는 _makeActionRows의 순서가 이미 정한다.
-            Container(
-              width: 36 * s, height: 36 * s,
-              decoration: BoxDecoration(
-                color: AppColors.grey100,
-                borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: item.onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 68),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: _rowWithTrailing(
+                context,
+                leading: Icon(item.icon, size: 24, color: AppColors.conceptNavy),
+                leadingWidth: 24,
+                leadingGap: 12,
+                body: body,
+                bodyTexts: [
+                  (TextLayout.keepWords(item.label), ConceptText.taskTitle()),
+                  (TextLayout.keepWords(item.desc), ConceptText.taskDescription()),
+                  for (final sub in item.subs) (TextLayout.keepWords(sub.text), ConceptText.taskDescription()),
+                ],
+                trailing: trailing,
+                trailingWidth: (pillW < 36 ? 36 : pillW) + 8 + 18,
               ),
-              child: Icon(item.icon, size: 18 * s, color: AppColors.grey600),
             ),
-            SizedBox(width: 12 * s),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(item.label, style: TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-              // [PH1] 긴급도는 이 badge 한 채널에서만 말한다 — 실제 urgency
-              //   metadata가 있을 때만 생긴다('긴급 N건' · '연체 N건' 등).
-              if (item.badge != null) ...[
-                SizedBox(height: 2 * s),
-                Text(item.badge!, style: TextStyle(fontSize: 12, color: item.color)),
-              ],
-            ])),
-            SizedBox(width: 8 * s),
-            // [HOME-V2-08D.4] count는 전부 같은 무게다. 항목에 따라 굵기나
-            //   색이 달라지면 숫자 크기가 아닌 종류가 급함을 주장하게 된다.
-            // [HOME-V2-08D.5] `조회 실패` 분기는 사라졌다 — 확인하지 못한 항목은
-            //   애초에 행이 되지 않고, 그 사실은 section-level notice가 말한다.
-            Text(item.countStr, style: TextStyle(
-                fontSize: 15, fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary)),
-            SizedBox(width: 4 * s),
-            Icon(Icons.chevron_right, size: 18 * s, color: AppColors.grey400),
-          ]),
+          ),
         ),
       ),
       if (!isLast)
         Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16 * s),
-          child: Divider(height: 1, color: AppColors.grey100),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Container(height: 1 / MediaQuery.devicePixelRatioOf(context), color: AppColors.conceptDivider),
         ),
     ]);
   }
 
+}
+
+/// [CP04] 처리할 일 한 행의 표시 값 — 값·조건·권한·목적지는 `_makeActionRows` 의 기존 판정 그대로다.
+class _TaskRow {
+  const _TaskRow({
+    required this.icon,
+    required this.label,
+    required this.desc,
+    required this.pill,
+    required this.subs,
+    required this.count,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  /// 정밀 §5 의 정확 일반 설명(같은 canonical N).
+  final String desc;
+  /// 숫자 알약 — 기본 숫자만(마감은 `N일`). 단위는 설명·의미 이름에 남는다.
+  final String pill;
+  final List<_TaskSub> subs;
+  final int count;
+  final VoidCallback onTap;
+}
+
+enum _SubTone { neutral, warning, urgent }
+
+/// [CP04] 보조줄 — 실제 metadata(긴급·연체·만료·빠른 검토·수동 검토·지급일 확인·가장 오래된 날).
+class _TaskSub {
+  const _TaskSub(this.text, {this.tone = _SubTone.neutral});
+  final String text;
+  final _SubTone tone;
+  Color get color => switch (tone) {
+        _SubTone.urgent => AppColors.errorDark,
+        _SubTone.warning => AppColors.warningDark,
+        _SubTone.neutral => AppColors.textSecondary,
+      };
 }
 

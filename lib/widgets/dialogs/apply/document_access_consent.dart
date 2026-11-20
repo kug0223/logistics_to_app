@@ -58,4 +58,51 @@ class DocumentAccessConsent {
   /// 지원 확인 UI에 삽입하는 고지 카드.
   static Widget card(String businessName) =>
       StyledDialogInfoCard.warningSegments(partsFor(businessName));
+
+  // ── [INVITE-PREACCEPT] 초대 전용 문구 ─────────────────────────────────
+  //
+  //   V3 는 "지원하기를 누르면…"으로 시작한다. 초대에는 `지원하기` 버튼이
+  //   없다 — 근로자가 누르는 것은 `동의하기`(수락 전 동의)나 `동의하고 초대
+  //   수락`이다. V3 문장을 고치면 V3 를 본 사람들의 기록이 거짓이 되므로
+  //   고치지 않고, **별도 버전**을 둔다.
+  //
+  //   한 버전 = 한 문장. 이 문구는 특정 버튼 이름을 말하지 않는다("동의하면")
+  //   — 그래서 초대 화면의 두 버튼 어느 쪽에서 보여도 같은 문장이고,
+  //   같은 버전 토큰을 보낸다.
+  //
+  //   V3 와 달라진 것은 두 곳뿐이다:
+  //     1) 행동 문구: "지원하기를 누르면" → "동의하면"
+  //     2) 검토 기간: "해당 지원이 유효한 동안" → "이 초대의 수락 기한까지"
+  //        (+ 동의만으로 확정되지 않는다는 사실)
+  //   근무 확정 후 신분증·계좌 열람 범위와 기간, 종료·승계 조건은 V3 와 같다.
+  //
+  // [LEGAL-REVIEW-ID-CONSENT] 문구 및 방식의 법적 적절성은 별도 법무 검토 필요.
+
+  /// 초대 문구의 버전. 서버 allowlist(`DOCUMENT_ACCESS_CONSENT_INVITE_V1`)와 일치.
+  static const String inviteVersion = '2026-10-15-invite-v1';
+
+  static String inviteCopyFor(String businessName) =>
+      '동의하면 [$businessName]의 권한 있는 관리자가 '
+      '이 초대에 대한 지원자 확인 및 채용 검토, 근무 확정 후 소득신고·급여처리를 위해 '
+      '등록된 신분증과 급여계좌·통장사본을 열람할 수 있음에 동의합니다.\n'
+      '· 초대 검토 중: 이 초대의 수락 기한까지 채용 검토 목적으로 '
+      '신분증 및 급여계좌·통장사본을 열람할 수 있습니다. '
+      '동의만으로 근무가 확정되지는 않으며, 근무 확정은 초대를 수락할 때 이루어집니다.\n'
+      '· 근무 확정 후: 신분증은 해당 근무관계의 마지막 근무일로부터 7일 후 '
+      '자동 종료되며, 급여계좌·통장사본은 급여처리 관계가 유효한 동안 '
+      '열람할 수 있습니다.\n'
+      '· 초대를 거절하거나 초대가 만료·취소되면 채용 검토 목적의 열람 권한은 종료됩니다.\n'
+      '동일 고용관계의 계약이 갱신되는 경우 기존 서류 접근 동의는 '
+      '갱신된 근무관계에도 승계됩니다.';
+
+  /// [inviteCopyFor] 를 `\n` 으로 자른 것 — 문자열을 바꾸지 않는다.
+  static List<String> invitePartsFor(String businessName) =>
+      inviteCopyFor(businessName).split('\n');
+
+  /// 초대 화면(수락 전 동의·초대 수락)에 삽입하는 고지 카드.
+  static Widget inviteCard(String businessName) =>
+      StyledDialogInfoCard.warningSegments(invitePartsFor(businessName));
+
+  /// 채용 검토 목적 열람을 담은 버전들 — 서버 `srvConsentCoversApplicantReview` 와 같은 집합.
+  static const Set<String> reviewPurposeVersions = {version, inviteVersion};
 }

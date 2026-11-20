@@ -119,7 +119,8 @@ void main() {
     test('SETUP-PARITY-07 단일 사업장이면 관리 탭도 그 사업장으로 간다', () {
       expect(_picker().contains('if (businesses.length == 1) return businesses.first;'),
           isTrue, reason: '고르라고 묻지 않고 그 하나로 간다');
-      expect(_picker().contains('businesses.where((b) => b.isApproved)'), isTrue);
+      // [BUSINESS-ARCHIVE] 승인 사업장 + (기록 화면만) 운영 종료 사업장.
+      expect(_picker().contains('.where((b) => b.isApproved || (includeClosed && b.isDeactivated))'), isTrue);
     });
 
     test('SETUP-PARITY-07b 조회 실패를 "사업장 없음" 으로 바꾸지 않는다', () {

@@ -1,10 +1,12 @@
 // lib/screens/business_admin/dialogs/work_applicants_dialog.dart
 // 업무별 지원자 관리 다이얼로그 - 개선된 버전
 
-import 'dart:convert';
 import 'dart:math' show min;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+// [BULK-DISPATCH] 서버가 중복 발송을 막은 `already-exists` 를 실패와 구별하려면
+//   CF 예외 타입이 필요하다.
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../models/core/application_model.dart';
@@ -13,14 +15,18 @@ import '../../../models/core/employment_contract_model.dart';
 import '../../../models/core/work_detail_model.dart';
 import '../../../models/core/user_model.dart';
 import '../../../services/contract_service.dart';
+import '../../../services/business_posting_readiness.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/invite_save_verifier.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/person_label.dart';
+import '../../../utils/contract_attendance_gate.dart';
 import '../../../utils/loading_state_mixin.dart';
 import '../../../utils/posting_readiness_reason.dart';
 import '../../../widgets/dialogs/application_policy_acknowledge_sheet.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/text_layout.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../widgets/work_type_icon.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
@@ -32,12 +38,16 @@ import '../../../widgets/dialogs/contract_template_selector_dialog.dart';
 import '../../common/settings_screen.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../models/ui/invite_capacity_state.dart';
+// [ISG2-REFRESH] 초대 결과 → 전파·재조회 판단 한 곳.
+import '../../../models/ui/invite_refresh_outcome.dart';
 import '../../../utils/action_guard.dart';
 import '../../../utils/close_state_utils.dart';
 import 'invite_method_sheet.dart';
 import 'available_workers_bottom_sheet.dart';
 import 'invite_worker_dialog.dart';
+import 'work_applicants_reads.dart';
 import '../../../theme/app_colors.dart';
+import '../../../widgets/common/adaptive_action_row.dart';
 import '../../../widgets/common/app_checkbox.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../utils/id_card_helper.dart';
@@ -57,14 +67,43 @@ import '../../../utils/applicant_load_outcome.dart';
 import '../../../utils/staffing_relation.dart';
 import '../../../widgets/admin/applicant_row_surface.dart';
 import '../../../widgets/admin/capacity_summary_text.dart';
+import '../../../widgets/admin/contract_attendance_unknown_notice.dart';
+import '../../../widgets/admin/invite_roster_row.dart';
+import '../../../models/ui/work_applicant_split.dart';
+import '../../../utils/staffing_clock.dart';
+
+/// [BULK-DISPATCH] 서버가 끝까지 처리했는지 **알 수 없는** CF 오류 코드.
+///
+///   이 코드들에서는 계약서가 커밋됐을 수도, 안 됐을 수도 있다. 지원서 상태를
+///   되돌리면 커밋된 쪽에서 계약서와 지원서가 어긋난다 — 확정을 유지하고
+///   관리자에게 "확인 필요"로 말한 뒤 목록을 다시 읽는다.
+const Set<String> _indeterminateCfCodes = {
+  'deadline-exceeded',
+  'unavailable',
+  'internal',
+  'cancelled',
+  'aborted',
+};
 
 /// 다이얼로그 결과
 class WorkApplicantsDialogResult {
   final bool hasChanges;
+
+  /// [ISG2-REFRESH] 이 변경이 **Home 의 진실**까지 바꾸는가.
+  ///
+  ///   Home 의 인력 현황은 `confirmed` 기준이다. 초대는 `대기` 만 올리므로
+  ///   Home 숫자를 바꾸지 않는다 — 그런데 Home full refresh 는
+  ///   2 callable + 약 4N query 다(`WorkforceController.notifyDataChanged`
+  ///   주석의 기록된 결정). 그래서 "카드를 다시 그려야 한다"와
+  ///   "Home 에 알려야 한다"를 한 깃발로 묶지 않는다.
+  ///
+  ///   초대만 있었다면 `hasChanges = true`, `homeRelevant = false`.
+  final bool homeRelevant;
   final Set<String> affectedTOIds;  // 충돌로 영향받은 다른 TO ID
-  
+
   const WorkApplicantsDialogResult({
     this.hasChanges = false,
+    this.homeRelevant = false,
     this.affectedTOIds = const <String>{},
   });
 }
@@ -97,9 +136,16 @@ class WorkApplicantsDialog extends StatefulWidget {
   State<WorkApplicantsDialog> createState() => _WorkApplicantsDialogState();
 }
 
+/// [E1-FIXTURE-CLOCK] 이 창의 "지금" — 판정마다 같은 시계(`StaffingClock`)를 쓴다.
+DateTime _workApplicantsNow() => StaffingClock.now();
+
 class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     with LoadingStateMixin {
   final FirestoreService _firestoreService = FirestoreService();
+
+  /// [E2-INVITED-SEAT] 이 창의 읽기 — 운영은 production, 테스트만 debugOverride.
+  late final WorkApplicantsReads _reads = WorkApplicantsReads.debugOverride ??
+      WorkApplicantsReads.production(_firestoreService);
 
   List<Map<String, dynamic>> _applicants = [];
   List<Map<String, dynamic>> _pending = [];
@@ -113,6 +159,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   // 통계 계산용 전체 앱 목록 (_loadApplicants에서 캐시, _updateLocalStats에서 재사용)
   List<ApplicationModel> _allApplications = [];
 
+  /// [E2-INVITED-SEAT] 아직 응답하지 않은 초대(INVITED) — `{application, user}`.
+  ///
+  ///   지원(`_pending`)과 합치지 않는다. 지원은 근로자가 표시한 관심이고 초대는
+  ///   관리자가 먼저 보낸 제안이라 다음 행동이 다르다(초대에는 승인 버튼이 없다).
+  ///   예전에는 이 화면이 INVITED 를 버려 초대만 있는 업무를 열면
+  ///   `지원자가 없습니다` 였다 — 날짜별 명단은 같은 초대를 `초대 중` 으로 보였다.
+  ///   행은 명단 조회가 **이미 받은** 지원서에서 고른다(추가 조회 없음).
+  List<Map<String, dynamic>> _invites = [];
+
   final Set<String> _selectedIds = {};
   final Set<String> _starredIds = <String>{};
   bool _selectAll = false;
@@ -122,6 +177,20 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   Map<String, String> _idCardStatusMap = {};
   // ⭐ 변경 여부 추적
   bool _hasChanges = false;
+
+  /// [ISG2-REFRESH] **초대만** 바꾼 변경.
+  ///
+  ///   초대는 `대기` 를 올리므로 이 카드는 다시 그려야 한다. 그러나 Home 의
+  ///   인력 현황은 `confirmed` 기준이라 바뀌지 않는다 — 기록된 결정대로
+  ///   Home full refresh 를 깨우지 않는다. 그래서 `_hasChanges` 와 나눠 센다.
+  bool _inviteChanged = false;
+
+  /// 닫을 때 돌려줄 결과 — 다섯 군데가 같은 식을 쓴다.
+  WorkApplicantsDialogResult get _dialogResult => WorkApplicantsDialogResult(
+        hasChanges: _hasChanges || _inviteChanged,
+        homeRelevant: _hasChanges,
+        affectedTOIds: _affectedOtherTOIds,
+      );
   // ✅ 로딩 상태
   bool _isProcessing = false;
   // 신분증 일괄 요청 모드
@@ -132,7 +201,76 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   // 이번 주 근무 횟수 (uid → 근무 횟수)
   final Map<String, int> _weeklyWorkCountMap = {};
   // 계약서 상태 (applicationId → status string, null=미작성)
-  Map<String, String?> _contractStatusMap = {};
+  // [REISSUE-RECOVERY] 조회 실패(unresolved)와 "계약 없음"을 구별해 담는다.
+  ContractStatusBatch _contractStatusMap = const ContractStatusBatch();
+
+  /// [REISSUE-RECOVERY] **지금 이 지원서에 계약서를 보내는 것이 행동인가.**
+  ///
+  ///   두 사실의 곱이다.
+  ///     · 계약서가 **없다고 확인됐다** — 조회 실패는 아니다(ERROR ≠ ZERO)
+  ///     · 보낼 수 있는 관계다 — 좌석 반납(`staffingReleasedAt`)·해지 승인 제외
+  ///       (서버 `srvNeedsContractIssue` 와 같은 한 벌: `isContractIssuable`)
+  ///
+  ///   미발송 탭·홈 할 일은 그 서버 판정을 쓴다. 여기가 다른 조건을 쓰면
+  ///   같은 사실을 두 화면이 다르게 말한다.
+  ///   [NOSHOW-CONTRACT-GUARD] 세 번째 사실 — 그 근무일 근태가 노쇼·결근이 아니다
+  ///   (서버 `srvContractBlockedByAttendance` 와 같은 규칙, 근태를 모르면 단기는 아니다).
+  bool _needsContractIssue(ApplicationModel app) =>
+      _contractStatusMap.isMissingContract(app.id) &&
+      app.isContractIssuable &&
+      ContractAttendanceGate.clearForIssue(app, _contractBlockedAppIds);
+
+  /// [NOSHOW-CONTRACT-GUARD] 노쇼·결근으로 기록된 지원서 id. null = 근태를 읽지 못했다.
+  Set<String>? _contractBlockedAppIds;
+  bool _contractAttRetrying = false;
+
+  /// 근태 판정이 필요한 확정 단기 근무들 — 로드와 재시도가 같은 목록을 쓴다.
+  static List<ApplicationModel> _contractAttCandidatesOf(
+          Iterable<ApplicationModel> apps) =>
+      apps
+          .where((a) =>
+              AppStatus.confirmedStatuses.contains(a.status) &&
+              ContractAttendanceGate.attendanceDocId(a) != null)
+          .toList();
+
+  /// 근태를 몰라서 `계약서 작성` 을 **내지 않은** 행이 있는가 — 행 버튼과 같은 조건.
+  bool get _contractAttendanceSuppressed =>
+      _contractBlockedAppIds == null &&
+      _canManageContract() &&
+      _contractAttCandidatesOf(
+              _applicants.map((i) => i['application'] as ApplicationModel))
+          .any((a) =>
+              _contractStatusMap.isMissingContract(a.id) &&
+              a.isContractIssuable &&
+              !_isEndedRelation(a));
+
+  /// 근태만 다시 읽는다(명단 전체를 다시 부르지 않는다).
+  Future<void> _retryContractAttendance() async {
+    final read = _reads.contractAttendances;
+    if (read == null || _contractAttRetrying) return;
+    final candidates = _contractAttCandidatesOf(
+        _applicants.map((i) => i['application'] as ApplicationModel));
+    if (candidates.isEmpty) return;
+    setState(() => _contractAttRetrying = true);
+    final days = candidates.map((a) => a.workDate).toList()..sort();
+    Set<String>? blocked;
+    try {
+      blocked = ContractAttendanceGate.blockedIds(
+          candidates,
+          await read(
+              businessId: widget.toItem.to.businessId,
+              first: days.first,
+              last: days.last));
+    } catch (e) {
+      debugPrint('⚠️ [NOSHOW-CONTRACT-GUARD] 근태 재조회 실패: $e');
+      blocked = null;
+    }
+    if (!mounted) return;
+    setState(() {
+      _contractBlockedAppIds = blocked;
+      _contractAttRetrying = false;
+    });
+  }
   // 계약서 일괄작성 처리 중 플래그
   bool _isContractBatchProcessing = false;
   // [BUG-CANCEL-01] 확정취소 버튼 가드 — 근무 이력 있는 확정자 노출 방지
@@ -202,28 +340,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   // BUSINESS_ADMIN: 현재 사용자(사업주 본인) seal 사용.
   // SUB_ADMIN: business.ownerId 문서에서 사업주 seal 조회 — DayApplicants와 동일 semantics.
   // CF는 seal bytes 출처를 검증하지 않으므로 클라이언트가 올바른 owner seal을 사용해야 한다.
-  Future<({String sealBase64, String sealType})> _resolveEmployerSeal(
-    BusinessModel business,
-  ) async {
-    // [P4.4C-SIGNER-01] 계약의 날인은 **이 사업장의 사업주(owner)** 것이다.
-    //   누가 발송 버튼을 눌렀는지가 아니라 근로계약의 사용자(고용주) 법적
-    //   identity 가 정한다. 예전에는 SubAdmin 일 때만 owner 를 썼고 그 밖에는
-    //   호출자 자신의 날인을 썼다 — owner 가 아닌 co-admin(`adminIds`)이
-    //   발송하면 그 사람 개인 날인이 고용주 날인 자리에 찍힌다.
-    //
-    //   레퍼런스 대조: 모두싸인은 도장/사인을 **조직 소유물**로 두고 멤버에게
-    //   이용 권한을 공유한다 — 담당자가 보내도 서명 주체는 회사/대표다.
-    //   ALfit 에는 조직 entity 가 없으므로 그 자리를 `business.ownerId` 가
-    //   맡는다(새 컬렉션을 만들지 않는다).
-    final sealUid = business.ownerId;
-    if (sealUid.isEmpty) return (sealBase64: '', sealType: 'stamp');
-    final doc = await FirebaseFirestore.instance.collection('users').doc(sealUid).get();
-    final data = doc.data();
-    return (
-      sealBase64: (data?['sealBase64'] as String?) ?? '',
-      sealType: (data?['sealType'] as String?) ?? 'stamp',
-    );
-  }
+  // [CONTRACT-DISPATCH-B1] owner 날인은 **서버가** 찍는다. 앱은 owner 문서를 읽을 수 없다
+  //   (사업장 목록은 ownerId 를 지우고 users 문서는 본인만 읽는다) — 그래서 예전 읽기는 늘 비어
+  //   날인을 등록한 사업주도 '미등록' 이었다. 여기서는 있는지만 묻는다: true/false/null(모름).
+  Future<bool?> _employerSealReady(BusinessModel business) =>
+      BusinessPostingReadiness.employerSealReady(business.id);
 
   // [CSA-01] Seal 미등록 시 안내 메시지 — SubAdmin과 사업주 구분.
   Future<void> _showSealMissingDialog({required bool isBatchApprove}) async {
@@ -352,9 +473,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         _capacity.clearOnRevocation();
         _applicants = [];
         _allApplications = [];
+        _invites = [];
         _groupApplicants();
         _idCardStatusMap = {};
-        _contractStatusMap = {};
+        _contractStatusMap = const ContractStatusBatch();
         _hasWorkedMap = {};
         _weeklyWorkCountMap.clear();
         _starredIds.clear();
@@ -374,6 +496,42 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     if (!ok && hadRows) {
       ToastHelper.showError('최신 정보를 불러오지 못했습니다. 아래는 이전에 받은 내용입니다.');
     }
+    // [E1-W3] 성공한 재조회에서만 미확인 초대를 판정한다.
+    if (ok) _reconcileUnconfirmedInvites();
+  }
+
+  /// [E1-W3] 저장 여부를 확인하지 못한 채 닫힌 초대의 대상.
+  ///
+  ///   직접 초대 창이 `unconfirmed` 로 닫히고 저장 확인 읽기도 saved 를
+  ///   주지 못하면(unknown·notSaved) 상위 전파를 하지 않는다 — 모름을 성공으로
+  ///   추정하지 않는다. 그런데 이 창은 바로 이어서 자기 목록을 다시 읽고,
+  ///   그 읽기가 성공해 **그 대상의 이 업무 INVITED 초대**를 보여 줄 수 있다.
+  ///   예전에는 그래도 `hasChanges=false` 라 공고 카드가 다시 읽지 않았다
+  ///   (창은 `초대 1`, 카드는 옛 `대기 0`).
+  ///   여기 남겨 두었다가, 성공한 재조회에서 그 초대를 **읽었을 때만** 전파한다.
+  final List<InviteVerifyTarget> _unconfirmedInviteTargets = [];
+
+  /// [E1-W3] 방금 성공한 목록 읽기(`_invites` = 이 업무의 INVITED)에서
+  ///   미확인 대상의 초대를 찾는다. 찾으면 전파하고 목록에서 뺀다.
+  ///   조회 실패·다른 대상·다른 슬롯의 초대는 증거가 아니다.
+  void _reconcileUnconfirmedInvites() {
+    if (_unconfirmedInviteTargets.isEmpty) return;
+    final found = <InviteVerifyTarget>[];
+    for (final t in _unconfirmedInviteTargets) {
+      final hit = _invites.any((item) {
+        final a = item['application'] as ApplicationModel;
+        return a.status == AppStatus.invited &&
+            a.invitedAt != null &&
+            a.uid == t.targetUid &&
+            a.toId == t.toId &&
+            (t.slotId == null || a.slotId == t.slotId);
+      });
+      if (hit) found.add(t);
+    }
+    if (found.isEmpty) return;
+    _unconfirmedInviteTargets.removeWhere(found.contains);
+    _inviteChanged = true;
+    InviteSaveVerifier.announceClose(InviteSaveCheck.saved);
   }
 
   Future<void> _runLoadApplicants() => runWithLoading(() async {
@@ -394,28 +552,20 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         //   멤버에게도 지원서 payload 가 그대로 나간다. DEV 에서 실제로 그랬다
         //   (canManageTo=false 인데 count=50). UI 가 감추는 것은 authorization 이
         //   아니다. 이 화면의 UI 계약(canManageTo)과 서버 계약을 같게 만든다.
-        if (widget.toItem.slot != null) {
-          apps = await _firestoreService.getApplicationsBySlotId(
-            widget.toItem.to.id,
-            widget.toItem.slot!.id,
-            businessId: widget.toItem.to.businessId,
-            purpose: FirestoreService.purposeApplicantReview,
-          );
-        } else {
-          apps = await _firestoreService.getApplicationsByTOId(
-            widget.toItem.to.id,
-            businessId: widget.toItem.to.businessId,
-            purpose: FirestoreService.purposeApplicantReview,
-          );
-        }
+        apps = await _reads.applications(
+          widget.toItem.to,
+          slotId: widget.toItem.slot?.id,
+          purpose: FirestoreService.purposeApplicantReview,
+        );
       } catch (e) {
         _loadDenied = isPermissionDenial(e);
         rethrow;
       }
 
-      const activeStatuses = {'PENDING', 'CONTRACT_PENDING', 'CONFIRMED'};
-      final filtered = apps.where((app) {
-        if (!activeStatuses.contains(app.status)) return false;
+      // [E2-INVITED-SEAT] 업무 소속 판정을 지원·초대가 같이 쓰도록 떼어 냈다.
+      //   상태 판정(PENDING/CONTRACT_PENDING/CONFIRMED · INVITED)은
+      //   splitWorkApplications 가 한다.
+      bool belongsToThisWork(ApplicationModel app) {
         if (widget.work != null) {
           // [R7-PRE0] canonical identity 로 먼저 맞춘다.
           //
@@ -448,11 +598,21 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                  app.startTime == widget.work!.startTime &&
                  app.endTime == widget.work!.endTime;
         }
-        return true; // 그룹 모드: 업무 필터 없음 (activeStatuses만 체크)
-      }).toList();
+        return true; // 그룹 모드: 업무 필터 없음 (상태 판정은 split 이 한다)
+      }
+
+      // [E2-INVITED-SEAT] 같은 응답을 지원·초대로 나눈다 — 초대는 지원 목록·일괄
+      //   처리·계약 조회 대상에 넣지 않는다(초대는 관리자가 확정하지 않는다).
+      final split = splitWorkApplications(apps, belongsToThisWork);
+      final filtered = split.active;
+      final invitedApps = split.invites;
 
       // ✅ 1. 중복 제거된 UID/ID 목록 추출
-      final uniqueUids = filtered.map((app) => app.uid).toSet().toList();
+      //   초대받은 사람의 이름도 같은 batch 로 받는다(추가 왕복 없음).
+      final uniqueUids = {
+        ...filtered.map((app) => app.uid),
+        ...invitedApps.map((app) => app.uid),
+      }.toList();
       final allAppIds = filtered.map((app) => app.id).toList();
 
       // 날짜 범위 (weeklyMap Future 생성에 필요)
@@ -473,19 +633,43 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       // hasWorkedMap은 슬롯 날짜 있을 때만 의미 있지만, 미리 시작해두면 크리티컬 패스에서 제외됨
       // [PII-DOC-R0.1 / INV-1] 지원자 목록 — 이름·나이·성별·연락처·평점·이력까지.
       //   이 화면은 계좌를 그리지 않는다. 그러니 받지도 않는다.
-      final userMapFuture = _firestoreService.getUsersBatch(
+      final userMapFuture = _reads.usersBatch(
         uniqueUids,
         businessId: widget.toItem.to.businessId,
         purpose: FirestoreService.purposeWorkerDirectory,
       );
-      final weeklyMapFuture = _firestoreService.getWeeklyAttendanceByBusiness(
+      final weeklyMapFuture = _reads.weeklyAttendance(
         businessId: widget.toItem.to.businessId, weekStart: ws, weekEnd: we);
-      final contractMapFuture = ContractService().getContractStatusBatch(
+      final contractMapFuture = _reads.contractStatusBatch(
         allAppIds, businessId: widget.toItem.to.businessId);
       final hasWorkedFuture = slotDate != null
-          ? _firestoreService.loadHasWorkedMap(
+          ? _reads.hasWorkedMap(
               businessId: widget.toItem.to.businessId, date: slotDate)
           : Future.value(<String, bool>{});
+
+      // [NOSHOW-CONTRACT-GUARD] 확정 단기 근무들의 근무일 범위를 한 번에 읽는다.
+      //   주간 근무횟수 조회(weeklyAttendance)는 실패를 빈 값으로 삼키고 범위도
+      //   이번 주뿐이라 쓰지 않는다. 실패는 null(모름)로 남긴다.
+      final contractCandidates = _contractAttCandidatesOf(filtered);
+      final Future<Set<String>?> contractBlockedFuture;
+      if (contractCandidates.isEmpty) {
+        contractBlockedFuture = Future.value(<String>{});
+      } else if (_reads.contractAttendances == null) {
+        contractBlockedFuture = Future.value(null);
+      } else {
+        final days = contractCandidates.map((a) => a.workDate).toList()..sort();
+        contractBlockedFuture = _reads.contractAttendances!(
+          businessId: widget.toItem.to.businessId,
+          first: days.first,
+          last: days.last,
+        ).then<Set<String>?>(
+          (atts) => ContractAttendanceGate.blockedIds(contractCandidates, atts),
+          onError: (Object e) {
+            debugPrint('⚠️ [NOSHOW-CONTRACT-GUARD] 근태 조회 실패 — 계약 발행 판정 보류: $e');
+            return null;
+          },
+        );
+      }
 
       final userMap = await userMapFuture;
       
@@ -515,8 +699,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           .map((item) => (item['user'] as UserModel).uid)
           .toList();
       
-      final idCardStatusMap = await IdCardHelper.loadStatusBatch(
-        firestoreService: _firestoreService,
+      final idCardStatusMap = await _reads.idCardStatusBatch(
         requesterId: currentUserId,
         targetUserIds: confirmedUserIds,
       );
@@ -554,6 +737,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
       // 계약서 상태 — 위에서 동시에 시작한 contractMapFuture 결과 수집
       final contractMap = await contractMapFuture;
+      final contractBlocked = await contractBlockedFuture;
 
       // [BUG-CANCEL-01] 확정취소 버튼 가드 — 근무 이력 맵 구성
       // 슬롯 기반: hasWorkedFuture (위에서 동시 시작) 결과 수집
@@ -604,6 +788,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       if (!mounted) return;
       setState(() {
         _applicants = applicantsWithUserInfo;
+        _invites = [
+          for (final app in invitedApps)
+            {'application': app, 'user': userMap[app.uid]},
+        ];
         _groupApplicants();
         _idCardStatusMap = idCardStatusMap;
         _allApplications = apps; // 통계 계산용 캐시
@@ -614,6 +802,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           ..clear()
           ..addAll(weeklyCountMap);
         _contractStatusMap = contractMap;
+        _contractBlockedAppIds = contractBlocked; // [NOSHOW-CONTRACT-GUARD]
+        _contractAttRetrying = false;
         _hasWorkedMap = hasWorkedMap; // [BUG-CANCEL-01]
       });
   }, errorTag: '지원자 목록 로드');
@@ -642,7 +832,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     //   셋을 조합할 뿐, 새 정책을 만들지 않는다.
     //
     //   어느 경우에도 사람을 목록에서 지우지 않는다. 자리를 옮길 뿐이다.
-    final now = DateTime.now();
+    final now = _workApplicantsNow();
     _confirmed = <Map<String, dynamic>>[];
     _released = <Map<String, dynamic>>[];
     _decisionPending = <Map<String, dynamic>>[];
@@ -666,7 +856,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   ///   만료+미결정(`decisionPending`)은 여기 들어오지 않는다 — 그 사람에게는
   ///   아직 할 일이 남아 있고, 액션을 내리면 그 일이 사라진다.
   bool _isEndedRelation(ApplicationModel app) =>
-      staffingRelationOf(app, DateTime.now()).resolvedEnded;
+      staffingRelationOf(app, _workApplicantsNow()).resolvedEnded;
 
   /// 전체 선택/해제
   void _toggleSelectAll(bool? value) {
@@ -726,17 +916,18 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop) {
-          Navigator.pop(context, WorkApplicantsDialogResult(
-            hasChanges: _hasChanges,
-            affectedTOIds: _affectedOtherTOIds,
-          ));
+          Navigator.pop(context, _dialogResult);
         }
       },
       child: AppModalShell(
         children: [
-          _buildHeader(context, theme),
+          // [DU532] 머리 모양과 본문 배치를 한 값(narrow)으로 함께 고른다 — _headAndBody 가 '전체형 머리 아래 남는 칸'을 먼저 잰다.
+          // [DU528] 통계 · 초대 · 전체 선택 줄과 본문을 한 칸으로 묶어 그 칸의 실제 높이를 잰다(_measuredBody = 남은 칸 + LayoutBuilder).
+          ..._headAndBody(context, theme, widget.work != null && !noPermission, (context, box, narrow) {
+          final strips = <Widget>[
           if (!noPermission) ...[
-          _buildStatsBar(context, pending.length, confirmed.length),
+          if (narrow) _buildHeadInfoRow(context),
+          _buildStatsBar(context, pending.length, confirmed.length, compact: narrow),
           // [R7-P1-3] 부족 해소 진입 — Day와 같은 자리, 같은 조건.
           if (!isLoading) _buildStaffingActionRow(context),
           // [R7-P1-PRODUCT §17] 게이트가 `pending.isNotEmpty`였다 — 1명이어도
@@ -752,6 +943,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           if (!isLoading && _refreshFailed && !_loadFailed)
             _buildRefreshFailedBanner(context),
           ],
+          ];
+          // [DU528] 좁은 창 — 이 칸(창 최대 높이 − 머리 − 하단)이 화면 높이의 60% 에 못 미치면 통계 · 초대 · 전체 선택 줄을
+          //   목록과 같은 스크롤 안 첫 항목으로 보낸다. 320×640 · 글자 2.0 에서 이 칸은 약 304(47%)인데 세 줄이 약 372 라
+          //   목록 칸 높이가 0 이었다(DU527a r3 B: 창 Column 아래 넘침 69). 390×844 · 1.0 은 약 77% — 이전 배치 그대로.
+          //   글자 배율 상수는 쓰지 않는다(실측 높이만). 업무별 창(work != null)만 — 묶음 창 · 권한 없음은 이전과 같다.
+          // [DU532] narrow 면 머리가 짧아져 이 칸이 60% 를 넘을 수 있다 — 그래도 세 줄은 스크롤 안에 둔다(narrow 는 머리 모양과 무관한 값이라 뒤집히지 않는다).
+          final tight = narrow ||
+              (widget.work != null &&
+              !noPermission &&
+              box.maxHeight < MediaQuery.sizeOf(context).height * 0.6);
+          final lead = tight ? strips : const <Widget>[];
           // [R7-P1-2 DEVICE.1G] `Expanded` → `Flexible`.
           //
           //   `AppModalShell` 은 `Column(mainAxisSize: min)` 이라 내용만큼
@@ -763,8 +965,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           //   고정 높이를 없애거나 전체화면으로 바꾸는 것이 아니다.
           //   본문이 스크롤 가능한 것은 그대로다(내부 SingleChildScrollView).
           //   많은 행에서는 여전히 maxHeight 까지 자라고 그 안에서 스크롤한다.
-          Flexible(
-            child: noPermission
+          final Widget body = noPermission
                 // [R7-P1-2.1] 권한 없음 — 실패도 아니고 0명도 아니다.
                 ? _buildNoPermissionState()
                 : isLoading
@@ -772,8 +973,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                     // [R7-P1-2] ERROR != ZERO — 읽지 못한 것을 `없다`로 말하지 않는다.
                     : _loadFailed
                         ? _buildLoadErrorState()
+                        // [E2-INVITED-SEAT] 초대만 있는 업무는 빈 화면이 아니다.
                         : (pending.isEmpty &&
                                 confirmed.isEmpty &&
+                                _invites.isEmpty &&
                                 _ended.isEmpty &&
                                 _decisionPending.isEmpty &&
                                 _released.isEmpty)
@@ -781,8 +984,25 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                             : widget.work == null
                                 ? _buildGroupedApplicantList(context)
                                 : _buildApplicantList(
-                                    context, pending, confirmed),
-          ),
+                                    context, pending, confirmed, leading: lead);
+          // 좁은 창 + 명단: 세 줄은 이미 명단 스크롤 안에 있다(_buildApplicantList 의 leading).
+          if (tight && body is SingleChildScrollView) return body;
+          // 좁은 창 + 불러오는 중 · 실패 · 빈 상태: 세 줄과 본문을 한 스크롤에 둔다(넘침 대신 스크롤).
+          // [DU530] 빈 상태 · 조회 실패 본문(AppEmptyState)은 받은 최대 높이를 최소 높이로 쓴다 — 스크롤 안(높이 제한 없음)에
+          //   그대로 두면 무한 높이를 강제한다(감사129 F129-EMPTY-UNBOUNDED). 이 칸의 실측 최대 높이(box.maxHeight · 유한)를 준다.
+          //   불러오는 중은 내용만큼(이전과 같다 — 통계 줄 바로 아래).
+          if (tight) {
+            return SingleChildScrollView(
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+              ...strips,
+              if (isLoading) body else SizedBox(height: box.maxHeight, child: body),
+            ]));
+          }
+          // 그 밖(이전 배치 그대로): 세 줄 고정 + 본문.
+          return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [...strips, Flexible(child: body)]);
+          }),
           // 권한이 없으면 일괄 확정·거절이 있는 하단 바를 세우지 않는다.
           if (noPermission) _buildCloseOnlyBar(context) else _buildBottomBar(context),
         ],
@@ -815,8 +1035,42 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         widget.toItem.slot?.date ?? widget.initialDate ?? to.date);
   }
 
+  /// 머리 제목 원문. [R7-P1-7 §15] `지원자 관리` → `인력 현황` — Day와 같은 이름.
+  String get _headerTitle => widget.work != null
+      ? '${widget.work!.workType} · 인력 현황'
+      : '${widget.toItem.to.title} · 인력 현황';
+
+  /// 머리 보조 줄(날짜/범위 · 시간 · 임금) — 머리 안과 좁은 창의 본문 첫 항목이 같은 위젯을 쓴다(글 · 읽는 이름 한 곳).
+  Widget _headerSub() => Text.rich(
+        TextSpan(
+          text: widget.work != null
+              ? '${TextLayout.phrases('$_headerScope · ${widget.work!.startTime}~${widget.work!.endTime}')} '
+                '${TextLayout.unit('| ${widget.work!.wageTypeLabel}')} ${TextLayout.unit(widget.work!.formattedWage)}'
+              : TextLayout.phrases('$_headerScope · 업무 ${widget.toItem.workDetails.length}종'),
+          semanticsLabel: widget.work != null
+            ? '$_headerScope · ${widget.work!.startTime}~${widget.work!.endTime}'
+              ' | ${widget.work!.wageTypeLabel} ${widget.work!.formattedWage}'
+            : '$_headerScope · 업무 ${widget.toItem.workDetails.length}종',
+        ),
+        style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+          color: AppColors.textSecondary,
+        ),
+      );
+
+  /// [DU532] 좁은 업무별 창에서 머리 대신 본문 스크롤의 첫 항목으로 서는 보조 줄(통계 줄과 같은 여백 · 흰 바탕).
+  Widget _buildHeadInfoRow(BuildContext context) => Container(
+        width: double.infinity,
+        alignment: Alignment.centerLeft,
+        padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 16), vertical: ResponsiveHelper.spacing(context, 12)),
+        child: _headerSub(),
+      );
+
   /// 헤더 — ALfit modal grammar (flat white + grey200 divider)
-  Widget _buildHeader(BuildContext context, ThemeData theme) {
+  ///   [DU532] [dense] 면 제목 · 닫기만 둔다(보조 줄은 본문 첫 항목 — _buildHeadInfoRow).
+  Widget _buildHeader(BuildContext context, ThemeData theme, {bool dense = false}) {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: const BoxDecoration(
@@ -854,39 +1108,27 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  // [R7-P1-7 §15] `지원자 관리` → `인력 현황` — Day와 같은 이름.
-                  widget.work != null
-                      ? '${widget.work!.workType} · 인력 현황'
-                      : '${widget.toItem.to.title} · 인력 현황',
+                // [DU530] 큰 글자(320×640 · 2.0)에서 제목이 '홀서빙 · …'로 잘리고 보조 줄은 금액 끝 '원' 한 글자만 다음 줄로 떨어졌다.
+                //   말줄임을 빼고 줄은 공백에서만 바꾼다(구분점 · 세로줄은 옆 낱말에 붙인다). 글 원문 · 읽는 이름은 그대로(span 의 semanticsLabel).
+                Text.rich(
+                  TextSpan(
+                    text: TextLayout.phrases(_headerTitle),
+                    semanticsLabel: _headerTitle,
+                  ),
                   style: const TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textPrimary,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                Text(
-                  widget.work != null
-                      ? '$_headerScope · ${widget.work!.startTime}~${widget.work!.endTime}'
-                        ' | ${widget.work!.wageTypeLabel} ${widget.work!.formattedWage}'
-                      : '$_headerScope · 업무 ${widget.toItem.workDetails.length}종',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w400,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
+                if (!dense) _headerSub(),
               ],
             ),
           ),
 
           // 닫기 버튼
           IconButton(
-            onPressed: () => Navigator.pop(context, WorkApplicantsDialogResult(
-              hasChanges: _hasChanges,
-              affectedTOIds: _affectedOtherTOIds,
-            )),
+            onPressed: () => Navigator.pop(context, _dialogResult),
             icon: const Icon(Icons.close, color: AppColors.grey500, size: 20),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
@@ -927,7 +1169,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   //   실패→재시도·순서 역전·dispose·권한 회수를 실행으로 증명하기 위해서다.
   //   화면은 그 객체를 그대로 쓴다(테스트 전용 분기 없음).
   late final CapacityLoadState _capacity = CapacityLoadState(
-    loader: () => _firestoreService.loadTOWorkDetails(
+    loader: () => _reads.capacity(
       widget.toItem.to,
       slotId: widget.toItem.slot?.id,
       slotWorkDetails: widget.toItem.slot?.workDetails,
@@ -981,7 +1223,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         canonicalConfirmed: _canonicalConfirmed,
         requiredCount: widget.work?.requiredCount ?? 0,
         isClosed: CloseStateUtils.isToItemClosed(
-            widget.toItem, widget.toItem.to, DateTime.now()),
+            widget.toItem, widget.toItem.to, _workApplicantsNow()),
       );
 
   /// 부족 — null이면 확인하지 못했다는 뜻이다 (UNKNOWN != ZERO).
@@ -1005,7 +1247,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   }
 
   /// 통계 바
-  Widget _buildStatsBar(BuildContext context, int pendingCount, int confirmedCount) {
+  ///   [DU533] [compact](좁은 업무별 창 = DU532 의 narrow)이면 항목을 내용 폭으로 줄여 아래 Wrap 이 가로로 흘린다(항목 단위 줄바꿈).
+  ///   항목 · 글 · 색 · 순서 · 표시 조건은 그대로다. 넓은 창 · 묶음 창은 이전처럼 항목마다 한 줄.
+  Widget _buildStatsBar(BuildContext context, int pendingCount, int confirmedCount, {bool compact = false}) {
     final work = widget.work;
     final shortage = _shortage;
     final capacity = _capacityState;
@@ -1040,15 +1284,20 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           //   `지원 0` 에 그것을 쓰면 없는 할 일을 강조하고, 바로 옆
           //   `부족 2` 와 같은 경고 강도로 경쟁한다. 같은 파일의 `부족` 이
           //   이미 `> 0` 일 때만 강조하고 있었다 — 같은 규칙을 맞춘다.
+          // [UI-APPLICANTS-AND-INVITATIONS.2] 지원·초대·확정 수는 사실이다 — 의미색은 부족(처리할 일)에만.
           _buildStatItem(context, '지원', pendingCount,
-              pendingCount > 0 ? AppColors.warning : AppColors.grey500),
+              pendingCount > 0 ? AppColors.textPrimary : AppColors.grey500, compact: compact),
+          // [E2-INVITED-SEAT] 직접 지원과 초대를 나눠 말한다 — `지원 0 · 초대 1`.
+          //   0 이면 세우지 않는다(초대가 없는 업무에 빈 칸을 늘리지 않는다).
+          if (_invites.isNotEmpty)
+            _buildStatItem(context, '초대', _invites.length, AppColors.textPrimary, compact: compact),
           _buildStatItem(context, '확정', confirmedCount,
-              confirmedCount > 0 ? AppColors.success : AppColors.grey500),
+              confirmedCount > 0 ? AppColors.textPrimary : AppColors.grey500, compact: compact),
           // [R7-P1-6] 부족은 실패가 아니라 **지금 처리 가능한 미완료**다.
           //   red는 NO_SHOW·실패에 남겨 둔다.
           if (work != null && shortage != null)
             _buildStatItem(context, '부족', shortage,
-                shortage > 0 ? AppColors.warningDark : AppColors.grey500),
+                shortage > 0 ? AppColors.warningDark : AppColors.grey500, compact: compact),
           // [R7-P1-2 DEVICE.1E.2A] 정원 문구는 전용 component 가 그린다.
           //
           //   필요 인원은 공고가 정한 값이라 조회 상태와 무관하게 유효하다 —
@@ -1131,10 +1380,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       child: OutlinedButton.icon(
         onPressed: () => _openInviteMethod(work, toId, slotId, shortage),
         icon: const Icon(Icons.person_add_outlined, size: 16),
-        label: Text('인력 초대 ($shortage명 부족)'),
+        // [DU530] 큰 글자에서 '부/족'으로 끊겼다 — 줄은 공백에서만 바꾼다. 글 원문 · 읽는 이름은 그대로(DU519 와 같은 방식).
+        label: Text.rich(TextSpan(
+          text: TextLayout.keepWords('인력 초대 ($shortage명 부족)'),
+          semanticsLabel: '인력 초대 ($shortage명 부족)',
+        )),
         style: OutlinedButton.styleFrom(
-          foregroundColor: AppColors.info,
-          side: const BorderSide(color: AppColors.info),
+          foregroundColor: AppColors.brand,
+          side: const BorderSide(color: AppColors.brand),
           alignment: Alignment.centerLeft,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         ),
@@ -1303,11 +1556,27 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     if (!mounted || choice == null) return;
 
     final businessId = widget.toItem.to.businessId;
+    // [ISG2-REFRESH] 네 결과를 구분한다.
+    //   성공 → `_hasChanges`(상위 카드·홈 전파) + 재조회
+    //   취소 → 아무것도 하지 않는다(성공으로 보이게 하지 않는다)
+    //   실패·응답 불명확 → 성공으로 세지 않되 **재조회는 한다**
+    //     (쓰기가 실제로 들어갔을 수 있다 — 진실은 서버에서 다시 읽는다)
+    var sheetSucceeded = false;
+    InviteDialogResult? directResult;
     if (choice == 'availability') {
       await DialogHelper.showSheet<void>(
         context,
         isScrollControlled: true,
         builder: (ctx) => AvailableWorkersBottomSheet(
+          onInviteSucceeded: () => sheetSucceeded = true,
+          // [E1-W3·SHEET] 확인하지 못한 대상 — 성공으로 세지 않고 기억만 한다.
+          onInviteUnconfirmed: (uid) {
+            final t = InviteVerifyTarget(
+                toId: toId, targetUid: uid, slotId: slotId);
+            if (!_unconfirmedInviteTargets.contains(t)) {
+              _unconfirmedInviteTargets.add(t);
+            }
+          },
           toId: toId,
           slotId: slotId,
           workDetailId: work.id,
@@ -1328,7 +1597,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       );
     } else if (choice == 'direct') {
       // Day와 같은 contextual 생성자 — 날짜·슬롯을 다시 고르게 하지 않는다.
-      await showDialog<void>(
+      // [E1-AMBIGUOUS-INVITE] 다이얼로그는 sent / canceled / unconfirmed 로
+      //   닫힌다. 예전 bool 에서는 저장 시도 뒤 응답이 불명확해도 사용자가
+      //   닫으면 false(=취소)였다.
+      final invited = await showDialog<InviteDialogResult>(
         context: context,
         barrierDismissible: false,
         builder: (_) => InviteWorkerDialog.contextual(
@@ -1342,13 +1614,40 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           endTime: work.endTime,
         ),
       );
+      directResult = invited;
     }
     if (!mounted) return;
-    await _loadApplicants();
+    // [ISG2-REFRESH] 판단은 공용 식 하나가 한다.
+    //   이 다이얼로그는 자기 목록만 다시 읽고 `_hasChanges` 를 세우지
+    //   않았다 — 그래서 초대를 보내고 닫아도 상위 카드의 대기 수가
+    //   그대로였다.
+    // [E1-AMBIGUOUS-INVITE] 불명확하게 닫혔으면 대상 지원서를 다시 읽어
+    //   **저장이 확인된 경우에만** 전파한다.
+    final requested = choice == 'availability'
+        ? inviteSheetOutcome(anySucceeded: sheetSucceeded)
+        : inviteDialogOutcome(directResult);
+    final resolved =
+        await InviteSaveVerifier.resolve(requested, businessId: businessId);
+    if (!mounted) return;
+    InviteSaveVerifier.announceClose(resolved.check);
+    final outcome = resolved.outcome;
+    // [E1-W3] 확인하지 못한 대상은 남겨 두고, 아래 재조회(그리고 이후의
+    //   성공한 재조회)에서 그 초대를 읽었을 때만 전파한다.
+    final pending = requested.verify;
+    if (pending != null &&
+        resolved.check != InviteSaveCheck.saved &&
+        !_unconfirmedInviteTargets.contains(pending)) {
+      _unconfirmedInviteTargets.add(pending);
+    }
+    // [ISG2-REFRESH] 초대는 `_inviteChanged` 다 — 카드는 다시 그리되
+    //   Home full refresh 는 깨우지 않는다(기록된 결정).
+    if (outcome.propagate) _inviteChanged = true;
+    if (outcome.reload) await _loadApplicants();
   }
 
-  Widget _buildStatItem(BuildContext context, String label, int count, Color color) {
+  Widget _buildStatItem(BuildContext context, String label, int count, Color color, {bool compact = false}) {
     return Row(
+      mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
       children: [
         Container(
           width: ResponsiveHelper.spacing(context, 8),
@@ -1386,6 +1685,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       ),
       child: Row(
         children: [
+          // [DU528] 왼쪽 묶음을 Wrap 으로 — 큰 글자에서 건수 칩이 아래 줄로 내려간다(이전 Row 는 오른쪽으로 넘쳤다).
+          //   묶음이 한 줄에 들어가면 자리 · 간격 · 세로 가운데는 이전과 같다. 일괄 모드가 아니면 빈 칸(이전 Spacer 와 같다).
+          Expanded(child: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              runSpacing: ResponsiveHelper.spacing(context, 4),
+              children: [
           if (_isBatchMode) ...[
             AppCheckbox(
               value: _selectAll,
@@ -1405,13 +1710,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                   borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
                 ),
                 child: Text(
-                  '${_selectedIds.length}명',
+                  '${_selectedIds.length}건',
                   style: ResponsiveHelper.smallStyle(context, color: Theme.of(context).primaryColor),
                 ),
               ),
             ],
           ],
-          const Spacer(),
+          ])),
           // 일괄선택 토글 버튼
           Material(
             color: _isBatchMode
@@ -1521,10 +1826,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           TextButton(
             onPressed: () => Navigator.pop(
               context,
-              WorkApplicantsDialogResult(
-                hasChanges: _hasChanges,
-                affectedTOIds: _affectedOtherTOIds,
-              ),
+              _dialogResult,
             ),
             child: Text('닫기',
                 style:
@@ -1592,10 +1894,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     return sorted;
   }
 
-  Widget _buildApplicantList(BuildContext context, List<Map<String, dynamic>> pending, List<Map<String, dynamic>> confirmed) {
+  /// [DU528] [leading] 이 있으면(좁은 창) 통계 · 초대 · 전체 선택 줄을 같은 스크롤의 첫 항목으로 둔다 —
+  ///   없으면 이전과 같은 위젯 그대로다(목록 여백 · 항목 변경 0).
+  Widget _buildApplicantList(BuildContext context, List<Map<String, dynamic>> pending, List<Map<String, dynamic>> confirmed,
+      {List<Widget> leading = const []}) {
     return SingleChildScrollView(
-      padding: ResponsiveHelper.cardPadding(context),
-      child: Column(
+      padding: leading.isEmpty ? ResponsiveHelper.cardPadding(context) : null,
+      child: _leadingThenList(context, leading, Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // 대기 중 섹션 (별 표시 항목 상단 고정)
@@ -1607,9 +1912,26 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             ],
 
+            // [E2-INVITED-SEAT] 초대 섹션 — 승인 버튼 없이, 날짜별 명단과 같은 문구.
+            if (_invites.isNotEmpty) ...[
+              _buildSectionHeader(
+                  context, '초대', _invites.length, AppColors.infoDark),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              ..._invites.map((item) => _buildInviteRow(context, item,
+                  capacity: _inviteRowCapacity)),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            ],
+
             // 확정 섹션
             if (confirmed.isNotEmpty) ...[
               _buildSectionHeader(context, '확정', confirmed.length, AppColors.success),
+              // [NOSHOW-CONTRACT-GUARD] 근태를 몰라 발행을 멈춘 행이 있으면 이유·재시도.
+              if (_contractAttendanceSuppressed) ...[
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                ContractAttendanceUnknownNotice(
+                    onRetry: _retryContractAttendance,
+                    retrying: _contractAttRetrying),
+              ],
               Builder(builder: (context) {
                 final requestableCount = _applicants.where((item) {
                   final app = item['application'] as ApplicationModel;
@@ -1632,7 +1954,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                 if (!_canManageContract()) return const SizedBox.shrink();
                 final noContractCount = confirmed.where((item) {
                   final app = item['application'] as ApplicationModel;
-                  final status = _contractStatusMap[app.id];
+                  final status = _contractStatusMap.statuses[app.id];
                   return status == null || status.isEmpty || status == 'voided';
                 }).length;
                 // [R7-P1-5 §13] 1명이면 개인 카드 action만 — bulk 패널 없음.
@@ -1661,7 +1983,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
               if (confirmed.isNotEmpty)
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               _buildSectionHeader(context, '계약 확인 필요',
-                  _decisionPending.length, AppColors.warningDark),
+                  _decisionPending.length, AppColors.warningDark, urgent: true),
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               ..._decisionPending.asMap().entries.map((entry) =>
                   _buildApplicantCard(context, entry.value, entry.key + 1,
@@ -1688,9 +2010,55 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                   context, entry.value, entry.key + 1, isPending: false)),
             ],
           ],
-        ),
+        )),
       );
   }
+
+  /// [DU528] 머리와 하단 사이 남은 칸(창이 내용만큼 줄어드는 성질은 그대로)에서 그 칸의 최대 높이를 [builder] 에 준다.
+  Widget _measuredBody(Widget Function(BuildContext context, BoxConstraints box) builder) =>
+      Flexible(child: LayoutBuilder(builder: builder));
+
+  /// [DU532] 전체형 머리(보조 줄 포함) 아래 남는 칸의 최대 높이 — _headAndBody 의 재기 전용 사본이 배치 때마다 적는다.
+  double _fullHeadBox = double.infinity;
+
+  /// [DU532] 머리 + 본문 칸. [probe](업무별 창 · 권한 있음)가 아니면 이전과 같은 두 위젯 그대로다(narrow = false).
+  ///   probe 면 '창 최대 높이 − 하단 − 전체형 머리'를 실측 한 가지로 먼저 얻는다: 전체형 머리의 그리지 않는 사본(Offstage —
+  ///   배치만 · 그림 · 터치 · 읽는 이름 · 포커스 없음)을 같은 제약으로 배치하고 그 아래 남는 칸의 최대 높이를 받는다.
+  ///   이 값은 실제 머리가 어느 모양이든 같다 — 보조 줄을 본문으로 내려도 바뀌지 않으므로 판정이 뒤집히지 않는다(순환 없음).
+  ///   그 칸이 화면 높이의 60% 에 못 미치면(DU528 의 좁은 창 식 · 같은 값) narrow: 머리는 제목 · 닫기만, 보조 줄은 본문 첫 항목.
+  ///   실제 머리 · 본문은 사본 다음에 배치 중 짓는다(LayoutBuilder · Stack 은 자식을 순서대로 배치) — 같은 프레임 · 글자 배율 상수 없음.
+  List<Widget> _headAndBody(BuildContext context, ThemeData theme, bool probe,
+      Widget Function(BuildContext context, BoxConstraints box, bool narrow) body) {
+    if (!probe) return [_buildHeader(context, theme), _measuredBody((c, box) => body(c, box, false))];
+    return [
+      Flexible(
+        child: Stack(children: [
+          Offstage(
+            child: ExcludeFocus(
+              child: Column(children: [
+                _buildHeader(context, theme),
+                _measuredBody((_, ref) {
+                  _fullHeadBox = ref.maxHeight;
+                  return const SizedBox.shrink();
+                }),
+              ]),
+            ),
+          ),
+          LayoutBuilder(builder: (context, _) {
+            final narrow = _fullHeadBox < MediaQuery.sizeOf(context).height * 0.6;
+            return Column(mainAxisSize: MainAxisSize.min, children: [
+              _buildHeader(context, theme, dense: narrow),
+              _measuredBody((c, box) => body(c, box, narrow)),
+            ]);
+          }),
+        ]),
+      ),
+    ];
+  }
+
+  Widget _leadingThenList(BuildContext context, List<Widget> leading, Widget list) => leading.isEmpty
+      ? list
+      : Column(children: [...leading, Padding(padding: ResponsiveHelper.cardPadding(context), child: list)]);
 
   /// 그룹 모드: 업무별 섹션으로 나눈 지원자 목록
   Widget _buildGroupedApplicantList(BuildContext context) {
@@ -1715,7 +2083,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       return _appMatchesWork(app, work);
     }).toList();
 
-    if (workApplicants.isEmpty) return [];
+    // [E2-INVITED-SEAT] 초대만 있는 업무도 섹션을 세운다.
+    final workInvites = _invites.where((item) => _appMatchesWork(
+        item['application'] as ApplicationModel, work)).toList();
+
+    if (workApplicants.isEmpty && workInvites.isEmpty) return [];
 
     final pending = workApplicants.where((item) =>
         (item['application'] as ApplicationModel).status == AppStatus.pending).toList();
@@ -1769,12 +2141,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: AppColors.warningBg,
+                  color: AppColors.grey100,
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
                   '지원 ${pending.length}',
-                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.warningDark),
+                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary),
                 ),
               ),
             if (pending.isNotEmpty && confirmed.isNotEmpty)
@@ -1783,12 +2155,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: AppColors.successBg,
+                  color: AppColors.grey100,
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
                   '확정 ${confirmed.length}',
-                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.successDark),
+                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary),
                 ),
               ),
           ],
@@ -1801,6 +2173,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
             _buildApplicantCard(context, entry.value, entry.key + 1, isPending: true, workOverride: work)),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
       ],
+      // [E2-INVITED-SEAT] 초대 — 그룹 모드에는 업무별 canonical 정원이 없어
+      //   자리 여부를 단정하지 않는다(UNKNOWN). 행은 상세로 이어진다.
+      if (workInvites.isNotEmpty) ...[
+        ...workInvites.map((item) => _buildInviteRow(context, item,
+            capacity: InviteCapacityState.unknown)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+      ],
       // 확정 섹션
       if (confirmed.isNotEmpty) ...[
         ...confirmed.asMap().entries.map((entry) =>
@@ -1808,6 +2187,49 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         SizedBox(height: ResponsiveHelper.spacing(context, 16)),
       ],
     ];
+  }
+
+  /// [E2-INVITED-SEAT] 초대 행이 말할 자리 상태.
+  ///
+  ///   `_capacityState` 의 closed 는 **공개 모집** 마감(기기 시계 판정 포함)이다.
+  ///   공개 접수만 자동 마감된 단위의 초대는 기한까지 수락될 수 있는데, 이
+  ///   화면은 그것을 가를 서버 투영(canonicalInviteEnded)을 갖고 있지 않다.
+  ///   그래서 closed 를 `모집 종료` 로 단정하지 않고 UNKNOWN 으로 둔다 —
+  ///   정확한 갈래는 날짜별 명단(서버 row)이 말한다.
+  InviteCapacityState get _inviteRowCapacity {
+    final c = _capacityState;
+    return c == InviteCapacityState.closed ? InviteCapacityState.unknown : c;
+  }
+
+  /// [E2-INVITED-SEAT] 초대 한 줄 — [InviteRosterRow] 가 그린다(화면 없이 렌더 검증).
+  Widget _buildInviteRow(
+    BuildContext context,
+    Map<String, dynamic> item, {
+    required InviteCapacityState capacity,
+  }) {
+    final app = item['application'] as ApplicationModel;
+    final user = item['user'] as UserModel?;
+    return InviteRosterRow(
+      application: app,
+      name: user?.displayName ?? app.applicantName ?? '근무자',
+      capacity: capacity,
+      onTap: user == null ? null : () => _showInvitedWorkerDetail(app, user),
+    );
+  }
+
+  /// [E2-INVITED-SEAT] 초대받은 근로자 상세 — **승인 버튼 없이** 연다.
+  ///   날짜별 명단 `_showInvitedWorkerDetail` 과 같은 호출이다.
+  Future<void> _showInvitedWorkerDetail(
+      ApplicationModel app, UserModel user) async {
+    await WorkerDetailDialog.show(
+      context: context,
+      user: user,
+      application: app,
+      businessId: widget.toItem.to.businessId,
+      isConfirmed: false,
+      showApprovalButtons: false,
+    );
+    if (mounted) await _loadApplicants();
   }
 
   /// 매칭 헬퍼: app이 특정 work에 속하는지 확인
@@ -1842,13 +2264,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         vertical: ResponsiveHelper.spacing(context, 10),
       ),
       decoration: BoxDecoration(
-        color: _isIdCardSelectMode ? AppColors.infoBg : Colors.white,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
-        border: Border.all(color: _isIdCardSelectMode ? AppColors.info : AppColors.border),
+        border: Border.all(color: AppColors.border),
       ),
-      child: Row(
+      // [DU534] 좁은 창에서 안내와 버튼이 한 줄을 나눠 안내가 한 글자씩 끊겼다 — 날짜별 창과 같은 AdaptiveActionRow.
+      child: AdaptiveActionRow(
+        minRowWidth: 220,
+        gap: ResponsiveHelper.spacing(context, 8),
+        leading: Row(
         children: [
-          Icon(Icons.badge, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.info),
+          Icon(Icons.badge, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.grey600),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Expanded(
             child: Text(
@@ -1856,11 +2282,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                   ? '${_selectedIdCardUserIds.length}명 선택됨'
                   // [R7-P1-4 §12] Day와 같은 수정 — canonical 의미는
                   //   `지금 요청할 수 있는 사람`(IdCardHelper.isRequestable)이다.
-                  : '요청 가능 $requestableCount명',
-              style: ResponsiveHelper.bodyStyle(context, color: AppColors.infoDark),
+                  : TextLayout.keepWords('요청 가능 $requestableCount명'),
+              semanticsLabel: _isIdCardSelectMode ? '${_selectedIdCardUserIds.length}명 선택됨' : '요청 가능 $requestableCount명',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary),
             ),
           ),
-          if (_isIdCardSelectMode && _selectedIdCardUserIds.isNotEmpty) ...[
+        ]),
+        actions: [
+          if (_isIdCardSelectMode && _selectedIdCardUserIds.isNotEmpty)
             Material(
               color: Colors.transparent,
               child: InkWell(
@@ -1872,7 +2301,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                     vertical: ResponsiveHelper.spacing(context, 6),
                   ),
                   decoration: BoxDecoration(
-                    color: AppColors.success,
+                    color: AppColors.brand,
                     borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
                   ),
                   child: Text(
@@ -1883,8 +2312,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                 ),
               ),
             ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          ],
           Material(
             color: Colors.transparent,
             child: InkWell(
@@ -1909,14 +2336,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                   vertical: ResponsiveHelper.spacing(context, 6),
                 ),
                 decoration: BoxDecoration(
-                  color: _isIdCardSelectMode ? AppColors.grey100 : AppColors.info,
+                  color: _isIdCardSelectMode ? AppColors.grey100 : Colors.transparent,
                   borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
                 ),
                 child: Text(
                   _isIdCardSelectMode ? '취소' : '신분증 요청',
                   style: ResponsiveHelper.smallStyle(
                     context,
-                    color: _isIdCardSelectMode ? AppColors.grey700 : Colors.white,
+                    color: _isIdCardSelectMode ? AppColors.grey700 : AppColors.brand,
                   ).copyWith(fontWeight: FontWeight.w600),
                 ),
               ),
@@ -1943,20 +2370,26 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border),
       ),
-      child: Row(
+      child: AdaptiveActionRow(
+        minRowWidth: 270,
+        gap: ResponsiveHelper.spacing(context, 8),
+        leading: Row(
         children: [
           Icon(
             Icons.description_outlined,
             size: ResponsiveHelper.iconSize(context, 18),
-            color: AppColors.success,
+            color: AppColors.grey600,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Expanded(
             child: Text(
-              '계약서 미작성 $noContractCount명',
-              style: ResponsiveHelper.bodyStyle(context, color: AppColors.successDark),
+              TextLayout.keepWords('계약서 미작성 $noContractCount명'),
+              semanticsLabel: '계약서 미작성 $noContractCount명',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary),
             ),
           ),
+        ]),
+        actions: [
           if (_isContractBatchProcessing)
             const SizedBox(
               width: 20,
@@ -1973,12 +2406,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                   vertical: ResponsiveHelper.spacing(context, 6),
                 ),
                 decoration: BoxDecoration(
-                  color: AppColors.success,
+                  color: Colors.transparent,
+                  border: Border.all(color: AppColors.brand, strokeAlign: BorderSide.strokeAlignOutside),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   '계약서 일괄작성',
-                  style: ResponsiveHelper.smallStyle(context, color: Colors.white)
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.brand)
                       .copyWith(fontWeight: FontWeight.w600),
                 ),
               ),
@@ -2084,23 +2518,30 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   }
 
   /// 섹션 헤더
-  Widget _buildSectionHeader(BuildContext context, String title, int count, Color color) {
+  /// [UI-APPLICANTS-AND-INVITATIONS.2] 구획 제목은 중립색 한 가지 — 지원·확정·초대를 색 막대와 의미색으로
+  ///   나누면 주황·초록·파랑이 겹쳤다(인력 현황 UI-1 과 같은 기준). [urgent] 는 결정이 남은 구획
+  ///   ('계약 확인 필요')만 — 그 강조는 할 일이라서 남긴다. [color] 는 urgent 일 때만 쓴다.
+  Widget _buildSectionHeader(BuildContext context, String title, int count, Color color,
+      {bool urgent = false}) {
+    final c = urgent ? color : AppColors.textSecondary;
     return Row(
       children: [
-        Container(
-          width: ResponsiveHelper.spacing(context, 4),
-          height: ResponsiveHelper.spacing(context, 20),
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 2)),
+        if (urgent) ...[
+          Container(
+            width: ResponsiveHelper.spacing(context, 4),
+            height: ResponsiveHelper.spacing(context, 20),
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 2)),
+            ),
           ),
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        ],
         Text(
           '$title ($count명)',
           style: ResponsiveHelper.subtitleStyle(context).copyWith(
             fontWeight: FontWeight.bold,
-            color: color,
+            color: c,
           ),
         ),
       ],
@@ -2130,8 +2571,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       cardBg = Theme.of(context).primaryColor.withValues(alpha: 0.05);
       cardBorder = Theme.of(context).primaryColor;
     } else if (isStarred) {
-      cardBg = AppColors.amber.withValues(alpha: 0.1); // amber[50] equivalent
-      cardBorder = AppColors.amberLight;
+      cardBg = Colors.white;
+      cardBorder = AppColors.border;
     } else if (!isPending) {
       // [R7-P1-2 DEVICE.1H §4] 확정은 완료된 사실 — 낮은 강조.
       //
@@ -2139,7 +2580,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       //   사실을 세 번 말했다(D0: 반복 강조 축소 · 행당 강한 강조 제한 ·
       //   완료 정보 낮은 강조). tint 를 테두리로 낮춘다 — 배지 글자는
       //   그대로 둔다(상태를 색에만 의존하지 않는다).
-      cardBorder = AppColors.successLight.withValues(alpha: 0.7);
+      // [UI-APPLICANTS-AND-INVITATIONS.2] '확정' 구획 제목이 이미 말한다 — 행마다 초록 테두리로 반복하지 않는다.
+      cardBorder = AppColors.border;
     }
 
     // [R7-P1-2 DEVICE.1H.1] 표면은 `ApplicantRowSurface` 가 그린다 — 실제로
@@ -2184,7 +2626,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                 ? AppCheckbox(
                                     value: _selectedIdCardUserIds.contains(user?.uid ?? ''),
                                     onTap: () => _toggleIdCardSelection(user?.uid ?? ''),
-                                    activeColor: AppColors.info,
+                                    activeColor: AppColors.brand,
                                     size: ResponsiveHelper.iconSize(context, 20),
                                   )
                                 : AppCheckbox(
@@ -2238,30 +2680,34 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       Flexible(
+                                        // [UI-APPLICANTS-AND-INVITATIONS.2] 긴 이름을 한 줄 말줄임으로 숨기지 않는다 —
+                                        //   두 줄까지 보이고 그 뒤에만 줄인다(동명이인 구분은 옆 인력번호가 한다).
                                         child: Text(
                                           user?.name ?? app.applicantName ?? '이름 없음',
                                           style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w700),
+                                          maxLines: 2,
                                           overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
                                       // [R7-PRE1A.1] 번호를 성별·나이와 같은 보조 줄에 둔다.
                                       //   이름만 있는 목록에서는 동명이인 두 줄이 똑같아 보인다.
+                                      // [DIALOG-VISUAL-CLOSE] 보조 줄은 짧은 고정 폭으로 둔다.
+                                      //   둘 다 Flexible 이면 남는 몫을 서로 돌려주지 않아 이름이
+                                      //   행의 1/4 로 묶였다(Pixel 5: `QA 지…` 두 명을 구별 못 함).
                                       if (PersonLabel.secondary(
                                             user?.personNo,
                                             '${user?.gender ?? ''}'
                                             '${user?.age != null ? ' · ${user?.age}세' : ''}',
                                           ).isNotEmpty) ...[
                                         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                        Flexible(
-                                          child: Text(
-                                            '(${PersonLabel.secondary(
-                                              user?.personNo,
-                                              '${user?.gender ?? ''}'
-                                              '${user?.age != null ? ' · ${user?.age}세' : ''}',
-                                            )})',
-                                            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
+                                        Text(
+                                          '(${PersonLabel.secondary(
+                                            user?.personNo,
+                                            '${user?.gender ?? ''}'
+                                            '${user?.age != null ? ' · ${user?.age}세' : ''}',
+                                          )})',
+                                          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                                          maxLines: 1,
                                         ),
                                       ],
                                     ],
@@ -2270,19 +2716,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                               ],
                             ),
                           ),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                          // [R7-P1-2 DEVICE.1H.1] 큰 글자에서 넘치던 칸이다.
-                          //   `Expanded(이름)` 옆의 맨 Text 라 줄지 못했고,
-                          //   DEVICE.1H 의 `지원 ` 접두로 더 길어졌다.
-                          //   실제 렌더(320dp·배율 2.0)에서 확인했다.
-                          Flexible(
-                            child: Text(
-                              _formatAppliedTime(app.appliedAt),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
-                            ),
-                          ),
+                          // [DIALOG-VISUAL-CLOSE] 지원 시각은 2줄로 내렸다(아래 Wrap 첫 칸).
+                          //   이 줄에서 `Expanded(이름)` 과 1:1 로 폭을 나눠 이름을 반으로 묶었다.
                           if (isPending) ...[
                             SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                             GestureDetector(
@@ -2340,6 +2775,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                         runSpacing: ResponsiveHelper.spacing(context, 3),
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
+                          // [R7-P1-2 DEVICE.1H.1] 큰 글자에서 넘치던 칸 — Wrap 안이라 줄바꿈된다.
+                          Text(
+                            _relationTimeLabel(app),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+                          ),
                           if (user?.effectivePhone != null && (user?.effectivePhone ?? '').isNotEmpty)
                             Row(
                               mainAxisSize: MainAxisSize.min,
@@ -2389,12 +2831,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                             //   읽으면 관리자는 없는 할 일을 먼저 본다.
                             // [R7-P1-2 DEVICE.1E.1] 라벨은 canonical 조합이
                             //   정한다 — 화면이 날짜 조건을 다시 쓰지 않는다.
-                            if (staffingRelationLabel(app, DateTime.now())
+                            if (staffingRelationLabel(app, _workApplicantsNow())
                                 case final label?)
                               _buildRelationBadge(context, label,
-                                  urgent: staffingRelationOf(app, DateTime.now())
+                                  urgent: staffingRelationOf(app, _workApplicantsNow())
                                       .decisionPending),
-                            _buildContractBadge(context, app.id,
+                            _buildContractBadge(context, app,
                                 isEnded: _isEndedRelation(app)),
                             // [CORRECTION-R7-ENDED-ID-REUPLOAD-ACTION-COPY]
                             //
@@ -2471,13 +2913,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                       // 확정자 액션 버튼 (파트변경 / 계약서 작성 / 확정취소 or 고정근무 관리)
                       if (!isPending && !_isBatchMode) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                        SizedBox(
-                          width: double.infinity,
-                          child: Wrap(
-                          alignment: WrapAlignment.end,
-                          spacing: ResponsiveHelper.spacing(context, 8),
-                          runSpacing: ResponsiveHelper.spacing(context, 6),
-                          children: [
+                        _actionRow(
+                          context,
+                          primary: [
                             // [CROSS-DOMAIN-R5.3A] '파트변경' CTA 제거.
                             //   관리자 혼자 확정된 약속을 덮어쓰던 경로다.
                             //   업무를 옮기는 일은 제안이고 근로자가 수락해야
@@ -2493,26 +2931,26 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                             //    [OPEN-R7-ENDED-CONTRACT-REMEDIATION-POLICY])
                             if (_canManageContract() &&
                                 !_isEndedRelation(app) &&
-                                (_contractStatusMap[app.id] == null ||
-                                (_contractStatusMap[app.id]?.isEmpty ?? true) ||
-                                _contractStatusMap[app.id] == 'voided'))
+                                _needsContractIssue(app))
                               _buildActionButton(
                                 context,
                                 label: '계약서 작성',
                                 icon: Icons.description_outlined,
-                                bgColor: AppColors.success,
+                                bgColor: AppColors.brand,
                                 textColor: Colors.white,
                                 filled: true,
                                 onTap: () => _createContractForConfirmedUser(item),
                               ),
+                          ],
+                          secondary: [
                             // [B-2] 장기근무자는 첫 출근 전에도 고정근무 관리 가능
                             if (widget.toItem.to.isLongTerm)
                               _buildActionButton(
                                 context,
                                 label: '고정근무 관리',
                                 icon: Icons.settings,
-                                bgColor: AppColors.longTermBg,
-                                textColor: AppColors.longTermDark,
+                                bgColor: Colors.transparent,
+                                textColor: AppColors.textSecondary,
                                 // [B-3] item 전달 → 해당 근무자 uid로 자동 포커스
                                 onTap: () => _openFixedWorkerManagement(item),
                               )
@@ -2522,12 +2960,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                 context,
                                 label: '확정취소',
                                 icon: Icons.cancel_outlined,
-                                bgColor: AppColors.errorBg,
-                                textColor: AppColors.error,
+                                bgColor: Colors.transparent,
+                                textColor: AppColors.errorDark,
                                 onTap: () => _cancelConfirmation(item),
                               ),
                           ],
-                          ),
                         ),
                         // [CROSS-DOMAIN-R5.3E.2] 확정 근로자 업무 변경 제안.
                         //
@@ -2546,16 +2983,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                     context,
                                     label: '변경 확인 대기',
                                     icon: Icons.hourglass_top,
-                                    bgColor: AppColors.warningBg,
-                                    textColor: AppColors.warning,
+                                    bgColor: Colors.transparent,
+                                    textColor: AppColors.warningDark,
                                     onTap: () => _cancelReassignment(app),
                                   )
                                 : _buildActionButton(
                                     context,
                                     label: '근무 변경 제안',
                                     icon: Icons.swap_horiz,
-                                    bgColor: AppColors.infoBg,
-                                    textColor: AppColors.info,
+                                    bgColor: Colors.transparent,
+                                    textColor: AppColors.textSecondary,
                                     onTap: () =>
                                         _showConfirmedReassignmentSheet(item),
                                   ),
@@ -2569,9 +3006,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                       if (isPending && !_isBatchMode &&
                           _canManageTo()) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
+                        _actionRow(
+                          context,
+                          secondary: [
                             // [CROSS-DOMAIN-R5.3A] '파트변경' CTA 제거 (대기자 경로).
                             //   PENDING 지원자의 지원 조건을 동의 없이 덮어썼다.
                             // [CROSS-DOMAIN-R5.3B] 그 자리를 '다른 업무 제안'이 대신한다.
@@ -2582,32 +3019,31 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                 context,
                                 label: '다른 업무 제안',
                                 icon: Icons.swap_horiz,
-                                bgColor: AppColors.infoBg,
-                                textColor: AppColors.info,
+                                bgColor: Colors.transparent,
+                                textColor: AppColors.textSecondary,
                                 onTap: () => _showAlternativeWorkOfferSheet(item),
                               ),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                             ],
                             _buildActionButton(
                               context,
                               label: '거절',
                               icon: Icons.close,
-                              bgColor: AppColors.errorBg,
-                              textColor: AppColors.error,
+                              bgColor: Colors.transparent,
+                              textColor: AppColors.errorDark,
                               onTap: () => _rejectApplication(item),
                             ),
-                            if (widget.toItem.to.canApprovePending) ...[
-                              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                          ],
+                          primary: [
+                            if (widget.toItem.to.canApprovePending)
                               _buildActionButton(
                                 context,
                                 label: '확정',
                                 icon: Icons.check,
-                                bgColor: AppColors.success,
+                                bgColor: AppColors.brand,
                                 textColor: Colors.white,
                                 filled: true,
                                 onTap: () => _approveApplication(item),
                               ),
-                            ],
                           ],
                         ),
                         // [4J.1] FULL/TIME_EXPIRED 힌트 — 승인 버튼이 숨겨진 이유 안내
@@ -2633,6 +3069,41 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     );
   }
 
+  /// [UI-APPLICANTS-AND-INVITATIONS.2] 행 버튼 줄 — 보조·위험은 왼쪽(줄을 넘길 수 있음), 주요 채움은 오른쪽 끝.
+  ///   인력 현황(_actionRow)과 같은 배치. 보조가 없어도 주요 버튼 자리는 같다.
+  Widget _actionRow(BuildContext context,
+      {List<Widget> secondary = const [], List<Widget> primary = const []}) {
+    // [DU527a] 인력 현황(O002 · DU517)과 같은 배치 — 두 묶음이 한 줄에 들어가면 보조 왼쪽 · 주요 오른쪽 끝,
+    //   안 들어가면 묶음째 아래 줄로 내린다(오른쪽 맞춤). 이전 Row[Expanded(보조) · 주요]는 주요가 넓으면 보조 칸이 눌렸다.
+    final secondaryWrap = Wrap(
+      spacing: ResponsiveHelper.spacing(context, 4),
+      runSpacing: ResponsiveHelper.spacing(context, 4),
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: secondary,
+    );
+    if (primary.isEmpty) {
+      return SizedBox(width: double.infinity, child: secondaryWrap);
+    }
+    return SizedBox(
+      width: double.infinity,
+      child: OverflowBar(
+        alignment: MainAxisAlignment.spaceBetween,
+        spacing: ResponsiveHelper.spacing(context, 8),
+        overflowSpacing: ResponsiveHelper.spacing(context, 6),
+        overflowAlignment: OverflowBarAlignment.end,
+        children: [
+          secondaryWrap,
+          Wrap(
+            spacing: ResponsiveHelper.spacing(context, 8),
+            runSpacing: ResponsiveHelper.spacing(context, 6),
+            alignment: WrapAlignment.end,
+            children: primary,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildActionButton(
     BuildContext context, {
     required String label,
@@ -2651,16 +3122,18 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         onTap: onTap,
         borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
         child: Container(
+          // [DU527a] 받는 자리 — 인력 현황(O002 _actionButton)과 같은 여백: 주요 16×15.5 · 글자 행동 12×14.
+          //   화면 폭 배율을 곱하지 않는다(곱하면 390 미만에서 48 아래로 내려간다). 모양 · 글자 크기는 그대로.
+          // [DU527a r2] 이 창의 글자 줄 높이는 19 라 여백만으로는 글자 행동이 47 이었다(r1 TA) — 최소 높이 48 을 명시한다.
+          //   alignment 는 주지 않는다(Wrap 안에서 가로로 늘어난다 — O002 :2492 주석). 주요(50)는 그대로.
+          constraints: filled ? null : const BoxConstraints(minHeight: 48),
           padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 14),
-            vertical: ResponsiveHelper.spacing(context, 6),
+            horizontal: filled ? 16 : 12,
+            vertical: filled ? 15.5 : 14,
           ),
-          decoration: filled
-              ? null
-              : BoxDecoration(
-                  border: Border.all(color: textColor.withValues(alpha: 0.6)),
-                  borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
-                ),
+          // [UI-APPLICANTS-AND-INVITATIONS.2] 채움이 아닌 버튼(보조·위험)은 테두리 없이 글자로 —
+          //   반복 명단에서 상자 세 개가 모두 시선을 끌었다(UI-1 사용자 의견).
+          decoration: null,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -2711,20 +3184,40 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   }
 
 /// 계약서 상태 배지 (확정자 전용)
-  Widget _buildContractBadge(BuildContext context, String appId,
+  Widget _buildContractBadge(BuildContext context, ApplicationModel app,
       {bool isEnded = false}) {
-    final status = _contractStatusMap[appId];
+    final appId = app.id;
+    final status = _contractStatusMap.statuses[appId];
     final String label;
     final Color color;
     final Color bgColor;
-    if (status == null || status.isEmpty) {
+    // [REISSUE-RECOVERY] 조회하지 못한 건은 **모른다고 말한다.**
+    //   `계약서 작성 필요`로 적으면 있는 계약을 또 만들러 간다.
+    if (_contractStatusMap.isUnresolved(appId)) {
+      label = '계약 상태 확인 불가';
+      color = AppColors.grey600;
+      bgColor = AppColors.grey100;
+    } else if (status == null || status.isEmpty) {
       // [R7-P1-6 §14] 계약 미작성은 실패가 아니라 **지금 할 수 있는 다음 일**이다.
       //   red는 NO_SHOW·무효처럼 실제로 잘못된 것에 남긴다.
       // [R7-P1-2 DEVICE.1E §7] 다만 끝난 관계에서는 그 `다음 일`이 없다.
       //   같은 사실(계약서가 없다)을 **요구**가 아니라 **기록**으로 적는다.
-      label = isEnded ? '계약서 미작성' : '계약서 작성 필요';
-      color = isEnded ? AppColors.grey600 : AppColors.warningDark;
-      bgColor = isEnded ? AppColors.grey100 : AppColors.warningBg;
+      // [DIALOG-VISUAL-CLOSE] `작성 필요`는 버튼과 같은 판정(_needsContractIssue)일 때만.
+      //   노쇼·결근 근무일·좌석 반납에도 붙어 할 수 없는 일을 권했다(Pixel 5 10-23 관찰).
+      if (isEnded) {
+        label = '계약서 미작성';
+      } else if (_needsContractIssue(app)) {
+        label = '계약서 작성 필요';
+      } else if (app.isContractIssuable &&
+          _contractBlockedAppIds == null &&
+          ContractAttendanceGate.attendanceDocId(app) != null) {
+        label = '근태 확인 필요';
+      } else {
+        label = '계약 대상 아님';
+      }
+      final actionable = label == '계약서 작성 필요';
+      color = actionable ? AppColors.warningDark : AppColors.grey600;
+      bgColor = actionable ? AppColors.warningBg : AppColors.grey100;
     } else {
       switch (status) {
         case 'pending_employer':
@@ -2850,8 +3343,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   }
 
   /// 지원 시간 포맷
+  /// [INVITE-TIME-COPY] 초대로 들어온 사람은 초대한 시각(`초대 N분 전`). 기록이 없으면 `초대` 만.
+  String _relationTimeLabel(ApplicationModel app) {
+    if (app.invitedAt != null) {
+      return _formatAppliedTime(app.invitedAt!).replaceFirst('지원', '초대');
+    }
+    if (app.invitedBy != null) return '초대';
+    return _formatAppliedTime(app.appliedAt);
+  }
+
   String _formatAppliedTime(DateTime appliedAt) {
-    final now = DateTime.now();
+    final now = _workApplicantsNow();
     final diff = now.difference(appliedAt);
 
     // [R7-P1-2 DEVICE.1H §4] 상대 표기에도 같은 이름을 붙인다.
@@ -2994,7 +3496,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       final confirm = await DialogHelper.showConfirm(
         context,
         title: '지원 확정',
-        message: '${_personLabelOf(user, '지원자')}님을 확정하시겠습니까?',
+        message: '${_personLabelOf(user, '지원자')}님을 확정하시겠습니까?\n'
+            '확정하면 바로 계약서 작성으로 이어지고, 근무자가 동의해야 출근할 수 있어요.',
         confirmText: '확정',
       );
 
@@ -3017,10 +3520,25 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       }
 
       if (!mounted) return;
-      ToastHelper.showSuccess('${_personLabelOf(user, '지원자')}님이 확정되었습니다. 계약서를 작성해 주세요.');
+      // [CONTRACT-DISPATCH-B3-HANDOFF] 계약 권한이 없으면 발송 대기와 인계처를 말한다.
+      if (_canManageContract()) {
+        ToastHelper.showSuccess('${_personLabelOf(user, '지원자')}님이 확정되었습니다. 계약서를 작성해 주세요.');
+      } else {
+        ToastHelper.showInfo("${_personLabelOf(user, '지원자')}님 확정 — 계약서 발송 대기예요. 계약 권한이 있는 관리자가 홈 '계약 미발송'에서 보낼 수 있어요.");
+      }
       await _loadApplicants();
       if (!mounted) return;
       await _updateLocalStats();
+      // [CONTRACT-BEFORE-CHECKIN] 확정 → 바로 계약서 발송(2026-10-25 사용자 지시). 기존 '계약서 작성'
+      //   흐름(템플릿 → 사업주 날인 → 미리보기 → 서명)을 그대로 잇는다. 닫으면 발송되지 않은 채로 남고
+      //   확정 행의 '계약서 작성' 버튼이 다음 일이다. 근무자는 동의해야 출근할 수 있다(서버 판정).
+      if (!mounted) return;
+      final fresh = _confirmed.where((i) => (i['application'] as ApplicationModel).id == app.id).firstOrNull;
+      // 계약 권한이 없으면 잇지 않는다(행의 작성 버튼과 같은 조건 — worker_detail_dialog 와 대칭)
+      if (fresh != null && _canManageContract() && _needsContractIssue(fresh['application'] as ApplicationModel)) {
+        setState(() => _isProcessing = false);
+        await _createContractForConfirmedUser(fresh);
+      }
     } catch (e) {
       // [P4.4C.2A] 계약 준비가 깨져 확정이 막힌 경우는 이유를 준비 단계로
       //   잇는다. 여기는 원래 모든 실패를 한 문장으로 뭉갰다 — 관리자가
@@ -3128,8 +3646,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final bizId = widget.toItem.to.businessId;
     if (bizId.isEmpty) return;
     try {
-      final list = await ConfirmedReassignmentService.instance
-          .proposalsByBusiness(bizId);
+      final list = await _reads.reassignProposals(bizId);
       if (!mounted) return;
       setState(() => _reassignProposals = list);
     } catch (e) {
@@ -3230,10 +3747,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final user = item['user'] as UserModel?;
     final userProvider = context.read<UserProvider>();
 
-    final reason = await DialogHelper.showRejectReasonPicker(
+    // [CONFIRM-CANCEL-COPY] 지원 거절 창이 아니라 확정 취소 전용 창(사유·버튼·기본 문구).
+    final reason = await DialogHelper.showConfirmCancelReasonPicker(
       context,
-      title: '확정 취소',
-      message: '${_personLabelOf(user, '근무자')}님의 확정을 취소합니다.\n취소 사유를 선택해주세요.',
+      message: '${_personLabelOf(user, '근무자')}님의 확정된 근무를 취소합니다.\n취소 사유를 선택해 주세요.',
     );
 
     // [역전패턴 수정] 원래 "if (reason == null || !mounted)"였으나 !mounted 시에도 setState 호출되는 버그.
@@ -3274,10 +3791,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final onChanged = widget.onChanged;
     // 루트 Navigator는 이 다이얼로그가 pop된 후에도 유효
     final rootNav = Navigator.of(context, rootNavigator: true);
-    Navigator.of(context).pop(WorkApplicantsDialogResult(
-      hasChanges: _hasChanges,
-      affectedTOIds: _affectedOtherTOIds,
-    ));
+    Navigator.of(context).pop(_dialogResult);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       showDialog(
         context: rootNav.context,
@@ -3350,10 +3864,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
             TextButton(
-              onPressed: () => Navigator.pop(context, WorkApplicantsDialogResult(
-                hasChanges: _hasChanges,
-                affectedTOIds: _affectedOtherTOIds,
-              )),
+              onPressed: () => Navigator.pop(context, _dialogResult),
               child: Text('닫기', style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600)),
             ),
           ],
@@ -3366,19 +3877,26 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     // 거절은 canManageTo만으로 충분 (계약 생성 없음).
     final canApproveWithContract = _canManageContract();
     return AppModalFooter(
-      child: Row(
+      // [DU528] 한 줄에 다 들어가면 이전과 같은 자리(글 왼쪽 · 버튼 오른쪽 끝 · 세로 가운데), 안 들어가면 버튼 묶음을 아래 줄로(오른쪽 맞춤).
+      child: SizedBox(width: double.infinity, child: OverflowBar(
+        alignment: MainAxisAlignment.spaceBetween,
+        overflowAlignment: OverflowBarAlignment.end,
+        overflowSpacing: ResponsiveHelper.spacing(context, 6),
         children: [
           Text(
-            '선택: ${_selectedIds.length}명',
+            // [BULK-DISPATCH] 선택 단위는 지원서(=근무일)다. 슬롯 없이 들어오면
+            //   같은 근로자의 다른 날짜가 여러 건으로 잡힌다 — "명"이 아니다.
+            '선택: ${_selectedIds.length}건',
             style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
           ),
-          const Spacer(),
+          Row(mainAxisSize: MainAxisSize.min, children: [
           _buildBottomBarButton(
             context,
             label: '거절',
             icon: Icons.close,
-            bgColor: hasSelection ? AppColors.errorBg : AppColors.grey100,
-            textColor: hasSelection ? AppColors.error : AppColors.grey400,
+            // [DU527a] 위험 행동은 면 없는 글자(행 버튼 '거절'과 같은 errorDark) — 확인 창은 그대로.
+            bgColor: Colors.transparent,
+            textColor: hasSelection ? AppColors.errorDark : AppColors.grey400,
             onTap: hasSelection ? () => _batchReject() : null,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -3388,12 +3906,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
             context,
             label: '확정',
             icon: Icons.check,
-            bgColor: (hasSelection && canApproveWithContract) ? AppColors.successBg : AppColors.grey100,
-            textColor: (hasSelection && canApproveWithContract) ? AppColors.successDark : AppColors.grey400,
+            // [DU527a] 주요 행동 하나만 brand 채움(행 버튼 '확정'과 같다).
+            bgColor: (hasSelection && canApproveWithContract) ? AppColors.brand : AppColors.grey100,
+            textColor: (hasSelection && canApproveWithContract) ? Colors.white : AppColors.grey400,
             onTap: (hasSelection && canApproveWithContract) ? () => _batchApprove() : null,
           ),
+          ]),
         ],
-      ),
+      )),
     );
   }
 
@@ -3414,7 +3934,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         child: Padding(
           padding: EdgeInsets.symmetric(
             horizontal: ResponsiveHelper.spacing(context, 18),
-            vertical: ResponsiveHelper.spacing(context, 8),
+            vertical: 14, // [DU527a] 받는 자리 세로 ≥48(본문 글자 약 24 + 28). 가로 · 글자 크기는 그대로.
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -3472,8 +3992,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     // 2. 사업장 정보 + 인감 로드
     // [CSA-01] seal은 _resolveEmployerSeal()로 조회 — SUB_ADMIN은 owner seal 사용
     late BusinessModel business;
-    late String sealBase64;
-    String sealType = 'stamp';
+    const String? sealBase64 = null;
+    const String sealType = 'stamp';
     bool continueToProcess = false;
 
     try {
@@ -3483,14 +4003,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         return;
       }
       business = b;
-      final seal = await _resolveEmployerSeal(business);
-      if (seal.sealBase64.isEmpty) {
+      final sealReady = await _employerSealReady(business);
+      if (sealReady != true) {
         if (!mounted) return;
-        await _showSealMissingDialog(isBatchApprove: true);
+        if (sealReady == null) {
+          ToastHelper.showError('사업주 날인 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.');
+        } else {
+          await _showSealMissingDialog(isBatchApprove: true);
+        }
         return;
       }
-      sealBase64 = seal.sealBase64;
-      sealType = seal.sealType;
       continueToProcess = true;
     } catch (e) {
       debugPrint('❌ [_batchApprove] 사업장 정보 조회 실패: $e');
@@ -3502,23 +4024,33 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
     if (!mounted) return;
 
-    // 3. 첫 번째 선택 지원자로 미리보기 계약서 생성
-    final firstItem = _applicants.firstWhere(
-      (item) => _selectedIds.contains((item['application'] as ApplicationModel).id),
-      orElse: () => <String, dynamic>{},
-    );
-    if (firstItem.isEmpty) {
+    // 3. 처리 대상 확정 → 그중 첫 건으로 미리보기 계약서 생성
+    //
+    //   [BULK-DISPATCH] 대상 수집을 미리보기 **앞**으로 옮겼다. 두 가지 때문이다.
+    //     · 미리보기가 약속하는 건수와 실제로 시도하는 건수가 같아진다.
+    //       (전에는 `_selectedIds.length` 를 보여 주고, 지원자 정보를 못 읽은
+    //        건은 조용히 빠진 채 "일부 실패"로 끝났다)
+    //     · 첫 선택 건의 지원자 정보가 없으면 **나머지 멀쩡한 선택까지**
+    //       전부 중단됐다. 이제 시도 가능한 것 중 첫 건을 쓴다.
+    final toProcess = <Map<String, dynamic>>[];
+    for (final appId in _selectedIds.toList()) {
+      final item = _applicants.firstWhere(
+        (i) => (i['application'] as ApplicationModel).id == appId,
+        orElse: () => <String, dynamic>{},
+      );
+      if (item.isNotEmpty && item['user'] != null) toProcess.add(item);
+    }
+    final skippedCount = _selectedIds.length - toProcess.length;
+    if (toProcess.isEmpty) {
+      ToastHelper.showWarning('선택한 $skippedCount건의 지원자 정보를 불러오지 못했습니다. '
+          '목록을 새로고침한 뒤 다시 시도해주세요.');
       if (mounted) setState(() => _isProcessing = false);
       return;
     }
 
+    final firstItem = toProcess.first;
     final firstApp = firstItem['application'] as ApplicationModel;
-    final firstUser = firstItem['user'] as UserModel?;
-    if (firstUser == null) {
-      ToastHelper.showError('지원자 정보를 불러올 수 없습니다');
-      if (mounted) setState(() => _isProcessing = false);
-      return;
-    }
+    final firstUser = firstItem['user'] as UserModel;
     final firstWorkDetail = widget.work ?? _getWorkForApp(firstApp);
     if (firstWorkDetail == null) {
       ToastHelper.showError('업무 정보를 찾을 수 없습니다');
@@ -3551,7 +4083,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       contract: previewContract,
       sealBase64: sealBase64,
       sealType: sealType,
-      count: _selectedIds.length,
+      count: toProcess.length,
     );
     if (confirmed != true || !mounted) return;
 
@@ -3560,39 +4092,156 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     try {
       final userProvider = context.read<UserProvider>();
       final adminUID = userProvider.currentUser?.uid;
-      final sealBytes = base64Decode(sealBase64);
+  
+      // 처리 대상(`toProcess`)·시도 못 한 수(`skippedCount`)는 미리보기 전에
+      //   이미 확정했다 — 관리자가 승인한 건수와 같은 집합으로 돌린다.
 
-      // 처리 대상 목록 수집
-      final toProcess = <Map<String, dynamic>>[];
-      for (final appId in _selectedIds.toList()) {
-        final item = _applicants.firstWhere(
-          (i) => (i['application'] as ApplicationModel).id == appId,
-          orElse: () => <String, dynamic>{},
-        );
-        if (item.isNotEmpty && item['user'] != null) toProcess.add(item);
+      // [BULK-DISPATCH-RECONCILE] 실패로 **보이는** 결과를 원장에 물어 확정한다.
+      //
+      //   불변식: **계약이 있거나 있는지 확인할 수 없으면 되돌리지 않는다.**
+      //
+      //   오류 코드는 어디까지 처리됐는지 말해 주지 않는다. 서버는 트랜잭션
+      //   커밋 뒤로는 던지지 않지만(알림 실패는 CF 안에서 삼킨다), 전송 계층과
+      //   클라이언트 파싱은 **커밋 뒤에도** 던질 수 있다. 그래서 코드로 추측하지
+      //   않고 그 지원서 하나의 원장을 본다.
+      //
+      // ─────────────────────────────────────────────────────────────────
+      // [ROLLBACK-ATOMICITY] **확정 롤백은 더 이상 하지 않는다.**
+      //
+      //   원장을 읽고 쓰기까지의 틈에 다른 관리자가 계약을 발행할 수 있다.
+      //   그러면 예전 코드는 그 **정상 계약을 void 하고** 지원서를 PENDING 으로
+      //   되돌렸다(실측 재현: scripts/rbatom-rollback-race.js RA-A/M1).
+      //
+      //   그 틈을 닫을 수 있는지 세 모델로 실측했다.
+      //     · 지원서 문서만 트랜잭션 → 계약은 **다른 컬렉션의 새 문서**라
+      //       충돌로 잡히지 않는다. 게다가 클라이언트 SDK 트랜잭션은
+      //       쿼리를 읽을 수 없어 "계약이 없다"를 트랜잭션 안에서 물을 수도 없다.
+      //     · 서버 트랜잭션 안에서 원장을 질의 → 읽을 때 **없던** 문서는
+      //       phantom 이라 잡히지 않는다.
+      //     · 발행과 롤백이 지원서 표식을 공유 → 가능해 보이지만, 그 안전성은
+      //       프로덕션 Firestore 트랜잭션 의미론에 달려 있고 격리 에뮬레이터는
+      //       충돌 감지 자체를 하지 않아(RA-X0) **입증할 수 없다.**
+      //
+      //   입증되지 않은 안전성에 기대어 남의 계약을 void 할 수는 없다. 쓰기를
+      //   하지 않으면 그 위험은 **의미론과 무관하게 0** 이다. 그래서 좌석을
+      //   유지하고 관리자에게 재발송을 요구한다(`needsReissue`).
+      //   확정이 남으니 겹침 자동취소(B)도 올바른 결과가 되어, 예전
+      //   `batchRollbackWithCollateral` 경고가 가리켰던 **복구 불가 2차 피해가
+      //   애초에 생기지 않는다.**
+      //
+      //   되살리는 조건: 계약 발행 CF 가 **같은 트랜잭션에서** 지원서에 표식을
+      //   쓰고(설계는 하네스 M4), 그 경쟁이 실제 Firestore 에서 입증될 때.
+      // ─────────────────────────────────────────────────────────────────
+      //
+      //   남은 판단은 **쓰기 없는 분류**다.
+      //     ① 원장 조회가 성공했고, 발송된 계약이 없다
+      //     ② 지원서를 다시 읽을 수 있다
+      //     ③ 이미 PENDING → 확정 전 실패(확인된 실패)
+      //     ④ 좌석 보유 상태 그대로 → `needsReissue`
+      //     ⑤ 그 밖(취소·노쇼·끝난 관계) → `rejected`
+      //   하나라도 확인되지 않으면 `unknown` 으로 남긴다.
+      //
+      //   `mayRollback: false` 는 **응답을 못 받은** 경우다. 그때 원장이
+      //   "없다"고 답해도 좌석 판단으로 넘어가지 않는다 — 그 요청이 아직
+      //   서버에서 살아 있을 수 있어서, 읽은 직후에 커밋될 수 있다.
+      //   그 경우 원장 조회는 `already` 로 **올려 주는 데만** 쓴다.
+      Future<String> settleFailure(String appId, Object err,
+          {required bool mayRollback}) async {
+        final probe = await ContractService()
+            .probeIssuedContract(appId, businessId: businessId);
+        if (probe == ContractLedgerProbe.issued) {
+          debugPrint('ℹ️ [$appId] 실패로 보였지만 계약이 원장에 있다 — 롤백 금지: $err');
+          return 'already';
+        }
+        if (probe == ContractLedgerProbe.unknown) {
+          debugPrint('⚠️ [$appId] 원장 확인 불가 — 롤백 금지: $err');
+          return 'unknown';
+        }
+        if (!mayRollback) {
+          debugPrint('⚠️ [$appId] 응답 미수신 — 원장에 없지만 진행 중일 수 있어 롤백 금지');
+          return 'unknown';
+        }
+
+        // ② 지원서 재조회 — 읽기 실패를 "되돌려도 된다"로 바꾸지 않는다.
+        final DocumentSnapshot<Map<String, dynamic>> appSnap;
+        try {
+          appSnap = await FirebaseFirestore.instance
+              .collection('applications')
+              .doc(appId)
+              .get(const GetOptions(source: Source.server));
+        } catch (readErr) {
+          debugPrint('⚠️ [$appId] 지원서 재조회 실패 — 롤백 금지: $readErr');
+          return 'unknown';
+        }
+        if (!appSnap.exists) {
+          debugPrint('⚠️ [$appId] 지원서가 없다 — 되돌릴 대상이 없다: $err');
+          return 'unknown';
+        }
+        final appData = appSnap.data() ?? const <String, dynamic>{};
+
+        // ③-0 이미 PENDING 이면 **되돌릴 것이 없다.**
+        //   확정 자체가 실패한 경우가 여기다 — 쓸 필요도 없고, 이것은
+        //   계약도 없고 좌석도 안 잡힌 **확인된 실패**다.
+        if ((appData['status'] as String?) == AppStatus.pending) {
+          debugPrint('❌ [$appId] 확정 전 실패 — 되돌릴 것이 없다: $err');
+          return 'failed';
+        }
+
+        // ⑤ 다른 요청·사람이 뒤이어 바꿨는가.
+        //
+        //   확정은 `callableConfirmApplication` 이 하고, 그 CF 가 쓰는 값은
+        //   **`CONTRACT_PENDING`** 이다(`CONFIRMED` 가 아니다 — 여기를
+        //   `CONFIRMED` 로만 적으면 정상 경로가 전부 이 분기로 떨어진다).
+        //   둘 다 "좌석 보유·계약 미발송"을 뜻하므로 서버의 좌석 집합
+        //   (CONFIRMED_STATUSES)과 같은 한 벌을 쓴다.
+        //   CANCELED·NO_SHOW·REJECTED·EXPIRED, 그리고 누군가 이미 PENDING 으로
+        //   되돌린 경우는 모두 여기서 걸러진다.
+        final nowStatus = appData['status'] as String?;
+        if (nowStatus == null ||
+            !AppStatus.confirmedStatuses.contains(nowStatus)) {
+          debugPrint('⚠️ [$appId] 후속 변경 감지 (status=$nowStatus): $err');
+          return 'rejected';
+        }
+        // 좌석 반납·해지·퇴사로 끝난 관계도 "건드리지 않는다"에 해당한다.
+        //    CF 의 발송 대상 판정(srvNeedsContractIssue)과 같은 필드를 본다.
+        const endedStatuses = {'APPROVED', 'AUTO_APPROVED'};
+        if (appData['staffingReleasedAt'] != null ||
+            endedStatuses.contains(appData['terminationStatus'] as String?) ||
+            endedStatuses.contains(appData['resignStatus'] as String?)) {
+          debugPrint('⚠️ [$appId] 끝난 관계 — 건드리지 않는다: $err');
+          return 'rejected';
+        }
+
+        // ④ 좌석은 유효하고 계약만 없다. **쓰지 않는다.**
+        //   확정을 그대로 두고 관리자에게 재발송을 요구한다.
+        debugPrint('❌ [$appId] 확정 유지 + 계약 미발송 — 재발송 필요: $err');
+        return 'needsReissue';
       }
 
-      // [4J.0B] 일괄 rollback 시 B 충돌 잔존 경고 추적
-      // A 확정 → B AUTO_CANCELED → A 계약서 실패 → A를 PENDING 롤백하지만 B는 복구 불가
-      bool batchRollbackWithCollateral = false;
-
-      // 단건 처리 함수 (성공 여부 반환)
-      Future<bool> processOne(Map<String, dynamic> item) async {
+      // 단건 처리 함수
+      //   'sent' | 'already' | 'needsReissue' | 'rejected' | 'unknown' | 'failed'
+      Future<String> processOne(Map<String, dynamic> item) async {
         final app = item['application'] as ApplicationModel;
         final user = item['user'] as UserModel;
         final appId = app.id;
         final appWorkDetail = widget.work ?? _getWorkForApp(app);
-        if (appWorkDetail == null) return false;
-        bool thisCallHadCollateral = false;
+        if (appWorkDetail == null) return 'failed';
         try {
           final affectedTOIds = await _firestoreService.updateApplicationStatus(
             applicationId: appId,
+            // [CONFIRM-BUSINESSID] 확정 CF 는 businessId 가 없으면 invalid-argument 로
+            //   거절한다 — 이 일괄 경로는 그래서 한 건도 확정하지 못했다.
+            //   지원서 자신의 사업장을 보낸다(같은 창의 개별 확정과 같은 값).
+            businessId: app.businessId,
             status: AppStatus.confirmed,
             confirmedBy: adminUID,
           );
           if (affectedTOIds.isNotEmpty) {
+            // 확정 시 겹치는 B 지원서가 AUTO_CANCELED 된다.
+            // [ROLLBACK-ATOMICITY] 예전에는 이 사실을 "롤백 시 B 는 복구
+            //   불가"라는 경고로 이어 붙였다. 이제 확정을 되돌리지 않으므로
+            //   B 의 자동취소는 **옳은 결과**다 — 경고할 일이 아니다.
             _affectedOtherTOIds.addAll(affectedTOIds);
-            thisCallHadCollateral = true;  // 확정 시 B가 AUTO_CANCELED됨
           }
           // [BUG-수정 M-1] updateApplicationStatus 완료 후 Firestore에는 computedWorkEndDate가
           // 저장되지만 로컬 app 객체는 구버전이라 workEndDate가 null일 수 있음.
@@ -3615,47 +4264,104 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           );
           await ContractService().saveEmployerSignature(
             contract: contract,
-            signatureBytes: sealBytes,
           );
-          return true;
+          return 'sent';
+        } on FirebaseFunctionsException catch (e) {
+          // [BULK-DISPATCH] "이미 발송된 근무"는 **실패가 아니다.**
+          //
+          //   예전에는 이것도 아래 catch 로 떨어져 확정을 PENDING 으로
+          //   되돌렸다. 계약서는 서버에 멀쩡히 살아 있는데 지원서만 PENDING 이
+          //   되어 **계약과 지원서 상태가 어긋난다.** 관리자에게도 "실패"로
+          //   보여 다시 누르게 만들고, 눌러도 또 같은 결과다.
+          //   day_applicants_dialog 는 이미 이렇게 구별하고 있었다.
+          if (e.code == 'already-exists') {
+            debugPrint('ℹ️ [$appId] 이미 발송된 근무 — 중복 발송 차단됨');
+            return 'already';
+          }
+          // [BULK-DISPATCH] 응답을 못 받은 것은 **실패가 아니다.**
+          //
+          //   타임아웃·연결 끊김에서는 서버가 계약서를 이미 썼는지 알 수 없다.
+          //   여기서 PENDING 으로 되돌리면, 커밋됐을 때 근로자는 **지원서가
+          //   PENDING 인 계약서에 서명하게 된다.** 확정 상태를 그대로 두는 쪽이
+          //   복구 가능하다 — 계약서가 없으면 `계약 미작성 확정자`로 보이고
+          //   관리자가 다시 보내면 되고, 있으면 그대로 맞는 상태다.
+          if (_indeterminateCfCodes.contains(e.code)) {
+            debugPrint('⚠️ [$appId] 처리 여부 확인 불가 (${e.code})');
+            // [BULK-DISPATCH-RECONCILE] 원장을 한 번 본다. 단 **올려 주는 데만**
+            //   쓴다 — 계약이 보이면 `already`, 아니면 그대로 `unknown`.
+            //   되돌리지는 않는다(요청이 아직 진행 중일 수 있다).
+            return settleFailure(appId, e, mayRollback: false);
+          }
+          // [BULK-DISPATCH-RECONCILE] 오류 코드 하나로 결과를 정하지 않는다.
+          //   원장에 물어본 뒤 분류한다 — 위 settleFailure.
+          return settleFailure(appId, e, mayRollback: true);
         } catch (itemErr) {
-          debugPrint('❌ [$appId] 계약서 처리 실패 — 상태 롤백: $itemErr');
-          try {
-            await _firestoreService.updateApplicationStatus(
-              applicationId: appId,
-              status: AppStatus.pending,
-            );
-          } catch (rollbackErr) {
-            debugPrint('⚠️ 롤백 실패 ($appId): $rollbackErr');
-          }
-          // [4J.0B-P1-ROLLBACK] B 충돌 잔존 경고: A 롤백 시 B(AUTO_CANCELED)는 복구 불가
-          // Firestore rules: AUTO_CANCELED → PENDING client direct write 차단
-          if (thisCallHadCollateral) {
-            batchRollbackWithCollateral = true;
-          }
-          return false;
+          // [BULK-DISPATCH-RECONCILE] **커밋 뒤에 터지는 예외도 여기로 온다.**
+          //   예: CF 응답을 다 받고 나서 `saveEmployerSignature` 가 응답 모양을
+          //   검사하다 던지는 경우. 계약은 이미 저장됐는데 예외 하나만 보고
+          //   되돌리면 지원서와 계약이 어긋난다. 그래서 원장을 본다.
+          return settleFailure(appId, itemErr, mayRollback: true);
         }
       }
 
       // 5개씩 배치 병렬 처리 (Firebase rate limit 고려)
       const batchSize = 5;
       int successCount = 0;
+      int alreadyCount = 0;
+      int unknownCount = 0;
+      int reissueCount = 0;
+      int rejectedCount = 0;
       for (var i = 0; i < toProcess.length; i += batchSize) {
         final batch = toProcess.sublist(i, min(i + batchSize, toProcess.length));
         final results = await Future.wait(batch.map(processOne));
-        successCount += results.where((r) => r).length;
+        successCount += results.where((r) => r == 'sent').length;
+        alreadyCount += results.where((r) => r == 'already').length;
+        unknownCount += results.where((r) => r == 'unknown').length;
+        reissueCount += results.where((r) => r == 'needsReissue').length;
+        rejectedCount += results.where((r) => r == 'rejected').length;
       }
       if (!mounted) return;
 
-      if (successCount < _selectedIds.length) {
-        final baseMsg =
-            '$successCount/${_selectedIds.length}명 계약서 발송 완료. 실패한 지원자는 다시 시도해주세요.';
-        // [4J.0B-P1-ROLLBACK] B 충돌 잔존 경고: 관리자에게 재지원 안내 요청
-        ToastHelper.showWarning(batchRollbackWithCollateral
-            ? '$baseMsg\n⚠️ 일부 다른 지원서가 취소 상태로 남아 있을 수 있습니다. 해당 근로자에게 재지원을 안내해 주세요.'
-            : baseMsg);
+      // [BULK-DISPATCH] 단위는 **건**이다 — 선택은 지원서 단위라서 같은
+      //   근로자의 다른 날짜가 여러 건으로 잡힌다. "명"으로 적으면 사람 수로
+      //   읽힌다(같은 사람의 3일이 "3명"이 됐다).
+      //   기준도 `toProcess.length` 로 맞춘다 — `_selectedIds` 에는 사용자
+      //   정보를 못 읽어 처리에서 빠진 것도 들어 있어 항상 실패처럼 보였다.
+      final failedCount = toProcess.length -
+          successCount - alreadyCount - unknownCount -
+          reissueCount - rejectedCount;
+      // [ROLLBACK-ATOMICITY] 네 가지를 서로 다른 문장으로 말한다.
+      //   섞으면 관리자가 할 일을 못 고른다 — 재발송할 건, 확인할 건,
+      //   손대지 않은 건, 시도조차 못 한 건은 각자 다른 행동을 부른다.
+      final skippedMsg = skippedCount > 0
+          ? '\n$skippedCount건은 지원자 정보를 불러오지 못해 시도하지 못했습니다.'
+          : '';
+      final unknownMsg = unknownCount > 0
+          ? '\n$unknownCount건은 처리 여부를 확인하지 못했습니다. 목록에서 계약 상태를 확인해주세요.'
+          : '';
+      final reissueMsg = reissueCount > 0
+          ? '\n$reissueCount건은 확정은 유지됐고 계약서만 발송되지 않았습니다. '
+              '계약서 미작성 목록에서 다시 발송해주세요.'
+          : '';
+      final rejectedMsg = rejectedCount > 0
+          ? '\n$rejectedCount건은 그 사이 다른 변경이 있어 건드리지 않았습니다.'
+          : '';
+      final tailMsg = '$reissueMsg$rejectedMsg$unknownMsg$skippedMsg';
+      if (failedCount > 0) {
+        ToastHelper.showWarning(
+            '$successCount/${toProcess.length}건 계약서 발송 완료. '
+            '실패한 $failedCount건은 다시 시도해주세요.$tailMsg');
+      } else if (tailMsg.isNotEmpty) {
+        // 시도한 것은 전부 됐더라도 **전부는 아니다** — 성공으로 끝내지 않는다.
+        ToastHelper.showWarning('$successCount건 계약서 발송 완료.'
+            '${alreadyCount > 0 ? ' ($alreadyCount건은 이미 발송된 근무)' : ''}'
+            '$tailMsg');
+      } else if (alreadyCount > 0) {
+        ToastHelper.showSuccess(successCount > 0
+            ? '$successCount건 계약서를 발송했습니다 ($alreadyCount건은 이미 발송된 근무)'
+            : '$alreadyCount건은 이미 계약서가 발송된 근무예요');
       } else {
-        ToastHelper.showSuccess('${_selectedIds.length}명에게 계약서가 발송되었습니다');
+        ToastHelper.showSuccess('${toProcess.length}건 계약서를 발송했습니다');
       }
       _selectedIds.clear();
       if (mounted) setState(() { _isBatchMode = false; _selectAll = false; });
@@ -3677,7 +4383,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 일괄 계약서 미리보기 다이얼로그
   Future<bool?> _showBatchContractPreview({
     required EmploymentContractModel contract,
-    required String sealBase64,
+    required String? sealBase64,
     String sealType = 'stamp',
     required int count,
   }) {
@@ -3717,10 +4423,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              color: AppColors.info.withValues(alpha: 0.08),
+              color: AppColors.grey100,
               child: Text(
-                '아래 조건으로 선택된 $count명에게 계약서가 발송됩니다.\n이름·생년월일 등 개인정보는 각 근무자별로 적용됩니다.',
-                style: ResponsiveHelper.smallStyle(ctx, color: AppColors.info),
+                // [BULK-DISPATCH] 한 근무일 = 한 계약 = 한 장이다.
+                //   "N명에게"는 사람 수로 읽혀서, 같은 사람의 3일을 고른
+                //   관리자가 3명에게 보내는 줄 알았다.
+                '아래 조건으로 선택한 $count건의 근무에 계약서가 발송됩니다.\n'
+                '근무일마다 계약서가 1장씩 따로 만들어집니다.\n'
+                '이름·생년월일 등 개인정보는 각 근무자별로 적용됩니다.',
+                style: ResponsiveHelper.smallStyle(ctx, color: AppColors.textPrimary),
                 textAlign: TextAlign.center,
               ),
             ),
@@ -3733,10 +4444,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                   contractDate: contract.createdAt,
                   slots: contract.slots,
                   articles: contract.articles,
-                  employerSignatureUrl: contract.employerSignatureUrl,
+                  // [R8P6-SIG-CUTOVER] 서명 이미지는 열 때마다 서버가 권한을
+                  //   보고 15분 링크를 낸다 — 계약과 역할만 넘긴다.
+                  contractId: contract.id,
+                  hasEmployerSignature: contract.hasEmployerSignature,
+                  hasWorkerSignature: contract.hasWorkerSignature,
                   employerSealBase64: sealBase64,
                   employerSealType: sealType,
-                  workerSignatureUrl: contract.workerSignatureUrl,
                 ),
               ),
             ),
@@ -3766,7 +4480,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                     flex: 2,
                     child: ElevatedButton(
                       onPressed: () => Navigator.pop(ctx, true),
-                      child: Text('$count명에게 발송'),
+                      child: Text('$count건 발송'),
                     ),
                   ),
                 ],
@@ -3794,8 +4508,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     // 2. 사업장 정보 로드 + 인감 확인
     // [CSA-01] seal은 _resolveEmployerSeal()로 조회 — SUB_ADMIN은 owner seal 사용
     late BusinessModel business;
-    late String sealBase64;
-    String sealType = 'stamp';
+    const String? sealBase64 = null;
+    const String sealType = 'stamp';
     try {
       final b = await _firestoreService.getBusinessById(businessId);
       if (b == null) {
@@ -3803,15 +4517,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         return;
       }
       business = b;
-      final seal = await _resolveEmployerSeal(business);
-      if (seal.sealBase64.isEmpty) {
+      final sealReady = await _employerSealReady(business);
+      if (sealReady != true) {
         if (!mounted) return;
-        await _showSealMissingDialog(isBatchApprove: true);
+        if (sealReady == null) {
+          ToastHelper.showError('사업주 날인 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.');
+        } else {
+          await _showSealMissingDialog(isBatchApprove: true);
+        }
         setState(() => _isContractBatchProcessing = false);
         return;
       }
-      sealBase64 = seal.sealBase64;
-      sealType = seal.sealType;
     } catch (e) {
       debugPrint('❌ [_batchCreateContractsForConfirmed] 사업장 정보 조회 실패: $e');
       if (mounted) ToastHelper.showError('사업장 정보를 불러오는 중 오류가 발생했습니다');
@@ -3822,12 +4538,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     if (!mounted) return;
 
     // 4. 계약 미작성 확정자 수집
-    final toProcess = _applicants.where((item) {
-      final app = item['application'] as ApplicationModel;
-      if (!AppStatus.confirmedStatuses.contains(app.status)) return false;
-      final status = _contractStatusMap[app.id];
-      return status == null || status.isEmpty || status == 'voided';
-    }).toList();
+    //   [REISSUE-RECOVERY] 판정은 한 곳(_needsContractIssue)만 쓴다 —
+    //   조회 실패를 대상에 넣지 않고, 좌석을 반납한 건도 넣지 않는다.
+    final toProcess = _applicants
+        .where((item) =>
+            _needsContractIssue(item['application'] as ApplicationModel))
+        .toList();
     if (toProcess.isEmpty) return;
 
     // 5. 첫 번째 대상으로 미리보기 생성
@@ -3872,14 +4588,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
     // 7. 일괄 계약서 생성 + 날인
     setState(() => _isContractBatchProcessing = true);
-    final sealBytes = base64Decode(sealBase64);
     try {
-      Future<bool> processOne(Map<String, dynamic> item) async {
+      // [BULK-DISPATCH] 'sent' | 'already' | 'failed' — 세 결과를 구별한다.
+      //   `already-exists` 는 서버가 **중복 발송을 막은 것**이고 계약서는 이미
+      //   있다. 실패로 적으면 관리자가 눌러도 눌러도 같은 경고를 본다.
+      Future<String> processOne(Map<String, dynamic> item) async {
         final app = item['application'] as ApplicationModel;
         final user = item['user'] as UserModel?;
-        if (user == null) return false;
+        if (user == null) return 'failed';
         final appWorkDetail = widget.work ?? _getWorkForApp(app);
-        if (appWorkDetail == null) return false;
+        if (appWorkDetail == null) return 'failed';
         try {
           final contract = await ContractService().findOrCreateContract(
             application: app,
@@ -3890,45 +4608,67 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           );
           await ContractService().saveEmployerSignature(
             contract: contract,
-            signatureBytes: sealBytes,
           );
-          return true;
+          return 'sent';
+        } on FirebaseFunctionsException catch (e) {
+          if (e.code == 'already-exists') {
+            debugPrint('ℹ️ [${app.id}] 이미 발송된 근무 — 중복 발송 차단됨');
+            return 'already';
+          }
+          debugPrint('❌ [${app.id}] 계약서 발송 실패: $e');
+          return 'failed';
         } catch (e) {
           debugPrint('❌ [${app.id}] 계약서 발송 실패: $e');
-          return false;
+          return 'failed';
         }
       }
 
       const batchSize = 5;
       int successCount = 0;
+      int alreadyCount = 0;
       final List<Map<String, dynamic>> successItems = [];
       for (var i = 0; i < toProcess.length; i += batchSize) {
         final batch = toProcess.sublist(i, min(i + batchSize, toProcess.length));
         final results = await Future.wait(batch.map(processOne));
         if (!mounted) return;
         for (var j = 0; j < batch.length; j++) {
-          if (results[j]) {
+          if (results[j] == 'sent') {
             successCount++;
             successItems.add(batch[j]);
+          } else if (results[j] == 'already') {
+            alreadyCount++;
           }
         }
       }
 
       if (!mounted) return;
-      if (successCount < toProcess.length) {
-        ToastHelper.showWarning(
-            '$successCount/${toProcess.length}명 계약서 발송 완료. 실패한 항목은 다시 시도해주세요.');
+      // [BULK-DISPATCH] 단위는 **건**이다 — 한 근무일 = 한 독립 계약이라서
+      //   같은 근로자의 3일이 3건으로 잡힌다. "명"으로 적으면 사람 수로 읽힌다.
+      final failedCount = toProcess.length - successCount - alreadyCount;
+      if (failedCount > 0) {
+        ToastHelper.showWarning('$successCount/${toProcess.length}건 계약서 발송 완료. '
+            '실패한 $failedCount건은 다시 시도해주세요.');
+      } else if (alreadyCount > 0) {
+        ToastHelper.showSuccess(successCount > 0
+            ? '$successCount건 계약서를 발송했습니다 ($alreadyCount건은 이미 발송된 근무)'
+            : '$alreadyCount건은 이미 계약서가 발송된 근무예요');
       } else {
-        ToastHelper.showSuccess('${toProcess.length}명에게 계약서가 발송되었습니다');
+        ToastHelper.showSuccess('${toProcess.length}건 계약서를 발송했습니다');
       }
       if (successCount > 0) {
         _hasChanges = true;
         setState(() {
           for (final item in successItems) {
             final app = item['application'] as ApplicationModel;
-            _contractStatusMap[app.id] = 'pending_worker';
+            _contractStatusMap = _contractStatusMap.withStatus(app.id, 'pending_worker');
           }
         });
+      }
+      // 이미 발송된 건은 **현재 상태를 모른다**(근로자가 서명했을 수도 있다).
+      //   `pending_worker` 로 추측해 쓰지 않고 서버에서 다시 읽는다.
+      if (alreadyCount > 0) {
+        _hasChanges = true;
+        await _loadApplicants();
       }
     } catch (e) {
       if (mounted) ToastHelper.showError('처리 중 오류가 발생했습니다');
@@ -3965,8 +4705,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       if (mounted) setState(() => _isProcessing = false);
       return;
     }
-    late String sealBase64;
-    String sealType = 'stamp';
+    const String? sealBase64 = null;
+    const String sealType = 'stamp';
     late EmploymentContractModel previewContract;
     try {
       final b = await _firestoreService.getBusinessById(businessId);
@@ -3974,15 +4714,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
         return;
       }
-      final seal = await _resolveEmployerSeal(b);
-      if (seal.sealBase64.isEmpty) {
+      final sealReady = await _employerSealReady(b);
+      if (sealReady != true) {
         if (!mounted) return;
-        await _showSealMissingDialog(isBatchApprove: false);
+        if (sealReady == null) {
+          ToastHelper.showError('사업주 날인 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.');
+        } else {
+          await _showSealMissingDialog(isBatchApprove: false);
+        }
         setState(() => _isProcessing = false);
         return;
       }
-      sealBase64 = seal.sealBase64;
-      sealType = seal.sealType;
       previewContract = await ContractService().buildPreviewContract(
         application: app,
         business: b,
@@ -4015,8 +4757,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
         return;
       }
-      final sealBytes = base64Decode(sealBase64);
-      final contract = await ContractService().findOrCreateContract(
+        final contract = await ContractService().findOrCreateContract(
         application: app,
         business: b,
         worker: user,
@@ -4025,12 +4766,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       );
       await ContractService().saveEmployerSignature(
         contract: contract,
-        signatureBytes: sealBytes,
       );
       if (!mounted) return;
       ToastHelper.showSuccess('계약서가 발송되었습니다');
       _hasChanges = true;
-      setState(() => _contractStatusMap[app.id] = 'pending_worker');
+      setState(() => _contractStatusMap = _contractStatusMap.withStatus(app.id, 'pending_worker'));
     } catch (e) {
       if (mounted) ToastHelper.showError('계약서 발송 실패: $e');
     } finally {
@@ -4052,7 +4792,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final reason = await DialogHelper.showRejectReasonPicker(
       context,
       title: '일괄 거절',
-      message: '선택한 ${_selectedIds.length}명을 거절합니다.\n거절 사유를 선택해주세요.',
+      // [BULK-DISPATCH] 같은 선택 집합이므로 단위도 같다 — 지원서(근무일) 건수다.
+      message: '선택한 ${_selectedIds.length}건의 지원을 거절합니다.\n거절 사유를 선택해주세요.',
     );
 
     if (reason == null || !mounted) {
@@ -4086,8 +4827,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       if (!mounted) return;
       if (successCount > 0) {
         final msg = failCount > 0
-            ? '$successCount명 거절 완료 ($failCount명 실패)'
-            : '$successCount명이 거절되었습니다';
+            ? '$successCount건 거절 완료 ($failCount건 실패)'
+            : '$successCount건의 지원을 거절했습니다';
         ToastHelper.showSuccess(msg);
         _selectedIds.clear();
         await _loadApplicants();
@@ -4156,7 +4897,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       //   여기는 status 만 봤다. `loadTOWorkDetails` 는 이미 반납 좌석과
       //   끝난 장기 약속을 빼고 센다. 같은 화면의 두 집계가 다른 규칙을
       //   쓰면, 확정 처리 한 번에 숫자가 조용히 갈라진다.
-      final seatDay = DateTime.now();
+      final seatDay = _workApplicantsNow();
       // [R7-P1-2 DEVICE.1E.1] 좌석 규칙은 섹션 분류와 **같은 함수**다.
       bool countsAsSeat(ApplicationModel a) =>
           staffingRelationOf(a, seatDay).isCurrentStaffing;
@@ -4166,10 +4907,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         int confirmed = 0;
 
         for (final app in applications) {
-          // workDetailId 우선 매칭, 없으면 workType+시간 폴백 (구 데이터 호환)
+          // [E2-INVITED-SEAT] canonical wdId 를 먼저 본다 — 지원서 소속 판정
+          //   (belongsToThisWork)·loadTOWorkDetails 와 같은 순서. 아래는 legacy.
           final bool matches;
           final wdId = app.workDetailId;
-          if (wdId != null && wdId.isNotEmpty) {
+          final appWd = app.wdId;
+          final workWd = work.wdId;
+          if (appWd != null && appWd.isNotEmpty &&
+              workWd != null && workWd.isNotEmpty) {
+            matches = appWd == workWd;
+          } else if (wdId != null && wdId.isNotEmpty) {
             if (wdId == work.id) {
               matches = true;
             } else if (wdId == work.workType) {
@@ -4185,7 +4932,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                 app.endTime == work.endTime;
           }
           if (matches && countsAsSeat(app)) {
-            if (app.status == AppStatus.pending) pending++;
+            // [E2-INVITED-SEAT] `대기` 는 서버 PENDING_STATUSES(PENDING·INVITED).
+            //   이 함수는 창이 **처음 열릴 때도** 돌고 그 값을 카드가 공유하는
+            //   TOItem 에 덮어쓴다 — PENDING 만 세면 창을 한 번 열었다 닫은 카드가
+            //   다음 build 에서 `대기 0` 이 됐다(설치 앱 실측).
+            if (AppStatus.seatPendingStatuses.contains(app.status)) pending++;
             if (app.status == AppStatus.confirmed || app.status == AppStatus.contractPending) confirmed++;
           }
         }
@@ -4217,10 +4968,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       int confirmed = 0;
 
       // [R7-P1-2 DEVICE.1E] 폴백도 같은 좌석 규칙을 쓴다.
-      final seatDay = DateTime.now();
+      final seatDay = _workApplicantsNow();
       for (final app in _allApplications) {
         if (!staffingRelationOf(app, seatDay).isCurrentStaffing) continue;
-        if (app.status == AppStatus.pending) pending++;
+        if (AppStatus.seatPendingStatuses.contains(app.status)) pending++;
         if (app.status == AppStatus.confirmed || app.status == AppStatus.contractPending) confirmed++;
       }
 

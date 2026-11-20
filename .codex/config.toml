@@ -1,0 +1,8 @@
+# ALfit 공용 감사 기록 갱신 자동 진행 — 사용자 요청 2026-11-04
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+writable_roots = ['C:\Users\kug02\codex-audit\records']
+network_access = false

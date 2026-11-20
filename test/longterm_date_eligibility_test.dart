@@ -452,7 +452,8 @@ void main() {
     test('03-d 자동 NO_SHOW가 resolver를 쓴다', () {
       final seg = _after(
         cf,
-        '.where("workEndDate", ">=", Timestamp.fromDate(yesterdayStartUTC))',
+        // [NOSHOW-ATOMICITY 2026-10-27] 두 근무일 창 — 창 시작 변수 이름이 바뀌었다
+        '.where("workEndDate", ">=", Timestamp.fromDate(windowStartUTC))',
         1400,
       );
       expect(seg.contains('srvLongTermEligibleOnDay('), true);

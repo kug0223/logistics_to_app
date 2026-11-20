@@ -128,7 +128,12 @@ void main() {
       expect(
           body.contains('controller.isLoading && controller.lastLoadFailed'),
           true);
-      expect(body.contains('if (!isStale) return const SizedBox.shrink();'), true);
+      // [SUBADMIN-SCOPE.40] 서브관리자 범위 = 공고 권한이 확인된 배정(서버 R5-D2 가 canManageTo 를 요구한다).
+      //   권한을 확인하지 못한 사업장이 빠졌다는 사실도 같은 배너가 말한다 — 재료는
+      //   여전히 controller 소유 state 다.
+      expect(body.contains('controller.unresolvedScopeIds.isNotEmpty'), true);
+      expect(body.contains('if (!isStale && !partialScope) return const SizedBox.shrink();'),
+          true);
       expect(body.contains('_isRefreshing'), false);
     });
 

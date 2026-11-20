@@ -127,7 +127,8 @@ void main() {
   group('계약 상태는 push에만 의존하지 않는다', () {
     test('홈 로드가 미서명 계약 목록도 함께 갱신한다', () {
       final home = _flat(_codeOf(_src(_homePath)));
-      expect(home.contains('refreshPendingContracts()'), true,
+      // [WORKER-HOME-STARTUP.23] 홈 로드는 같은 진입의 진행 중 조회에 합류한다(joinInFlight) — 갱신 자체는 그대로.
+      expect(home.contains('refreshPendingContracts(joinInFlight: true)'), true,
           reason: 'push를 놓치면 앱 재시작까지 배너가 나타나지 않는다');
       expect(home.contains('unawaited('), true,
           reason: '실패해도 홈 로드를 깨뜨리지 않아야 한다');

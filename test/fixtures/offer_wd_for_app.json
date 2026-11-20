@@ -1,0 +1,296 @@
+{
+ "slotWd": {
+  "A": "6ZubWVI7oskbMaJ9Jper",
+  "B": "cAivRxKxwjmrA5obUOjO"
+ },
+ "app": {
+  "toId": "to_wd2",
+  "businessId": "biz_e7",
+  "businessName": "[합성] E7 사업장",
+  "toTitle": "[합성] 같은 업무명 두 시간대",
+  "uid": "U_OFFER",
+  "applicantName": "합성 제안",
+  "type": "short",
+  "slotId": "s1",
+  "wdId": "cAivRxKxwjmrA5obUOjO",
+  "workDetailId": "cAivRxKxwjmrA5obUOjO",
+  "selectedWorkType": "분류",
+  "startTime": "14:00",
+  "endTime": "18:00",
+  "workDate": {
+   "__ts": 1793026800000
+  },
+  "wage": 10320,
+  "wageType": "hourly",
+  "baseHourlyWageMode": "AUTO",
+  "breakMinutes": 30,
+  "nightAllowanceApplied": true,
+  "nightIncluded": false,
+  "payScheduleType": "same_day",
+  "invitedBy": "4OOJH6lDslQHZR0TMOp2VDZGzv2B",
+  "invitedAt": {
+   "__ts": 1792995796000
+  },
+  "inviteExpiresAt": {
+   "__ts": 1793082196000
+  },
+  "appliedAt": {
+   "__ts": 1792995796000
+  },
+  "offerKind": "ALTERNATIVE_WORK",
+  "offerId": "to_wd2_s1_cAivRxKxwjmrA5obUOjO_Gor0L5yprw7smCJTpFInKH4CtSyL_1792995796424",
+  "sourceApplicationId": "to_wd2_s1_6ZubWVI7oskbMaJ9Jper_Gor0L5yprw7smCJTpFInKH4CtSyL",
+  "sourceWdId": "6ZubWVI7oskbMaJ9Jper",
+  "sourceWorkType": "분류",
+  "compensationOption": "TARGET_BASE",
+  "baseCompensationSnapshotAtOffer": {
+   "baseHourlyWageMode": "AUTO",
+   "breakMinutes": 30,
+   "nightAllowanceApplied": true,
+   "nightIncluded": false,
+   "payScheduleType": "same_day",
+   "wage": 10320,
+   "wageType": "hourly"
+  },
+  "offeredCompensationSnapshot": {
+   "baseHourlyWageMode": "AUTO",
+   "breakMinutes": 30,
+   "nightAllowanceApplied": true,
+   "nightIncluded": false,
+   "payScheduleType": "same_day",
+   "wage": 10320,
+   "wageType": "hourly"
+  },
+  "compensationSource": "ALTERNATIVE_WORK_OFFER",
+  "offeredBy": "4OOJH6lDslQHZR0TMOp2VDZGzv2B",
+  "offeredAt": {
+   "__ts": 1792995796000
+  },
+  "activationGeneration": 0,
+  "attendancePolicyAcknowledgement": {
+   "earlyWindow": 30,
+   "earlyArrivalUnit": 30,
+   "lateGrace": 5,
+   "lateUnit": 30,
+   "lateWindow": 30,
+   "overtimeUnit": 30,
+   "earlyLeaveUnit": 30,
+   "acknowledgedBy": "4OOJH6lDslQHZR0TMOp2VDZGzv2B",
+   "actorRole": "business_admin",
+   "acknowledgedAt": {
+    "__ts": 1792995796000
+   }
+  },
+  "attendancePolicySnapshot": {
+   "earlyWindow": 30,
+   "earlyArrivalUnit": 30,
+   "lateGrace": 5,
+   "lateUnit": 30,
+   "lateWindow": 30,
+   "overtimeUnit": 30,
+   "earlyLeaveUnit": 30,
+   "policySource": "legacy",
+   "capturedAt": {
+    "__ts": 1792995796000
+   }
+  },
+  "documentReviewedIdVersion": null,
+  "documentReviewBankbookVersion": 1,
+  "documentReviewBankAccountVersion": 1,
+  "documentAccessConsentVersion": "2026-10-15-invite-v1",
+  "matchingAutoEvaluatedIdVersion": 1,
+  "matchingReadinessState": "READY_AUTO",
+  "documentReviewBasis": "AUTO",
+  "documentReviewIdVersion": 1,
+  "documentReviewedBy": null,
+  "matchingAutoEvidenceSource": null,
+  "documentAccessConsentAt": {
+   "__ts": 1792995796000
+  },
+  "idCardConsentGiven": true,
+  "matchingAutoMatchStatus": "MATCHED",
+  "documentReviewedAt": null,
+  "documentAccessConsentGiven": true,
+  "confirmedAt": {
+   "__ts": 1792995796000
+  },
+  "documentReviewBusinessId": "biz_e7",
+  "idCardConsentAt": {
+   "__ts": 1792995796000
+  },
+  "status": "CONFIRMED",
+  "statusHistory": [
+   {
+    "status": "INVITED",
+    "at": {
+     "__ts": 1792995796000
+    },
+    "by": "4OOJH6lDslQHZR0TMOp2VDZGzv2B",
+    "action": "ALTERNATIVE_WORK_OFFERED"
+   },
+   {
+    "status": "CONFIRMED",
+    "at": {
+     "__ts": 1792995796000
+    },
+    "by": "Gor0L5yprw7smCJTpFInKH4CtSyL",
+    "action": "INVITE_ACCEPTED"
+   }
+  ]
+ },
+ "appId": "OFFER_APP",
+ "masterWorkDetails": [
+  {
+   "workType": "분류",
+   "requiredCount": 5,
+   "wageType": "hourly",
+   "wage": 10320,
+   "startTime": "09:00",
+   "endTime": "13:00",
+   "breakMinutes": 0,
+   "payScheduleType": "next_day",
+   "wdId": "aJOqZgpqRmzoM3pglB6j"
+  },
+  {
+   "workType": "분류",
+   "requiredCount": 5,
+   "wageType": "hourly",
+   "wage": 10320,
+   "startTime": "14:00",
+   "endTime": "18:00",
+   "breakMinutes": 30,
+   "payScheduleType": "same_day",
+   "wdId": "aGVwX4MlHPWsgLlsCCDo"
+  }
+ ],
+ "slotWorkDetails": [
+  {
+   "workType": "분류",
+   "requiredCount": 5,
+   "wageType": "hourly",
+   "wage": 10320,
+   "startTime": "09:00",
+   "endTime": "13:00",
+   "breakMinutes": 0,
+   "payScheduleType": "next_day",
+   "wdId": "6ZubWVI7oskbMaJ9Jper"
+  },
+  {
+   "workType": "분류",
+   "requiredCount": 1,
+   "wageType": "hourly",
+   "wage": 10320,
+   "startTime": "14:00",
+   "endTime": "18:00",
+   "breakMinutes": 30,
+   "payScheduleType": "same_day",
+   "wdId": "cAivRxKxwjmrA5obUOjO"
+  }
+ ],
+ "invApp": {
+  "toId": "to_wd2",
+  "businessId": "biz_e7",
+  "businessName": "[합성] E7 사업장",
+  "toTitle": "[합성] 같은 업무명 두 시간대",
+  "uid": "U_INV",
+  "applicantName": "합성 초대1",
+  "type": "short",
+  "startTime": "14:00",
+  "endTime": "18:00",
+  "workDate": {
+   "__ts": 1793026800000
+  },
+  "slotId": "s1",
+  "selectedWorkType": "분류",
+  "wage": 10320,
+  "wageType": "hourly",
+  "baseHourlyWageMode": "AUTO",
+  "breakMinutes": 30,
+  "nightAllowanceApplied": true,
+  "nightIncluded": false,
+  "payScheduleType": "same_day",
+  "wdId": "cAivRxKxwjmrA5obUOjO",
+  "invitedBy": "4OOJH6lDslQHZR0TMOp2VDZGzv2B",
+  "invitedAt": {
+   "__ts": 1792994404000
+  },
+  "inviteExpiresAt": {
+   "__ts": 1793077200000
+  },
+  "appliedAt": {
+   "__ts": 1792994404000
+  },
+  "activationGeneration": 0,
+  "attendancePolicyAcknowledgement": {
+   "earlyWindow": 30,
+   "earlyArrivalUnit": 30,
+   "lateGrace": 5,
+   "lateUnit": 30,
+   "lateWindow": 30,
+   "overtimeUnit": 30,
+   "earlyLeaveUnit": 30,
+   "acknowledgedBy": "4OOJH6lDslQHZR0TMOp2VDZGzv2B",
+   "actorRole": "business_admin",
+   "acknowledgedAt": {
+    "__ts": 1792994404000
+   }
+  },
+  "attendancePolicySnapshot": {
+   "earlyWindow": 30,
+   "earlyArrivalUnit": 30,
+   "lateGrace": 5,
+   "lateUnit": 30,
+   "lateWindow": 30,
+   "overtimeUnit": 30,
+   "earlyLeaveUnit": 30,
+   "policySource": "legacy",
+   "capturedAt": {
+    "__ts": 1792994404000
+   }
+  },
+  "documentReviewedIdVersion": null,
+  "documentReviewBankbookVersion": 1,
+  "documentReviewBankAccountVersion": 1,
+  "documentAccessConsentVersion": "2026-10-15-invite-v1",
+  "matchingAutoEvaluatedIdVersion": 1,
+  "matchingReadinessState": "READY_AUTO",
+  "documentReviewBasis": "AUTO",
+  "documentReviewIdVersion": 1,
+  "documentReviewedBy": null,
+  "matchingAutoEvidenceSource": null,
+  "documentAccessConsentAt": {
+   "__ts": 1792994404000
+  },
+  "idCardConsentGiven": true,
+  "matchingAutoMatchStatus": "MATCHED",
+  "documentReviewedAt": null,
+  "documentAccessConsentGiven": true,
+  "confirmedAt": {
+   "__ts": 1792994404000
+  },
+  "documentReviewBusinessId": "biz_e7",
+  "idCardConsentAt": {
+   "__ts": 1792994404000
+  },
+  "status": "CONFIRMED",
+  "statusHistory": [
+   {
+    "status": "INVITED",
+    "at": {
+     "__ts": 1792994404000
+    },
+    "by": "4OOJH6lDslQHZR0TMOp2VDZGzv2B",
+    "action": "INVITE_SENT"
+   },
+   {
+    "status": "CONFIRMED",
+    "at": {
+     "__ts": 1792994404000
+    },
+    "by": "Tozv8XuLG2V0UVrS28mcQc1OSlMW",
+    "action": "INVITE_ACCEPTED"
+   }
+  ]
+ },
+ "source": "core-invite-wd-20261026 D: Apply 00104 → Offer 00015 → Accept 00061 (LOCAL 에뮬레이터 · 라이브 lib)"
+}

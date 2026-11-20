@@ -376,8 +376,15 @@ void main() {
         contains(r'if (ad.wageStatus !== "confirmed")'),
         reason: '확정된 근태만 지급 — 금액이 탈퇴로 흔들리지 않는 이유',
       );
-      expect(_count(process, 'collection("users")'), 0,
-          reason: '알림도 helper 를 거치므로 user 경로를 직접 쓰지 않는다');
+      // [PAY-ACCT-GATE] user 문서 읽기는 하나뿐이다 — 계좌 스냅샷이 낡았는지(문서 버전)만 보는 TX 안 읽기.
+      //   금액·계좌 값은 읽지 않는다(아래 필드 검사). 알림은 helper 를 거친다.
+      expect(_count(process, 'collection("users")'), 1);
+      expect(_flat(process),
+          contains('const piWorkerUserSnap = await tx.get(db.collection("users").doc(workerId));'));
+      expect(_count(process, 'piWorkerUserSnap'), 2,
+          reason: '읽기 1 + 낡은 스냅샷 판정 1 — 다른 용도로 쓰이면 다시 본다');
+      expect(_flat(process),
+          contains('srvWageSnapshotStaleReason(ad, piWorkerUserSnap.data())'));
       expect(_flat(process), contains('srvPersistNotification(workerId, {'));
       for (final f in [
         'bankName',

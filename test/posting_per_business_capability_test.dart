@@ -192,7 +192,7 @@ void main() {
       final body = _flat(_codeOf(_bodyOf(
           _src(_providerPath), 'Future<void> _hydrateSubAdminPermissions(')));
       expect(body.contains('} catch (e) {'), true);
-      expect(body.contains('return MapEntry(bizId, null);'), true,
+      expect(body.contains('return (id: bizId, perms: null, failed: true);'), true,
           reason: '실패한 사업장만 제외되어야 한다');
       expect(body.contains('_subAdminPermissionsLoaded = true;'), true);
     });
@@ -648,12 +648,15 @@ void main() {
     test('12-c read scope 무변경 (§35)', () {
       // [POSTING-V2-03N.1] scope 결정은 _scopeOf로 옮겨졌다 — 내용은 그대로.
       final body = _flat(_codeOf(
-          _bodyOf(_src(_ctrlPath), 'List<String>? _scopeOf(UserModel user)')));
-      expect(body.contains('if (user.isSubAdmin) return user.subAdminBusinessIds;'),
+          _bodyOf(_src(_ctrlPath), '({List<String>? ids, List<String> unresolved}) _scopeOf(')));
+      expect(body.contains('final s = up.subAdminBusinessesFor((p) => p.canManageTo); '
+          'return (ids: s.allowed, unresolved: s.unresolved);'),
           true);
-      expect(body.contains('return user.managedBusinessIds;'), true);
-      expect(body.contains('canManageTo'), false,
-          reason: '조회 범위를 manageable로 좁히면 안 된다');
+      expect(body.contains('return (ids: user.managedBusinessIds, unresolved: const <String>[]);'), true);
+      // [SUBADMIN-SCOPE.40] 서브관리자 범위 = 공고 권한이 확인된 배정(서버 R5-D2 가 canManageTo 를 요구한다).
+      //   서버가 사업장마다 canManageTo 를 요구한다 — 같은 권한으로 좁혀야 목록이 산다.
+      expect(body.contains('canManageTo'), true,
+          reason: '조회 범위는 서버 guard 와 같은 권한이다');
     });
 
     test('12-d business filter 선택지가 권한으로 좁혀지지 않았다 (§35)', () {

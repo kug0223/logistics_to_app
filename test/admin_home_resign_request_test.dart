@@ -70,6 +70,14 @@ String _fnBody(String source, String signature) {
   return source.substring(start, end + 2);
 }
 
+/// 퇴사 요청 권한 블록 — 배지 조립부터 다음 권한 게이트 직전까지
+String _resignSection(String rows) {
+  final at = rows.indexOf('final resign = cs?.actions.resignRequest;');
+  expect(at, isNot(-1), reason: '퇴사 요청 블록을 찾지 못함');
+  final next = rows.indexOf('if (_verified(up, (p) => p.', at);
+  return next == -1 ? rows.substring(at) : rows.substring(at, next);
+}
+
 /// row 블록 — 다음 권한 게이트 직전까지
 String _rowBlock(String rows, String label) {
   final at = rows.indexOf("label: '$label'");
@@ -237,15 +245,36 @@ void main() {
     });
 
     test('임박 건수가 badge로 표현된다', () {
-      final block = _rowBlock(rows, '퇴사 요청');
+      // 배지 문자열은 add( 앞에서 조립한다 — 퇴사 요청 권한 블록 전체를 본다.
+      final block = _resignSection(rows);
       expect(block.contains("'내일 자동 승인 \$soon건'"), isTrue);
       expect(block.contains('soon > 0'), isTrue);
+    });
+
+    test('[D3-RETRO-EXCLUDE] 수동 검토 수는 아는 경우에만 배지로 말한다', () {
+      final block = _resignSection(rows);
+      expect(block.contains("'수동 검토 \$manual건'"), isTrue);
+      expect(block.contains('manual != null && manual > 0'), isTrue,
+          reason: '구버전 서버(필드 없음)를 "수동 검토 0건"으로 확정하지 않는다');
     });
 
     test('soonCount를 DTO가 파싱한다', () {
       final sec = AdminHomeResignRequestSection.fromMap(
           {'available': true, 'count': 4, 'soonCount': 2});
       expect(sec.soonCount, 2);
+    });
+
+    test('[D3-RETRO-EXCLUDE] manualReviewCount — 있으면 값, 없으면 null(0 아님)', () {
+      final withField = AdminHomeResignRequestSection.fromMap(
+          {'available': true, 'count': 4, 'soonCount': 1, 'manualReviewCount': 2});
+      expect(withField.manualReviewCount, 2);
+      final zero = AdminHomeResignRequestSection.fromMap(
+          {'available': true, 'count': 1, 'soonCount': 1, 'manualReviewCount': 0});
+      expect(zero.manualReviewCount, 0);
+      final oldServer = AdminHomeResignRequestSection.fromMap(
+          {'available': true, 'count': 4, 'soonCount': 2});
+      expect(oldServer.manualReviewCount, isNull);
+      expect(AdminHomeResignRequestSection.noAccess.manualReviewCount, isNull);
     });
   });
 
@@ -305,7 +334,14 @@ void main() {
     });
 
     test('자동 승인 TX도 PENDING을 재확인한다', () {
-      expect(cf.contains('snap.data()?.resignStatus !== "PENDING"'), isTrue);
+      // [RETRY-OVERLAP 2026-10-27] 승인 거래가 알림 문서까지 같은 커밋에 쓰면서 fresh snapshot 을
+      //   변수로 받는다. 검사는 그대로 "D+3 퇴사 자동 승인 거래 안에서, 쓰기 전에 PENDING 재확인".
+      final i = cf.indexOf('const autoResignGrantRef = db');
+      expect(i, greaterThan(0));
+      final tx = cf.substring(i, cf.indexOf('return true;', i));
+      final check = tx.indexOf('if (fresh?.resignStatus !== "PENDING") return false;');
+      expect(check, greaterThan(0));
+      expect(check, lessThan(tx.indexOf('tx.update(doc.ref')));
     });
   });
 

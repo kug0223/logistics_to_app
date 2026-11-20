@@ -134,7 +134,7 @@ void main() {
 
     test('SWC-PDF-05 PDF 도 화면과 같은 formatter 를 쓴다', () {
       final src = _read('lib/screens/contract/contract_pdf_builder.dart');
-      expect(src.contains('attendancePolicyLines(policy)'), isTrue);
+      expect(src.contains('attendanceRuleGuide(policy'), isTrue); // [.29-A1] 화면과 같은 생성 함수
       expect(src.contains("AttendancePolicyLine('"), isFalse,
           reason: 'PDF 가 목록을 직접 만들면 화면과 갈린다');
     });
@@ -177,11 +177,21 @@ void main() {
       final sign = _read('lib/screens/contract/contract_sign_screen.dart');
       final i = sign.indexOf('Future<void> _sharePdf()');
       expect(i, greaterThan(-1));
-      final body = sign.substring(i, i + 700);
-      expect(body.contains('widget.contract.pdfUrl'), isTrue,
-          reason: '저장본 URL 을 쓰지 않으면 과거 계약서가 새 문구로 바뀐다');
+      final body = sign.substring(i, i + 900);
+      // [R8P6-PDF-REMEDIATION] 저장본을 **가리키는 방법**이 바뀌었다.
+      //   예전: 계약 문서의 영구 URL(`widget.contract.pdfUrl`)을 그대로 열었다.
+      //   지금: `fetchContractPdfUrl(contractId)` 가 그때의 권한을 확인한 뒤
+      //         **그 저장된 object** 의 15분 Signed URL 을 낸다.
+      //   어느 쪽이든 가리키는 바이트는 서명 당시 올린 그 PDF 하나다.
+      expect(body.contains('fetchContractPdfUrl(widget.contract.id)'), isTrue,
+          reason: '저장본을 가리키지 않으면 과거 계약서가 새 문구로 바뀐다');
       expect(body.contains('ContractPdfBuilder'), isFalse,
           reason: '공유 경로가 PDF 를 다시 만들면 불변이 깨진다');
+      // 서버도 저장된 경로만 서명한다 — 재생성 경로가 없다.
+      final fn = _read('functions/src/index.ts');
+      expect(fn.contains('srvIsOwnedContractPdfPath(storagePath, contractId)'),
+          isTrue,
+          reason: '서명 대상이 그 계약의 저장 경로인지 확인해야 한다');
     });
 
     test('SWC-FROZEN-03 고지 숫자는 계약 snapshot 에서 온다', () {

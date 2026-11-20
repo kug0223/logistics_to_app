@@ -12,7 +12,9 @@ import '../../models/core/user_region.dart';
 import '../../providers/user_provider.dart';
 import '../../services/invite_region_service.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/light_app_bar_style.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/inputs/home_region_picker_sheet.dart';
 
@@ -129,10 +131,13 @@ class _InviteRegionSettingsScreenState
   Widget build(BuildContext context) {
     final home = Provider.of<UserProvider>(context).currentUser?.homeRegion;
     return Scaffold(
-      backgroundColor: AppColors.grey100,
+      backgroundColor: AppColors.background, // [DU259] 앱 화면 바탕(이전 grey100)
       appBar: AppBar(
         title: const Text('근무 초대 받기'),
         backgroundColor: Colors.white,
+        // [E2-APPBAR-ON-LIGHT] 흰 배경 — 테마의 흰 제목·아이콘을 이 화면만 덮는다.
+        titleTextStyle: LightAppBarStyle.title(context),
+        iconTheme: LightAppBarStyle.iconTheme,
         elevation: 0,
       ),
       bottomNavigationBar: SafeArea(
@@ -157,6 +162,8 @@ class _InviteRegionSettingsScreenState
                 _buildToggleCard(context),
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 if (_enabled) ...[
+                  // [DU259] 섹션 제목은 카드 위(S082·S045 와 같은 16 bold 본문색)
+                  _buildSectionTitle(context, '초대 받을 지역'),
                   _buildRegionCard(context, home),
                   SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 ],
@@ -166,23 +173,28 @@ class _InviteRegionSettingsScreenState
     );
   }
 
+  static const _loadErrorText = '현재 설정을 확인하지 못했어요. 저장하면 아래 내용으로 덮어써요.';
+
   /// ERROR != OFF — 못 읽었다는 사실을 숨기지 않는다.
+  ///   [DU259] 면 grey100 이 화면 바탕과 같아 상자가 보이지 않았다(글자 4.23).
+  ///   주의 의미색 면(warningBg)·반경 12, 아이콘·글자 warningDark(4.81), 낱말 단위 줄바꿈.
   Widget _buildLoadError(BuildContext context) => Container(
         margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
         decoration: BoxDecoration(
-          color: AppColors.grey100,
-          borderRadius: BorderRadius.circular(8),
+          color: AppColors.warningBg,
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.error_outline, size: 16, color: AppColors.grey600),
+            const Icon(Icons.error_outline, size: 16, color: AppColors.warningDark),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             Expanded(
               child: Text(
-                '현재 설정을 확인하지 못했어요. 저장하면 아래 내용으로 덮어써요.',
-                style:
-                    ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                TextLayout.keepWords(_loadErrorText),
+                semanticsLabel: _loadErrorText,
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark),
               ),
             ),
           ],
@@ -194,9 +206,10 @@ class _InviteRegionSettingsScreenState
           horizontal: ResponsiveHelper.spacing(context, 16),
           vertical: ResponsiveHelper.spacing(context, 8),
         ),
+        // [DU259] 흰·grey200 선, 반경 12 → 16. 행 제목은 본문색 명시(이전 bodyStyle 기본 #616161).
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: AppColors.borderLight),
         ),
         child: Row(
@@ -204,7 +217,7 @@ class _InviteRegionSettingsScreenState
             Expanded(
               child: Text(
                 '근무 초대 받기',
-                style: ResponsiveHelper.bodyStyle(context)
+                style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary)
                     .copyWith(fontWeight: FontWeight.w600),
               ),
             ),
@@ -218,6 +231,20 @@ class _InviteRegionSettingsScreenState
         ),
       );
 
+  /// [DU259] 섹션 제목 — S082·S045·S040 과 같은 16 bold 본문색, 카드 위.
+  Widget _buildSectionTitle(BuildContext context, String title) => Padding(
+        padding: EdgeInsets.only(
+          left: ResponsiveHelper.spacing(context, 4),
+          bottom: ResponsiveHelper.spacing(context, 8),
+        ),
+        child: Text(
+          TextLayout.keepWords(title),
+          semanticsLabel: title,
+          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+              fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+        ),
+      );
+
   Widget _buildRegionCard(BuildContext context, UserRegion? home) {
     // [§10] 거주지역은 **추천**일 뿐이다. 누르기 전에는 저장되지 않는다.
     final suggestHome = home != null && !_regions.contains(home);
@@ -227,20 +254,15 @@ class _InviteRegionSettingsScreenState
         horizontal: ResponsiveHelper.spacing(context, 16),
         vertical: ResponsiveHelper.spacing(context, 12),
       ),
+      // [DU259] 흰·grey200 선, 반경 12 → 16. 카드 안 제목은 카드 위 섹션 제목으로 옮겼다.
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.borderLight),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '초대 받을 지역',
-            style: ResponsiveHelper.bodyStyle(context)
-                .copyWith(fontWeight: FontWeight.w600),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           if (_regions.isEmpty)
             Padding(
               padding: EdgeInsets.symmetric(
@@ -248,7 +270,7 @@ class _InviteRegionSettingsScreenState
               child: Text(
                 '아직 선택한 지역이 없어요.',
                 style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.grey500),
+                    color: AppColors.textSecondary), // [DU259] grey500(2.68)
               ),
             ),
           ..._regions.map((r) => _buildRegionRow(context, r)),
@@ -277,23 +299,28 @@ class _InviteRegionSettingsScreenState
     );
   }
 
+  static String _regionLabel(UserRegion r) =>
+      r.province == null ? r.city : '${r.province} ${r.city}';
+
+  // [DU259] 장소·삭제 아이콘 grey600·grey500(2.68) → textSecondary.
+  //   지역명은 말줄임 없이 낱말 단위로 줄을 바꾼다(B320 에서 잘렸다), 본문색 명시.
   Widget _buildRegionRow(BuildContext context, UserRegion r) => Padding(
         padding:
             EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 4)),
         child: Row(
           children: [
-            const Icon(Icons.place_outlined, size: 18, color: AppColors.grey600),
+            const Icon(Icons.place_outlined, size: 18, color: AppColors.textSecondary),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             Expanded(
               child: Text(
-                r.province == null ? r.city : '${r.province} ${r.city}',
-                style: ResponsiveHelper.bodyStyle(context),
-                overflow: TextOverflow.ellipsis,
+                TextLayout.keepWords(_regionLabel(r)),
+                semanticsLabel: _regionLabel(r),
+                style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary),
               ),
             ),
             IconButton(
               icon: const Icon(Icons.close, size: 18),
-              color: AppColors.grey500,
+              color: AppColors.textSecondary,
               onPressed:
                   _saving ? null : () => setState(() => _regions.remove(r)),
               tooltip: '${r.city} 제거',
@@ -302,16 +329,21 @@ class _InviteRegionSettingsScreenState
         ),
       );
 
-  Widget _buildExplain(BuildContext context) => Padding(
-        padding:
-            EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 4)),
-        child: Text(
-          _enabled
-              ? '선택한 지역의 사업장에서 근무 제안을 받을 수 있어요.\n'
-                  '사는 곳과 달라도 괜찮아요. 직접 검색해서 지원하는 것은 이 설정과 상관없어요.'
-              : '초대 받기를 끄면 사업장이 먼저 제안을 보낼 수 없어요.\n'
-                  '일자리를 직접 검색하고 지원하는 것은 그대로 할 수 있어요.',
-          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-        ),
-      );
+  Widget _buildExplain(BuildContext context) {
+    final msg = _enabled
+        ? '선택한 지역의 사업장에서 근무 제안을 받을 수 있어요.\n'
+            '사는 곳과 달라도 괜찮아요. 직접 검색해서 지원하는 것은 이 설정과 상관없어요.'
+        : '초대 받기를 끄면 사업장이 먼저 제안을 보낼 수 없어요.\n'
+            '일자리를 직접 검색하고 지원하는 것은 그대로 할 수 있어요.';
+    return Padding(
+      padding:
+          EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 4)),
+      // [DU259] grey600(바탕 위 4.23) → textSecondary, 낱말 단위 줄바꿈
+      child: Text(
+        TextLayout.keepWords(msg),
+        semanticsLabel: msg,
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+      ),
+    );
+  }
 }

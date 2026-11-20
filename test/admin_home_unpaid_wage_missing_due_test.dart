@@ -334,10 +334,15 @@ void main() {
     test('§11 writer를 건드리지 않았다', () {
       // 다섯 non-payable writer가 그대로 있어야 한다
       expect('wageStatus: "confirmed"'.allMatches(cf).length >= 5, isTrue);
-      expect(cf.contains('autoNoShowAt:  admin.firestore.FieldValue.serverTimestamp()'),
+      // [.11 C2 2026-10-27] 자동 노쇼 writer 는 .7(NOSHOW-ATOMICITY)에서 근무 단위 거래로 다시 썼다 —
+      //   공백 수가 아니라 "그 writer 가 autoNoShowAt 을 서버 시각으로 찍는다"를 본다.
+      expect(RegExp(r'autoNoShowAt:\s+admin\.firestore\.FieldValue\.serverTimestamp\(\)').hasMatch(cf),
           isTrue);
+      // 레거시 자동 결근(processAutoAbsent → autoAbsentAt)은 .6(SCHED-LEGACY-RETIRE, DEV 배포)에서 의도적으로 뺐다.
+      //   writer 가 '그대로 있다'가 아니라 '폐기 결정대로 없다'를 고정한다 — 되살아나면 여기서 잡는다.
       expect(cf.contains('autoAbsentAt: admin.firestore.FieldValue.serverTimestamp()'),
-          isTrue);
+          isFalse, reason: '폐기한 자동 결근 writer 가 되살아났다');
+      expect(cf.contains('[SCHED-LEGACY-RETIRE 2026-10-27]'), isTrue);
       // 급여 확정 prevalidation 유지
       expect(cf.contains('급여 지급일을 확인할 수 없습니다.'), isTrue);
       expect(cf.contains('srvCalculatePaymentDueDate(pvPst, pvPsd, pvWorkDate) === null'),

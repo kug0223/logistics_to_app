@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
@@ -16,9 +18,11 @@ import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../services/storage_service.dart';
 import '../../services/tax_identity_service.dart';
+import '../../services/foreign_id_ocr_service.dart';
 import '../../utils/image_helper.dart';
 import '../../utils/ocr_verification_helper.dart';
 import '../../utils/navigation_helper.dart';
@@ -50,6 +54,13 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   String? _selectedBank;
 
   bool _isLoading = false;
+  /// [.20 PERCEIVED-PERFORMANCE] 업로드 중 지금 무엇을 하는지. 사진 확인(압축·글자 읽기)은 도우미 창이
+  ///   단계를 보여 주지만, 그 창이 닫힌 뒤 전송·등록 동안은 빈 화면에 스피너만 있어
+  ///   어디까지 됐는지 알 수 없었다. null 이면 문구 없음.
+  String? _loadingMessage;
+  void _stage(String message) {
+    if (mounted) setState(() => _loadingMessage = message);
+  }
   bool _hasChanges = false;
 
   /// [PII-B4-R1.4] 세무정보 등록 상태 — 번호는 담기지 않는다.
@@ -144,7 +155,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       backgroundColor: AppColors.grey50,
       appBar: appBar,
       body: _isLoading
-          ? const LoadingWidget()
+          ? LoadingWidget(message: _loadingMessage)
           : ListView(
               padding: ResponsiveHelper.listPadding(context),
               children: [
@@ -181,7 +192,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
         // 📝 사업자 정보 입력 섹션
-        _buildSectionHeader('사업자 정보', Icons.business),
+        _buildSectionHeader('사업자 정보'),
 
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
@@ -190,7 +201,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
         // 📋 사업자등록증 섹션
-        _buildSectionHeader('사업자등록증', Icons.description),
+        _buildSectionHeader('사업자등록증'),
 
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
@@ -472,19 +483,25 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // [DU485] grey500(grey50 위 약 2.6) → textSecondary(USER 경로 '미등록'과 같다 · DU1 구현89).
                           Text(
                             '미등록',
                             style: ResponsiveHelper.smallStyle(context,
-                                color: AppColors.grey500,
+                                color: AppColors.textSecondary,
                                 fontWeight: FontWeight.w600),
                           ),
+                          // [DU486] 큰 글자에서 '업 / 로드해주세요'처럼 음절 사이에서 끊겼다 — 낱말 사이에서만 줄을 바꾼다. 읽기 도구에는 원문.
                           Text(
-                            hasBusinessInfo
+                            TextLayout.keepWords(hasBusinessInfo
+                                ? '위 정보와 일치하는 사업자등록증을 업로드해주세요'
+                                : '먼저 사업자 정보를 입력하고 저장해주세요'),
+                            semanticsLabel: hasBusinessInfo
                                 ? '위 정보와 일치하는 사업자등록증을 업로드해주세요'
                                 : '먼저 사업자 정보를 입력하고 저장해주세요',
+                            // [DU485] 안내 grey400(grey50 위 약 1.8) → textTertiary. 사업자 정보 미저장 분기(warningDark)는 그대로다.
                             style: ResponsiveHelper.tinyStyle(context,
                                 color: hasBusinessInfo
-                                    ? AppColors.grey400
+                                    ? AppColors.textTertiary
                                     : AppColors.warningDark),
                           ),
                         ],
@@ -561,6 +578,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       //   이 값은 표시용이 아니다 — checkBusinessLicense를 거쳐 사업장 자동승인과
       //   공고 등록 선행조건을 연다. 그런데 클라이언트가 users 문서에 직접 쓰고 있었고,
       //   업로드는 영구 토큰 URL까지 만들었다. 신분증·통장사본과 같은 규칙으로 맞춘다.
+      _stage('사진을 올리고 있어요');
       final storagePath = 'users/${user.uid}/businessLicense_${DateTime.now().millisecondsSinceEpoch}.jpg';
       bool uploadOk = false;
       try {
@@ -577,6 +595,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
       // 2. CF로 등록 — 경로 소유권·존재 확인 후 서버가 기록한다.
       //    클라이언트 직접 write는 Rules denylist로 막혀 있다.
+      _stage('등록하고 있어요');
       newLicensePath = storagePath; // CF 호출 전 Storage orphan 추적
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableRegisterBusinessLicense')
@@ -612,7 +631,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       }
       if (mounted) ToastHelper.showError('사업자등록증 등록에 실패했습니다');
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() { _isLoading = false; _loadingMessage = null; });
     }
   }
 
@@ -695,16 +714,8 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 📢 안내 카드
-        _buildInfoBanner(
-          message: '본인 명의의 급여계좌를 등록해주세요.\n'
-              '통장에 표시된 예금주명을 정확히 확인해주세요.',
-          icon: Icons.info_outline,
-          color: AppColors.infoDark,
-        ),
-
-        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
+        // [DU1 구현121 S038 V6] 급여계좌 안내 띠는 ② 급여정보 준비 안(급여 계좌 카드 바로 위)으로 옮겼다 —
+        //   화면 첫 안내가 ① 신원 확인보다 먼저 ② 의 내용(본인 명의 급여계좌·예금주명)을 말했다(구현121 ko 관측). 문구·색·조건은 그대로다.
         // ① 신원 확인 섹션
         _buildReadinessSectionLabel(
           step: 1,
@@ -734,6 +745,17 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
           title: '급여정보 준비',
           description: '근무 후 급여 지급을 위해 필요해요',
           isComplete: isPayoutDocsReady,
+        ),
+
+        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+
+        // 📢 안내 카드 — 급여 계좌 등록 안내(구현121: 화면 맨 위에서 이 자리로)
+        _buildInfoBanner(
+          message: '본인 명의의 급여계좌를 등록해주세요.\n'
+              '통장에 표시된 예금주명을 정확히 확인해주세요.',
+          icon: Icons.info_outline,
+          // [DU1 구현89 S038] 배너 글자가 infoDark 라 옅은 면 위 3.97:1(PNG) — 이 호출만 brandDark(공용 배너 helper 무변경).
+          color: AppColors.brandDark,
         ),
 
         SizedBox(height: ResponsiveHelper.spacing(context, 10)),
@@ -789,41 +811,53 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                     ),
                   );
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
+    // [DU1 구현122 S038 V3] 번호 배지를 제목 줄과 한 Row 로 묶는다 — 예전 Row(center)는 배지를 제목+설명 묶음의 세로 가운데에 두어,
+    //   설명이 두 줄이 되면(320dp·글자 2.0) 번호가 제목이 아니라 설명 첫 줄 옆에 놓였다. 설명은 예전과 같은 x·같은 폭(배지 24 + 간격 뒤)이다.
+    // [DU1 구현123 S038 V7] 원 지름 = 숫자 글자(12 × 글자 배율) + 위아래 3, 최소 24 — 배율 1 에서는 예전 24 그대로다.
+    //   예전 고정 24 는 글자 2.0 에서 숫자(24)가 원 가장자리까지 닿아 아래 테두리가 끊겨 보였다(구현123 관측).
+    //   숫자 배율은 줄이지 않고 원을 필요한 만큼만 키운다(키운 글자를 되돌려 줄이지 않는다).
+    final badgeSize = (MediaQuery.textScalerOf(context).scale(12) + 6).clamp(24.0, double.infinity);
+    final gap = ResponsiveHelper.spacing(context, 10);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 스텝 배지
-        Container(
-          width: 24,
-          height: 24,
-          decoration: BoxDecoration(
-            color: badgeColor,
-            shape: BoxShape.circle,
-          ),
-          child: Center(child: badgeChild),
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-        // 제목 + 설명
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // 스텝 배지
+            Container(
+              width: badgeSize,
+              height: badgeSize,
+              decoration: BoxDecoration(
+                color: badgeColor,
+                shape: BoxShape.circle,
+              ),
+              child: Center(child: badgeChild),
+            ),
+            SizedBox(width: gap),
+            // 제목
+            Expanded(
+              child: Text(
                 title,
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
                   fontWeight: FontWeight.w700,
                   color: AppColors.textPrimary,
                 ),
               ),
-              Text(
-                description,
-                style: ResponsiveHelper.tinyStyle(context,
-                    color: AppColors.grey500),
-              ),
-            ],
+            ),
+            // 완료 배지 제거 — 왼쪽 배지가 이미 상태를 표현함
+          ],
+        ),
+        // 설명 — 제목 글 열에 맞춘다
+        Padding(
+          padding: EdgeInsets.only(left: badgeSize + gap),
+          child: Text(
+            description,
+            // [DU1 구현89 S038] grey500 2.57:1(PNG) — 읽기 설명이라 textSecondary.
+            style: ResponsiveHelper.tinyStyle(context,
+                color: AppColors.textSecondary),
           ),
         ),
-        // 완료 배지 제거 — 왼쪽 배지가 이미 상태를 표현함
       ],
     );
   }
@@ -863,9 +897,6 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       if (picked == null || !mounted) return; // finally가 _isLoading 초기화
       final imagePath = picked.path;
 
-      final oldUrl = user.idCardImageUrl;
-      final oldPath = user.idCardImagePath;
-
       // [R7-P4.4E.10A.1 / E10-D] 제출 시작을 서버에 알리고 순번을 받는다.
       //
       //   서버는 도착 순서만 알았다. A→B 로 올렸는데 A 의 호출이 나중에
@@ -878,6 +909,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       //   protocol 이 켜진 사용자의 순번 없는 finalize 를 받지 않으므로,
       //   그대로 진행하면 업로드만 하고 등록은 실패하는 더 나쁜 결과가 된다.
       //   재시도 가능한 오류로 말하고 끝낸다.
+      _stage('사진을 올리고 있어요');
       final int attemptSeq;
       try {
         final begin = await FirebaseFunctions.instanceFor(
@@ -918,6 +950,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       //    [PRODUCT-POLICY] callableMarkIdCardVerified가 경로 검증 완료 후 isIdVerified=true를 설정한다.
       //    [DOCUMENT-VERIFICATION-INTEGRITY-R0] 기기 확인 **근거**를 함께 보낸다.
       //      판정이 아니다 — 서버가 이 근거로 문서 상태를 정한다.
+      _stage('등록하고 있어요');
       newIdCardPath = storagePath; // CF 호출 전 Storage orphan 추적
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableMarkIdCardVerified')
@@ -928,21 +961,10 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       });
       newIdCardPath = null; // CF 성공 — Storage 정리 불필요
 
-      // 3. 기존 이미지 삭제 (best-effort)
-      //    path 기반 우선, 없으면 URL fallback
-      if (oldPath != null) {
-        try {
-          await _storageService.deleteImage(oldPath);
-        } catch (e) {
-          debugPrint('⚠️ 기존 신분증 삭제 실패 (무시): $e');
-        }
-      } else if (oldUrl != null) {
-        try {
-          await _storageService.deleteImageByUrl(oldUrl);
-        } catch (e) {
-          debugPrint('⚠️ 기존 신분증 URL 삭제 실패 (무시): $e');
-        }
-      }
+      // 3. 기존 이미지는 서버가 지운다.
+      //    [DOC-LATE-DELETE.7] callableMarkIdCardVerified 가 교체 커밋에서 옛 경로를 정리 대기로
+      //    올리고 지운다. 신분증 객체는 Storage 규칙상 클라이언트가 지우지 못한다 — 승인 뒤 늦게
+      //    끝나는 클라이언트 삭제가 현재 사진을 지우는 경쟁을 닫기 위해서다.
 
       // UserProvider 갱신
       await userProvider.refreshCurrentUser();
@@ -951,13 +973,21 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       ToastHelper.showSuccess('신분증이 등록되었습니다');
       _hasChanges = true;
     } catch (e) {
-      // [M-19] CF 실패 시 업로드된 신분증 파일 Storage orphan 방지 (path 기반 삭제)
+      // [M-19] CF 실패 시 업로드된 신분증 파일 Storage orphan 방지.
+      //   [DOC-LATE-DELETE.7] 서버에 정리를 맡긴다 — 응답만 늦고 실제로는 등록된 경우(현재 사진)면
+      //   서버가 지우지 않는다. 등록 처리가 아직 진행 중이면 정리가 먼저 그 경로를 막는다.
       if (newIdCardPath != null) {
-        try { await _storageService.deleteImage(newIdCardPath); } catch (_) {}
+        try {
+          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableDiscardIdCardUpload')
+              .call({'storagePath': newIdCardPath});
+        } catch (e) {
+          debugPrint('⚠️ 업로드 정리 요청 실패 (무시): $e');
+        }
       }
       if (mounted) ToastHelper.showError('신분증 등록에 실패했습니다');
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() { _isLoading = false; _loadingMessage = null; });
     }
   }
 
@@ -1155,6 +1185,10 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     }
   }
 
+  /// [DU1 후속110 S038] 완전 미등록의 상태 표시 — 세무(_taxStatusChip 미등록)와 같은 중립 아이콘·색·문구.
+  static const ({String label, Color color, IconData icon}) _unregisteredStatus =
+      (label: '미등록', color: AppColors.textSecondary, icon: Icons.remove_circle_outline);
+
   Widget _docStatusChip(
       BuildContext context, ({String label, Color color, IconData icon}) s) {
     return Row(mainAxisSize: MainAxisSize.min, children: [
@@ -1195,13 +1229,14 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   ({String label, Color color, IconData icon}) _taxStatusChip() {
     final s = _taxStatus;
     if (s == null || s.loadFailed) {
-      return (label: '확인 불가', color: AppColors.grey500, icon: Icons.help_outline);
+      return (label: '확인 불가', color: AppColors.textSecondary, icon: Icons.help_outline); // [DU1 구현89] grey500 2.68 → textSecondary
     }
     if (!s.registered) {
-      return (label: '미등록', color: AppColors.grey500, icon: Icons.remove_circle_outline);
+      return (label: '미등록', color: AppColors.textSecondary, icon: Icons.remove_circle_outline); // [DU1 구현89] grey500 2.68 → textSecondary
     }
     if (s.blocksApply) {
-      return (label: '정보 확인 필요', color: AppColors.errorFaded, icon: Icons.error_outline);
+      // [DU1 구현141 ⑤] 상태 글 13 / w600 · 아이콘이 이 색을 쓴다 — errorFaded 는 흰 카드 위 3.49(작은 글 4.5 미만, 구현134 관측).
+      return (label: '정보 확인 필요', color: AppColors.errorDark, icon: Icons.error_outline);
     }
     return (label: '등록 완료', color: AppColors.successDark, icon: Icons.check_circle);
   }
@@ -1235,28 +1270,38 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   size: 22,
                   color: registered ? AppColors.infoDark : AppColors.grey400),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              // [DU1 구현137 ②] 제목 · 부제 묶음과 상태 칩을 Wrap 으로(C128-3 과 같은 원칙) — 한 줄에 들어가면 칩이 예전처럼 오른쪽,
+              //   모자라면(좁은 폭 · 큰 글자) 칩이 아래 줄로 가서 제목 '세무정보' · 부제가 음절로 끊기지 않는다(구현134 B 관측: 세 / 무 / 정 / 보).
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  runSpacing: ResponsiveHelper.spacing(context, 6),
                   children: [
-                    Text('세무정보',
-                        style: ResponsiveHelper.bodyStyle(context)
-                            .copyWith(fontWeight: FontWeight.w600)),
-                    Text(
-                      isForeign
-                          ? (_needsForeignTaxRecovery
-                              ? '가입 시 확인한 외국인등록번호를 등록해주세요'
-                              : '가입 시 등록됨 — 외국인등록번호')
-                          : '소득신고에 쓰이는 주민등록번호',
-                      style: ResponsiveHelper.tinyStyle(context,
-                          color: isForeign && registered
-                              ? AppColors.successDark
-                              : AppColors.grey500),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('세무정보',
+                            style: ResponsiveHelper.bodyStyle(context)
+                                .copyWith(fontWeight: FontWeight.w600)),
+                        Text(
+                          isForeign
+                              ? (_needsForeignTaxRecovery
+                                  ? '가입 시 확인한 외국인등록번호를 등록해주세요'
+                                  : '가입 시 등록됨 — 외국인등록번호')
+                              : '소득신고에 쓰이는 주민등록번호',
+                          style: ResponsiveHelper.tinyStyle(context,
+                              color: isForeign && registered
+                                  ? AppColors.successDark
+                                  // [DU1 구현89 S038] 부제 grey500 2.68:1(PNG) → textSecondary
+                                  : AppColors.textSecondary),
+                        ),
+                      ],
                     ),
+                    _docStatusChip(context, chip),
                   ],
                 ),
               ),
-              _docStatusChip(context, chip),
             ],
           ),
 
@@ -1273,8 +1318,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               child: Text(
                 '등록한 세무정보와 신분증 정보가 달라 보입니다.\n'
                 '세무정보를 수정하거나 신분증을 다시 등록해주세요.',
+                // [DU1 구현136 V6] 글색만 errorDark — errorFaded 는 자기 8% 면(실측 #FEF1F1) 위 3.17(작은 글 4.5 미만, 구현134 관측). 면은 그대로.
                 style: ResponsiveHelper.tinyStyle(context,
-                    color: AppColors.errorFaded),
+                    color: AppColors.errorDark),
               ),
             ),
           ],
@@ -1306,32 +1352,46 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               ),
             )
           else if (registered)
-            Row(
-              children: [
-                TextButton(
-                  onPressed: _isLoading ? null : () => _openTaxIdentitySheet(user),
-                  style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    foregroundColor: AppColors.grey600,
+            // [DU1 구현135 ①] Row+Spacer 는 좁은 폭·큰 글자에서 오른쪽 안내가 화면 밖으로 넘쳤다(구현134 B 320×640@2.0 관측).
+            //   Wrap(spaceBetween): 한 줄에 들어가면 예전처럼 양끝, 아니면 안내가 다음 줄로 내려가 전문 줄바꿈. 문구·동작·색 무변경.
+            SizedBox(
+              width: double.infinity,
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: ResponsiveHelper.spacing(context, 12),
+                runSpacing: ResponsiveHelper.spacing(context, 6),
+                children: [
+                  TextButton(
+                    onPressed: _isLoading ? null : () => _openTaxIdentitySheet(user),
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      // [DU1 구현139 ③] 글자 버튼도 터치 최소 48×48(C128-1 과 같은 값, 구현137 관측: N 24.1×19 · B 48×37).
+                      //   글 폭이 48 보다 좁아(N 24.1) 가운데로 밀리지 않게 왼쪽 정렬 — 글 위치 · 색 · 크기는 그대로.
+                      minimumSize: const Size(48, 48),
+                      alignment: Alignment.centerLeft,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      foregroundColor: AppColors.grey600,
+                    ),
+                    child: Text('수정',
+                        style: ResponsiveHelper.smallStyle(context,
+                            color: AppColors.grey600,
+                            fontWeight: FontWeight.w500)),
                   ),
-                  child: Text('수정',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.grey600,
-                          fontWeight: FontWeight.w500)),
-                ),
-                const Spacer(),
-                // 등록된 번호를 되돌려 보여주는 경로는 두지 않는다(§27).
-                Text('등록된 번호는 표시되지 않습니다',
-                    style: ResponsiveHelper.tinyStyle(context,
-                        color: AppColors.grey400)),
-              ],
+                  // 등록된 번호를 되돌려 보여주는 경로는 두지 않는다(§27).
+                  // [DU1 구현140 ④] 부가 설명 글색 textTertiary — grey400 은 흰 카드 위 1.88(작은 글 4.5 미만, 구현134 관측).
+                  Text('등록된 번호는 표시되지 않습니다',
+                      style: ResponsiveHelper.tinyStyle(context,
+                          color: AppColors.textTertiary)),
+                ],
+              ),
             )
           else
             _flatPrimaryButton(
               text: '세무정보 등록하기',
               onPressed: _isLoading ? null : () => _openTaxIdentitySheet(user),
+              // [DU1 구현121 S038 V10] 같은 '입력해서 등록' 행동인 급여정보 등록하기와 같은 + — 세 등록 버튼 중 이것만 아이콘이 없었다.
+              icon: Icons.add,
             ),
         ],
       ),
@@ -1396,41 +1456,45 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 color: hasIdCard ? AppColors.infoDark : AppColors.grey400,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              // [DU1 구현137 ②] 세무 머리와 같은 Wrap — B 320×2.0 에서 칩 옆 부제가 '주민등록 / 증 또는 운 / 전면허증' 으로 끊겼다(구현136 관측).
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  runSpacing: ResponsiveHelper.spacing(context, 6),
                   children: [
-                    Text(
-                      isForeignRegistered ? '외국인등록증' : '신분증',
-                      style: ResponsiveHelper.bodyStyle(context)
-                          .copyWith(fontWeight: FontWeight.w600),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          isForeignRegistered ? '외국인등록증' : '신분증',
+                          style: ResponsiveHelper.bodyStyle(context)
+                              .copyWith(fontWeight: FontWeight.w600),
+                        ),
+                        Text(
+                          isForeignRegistered
+                              ? '가입 시 등록됨 — 갱신 시 재업로드 가능'
+                              : '주민등록증 또는 운전면허증',
+                          style: ResponsiveHelper.tinyStyle(context,
+                              color: isForeignRegistered ? AppColors.successDark : AppColors.textSecondary), // [DU1 구현89] 2.68 → textSecondary
+                        ),
+                      ],
                     ),
-                    Text(
-                      isForeignRegistered
-                          ? '가입 시 등록됨 — 갱신 시 재업로드 가능'
-                          : '주민등록증 또는 운전면허증',
-                      style: ResponsiveHelper.tinyStyle(context,
-                          color: isForeignRegistered ? AppColors.successDark : AppColors.grey500),
-                    ),
+                    // [DOCUMENT-VERIFICATION-INTEGRITY-R0] 상태를 그대로 말한다.
+                    //
+                    //   예전에는 파일이 있기만 하면 '✓ 등록완료'였다. 인식이
+                    //   실패했든, 이름이 달랐든, 사용자가 경고를 넘겼든 화면은
+                    //   똑같이 초록 체크를 보여줬다 — 그것이 제보된 현상이다.
+                    //   '확인 완료'는 사람이 확인한 경우에만 쓴다.
+                    if (hasIdCard)
+                      _docStatusChip(context, _idCardStatus(user))
+                    else
+                      // [DU1 후속110 S038] 세무 미등록과 같은 중립 표시(⊖ 미등록) — 이 상태 행에는 탭 동작이 없는데
+                      //   chevron 이 '눌러서 이동'처럼 보였다. 등록은 아래 '신분증 등록하기' 버튼이 맡는다.
+                      _docStatusChip(context, _unregisteredStatus),
                   ],
                 ),
               ),
-              // [DOCUMENT-VERIFICATION-INTEGRITY-R0] 상태를 그대로 말한다.
-              //
-              //   예전에는 파일이 있기만 하면 '✓ 등록완료'였다. 인식이
-              //   실패했든, 이름이 달랐든, 사용자가 경고를 넘겼든 화면은
-              //   똑같이 초록 체크를 보여줬다 — 그것이 제보된 현상이다.
-              //   '확인 완료'는 사람이 확인한 경우에만 쓴다.
-              if (hasIdCard)
-                _docStatusChip(context, _idCardStatus(user))
-              else
-                Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text('미등록',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: const Color(0xFF9CA3AF))),
-                  const Icon(Icons.chevron_right,
-                      color: Color(0xFF9CA3AF), size: 16),
-                ]),
             ],
           ),
 
@@ -1460,7 +1524,8 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   onPressed: _isLoading ? null : _uploadIdCard,
                   style: TextButton.styleFrom(
                     padding: EdgeInsets.zero,
-                    minimumSize: Size.zero,
+                    // [DU1 구현129 C128-1] 글자 링크도 터치 최소 48×48(구현128 관측: 높이 N 19 / B 37). 글자·색·배치는 그대로.
+                    minimumSize: const Size(48, 48),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     foregroundColor: AppColors.grey600,
                   ),
@@ -1474,17 +1539,19 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   onPressed: _isLoading ? null : _deleteIdCard,
                   style: TextButton.styleFrom(
                     padding: EdgeInsets.zero,
-                    minimumSize: Size.zero,
+                    // [DU1 구현129 C128-1] 글자 링크도 터치 최소 48×48(구현128 관측: 높이 N 19 / B 37). 글자·색·배치는 그대로.
+                    minimumSize: const Size(48, 48),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    // errorFaded: 인라인 삭제는 낮은 강조 — confirm dialog에서 강한 red 사용
-                    foregroundColor: AppColors.errorFaded,
+                    // [DU1 구현131 C128-2] 인라인 삭제는 글자 링크(채움 없음)라 낮은 강조이고, 색은 작은 글 대비를 넘는 errorDark —
+                    //   예전 errorFaded(#EF5350)는 흰 카드 위 3.49:1(작은 글 4.5 미만, 구현128 관측). 확인 dialog 의 강한 red 는 그대로다.
+                    foregroundColor: AppColors.errorDark,
                   ),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     const Icon(Icons.delete_outline, size: 13),
                     const SizedBox(width: 3),
                     Text('삭제',
                         style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.errorFaded,
+                            color: AppColors.errorDark,
                             fontWeight: FontWeight.w500)),
                   ]),
                 ),
@@ -1536,12 +1603,8 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               color: AppColors.infoDark, fontWeight: FontWeight.w500));
     } else {
       // A: 완전 미등록
-      statusBadge = Row(mainAxisSize: MainAxisSize.min, children: [
-        Text('미등록',
-            style: ResponsiveHelper.smallStyle(context,
-                color: const Color(0xFF9CA3AF))),
-        const Icon(Icons.chevron_right, color: Color(0xFF9CA3AF), size: 16),
-      ]);
+      // [DU1 후속110 S038] 세무·신분증 미등록과 같은 중립 표시 — chevron 은 탭 동작 없는 상태 행에 '이동'을 암시했다.
+      statusBadge = _docStatusChip(context, _unregisteredStatus);
     }
 
     // ── 부제 텍스트 ────────────────────────────────────────────────
@@ -1557,6 +1620,20 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     } else {
       subText = '은행 · 계좌 · 예금주 · 통장사본';
     }
+
+    // [DU1 구현130 C128-3] 제목 · 은행명 묶음 — 아래 머리 Row 에서 상태에 따라 Wrap / Expanded 로 쓴다(위젯 구성은 예전 Column 그대로).
+    final Widget titleBlock = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('급여 계좌',
+                        style: ResponsiveHelper.bodyStyle(context)
+                            .copyWith(fontWeight: FontWeight.w600)),
+                    Text(subText,
+                        // [DU1 구현89 S038] 2.68:1 → textSecondary
+                        style: ResponsiveHelper.tinyStyle(context,
+                            color: AppColors.textSecondary)),
+                  ],
+                );
 
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
@@ -1584,21 +1661,24 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 color: hasBankAccount ? AppColors.infoDark : AppColors.grey400,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('급여 계좌',
-                        style: ResponsiveHelper.bodyStyle(context)
-                            .copyWith(fontWeight: FontWeight.w600)),
-                    Text(subText,
-                        style: ResponsiveHelper.tinyStyle(context,
-                            color: AppColors.grey500)),
-                  ],
-                ),
-              ),
-              // 상태 뱃지 (우측)
-              statusBadge,
+              // [DU1 구현130 C128-3] 제출 완료에서는 묶음과 상태 칩을 Wrap 으로 — 한 줄에 들어가면 칩이 예전처럼 오른쪽,
+              //   모자라면(좁은 폭 · 큰 글자) 칩이 묶음 아래 줄로 가서 제목 '급여 계좌' 가 음절로 끊기지 않는다
+              //   (구현128 관측: B 320×2.0 에서 '급여 계 / 좌'). 계좌만 · 미등록은 예전 Row 배치 그대로.
+              // [DU1 구현137 ②] 미등록도 Wrap(B 관측: 부제 '통장 / 사본') — 계좌만(통장사본 없음)은 fixture 가 없어 예전 Row 그대로.
+              if (!(hasBankAccount && !hasBankbook))
+                Expanded(
+                  child: Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    runSpacing: ResponsiveHelper.spacing(context, 6),
+                    children: [titleBlock, statusBadge],
+                  ),
+                )
+              else ...[
+                Expanded(child: titleBlock),
+                // 상태 뱃지 (우측)
+                statusBadge,
+              ],
             ],
           ),
 
@@ -1623,7 +1703,8 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   onPressed: _isLoading ? null : _showBankEditDialog,
                   style: TextButton.styleFrom(
                     padding: EdgeInsets.zero,
-                    minimumSize: Size.zero,
+                    // [DU1 구현129 C128-1] 글자 링크도 터치 최소 48×48(구현128 관측: 높이 N 19 / B 37). 글자·색·배치는 그대로.
+                    minimumSize: const Size(48, 48),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     foregroundColor: AppColors.grey600,
                   ),
@@ -1637,16 +1718,18 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   onPressed: _isLoading ? null : _deleteBankInfo,
                   style: TextButton.styleFrom(
                     padding: EdgeInsets.zero,
-                    minimumSize: Size.zero,
+                    // [DU1 구현129 C128-1] 글자 링크도 터치 최소 48×48(구현128 관측: 높이 N 19 / B 37). 글자·색·배치는 그대로.
+                    minimumSize: const Size(48, 48),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    foregroundColor: AppColors.errorFaded,
+                    // [DU1 구현131 C128-2] 신분증 삭제와 같은 errorDark(작은 글 대비).
+                    foregroundColor: AppColors.errorDark,
                   ),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     const Icon(Icons.delete_outline, size: 13),
                     const SizedBox(width: 3),
                     Text('삭제',
                         style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.errorFaded,
+                            color: AppColors.errorDark,
                             fontWeight: FontWeight.w500)),
                   ]),
                 ),
@@ -1748,6 +1831,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       //   그러면서도 **영구 토큰이 박힌 다운로드 URL** 이 PII 문서에 대해 만들어져
       //   Firestore 에 저장되고 있었다. 신분증은 [BUG-ID-01] 로 이미 이 경로를 막았다 —
       //   통장사본만 남아 있었다.
+      _stage('사진을 올리고 있어요');
       final storagePath = 'users/${user.uid}/bankbook_${DateTime.now().millisecondsSinceEpoch}.jpg';
       bool uploadOk = false;
       try {
@@ -1765,6 +1849,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       // 2. CF로 통장사본 canonical state 기록 — Admin SDK 경유로 직접 쓰기 차단 준수
       //    [DOCUMENT-VERIFICATION-INTEGRITY-R0] storagePath 직통 + 기기 확인 근거.
       //    [R8-P5] imageUrl 미전달 — 서버가 canonical 로 쓰는 값은 storagePath 하나다.
+      _stage('등록하고 있어요');
       newBankbookPath = storagePath; // CF 호출 전 Storage orphan 추적
       final markResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableMarkBankbookVerified')
@@ -1807,7 +1892,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       }
       if (mounted) ToastHelper.showError('통장사본 등록에 실패했습니다');
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() { _isLoading = false; _loadingMessage = null; });
     }
   }
 
@@ -1826,11 +1911,14 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       child: ElevatedButton(
         onPressed: onPressed,
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.workTypeBlue,   // #1565C0 flat
+          // [DU1 구현89 S038] 옛 #1565C0 이 같은 화면 단계 원(브랜드 #3859E8)·앱 주 행동색과 달랐다 — 브랜드 토큰(흰 글자 5.58:1).
+          backgroundColor: AppColors.brand,
           foregroundColor: Colors.white,
           elevation: 0,
           padding: EdgeInsets.symmetric(
               vertical: ResponsiveHelper.spacing(context, 10)),  // 14→10: 카드 시각 무게 경감
+          // [DU1 구현89 S038] 실측 48 — 공통 기준 주 버튼 최소 52(여백은 그대로, 최소값만).
+          minimumSize: const Size.fromHeight(52),
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12)),
           disabledBackgroundColor: AppColors.grey200,
@@ -1860,21 +1948,15 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   }
 
   /// 섹션 헤더 (settings_screen.dart 동일 스타일)
-  Widget _buildSectionHeader(String title, IconData icon) {
+  ///   [DU485] 설정 화면은 DU241 에서 16 bold 본문색 · 아이콘 없음으로 바뀌었는데 여기는 옛 양식(grey500 작은 글자 + 아이콘 · grey50 위 약 2.6)이었다.
+  ///   설정의 `_buildSectionHeader` 와 같은 정의로 맞춘다. 원문 그대로(짧은 두세 낱말).
+  Widget _buildSectionHeader(String title) {
     return Padding(
       padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 4)),
-      child: Row(
-        children: [
-          Icon(icon,
-              size: ResponsiveHelper.iconSize(context, 14),
-              color: AppColors.grey500),
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Text(
-            title,
-            style: ResponsiveHelper.smallStyle(context,
-                color: AppColors.grey500, fontWeight: FontWeight.w600),
-          ),
-        ],
+      child: Text(
+        title,
+        style: const TextStyle(
+            fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
       ),
     );
   }
@@ -2099,6 +2181,35 @@ class _BankEditDialogState extends State<_BankEditDialog> {
 //
 //   제출 후에는 컨트롤러를 비우고 시트를 닫는다(§29).
 // ══════════════════════════════════════════════════════════════
+/// [FULL13-REEVAL.2] 위젯 시험용 주입 지점 — Storage·ML Kit·callable 대신 합성 함수를 넣는다.
+///   운영 코드는 이 값을 설정하지 않는다(null 이면 실제 구현).
+@visibleForTesting
+class TaxIdentitySheetHooks {
+  static Future<File?> Function(String storagePath)? download;
+  static Future<Map<String, dynamic>> Function(
+      String imagePath, String expectedName, String expected, bool isForeign)? ocr;
+  static Future<String?> Function(String kind, String value,
+      DocFieldOutcome match, TaxIdDocumentEvidence? evidence)? submit;
+  static Future<ForeignIdOcrResult> Function(String imagePath)? foreignOcr;
+
+  static void reset() {
+    download = null;
+    ocr = null;
+    submit = null;
+    foreignOcr = null;
+  }
+}
+
+/// [FULL13-REEVAL.2] 위젯 시험에서 시트를 직접 띄운다.
+@visibleForTesting
+Widget debugTaxIdentitySheet({
+  required UserModel user,
+  bool isUpdate = false,
+  bool isForeignRecovery = false,
+}) =>
+    _TaxIdentitySheet(
+        user: user, isUpdate: isUpdate, isForeignRecovery: isForeignRecovery);
+
 class _TaxIdentitySheet extends StatefulWidget {
   const _TaxIdentitySheet({
     required this.user,
@@ -2110,8 +2221,10 @@ class _TaxIdentitySheet extends StatefulWidget {
   final bool isUpdate;
 
   /// [R1.4.1] 수집이 꺼져 있을 때 가입한 외국인의 1회 복구인가.
-  ///   서버가 입력값을 가입 때 만든 신원 지문과 대조하므로,
-  ///   여기서 별도 OCR 대조를 붙이지 않는다 — 그쪽이 더 강한 확인이다.
+  ///   서버가 입력값을 가입 때 만든 신원 지문과 대조한다(번호 확인).
+  ///   [FULL13-REEVAL.2] 그와 별개로, 올라간 등록증이 있으면 그 사진을 다시
+  ///   읽어 문서 대조 근거를 보낸다(대조 버튼·안내 문구는 붙이지 않는다).
+  ///   이름은 독립 근거가 없어 UNASSESSED 로 보낸다.
   final bool isForeignRecovery;
 
   @override
@@ -2123,6 +2236,10 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
   final _backCtrl = TextEditingController();
   final _backFocus = FocusNode();
 
+  /// [FULL13-REEVAL.3] 외국인 복구에서만 — 등록증 기재대로 직접 입력하는 영문 이름.
+  ///   비교에만 쓰고 저장하지 않는다.
+  final _legalNameCtrl = TextEditingController();
+
   bool _busy = false;
   String? _error;
 
@@ -2133,11 +2250,72 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
   DocFieldOutcome _match = DocFieldOutcome.unassessed;
   bool _checking = false;
 
+  /// [FULL13-REEVAL] 현재 업로드 신분증을 다시 읽은 근거 — 서버가 판정한다.
+  ///   입력이 바뀌면 버린다(그 값에 대한 근거가 아니다).
+  TaxIdDocumentEvidence? _evidence;
+
+  bool get _hasUploadedIdCard =>
+      (widget.user.idCardImagePath?.isNotEmpty ?? false) &&
+      (widget.user.idDocumentVersion ?? 0) > 0;
+
+  /// 본인 Storage 경로의 현재 신분증을 임시 파일로 받는다(호출자가 삭제).
+  ///   쓰기 도중 실패하면 반쯤 쓴 파일을 여기서 지운다.
+  Future<File?> _downloadUploadedIdCard() async {
+    final path = widget.user.idCardImagePath!;
+    final hook = TaxIdentitySheetHooks.download;
+    if (hook != null) return hook(path);
+    final bytes =
+        await FirebaseStorage.instance.ref(path).getData(10 * 1024 * 1024);
+    if (bytes == null) return null;
+    final dir = await getTemporaryDirectory();
+    final file = File(
+        '${dir.path}/tax_idcheck_${DateTime.now().millisecondsSinceEpoch}.jpg');
+    try {
+      await file.writeAsBytes(bytes, flush: true);
+    } catch (_) {
+      try {
+        await file.delete();
+      } catch (_) {/* 없으면 무시 */}
+      rethrow;
+    }
+    return file;
+  }
+
+  Future<Map<String, dynamic>> _ocr(String imagePath) async {
+    if (widget.isForeignRecovery) {
+      // [FULL13-REEVAL.3] 외국인 복구: 가입 때와 같은 등록증 OCR 로 읽고,
+      //   이번에 직접 입력한 영문 이름과 비교한다(저장된 legalName 은 OCR 로 채워졌을
+      //   수 있어 기준으로 쓰지 않는다). 번호는 후보로만 — 판정은 서버가 한다.
+      final fHook = TaxIdentitySheetHooks.foreignOcr;
+      final r = fHook != null
+          ? await fHook(imagePath)
+          : await ForeignIdOcrService.recognizeFromPath(imagePath);
+      final raw = (r.foreignIdRaw ?? '').replaceAll(RegExp(r'\D'), '');
+      return {
+        'identifierOutcome': raw.length == 13
+            ? (raw == _entered ? DocFieldOutcome.matched : DocFieldOutcome.mismatch)
+            : DocFieldOutcome.unreadable,
+        'nameOutcome':
+            ForeignIdOcrService.compareTypedLegalName(_legalNameCtrl.text, r),
+        'identifierCandidates': raw.length == 13 ? <String>[raw] : const <String>[],
+      };
+    }
+    final name = widget.user.name;
+    final hook = TaxIdentitySheetHooks.ocr;
+    if (hook != null) return hook(imagePath, name, _entered, false);
+    return OcrVerificationHelper.verifyIdCardName(
+      imagePath,
+      name,
+      expectedResidentNumber: _entered,
+    );
+  }
+
   @override
   void dispose() {
     _frontCtrl.dispose();
     _backCtrl.dispose();
     _backFocus.dispose();
+    _legalNameCtrl.dispose();
     super.dispose();
   }
 
@@ -2148,30 +2326,53 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
   bool get _canSubmit => _entered.length == 13 && !_busy;
 
   /// 신분증 사진과 대조. 선택 사항이며, 실패해도 등록을 막지 않는다.
+  ///
+  ///   [FULL13-REEVAL] 신분증이 이미 올라가 있으면 **그 사진**을 다시 읽는다 —
+  ///   새로 찍은 사진은 서버의 현재 문서가 아니다. 그 근거([_evidence])를
+  ///   등록과 함께 보내면 서버가 입력 13자리와 대조해 자동 대조를 다시 적는다.
   Future<void> _compareWithIdCard() async {
     if (_entered.length != 13) return;
     setState(() => _checking = true);
     File? image;
     try {
-      image = await ImageHelper.pickAndCompressImage(
-        context,
-        type: ImageType.document,
-        useBottomSheet: true,
-      );
+      final uploaded = _hasUploadedIdCard;
+      image = uploaded
+          ? await _downloadUploadedIdCard()
+          : await ImageHelper.pickAndCompressImage(
+              context,
+              type: ImageType.document,
+              useBottomSheet: true,
+            );
       if (image == null || !mounted) return;
-      final result = await OcrVerificationHelper.verifyIdCardName(
-        image.path,
-        widget.user.name,
-        expectedResidentNumber: _entered,
-      ).timeout(const Duration(seconds: 30),
+      final result = await _ocr(image.path).timeout(
+          const Duration(seconds: 30),
           onTimeout: () => <String, dynamic>{});
       if (!mounted) return;
-      setState(() => _match =
-          result['identifierOutcome'] as DocFieldOutcome? ??
-              DocFieldOutcome.unassessed);
+      // 시간 초과·인식 오류는 "못 읽었다"가 아니라 "판정 안 함"이다 — 근거를 보내지 않는다.
+      final assessed = result.containsKey('identifierOutcome');
+      setState(() {
+        _match = result['identifierOutcome'] as DocFieldOutcome? ??
+            DocFieldOutcome.unassessed;
+        _evidence = (uploaded && assessed)
+            ? TaxIdDocumentEvidence(
+                idDocumentVersion: widget.user.idDocumentVersion!,
+                name: result['nameOutcome'] as DocFieldOutcome? ??
+                    DocFieldOutcome.unassessed,
+                identifierCandidates:
+                    (result['identifierCandidates'] as List<String>?) ??
+                        const <String>[],
+              )
+            : null;
+      });
     } catch (e) {
       // 대조 실패는 불일치가 아니다 — 모르는 상태로 둔다(§16·§37).
-      if (mounted) setState(() => _match = DocFieldOutcome.unassessed);
+      //   [FULL13-REEVAL.2] 다운로드·OCR 실패면 근거도 보내지 않는다.
+      if (mounted) {
+        setState(() {
+          _match = DocFieldOutcome.unassessed;
+          _evidence = null;
+        });
+      }
     } finally {
       // 대조용 임시 파일은 업로드하지 않는다 — 여기서 끝난다.
       try {
@@ -2184,16 +2385,33 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
   Future<void> _submit() async {
     if (!_canSubmit) return;
     FocusScope.of(context).unfocus();
+    // [FULL13-REEVAL] 올라간 신분증이 있는데 아직 대조하지 않았으면 먼저 한다 —
+    //   정상 신청자가 버튼을 몰라서 수동 확인으로 떨어지지 않게. 실패해도 등록은 계속한다.
+    //   [FULL13-REEVAL.2] 외국인 복구도 같다 — 지금 등록증 사진을 다시 읽는다.
+    if (_hasUploadedIdCard && _evidence == null) {
+      await _compareWithIdCard();
+      if (!mounted) return;
+    }
     setState(() {
       _busy = true;
       _error = null;
     });
     final value = _entered;
-    final err = widget.isForeignRecovery
-        ? await TaxIdentityService.recoverForeign(value)
-        : widget.isUpdate
-            ? await TaxIdentityService.update(value, documentMatch: _match)
-            : await TaxIdentityService.register(value, documentMatch: _match);
+    final evidence = _evidence;
+    final kind = widget.isForeignRecovery
+        ? 'recoverForeign'
+        : (widget.isUpdate ? 'update' : 'register');
+    final hook = TaxIdentitySheetHooks.submit;
+    final err = hook != null
+        ? await hook(kind, value, _match, evidence)
+        : widget.isForeignRecovery
+            ? await TaxIdentityService.recoverForeign(value,
+                documentEvidence: evidence)
+            : widget.isUpdate
+                ? await TaxIdentityService.update(value,
+                    documentMatch: _match, documentEvidence: evidence)
+                : await TaxIdentityService.register(value,
+                    documentMatch: _match, documentEvidence: evidence);
     if (!mounted) return;
     if (err != null) {
       setState(() {
@@ -2205,6 +2423,7 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
     // [§29] 제출 즉시 입력값을 지운다 — 뒤로 가도 남아 있지 않게.
     _frontCtrl.clear();
     _backCtrl.clear();
+    _evidence = null;
     if (!mounted) return;
     Navigator.pop(context, true);
   }
@@ -2212,13 +2431,14 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
   ({String text, Color color})? get _matchHint => switch (_match) {
         DocFieldOutcome.matched =>
           (text: '신분증의 번호와 같습니다', color: AppColors.successDark),
+        // [DU281 TX3] errorFaded(#EF5350 3.49) → errorDark, grey600 → 보조색
         DocFieldOutcome.mismatch => (
             text: '신분증의 번호와 다릅니다. 입력값을 확인해주세요',
-            color: AppColors.errorFaded
+            color: AppColors.errorDark
           ),
         DocFieldOutcome.unreadable => (
             text: '신분증에서 번호를 읽지 못했습니다. 등록은 계속할 수 있어요',
-            color: AppColors.grey600
+            color: AppColors.textSecondary
           ),
         DocFieldOutcome.unassessed => null,
       };
@@ -2226,7 +2446,10 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
   @override
   Widget build(BuildContext context) {
     final hint = _matchHint;
-    return Padding(
+    // [DU281 TX7] 320·2.0 에서 내용이 아래로 305px(키보드가 뜨면 585px) 넘쳐 입력칸·'등록하기'에 닿지 못했다 —
+    //   내용을 스크롤 안에 둔다(키보드 높이만큼 아래 여백은 그대로).
+    return SingleChildScrollView(
+      child: Padding(
       padding: EdgeInsets.only(
         left: ResponsiveHelper.spacing(context, 20),
         right: ResponsiveHelper.spacing(context, 20),
@@ -2238,18 +2461,22 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(widget.isUpdate ? '세무정보 수정' : '세무정보 등록',
-              style: ResponsiveHelper.bodyStyle(context)
-                  .copyWith(fontWeight: FontWeight.w700)),
+          // [DU281 TX1] 기본 grey700 15 → 시트 제목(subtitle bold 본문색, O057 과 같다). 낱말 단위.
+          Text(TextLayout.keepWords(widget.isUpdate ? '세무정보 수정' : '세무정보 등록'),
+              semanticsLabel: widget.isUpdate ? '세무정보 수정' : '세무정보 등록',
+              style: ResponsiveHelper.subtitleStyle(context)
+                  .copyWith(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
           SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          // [DU281 r1] 낱말 단위(B320 '쓰이/는'·'다/시')
           Text(
-            widget.isForeignRecovery
+            TextLayout.keepWords(widget.isForeignRecovery
                 ? '가입할 때 확인한 외국인등록번호를 한 번 더 입력해주세요.\n'
                     '가입 정보와 같은 번호일 때만 등록됩니다.'
                 : '소득신고·원천징수에 쓰이는 주민등록번호입니다.\n'
-                    '등록한 번호는 화면에 다시 표시되지 않습니다.',
+                    '등록한 번호는 화면에 다시 표시되지 않습니다.'),
+            // [DU281 TX2] grey600(4.61) → 보조색
             style:
-                ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           // [RELEASE-CORRECTION-PRIVACY-INLINE-DISCLOSURE]
@@ -2260,6 +2487,22 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
             icon: Icons.lock_outline,
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          // [DU282 DF1] 큰 글자: 두 칸을 나란히 두면 '앞 6자리' 값이 칸보다 넓어 앞이 잘려 보였다
+          //   (320·2.0 칸 89.1 < 글자 109.6, '00101'). 위아래로 둔다 — 입력 순서·포커스 이동·가림은 같다.
+          //   기본 배율은 기존 가로 배치 그대로(DU274·DU276 과 같은 큰 글자 전환 기준).
+          if (MediaQuery.textScalerOf(context).scale(10) >= 13)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _digitField(_frontCtrl, 6, '앞 6자리',
+                    autofocus: true,
+                    onFilled: () => _backFocus.requestFocus()),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                _digitField(_backCtrl, 7, '뒤 7자리',
+                    focusNode: _backFocus, obscure: true),
+              ],
+            )
+          else
           Row(
             children: [
               Expanded(
@@ -2280,16 +2523,35 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
               ),
             ],
           ),
+          // [FULL13-REEVAL.3] 외국인 복구 — 영문 이름을 등록증 기재대로 한 번 입력한다.
+          //   지금 올라간 등록증의 이름과 비교하는 데만 쓰고 저장하지 않는다.
+          if (widget.isForeignRecovery) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            TextField(
+              controller: _legalNameCtrl,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(
+                labelText: '영문 이름 (등록증 기재대로)',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              onChanged: (_) => setState(() => _evidence = null),
+            ),
+          ],
           if (hint != null) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-            Text(hint.text,
-                style: ResponsiveHelper.tinyStyle(context, color: hint.color)),
+            // [DU281 r2] 낱말 단위(B320 '다릅니/다'). 읽기 이름은 원문.
+            Text(TextLayout.keepWords(hint.text),
+                semanticsLabel: hint.text,
+                style: ResponsiveHelper.smallStyle(context, color: hint.color)), // [DU281 TX3] tiny → small
           ],
           if (_error != null) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-            Text(_error!,
-                style: ResponsiveHelper.tinyStyle(context,
-                    color: AppColors.errorFaded)),
+            Text(TextLayout.keepWords(_error!),
+                semanticsLabel: _error,
+                // [DU281 TX4] tiny errorFaded(3.49) → small errorDark · [r2] 낱말 단위
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.errorDark)),
           ],
           SizedBox(height: ResponsiveHelper.spacing(context, 14)),
           // 대조는 선택이다. 건너뛰어도 등록은 된다 — 확인은 나중에
@@ -2307,10 +2569,15 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
                     height: 14,
                     child: CircularProgressIndicator(strokeWidth: 2))
                 : const Icon(Icons.badge_outlined, size: 16),
-            label: Text(_checking ? '확인 중…' : '신분증 사진으로 확인 (선택)',
-                style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.infoDark)),
-            style: TextButton.styleFrom(padding: EdgeInsets.zero),
+            label: Text(_checking ? '확인 중…' : '신분증 사진으로 확인 (선택)'),
+            // [DU281 TX5] padding 0(터치 48 미만)·글자색 직접 지정(누를 수 없을 때도 같은 색) →
+            //   대표색 글자 버튼 48, 스타일은 textStyle 로(비활성은 테마 비활성색)
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.brand,
+              minimumSize: const Size(48, 48),
+              padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 4)),
+              textStyle: ResponsiveHelper.smallStyle(context, fontWeight: FontWeight.w600),
+            ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 14)),
           SafeArea(
@@ -2319,6 +2586,16 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: _canSubmit ? _submit : null,
+                // [DU281 TX6] 대표색 52, 비활성 grey200 위 보조색(DU280 과 같다)
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.brand,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: AppColors.grey200,
+                  disabledForegroundColor: AppColors.textSecondary,
+                  elevation: 0,
+                  minimumSize: const Size.fromHeight(52),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
                 child: _busy
                     ? const SizedBox(
                         width: 18,
@@ -2330,6 +2607,7 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
             ),
           ),
         ],
+      ),
       ),
     );
   }
@@ -2360,7 +2638,10 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
         ),
         onChanged: (v) {
           // 입력이 바뀌면 이전 대조 결과는 더 이상 이 값에 대한 것이 아니다.
-          setState(() => _match = DocFieldOutcome.unassessed);
+          setState(() {
+            _match = DocFieldOutcome.unassessed;
+            _evidence = null;
+          });
           if (v.length == len) onFilled?.call();
         },
       );

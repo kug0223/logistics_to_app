@@ -7,6 +7,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/contract_status_visual.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
@@ -20,7 +21,10 @@ import '../../widgets/common/loading_widget.dart';
 /// - 무한 스크롤 (pageSize: 20)
 /// - 카드 탭 → HistoricalContractDetailScreen
 class HistoricalContractsScreen extends StatefulWidget {
-  const HistoricalContractsScreen({super.key});
+  /// [DU345 seam] 서비스 주입 지점(시험 · 표시 검증용). null 이면 HistoricalContractService() — 기존과 같다.
+  final HistoricalContractService? service;
+
+  const HistoricalContractsScreen({super.key, this.service});
 
   @override
   State<HistoricalContractsScreen> createState() =>
@@ -28,7 +32,7 @@ class HistoricalContractsScreen extends StatefulWidget {
 }
 
 class _HistoricalContractsScreenState extends State<HistoricalContractsScreen> {
-  final _service = HistoricalContractService();
+  late final HistoricalContractService _service = widget.service ?? HistoricalContractService();
   final _scrollController = ScrollController();
 
   List<HistoricalContractSummary> _contracts = [];
@@ -274,6 +278,12 @@ class _HistoricalContractCard extends StatelessWidget {
     return (bg: c.bg, fg: c.fg);
   }
 
+  // [DU345] 머리 적응 배치에서 배지 폭을 재는 데 쓴다(_ArchiveStatusBadge 와 같은 글자 · 여백).
+  String get _badgeLabel => summary.displayStatus;
+  TextStyle _badgeStyle(BuildContext context) =>
+      ResponsiveHelper.tinyStyle(context).copyWith(fontWeight: FontWeight.w600);
+  static const double _badgePadH = 8;
+
   @override
   Widget build(BuildContext context) {
     final dateInfo = _resolveDate();
@@ -315,42 +325,73 @@ class _HistoricalContractCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // 헤더: 근로자명 + 상태 배지
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _workerDisplayName,
-                        style: ResponsiveHelper.bodyStyle(context)
-                            .copyWith(fontWeight: FontWeight.w700),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                    _ArchiveStatusBadge(
-                      label: summary.displayStatus,
-                      bg: colors.bg,
-                      fg: colors.fg,
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                    Icon(
-                      Icons.chevron_right,
-                      size: ResponsiveHelper.iconSize(context, 16),
-                      color: AppColors.grey400,
-                    ),
-                  ],
-                ),
+                // [DU345] 이름 + 상태 배지 — 배지 폭(실제 글자 배율)과 이름 최소 폭(본문 굵은 글자 6자)을 재서 한 줄에 같이 못 두면
+                //   배지를 이름 아래 줄로 내린다(S006 DU342 와 같은 방식). 이름은 식별 정보 — 말줄임 없이 identity 줄바꿈.
+                LayoutBuilder(builder: (ctx, cons) {
+                  final nameStyle = ResponsiveHelper.bodyStyle(ctx).copyWith(fontWeight: FontWeight.w700);
+                  final name = Text(
+                    TextLayout.identity(_workerDisplayName),
+                    semanticsLabel: _workerDisplayName,
+                    style: nameStyle,
+                  );
+                  final badge = _ArchiveStatusBadge(label: summary.displayStatus, bg: colors.bg, fg: colors.fg);
+                  double oneLine(String text, TextStyle style) {
+                    final tp = TextPainter(
+                      text: TextSpan(text: text, style: DefaultTextStyle.of(ctx).style.merge(style)),
+                      textDirection: Directionality.of(ctx),
+                      textScaler: MediaQuery.textScalerOf(ctx),
+                      maxLines: 1,
+                    )..layout();
+                    final w = tp.width;
+                    tp.dispose();
+                    return w;
+                  }
+                  final gap = ResponsiveHelper.spacing(ctx, 8);
+                  final badgeWidth = oneLine(_badgeLabel, _badgeStyle(ctx)) + ResponsiveHelper.spacing(ctx, _badgePadH) * 2;
+                  final trailingWidth = ResponsiveHelper.iconSize(ctx, 16) + ResponsiveHelper.spacing(ctx, 4);
+                  final sideBySide = !cons.hasBoundedWidth ||
+                      cons.maxWidth - gap - badgeWidth - trailingWidth >= oneLine('가나다라마바', nameStyle);
+                  if (sideBySide) {
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(child: name),
+                        SizedBox(width: gap),
+                        badge,
+                        SizedBox(width: ResponsiveHelper.spacing(ctx, 4)),
+                        Icon(
+                          Icons.chevron_right,
+                          size: ResponsiveHelper.iconSize(ctx, 16),
+                          color: AppColors.grey600, // [DU345] grey400 → grey600
+                        ),
+                      ],
+                    );
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [Expanded(child: name),
+                        SizedBox(width: ResponsiveHelper.spacing(ctx, 4)),
+                        Icon(
+                          Icons.chevron_right,
+                          size: ResponsiveHelper.iconSize(ctx, 16),
+                          color: AppColors.grey600, // [DU345] grey400 → grey600
+                        ),]),
+                      SizedBox(height: ResponsiveHelper.spacing(ctx, 4)),
+                      badge,
+                    ],
+                  );
+                }),
 
                 SizedBox(height: ResponsiveHelper.spacing(context, 4)),
 
                 // 사업장명
+                // [DU345] 사업장명 — 한 줄 말줄임 대신 낱말 단위 줄바꿈
                 Text(
-                  _businessDisplayName,
+                  TextLayout.phrases(_businessDisplayName),
+                  semanticsLabel: _businessDisplayName,
                   style: ResponsiveHelper.captionStyle(context)
                       .copyWith(color: AppColors.textSecondary),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
 
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -368,12 +409,12 @@ class _HistoricalContractCard extends StatelessWidget {
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                       Expanded(
+                        // [DU345] 말줄임 대신 줄바꿈(라벨 · 날짜 덩어리)
                         child: Text(
-                          '${dateInfo.label}  $formattedDate',
+                          '${TextLayout.keepWords(dateInfo.label)}  ${TextLayout.unit(formattedDate)}',
+                          semanticsLabel: '${dateInfo.label}  $formattedDate',
                           style: ResponsiveHelper.captionStyle(context)
                               .copyWith(color: AppColors.textSecondary),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ] else

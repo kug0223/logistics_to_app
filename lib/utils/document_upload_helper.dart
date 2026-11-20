@@ -40,7 +40,11 @@ class DocumentPickResult {
   ///   평문으로 복원할 수 없다. 그래서 후보만 올리고 **비교는 서버가** 한다.
   ///   예전에는 앞 7자리(생년월일+성별)만 맞으면 MATCHED 였다 — 같은 날
   ///   태어난 같은 성별이면 누구의 신분증이든 통과하는 증거였다.
-  final List<String> identifierCandidates;
+  ///
+  ///   [FULL13-REEVAL.2] `null` = 번호 판독을 하지 않았다(서버: UNASSESSED).
+  ///   빈 목록 = 읽으려 했지만 못 읽었다(서버: UNREADABLE → OCR_UNCERTAIN).
+  ///   둘을 섞으면 "판정 안 함"이 "못 읽음"으로 적힌다.
+  final List<String>? identifierCandidates;
 
   const DocumentPickResult({
     required this.path,
@@ -48,7 +52,7 @@ class DocumentPickResult {
     this.identifierOutcome = DocFieldOutcome.unassessed,
     this.ocrFailed = false,
     this.overridden = false,
-    this.identifierCandidates = const [],
+    this.identifierCandidates,
   });
 
   /// CF로 보낼 근거 payload. 서버가 이 값으로 상태를 계산한다.
@@ -69,7 +73,9 @@ class DocumentPickResult {
         // [R7-P4.4E.10A] 서버가 canonical 지문과 대조할 후보. 비어 있으면
         //   서버는 식별번호를 "읽지 못했다" 로 본다 — 앞 7자리 추정으로
         //   일치를 만들지 않는다.
-        if (identifierCandidates.isNotEmpty)
+        // [FULL13-REEVAL.2] 판독을 했으면 빈 목록이라도 보낸다. 키가 없으면
+        //   서버는 "판독하지 않았다"(UNASSESSED)로 읽는다.
+        if (identifierCandidates != null)
           'identifierCandidates': identifierCandidates,
       };
 
@@ -85,6 +91,37 @@ class DocumentPickResult {
         'ocrFailed': ocrFailed,
         'overridden': false,
       };
+
+  /// [FULL13-REEVAL.2] 외국인 가입 업로드의 근거.
+  ///
+  ///   번호는 근로자가 **직접 입력**한다(OCR 값으로 칸을 채우지 않는다). 그래서
+  ///   같은 사진에서 OCR 이 읽은 번호를 후보로 보내면 서버가 입력 번호의 지문과
+  ///   대조할 수 있다 — 자기 대조가 아니다.
+  ///
+  ///   - 수집이 꺼져 있으면 지금처럼 무판정 근거만 보낸다(새 전송 없음).
+  ///   - [FULL13-REEVAL.3] 이름도 직접 입력이다. [nameOutcome] 은 입력 이름 ↔ 같은
+  ///     사진의 OCR 이름 비교 결과(`ForeignIdOcrService.compareTypedLegalName`).
+  ///     비교하지 않았으면 UNASSESSED 로 남고, 서버는 MATCHED 를 적지 않는다.
+  ///   - OCR 이 예외로 끝났으면 ocrFailed. 돌았지만 번호를 못 읽었으면 빈 후보.
+  static Map<String, dynamic> foreignSignupSelfCheck({
+    required bool collectionEnabled,
+    required bool ocrAttempted,
+    required bool ocrThrew,
+    String? ocrForeignIdRaw,
+    DocFieldOutcome nameOutcome = DocFieldOutcome.unassessed,
+  }) {
+    if (!collectionEnabled || !ocrAttempted) return unassessedSelfCheck();
+    if (ocrThrew) return unassessedSelfCheck(ocrFailed: true);
+    final digits = (ocrForeignIdRaw ?? '').replaceAll(RegExp(r'\D'), '');
+    return {
+      'selfCheckVersion': 2,
+      'name': nameOutcome.wire,
+      'identifier': DocFieldOutcome.unassessed.wire,
+      'ocrFailed': false,
+      'overridden': false,
+      'identifierCandidates': digits.length == 13 ? [digits] : const <String>[],
+    };
+  }
 }
 
 class DocumentUploadHelper {

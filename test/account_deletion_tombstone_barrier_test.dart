@@ -356,18 +356,40 @@ void main() {
           '/databases/(default)/documents/account_deletion_tombstones/\$(uid));'));
       // get() 으로 내용을 읽지 않는다 — 존재만 본다 (§5)
       expect(h, isNot(contains('firestore.get(')));
-      // 전체 파일에서 cross-service 호출은 이 한 곳뿐이다.
+      // 전체 파일에서 barrier 조회(exists)는 이 한 곳뿐이다.
       expect('firestore.exists('.allMatches(stRules).length, 1);
-      expect('firestore.get('.allMatches(_codeOf(stRules)).length, 0);
-      // helper 사용도 1회 — 같은 평가에서 중복 조회하지 않는다 (§40)
-      expect('accountDeletionBarrierExists(uid)'.allMatches(stRules).length, 2,
-          reason: '정의 1 + 사용 1');
+      // [FULL13-DOC-INTEGRITY.4 갱신] 이전: get() 0. 이제 신분증 객체 **delete** 에서만
+      //   "지금 참조 중인가"를 get() 1회로 본다(isCurrentIdCard). delete 분기는 barrier 를
+      //   보지 않으므로 평가 한 번당 Firestore 접근은 여전히 최대 1회다(§40).
+      // [DOC-PRODUCT-DELETE.8 갱신] 예전 단언: get() 1곳. create 에 '정리 대기 이름은 다시 만들지
+      //   못한다'(isRetiringIdCard)가 더해져 2곳이다. 둘 다 **같은 users 문서**라 평가당 서로 다른
+      //   문서 수는 users + tombstone 최대 2개 그대로다(§40).
+      expect('firestore.get('.allMatches(_codeOf(stRules)).length, 2);
+      final cur = _flat(_slice(stRules, 'function isCurrentIdCard(uid, name)', '\n    }'));
+      expect(cur, contains('firestore.get(/databases/(default)/documents/users/\$(uid))'));
+      final ret = _flat(_slice(stRules, 'function isRetiringIdCard(uid, name)', '\n    }'));
+      expect(ret, contains('firestore.get(/databases/(default)/documents/users/\$(uid))'));
+      // barrier helper 사용은 create·update 두 분기 — 한 평가에서 둘이 같이 돌지 않는다 (§40)
+      expect('accountDeletionBarrierExists(uid)'.allMatches(stRules).length, 3,
+          reason: '정의 1 + create 1 + update 1');
     });
 
     test('ACC-STOR-BAR-01~07 create/update 가 barrier 뒤에 걸린다', () {
       final u = stUsers();
+      // [FULL13-DOC-INTEGRITY.4 갱신] 이전: `allow create, update:` 한 줄. 신분증 객체의
+      //   덮어쓰기 금지 때문에 둘로 나뉘었다 — 둘 다 여전히 barrier 를 마지막에 본다.
+      // [STORAGE-FINALIZE.5 · S1] 신분증 이름은 객체가 없고 **지금 참조 경로가 아닐 때만** 만든다.
+      // [DOC-PRODUCT-DELETE.8 갱신] 정리 대기(idDocumentOrphanPaths) 이름도 만들지 못한다 — 늦게 끝나는
+      //   서버 정리가 지우는 generation 이 언제나 정리 대기 전의 그 객체가 되게. barrier 는 여전히 마지막이다.
       expect(u, contains(
-          'allow create, update: if isLoggedIn() && request.auth.uid == uid && '
+          'allow create: if isLoggedIn() && request.auth.uid == uid && '
+          '(!isIdCardName(request.resource.name) || '
+          '(resource == null && !isCurrentIdCard(uid, request.resource.name) && '
+          '!isRetiringIdCard(uid, request.resource.name))) && '
+          'isUnder5MB() && isImageType() && !accountDeletionBarrierExists(uid);'));
+      expect(u, contains(
+          'allow update: if isLoggedIn() && request.auth.uid == uid && '
+          '!isIdCardName(resource.name) && '
           'isUnder5MB() && isImageType() && !accountDeletionBarrierExists(uid);'));
       // generic prefix 이므로 네 writer + 미래 writer 전부 덮는다 (§32·§33)
       expect(u, contains('match /users/{uid}/{allPaths=**} {'));
@@ -375,12 +397,20 @@ void main() {
 
     test('ACC-STOR-BAR-10·11 read·delete semantics 무변경 (§30·§63)', () {
       final u = stUsers();
+      // [FULL13-DOC-INTEGRITY.4 갱신] 이전: `allow read, delete:` 한 줄(둘 다 본인만).
+      //   read 는 그대로다. delete 는 신분증 객체 중 **지금 참조 중인 것**만 본인이 못 지운다
+      //   (지운 뒤 같은 경로로 다시 만들어 옛 판정에 새 사진을 붙이는 우회 차단).
+      //   탈퇴 barrier 와 무관하다 — 두 분기 모두 barrier 를 보지 않는다(§30).
+      expect(u, contains('allow read: if isLoggedIn() && request.auth.uid == uid;'));
+      // [DOC-LATE-DELETE.7 갱신] 예전 단언: (!isIdCardName(resource.name) || !isCurrentIdCard(uid, resource.name)).
+      //   신분증 객체는 이제 클라이언트가 아예 지우지 못한다 — 승인 뒤 늦게 끝나는 클라이언트 삭제가
+      //   현재 사진을 지우는 경쟁을 닫는다(정리는 서버가 정리 대기 거래 뒤에 한다). 다른 파일은 그대로.
       expect(u, contains(
-          'allow read, delete: if isLoggedIn() && request.auth.uid == uid;'));
-      // read/delete 분기에 barrier 가 끼지 않았다.
-      final rd = _slice(stUsers(), 'allow read, delete:', ';');
+          'allow delete: if isLoggedIn() && request.auth.uid == uid && '
+          '!isIdCardName(resource.name);'));
+      final rd = _slice(stUsers(), 'allow read:', 'allow create:');
       expect(rd, isNot(contains('accountDeletionBarrierExists')));
-      expect(rd, isNot(contains('firestore.')));
+      expect(rd, isNot(contains('firestore.exists')));
     });
 
     test('ACC-STOR-BAR-20 기존 MIME·크기 정책이 유지된다 (§31·§61)', () {

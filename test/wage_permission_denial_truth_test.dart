@@ -8,6 +8,7 @@
 //
 // 여기서는 **렌더할 수 있는 쪽(계약)** 을 실제로 세워 대조 기준을 만든다.
 // 권한을 부여·해제하지 않는다 — fake provider 의 현재 상태만 읽는다.
+import 'support/visible_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -162,7 +163,7 @@ Future<void> _pushContract(
     ),
   );
   await tester.pump();
-  await tester.tap(find.text('계약 관리 열기'));
+  await tester.tap(findVisibleText('계약 관리 열기'));
   for (var i = 0; i < 30; i++) {
     await tester.pump(const Duration(milliseconds: 50));
   }
@@ -185,21 +186,21 @@ void main() {
     await _pushContract(tester, contract: false);
 
     // 더 이상 말없이 사라지지 않는다.
-    expect(find.text('계약 관리 열기'), findsNothing);
-    expect(find.text('접근 권한이 없습니다'), findsOneWidget);
-    expect(find.text('계약 관리 권한이 있는 관리자에게 문의하세요.'), findsOneWidget);
+    expect(findVisibleText('계약 관리 열기'), findsNothing);
+    expect(findVisibleText('접근 권한이 없습니다'), findsOneWidget);
+    expect(findVisibleText('계약 관리 권한이 있는 관리자에게 문의하세요.'), findsOneWidget);
   });
 
   testWidgets('[WPD-2] 권한이 있으면 화면이 열린다 (양성 대조)', (tester) async {
     await _pushContract(tester, contract: true);
 
-    expect(find.text('계약 관리 열기'), findsNothing); // 앞 화면을 덮었다
-    expect(find.text('접근 권한이 없습니다'), findsNothing);
+    expect(findVisibleText('계약 관리 열기'), findsNothing); // 앞 화면을 덮었다
+    expect(findVisibleText('접근 권한이 없습니다'), findsNothing);
   });
 
   testWidgets('[WPD-3] 머무는 중 회수되면 그때는 이유와 담당자를 말한다', (tester) async {
     await _pushContract(tester, contract: true);
-    expect(find.text('접근 권한이 없습니다'), findsNothing);
+    expect(findVisibleText('접근 권한이 없습니다'), findsNothing);
 
     // 관리자가 권한을 거둬들인 상황 — provider 상태만 바꾸고 알린다.
     gProvider.revokeContract();
@@ -208,8 +209,8 @@ void main() {
     }
 
     // "계약이 없다"가 아니라 "볼 수 없다"이고, 다음에 누구에게 갈지 말한다.
-    expect(find.text('접근 권한이 없습니다'), findsOneWidget);
-    expect(find.text('계약 관리 권한이 있는 관리자에게 문의하세요.'), findsOneWidget);
+    expect(findVisibleText('접근 권한이 없습니다'), findsOneWidget);
+    expect(findVisibleText('계약 관리 권한이 있는 관리자에게 문의하세요.'), findsOneWidget);
   });
 
   testWidgets('[WPD-4] 320dp x 2.0 — 회수 안내가 잘리지 않는다', (tester) async {
@@ -221,7 +222,7 @@ void main() {
     }
 
     expect(tester.takeException(), isNull);
-    expect(find.text('접근 권한이 없습니다'), findsOneWidget);
-    expect(find.text('계약 관리 권한이 있는 관리자에게 문의하세요.'), findsOneWidget);
+    expect(findVisibleText('접근 권한이 없습니다'), findsOneWidget);
+    expect(findVisibleText('계약 관리 권한이 있는 관리자에게 문의하세요.'), findsOneWidget);
   });
 }

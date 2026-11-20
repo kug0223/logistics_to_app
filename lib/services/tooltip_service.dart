@@ -3,7 +3,10 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/responsive_helper.dart';
+import '../utils/text_layout.dart';
 import '../theme/app_colors.dart';
+import '../widgets/common/common_widgets.dart';
+import '../widgets/common/first_line_icon.dart';
 
 /// 상황별 툴팁 서비스
 /// 
@@ -99,6 +102,13 @@ class TooltipService {
 }
 
 /// 툴팁 다이얼로그 위젯
+///
+/// [DU433 · 시안 · Standards §12.2 DU308 선례] 넓은 그라데이션 머리 띠 · 흰 제목을 걷었다.
+///   - 머리: 흰 바탕 · 작은 의미색 타일 · 진한 제목.
+///   - 본문: 그림자 없는 팁 묶음.
+///   - 버튼: 브랜드 주 행동(CommonWidgets.primaryButton).
+///   의미색은 타일 · 점에만 남는다. 상태 배지와 같은 Bg/Dark 짝을 쓴다(같은 의미 = 같은 토큰).
+///   예전 의미색 채움 버튼은 흰 글자 대비가 amber 1.6 · success 2.8 · info 3.1 로 4.5 에 못 미쳤다.
 class _TooltipDialog extends StatelessWidget {
   final String title;
   final String message;
@@ -114,14 +124,25 @@ class _TooltipDialog extends StatelessWidget {
     this.iconColor,
   });
 
+  /// 의미색 → (타일 바탕, 아이콘 · 점) 짝. 호출처 색(success · amber · info · 없음)은 배지 짝으로, 그 밖의 색은 α.15 타일로 둔다.
+  static ({Color bg, Color fg}) _pairOf(Color? c) {
+    if (c == null) return (bg: AppColors.brandSurface, fg: AppColors.brand);
+    if (c == AppColors.success) return (bg: AppColors.successBg, fg: AppColors.successDark);
+    if (c == AppColors.amber) return (bg: AppColors.warningBg, fg: AppColors.warningDark);
+    if (c == AppColors.info) return (bg: AppColors.infoBg, fg: AppColors.infoDark);
+    return (bg: c.withValues(alpha: 0.15), fg: c);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final effectiveIconColor = iconColor ?? theme.primaryColor;
+    final pair = _pairOf(iconColor);
     // 제목에서 앞쪽 이모지 제거 (디자인으로 대신 표현)
     final cleanTitle = title.replaceAll(RegExp(r'^[\u{1F300}-\u{1FAFF}⭐💡📍✅❌✨🔔]\s*', unicode: true), '');
+    final side = ResponsiveHelper.spacing(context, 20);
 
     return Dialog(
+      // [DU433] 창 바탕을 흰색으로 명시한다 — 미지정이면 M3 기본(surfaceContainerHigh)의 옅은 보라 기운이 깔린다(DU308 과 같다).
+      backgroundColor: AppColors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       clipBehavior: Clip.antiAlias,
       insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
@@ -129,69 +150,61 @@ class _TooltipDialog extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // 헤더 — 앱 그라데이션 스타일
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [theme.primaryColor, theme.colorScheme.secondary],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(icon,
-                      color: Colors.white,
-                      size: ResponsiveHelper.iconSize(context, 22)),
+          // 머리 — 흰 바탕 · 작은 의미색 타일 · 진한 제목(넓은 색 띠 없음)
+          Padding(
+            padding: EdgeInsets.fromLTRB(side, side, side, 0),
+            child: LayoutBuilder(builder: (_, box) {
+              final tilePad = ResponsiveHelper.spacing(context, 10);
+              final tileIcon = ResponsiveHelper.iconSize(context, 22);
+              final gap = ResponsiveHelper.spacing(context, 12);
+              final tile = Container(
+                padding: EdgeInsets.all(tilePad),
+                decoration: BoxDecoration(
+                  color: pair.bg,
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                Expanded(
-                  child: Text(
-                    cleanTitle,
-                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        color: Colors.white, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
-            ),
+                child: Icon(icon, color: pair.fg, size: tileIcon),
+              );
+              final titleText = Text(
+                TextLayout.keepWords(cleanTitle),
+                semanticsLabel: cleanTitle,
+                style: ResponsiveHelper.subtitleStyle(context),
+              );
+              // [DU433] 큰 글자 · 좁은 창에서는 제목 낱말이 타일 옆 칸에 안 들어간다
+              //   (B 320@2.0: '작성이시네요!' 200 > 옆 칸 176) — 그때는 타일을 제목 위로 올린다(음절 끊김 없이 낱말 사이 줄바꿈).
+              if (TextLayout.fits(context, box.maxWidth - tilePad * 2 - tileIcon - gap, 120)) {
+                return Row(children: [tile, SizedBox(width: gap), Expanded(child: titleText)]);
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [tile, SizedBox(height: gap), titleText],
+              );
+            }),
           ),
 
-          // 본문
-          Container(
-            color: AppColors.grey50,
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 18)),
+          // 본문 — [.64] 320·1.3 에서 아래로 넘쳤다(고정 Column). 머리는 두고 본문만 스크롤한다.
+          Flexible(
+            child: SingleChildScrollView(
+            child: Padding(
+            padding: EdgeInsets.fromLTRB(side, ResponsiveHelper.spacing(context, 12), side, side),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 메시지
+                // 메시지 — [.64] 낱말 단위로만 줄을 바꾼다(긴 안내가 음절에서 끊기지 않게)
                 Text(
-                  message,
+                  TextLayout.keepWords(message),
                   style: ResponsiveHelper.bodyStyle(context,
                       color: AppColors.grey700),
                 ),
 
-                // 팁 목록 — 아이콘 불렛
+                // 팁 목록 — 의미색 점 · 그림자 없는 묶음(화면 바탕색 면)
                 if (tips != null && tips!.isNotEmpty) ...[
                   SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                   Container(
                     padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: AppColors.background,
                       borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.04),
-                          blurRadius: 6,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
                     ),
                     child: Column(
                       children: tips!.asMap().entries.map((e) {
@@ -201,21 +214,19 @@ class _TooltipDialog extends StatelessWidget {
                             Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Container(
-                                  margin: EdgeInsets.only(
-                                      top: ResponsiveHelper.spacing(context, 2),
-                                      right: ResponsiveHelper.spacing(context, 8)),
-                                  width: 5, height: 5,
-                                  decoration: BoxDecoration(
-                                    color: effectiveIconColor,
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
+                                // [DU451] 점이 위 여백 2 · 5×5 고정이라 첫 줄 가운데보다 위에 있었다(W ≈ 5 · B ≈ 14).
+                                //   공용 FirstLineIcon 으로 옆 글(smallStyle)의 첫 줄 가운데에 둔다 — 크기는 그대로(DU361 규칙).
+                                FirstLineIcon(Icons.circle,
+                                    size: 6,
+                                    color: pair.fg,
+                                    textStyle: ResponsiveHelper.smallStyle(context)),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                                 Expanded(
                                   child: Text(
-                                    e.value,
+                                    TextLayout.keepWords(e.value),
+                                    // [DU433] 묶음 면(background) 위 grey600 은 4.30 — 보조 글 토큰 textSecondary(5.52)로.
                                     style: ResponsiveHelper.smallStyle(context,
-                                        color: AppColors.grey600),
+                                        color: AppColors.textSecondary),
                                   ),
                                 ),
                               ],
@@ -223,7 +234,7 @@ class _TooltipDialog extends StatelessWidget {
                             if (!isLast)
                               Divider(
                                 height: ResponsiveHelper.spacing(context, 12),
-                                color: AppColors.grey100,
+                                color: AppColors.dividerLight,
                               ),
                           ],
                         );
@@ -234,29 +245,16 @@ class _TooltipDialog extends StatelessWidget {
 
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-                // 확인 버튼
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: effectiveIconColor,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      padding: EdgeInsets.symmetric(
-                          vertical: ResponsiveHelper.spacing(context, 14)),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                    ),
-                    child: Text(
-                      '확인',
-                      style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          color: Colors.white, fontWeight: FontWeight.bold),
-                    ),
-                  ),
+                // 확인 버튼 — 브랜드 주 행동(시안 · 공용 버튼)
+                CommonWidgets.primaryButton(
+                  context: context,
+                  text: '확인',
+                  onPressed: () => Navigator.pop(context),
                 ),
               ],
             ),
+          ),
+          ),
           ),
         ],
       ),
@@ -303,10 +301,12 @@ class TooltipContents {
       context,
       key: TooltipService.firstReview,
       title: '⭐ 첫 리뷰 작성이시네요!',
-      message: '리뷰는 작성 후 3일 뒤\n지원자에게 공개됩니다.',
+      // [.64] '작성 후 3일 뒤 공개'는 실제 계약이 아니었다. 공개는 onReviewCreated(양쪽 제출 즉시) 또는
+      //   자정 만료 처리(review_requests.deadline = 요청을 만든 근무일 + 14일)다.
+      message: '양쪽이 모두 작성하면 바로 함께 공개돼요.\n지원자가 작성하지 않으면 리뷰 요청이 온 근무일로부터 14일이 지난 뒤 공개돼요.',
       tips: [
         '평점과 태그는 지원자가 볼 수 있어요.',
-        '상세 코멘트는 관리자끼리만 공유됩니다.',
+        '상세 코멘트와 재고용 의사는 관리자끼리만 공유됩니다.',
         '같은 지원자는 월 1회만 작성 가능해요.',
       ],
       icon: Icons.rate_review,

@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/visible_text.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -196,6 +200,7 @@ Future<void> _pump(
   required PayrollOverviewReads reads,
   Size size = const Size(390, 900),
   double textScale = 1.0,
+  ThemeData? theme,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -210,6 +215,7 @@ Future<void> _pump(
             create: (_) => NotificationProvider()),
       ],
       child: MaterialApp(
+        theme: theme,
         builder: (ctx, child) => MediaQuery(
           data: MediaQuery.of(ctx)
               .copyWith(textScaler: TextScaler.linear(textScale)),
@@ -231,12 +237,46 @@ void main() {
     await Firebase.initializeApp();
   });
 
+  // [DEVICE-MISMATCH-FIX] 월 카드는 높이를 고정하지 않는다.
+  //   DEVICE(Pixel 5, 10-20): 기본 배율에서도 10월 카드가
+  //   `BOTTOM OVERFLOWED BY 1.00 PIXELS` 로 `미이체 2` 줄이 잘렸다 — 높이 추정식
+  //   (줄 높이 ≈ font×1.25)이 기기 한글 폰트보다 작았다. 기기 폰트에 가장
+  //   가까운 번들 NotoSansKR 로, Pixel 5 폭에서 잰다.
+  for (final scale in const [1.0, 1.3]) {
+    testWidgets('POV-H 기기 폰트 · Pixel 5 · 배율 $scale — 월 카드가 넘치지 않고 미이체 줄이 다 보인다',
+        (tester) async {
+      final loader = FontLoader('NotoSansKR');
+      for (final f in const ['Regular', 'Bold']) {
+        loader.addFont(rootBundle
+            .load('assets/fonts/NotoSansKR-$f.ttf')
+            .then((b) => ByteData.sublistView(b.buffer.asUint8List())));
+      }
+      await loader.load();
+      await _pump(tester,
+          reads: _reads(),
+          size: const Size(1080 / 2.625, 900),
+          textScale: scale,
+          theme: ThemeData(fontFamily: 'NotoSansKR'));
+      expect(tester.takeException(), isNull, reason: '월 카드가 넘쳤다');
+      final f = findVisibleTextContaining('미이체 3');
+      expect(f, findsOneWidget);
+      final rp = tester.renderObject<RenderParagraph>(f);
+      expect(rp.didExceedMaxLines, isFalse);
+      // 카드 안에 다 들어갔다 — 문단 아래 끝이 카드(부모 Container) 아래 끝을 넘지 않는다.
+      final card = find.ancestor(of: f, matching: find.byType(Container)).first;
+      final cardBox = tester.getRect(card);
+      final textBox = tester.getRect(f);
+      expect(textBox.bottom, lessThanOrEqualTo(cardBox.bottom + 0.01),
+          reason: '미이체 줄이 카드 밖으로 나갔다: text=$textBox card=$cardBox');
+    });
+  }
+
   testWidgets('POV-1 정상 — 미이체 건수를 그린다', (tester) async {
     await _pump(tester, reads: _reads());
 
     expect(tester.takeException(), isNull);
-    expect(find.textContaining('미이체 3'), findsOneWidget);
-    expect(find.text('미이체 확인 못함'), findsNothing);
+    expect(findVisibleTextContaining('미이체 3'), findsOneWidget);
+    expect(findVisibleText('미이체 확인 못함'), findsNothing);
   });
 
   testWidgets('POV-2 출근 집계 실패 — 0 이 아니라 확인 못함', (tester) async {
@@ -245,10 +285,11 @@ void main() {
 
     expect(tester.takeException(), isNull);
     // 금액은 집계 projection 에서 왔으므로 그대로 있다.
-    expect(find.textContaining('4,800,000'), findsWidgets);
+    // [.33] 금액은 쉼표 뒤 줄바꿈 표시 문자를 품는다 — 보이는 글자로 비교.
+    expect(findVisibleTextContaining('4,800,000'), findsWidgets);
     // 미이체 줄이 사라지지도, 0 이 되지도 않는다.
-    expect(find.text('미이체 확인 못함'), findsOneWidget);
-    expect(find.textContaining('미이체 0'), findsNothing);
+    expect(findVisibleText('미이체 확인 못함'), findsOneWidget);
+    expect(findVisibleTextContaining('미이체 0'), findsNothing);
   });
 
   testWidgets('POV-3 월 상세 — 모를 때 이체 완료 건수를 계산해 말하지 않는다',
@@ -257,23 +298,23 @@ void main() {
         reads: _reads(attendanceError: StateError('attendance cf down')));
 
     // 월 카드를 눌러 상세로 들어간다(production 경로).
-    await tester.tap(find.text('미이체 확인 못함'));
+    await tester.tap(findVisibleText('미이체 확인 못함'));
     for (var i = 0; i < 15; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
-    expect(find.text('이체 완료'), findsOneWidget);
-    expect(find.text('미이체'), findsOneWidget);
+    expect(findVisibleText('이체 완료'), findsOneWidget);
+    expect(findVisibleText('미이체'), findsOneWidget);
     // 두 수치 모두 모름으로 말한다 — `5건`(=확정 5 - 미이체 0)을 주장하지 않는다.
-    expect(find.text('확인 못함'), findsNWidgets(2));
+    expect(findVisibleText('확인 못함'), findsNWidgets(2));
     // 파생값(확정 5 - 미이체 0 = 5)을 이체 완료 자리에 앉히지 않는다.
     //   우측 요약 칩의 '확정 5건' 은 집계 projection 값이라 그대로 있다.
     final transferRow = find.ancestor(
-      of: find.text('이체 완료'),
+      of: findVisibleText('이체 완료'),
       matching: find.byType(Row),
     );
     expect(
-      find.descendant(of: transferRow.first, matching: find.text('확인 못함')),
+      find.descendant(of: transferRow.first, matching: findVisibleText('확인 못함')),
       findsOneWidget,
     );
   });
@@ -282,31 +323,31 @@ void main() {
       (tester) async {
     await _pump(tester, reads: _reads(workersError: StateError('perm denied')));
 
-    await tester.tap(find.textContaining('미이체 3'));
+    await tester.tap(findVisibleTextContaining('미이체 3'));
     for (var i = 0; i < 15; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
-    expect(find.text('근무자 목록을 불러오지 못했습니다'), findsOneWidget);
-    expect(find.text('다시 시도'), findsOneWidget);
+    expect(findVisibleText('근무자 목록을 불러오지 못했습니다'), findsOneWidget);
+    expect(findVisibleText('다시 시도'), findsOneWidget);
     // 실패에 서버 재집계를 권하지 않는다.
-    expect(find.text('집계 데이터가 없습니다'), findsNothing);
-    expect(find.text('집계 데이터 복원'), findsNothing);
-    expect(find.text('확정된 급여가 없습니다'), findsNothing);
+    expect(findVisibleText('집계 데이터가 없습니다'), findsNothing);
+    expect(findVisibleText('집계 데이터 복원'), findsNothing);
+    expect(findVisibleText('확정된 급여가 없습니다'), findsNothing);
   });
 
   testWidgets('POV-5 근무자 행은 확정 근무 건수로 말한다', (tester) async {
     await _pump(tester, reads: _reads());
 
-    await tester.tap(find.textContaining('미이체 3'));
+    await tester.tap(findVisibleTextContaining('미이체 3'));
     for (var i = 0; i < 15; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
-    expect(find.text('김근로'), findsOneWidget);
+    expect(findVisibleText('김근로'), findsOneWidget); // [PAYROLL-DETAIL.32] 이름은 낱말 단위 표시 문자를 품는다
     // projection 의 workDays 는 확정·이체된 attendance 1건당 +1 이다.
-    expect(find.text('확정 근무 2건'), findsOneWidget);
-    expect(find.text('2일 근무'), findsNothing);
+    expect(findVisibleText('확정 근무 2건'), findsOneWidget);
+    expect(findVisibleText('2일 근무'), findsNothing);
   });
 
   testWidgets('POV-6 320dp·배율 1.3 — 큰 금액과 새 문구가 함께 있어도 예외 0',
@@ -323,8 +364,8 @@ void main() {
         ));
 
     expect(tester.takeException(), isNull);
-    expect(find.text('미이체 확인 못함'), findsOneWidget);
-    expect(find.textContaining('128,400,000'), findsWidgets);
+    expect(findVisibleText('미이체 확인 못함'), findsOneWidget);
+    expect(findVisibleTextContaining('128,400,000'), findsWidgets);
   });
 // ══════════════════════════════════════════════════════════
   // [R7-P1-5 후속] 미이체 건수의 owner — 원장 하나
@@ -353,14 +394,14 @@ void main() {
         ));
 
     // 개요는 원장 기준이다.
-    expect(find.textContaining('미이체 2'), findsOneWidget);
+    expect(findVisibleTextContaining('미이체 2'), findsOneWidget);
 
     // 월 상세 진입
-    await tester.tap(find.textContaining('미이체 2'));
+    await tester.tap(findVisibleTextContaining('미이체 2'));
     for (var i = 0; i < 15; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
-    expect(find.text('2건'), findsWidgets, reason: '미이체 2건');
+    expect(findVisibleText('2건'), findsWidgets, reason: '미이체 2건');
 
     // 지급 현황으로 갔다가 돌아온다 → 복귀 시 _refreshSummary 가 돈다.
     //   (권한 gate 가 스스로 닫는 경로라 pop 을 따로 누르지 않는다 —
@@ -379,10 +420,10 @@ void main() {
         reason: '복귀 갱신이 **원장도** 다시 읽는다 — 건수의 owner 이기 때문이다');
 
     // 복귀 후에도 원장 값이다 — 집계 문서의 1 로 되돌아가지 않는다.
-    expect(find.text('1건'), findsNothing,
+    expect(findVisibleText('1건'), findsNothing,
         reason: '낡은 집계 문서 값(미이체 1)이 확정 사실로 앉으면 안 된다');
-    expect(find.text('2건'), findsWidgets);
-    expect(find.text('확인 못함'), findsNothing, reason: '원장을 받았으므로 모름이 아니다');
+    expect(findVisibleText('2건'), findsWidgets);
+    expect(findVisibleText('확인 못함'), findsNothing, reason: '원장을 받았으므로 모름이 아니다');
   });
 
   testWidgets('PNT-2 네 상태·동일인 복수 근무 — 파생이 한 owner 안에서 정확하다',
@@ -410,23 +451,23 @@ void main() {
           ],
         ));
 
-    expect(find.textContaining('미이체 1'), findsOneWidget);
+    expect(findVisibleTextContaining('미이체 1'), findsOneWidget);
 
-    await tester.tap(find.textContaining('미이체 1'));
+    await tester.tap(findVisibleTextContaining('미이체 1'));
     for (var i = 0; i < 15; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
     // 이체 완료 = 확정(원장 2) - 미이체(원장 1) = 1. 낡은 5 를 섞으면 4 가 된다.
     final transferRow = find.ancestor(
-      of: find.text('이체 완료'),
+      of: findVisibleText('이체 완료'),
       matching: find.byType(Row),
     );
     expect(
-      find.descendant(of: transferRow.first, matching: find.text('1건')),
+      find.descendant(of: transferRow.first, matching: findVisibleText('1건')),
       findsOneWidget,
     );
-    expect(find.text('4건'), findsNothing, reason: '낡은 확정 건수가 파생에 섞였다');
+    expect(findVisibleText('4건'), findsNothing, reason: '낡은 확정 건수가 파생에 섞였다');
   });
 
   testWidgets('PNT-3 상한에 걸린 응답은 작은 수를 사실처럼 보여주지 않는다',
@@ -440,8 +481,8 @@ void main() {
         ));
 
     expect(tester.takeException(), isNull);
-    expect(find.text('미이체 확인 못함'), findsOneWidget);
-    expect(find.textContaining('미이체 1'), findsNothing);
+    expect(findVisibleText('미이체 확인 못함'), findsOneWidget);
+    expect(findVisibleTextContaining('미이체 1'), findsNothing);
   });
 
   testWidgets('PNT-4 집계 문서도 없고 원장도 못 읽은 달은 데이터 없음이 아니다',
@@ -454,7 +495,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     // 근무가 없었다고 말하지 않는다.
-    expect(find.text('데이터 없음'), findsNothing);
-    expect(find.text('확인 못함'), findsWidgets);
+    expect(findVisibleText('데이터 없음'), findsNothing);
+    expect(findVisibleText('확인 못함'), findsWidgets);
   });
 }

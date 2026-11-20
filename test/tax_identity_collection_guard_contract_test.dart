@@ -174,7 +174,8 @@ void main() {
       // 트랜잭션 콜백 안에서 tx를 거치지 않은 읽기를 하지 않는다.
       final txBody = _sliceOf(cfRaw,
           'const acceptTaxEnabled = await srvIsTaxIdentityCollectionEnabled();',
-          'srvResolveMatchingReadiness(freshUserData');
+          // [DOC-LATE-DELETE.7 갱신] 예전 끝 표지: srvResolveMatchingReadiness(freshUserData
+          'srvWithLegacyIdCardObject(freshUserData');
       final after = txBody.substring(txBody.indexOf('await db.runTransaction'));
       expect(after, isNot(contains('await db.collection(TAX_ID_COL)')));
     });

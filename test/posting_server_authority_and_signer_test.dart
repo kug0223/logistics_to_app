@@ -222,21 +222,43 @@ void main() {
   // SIGNER-01. 계약 날인 = 그 사업장 owner
   // ══════════════════════════════════════════════════════════════
   group('SIGNER-01 canonical signer', () {
-    test('SIGNER-01a 세 발송 경로 모두 owner 날인을 쓴다', () {
+    // 연혁: P4.4C-SIGNER-01(2026-09-30)은 앱이 `users/{business.ownerId}` 를 읽어 owner 날인
+    //   바이트를 보내게 했고 이 시험이 그 문장을 고정했다. 그런데 사업장 목록은 ownerId 를
+    //   지우고(SEC-20) users 문서는 본인만 읽는다(E.3A) — 그 읽기는 늘 비어 날인을 등록한
+    //   사업주도 '미등록' 이었다(2026-10-25 기기 관찰, CONTRACT-DISPATCH.4 B1).
+    //   owner 날인이 정본이라는 규칙은 그대로이고, **읽는 자리만 서버로** 옮겼다:
+    //   앱은 있는지만 묻고(E.3B readiness), 서명 writer 가 owner 를 businessId 로 해석해 찍는다.
+    test('SIGNER-01a 발송 경로는 owner 문서를 읽지 않고 서버에 날인을 맡긴다', () {
       for (final p in const [
         'lib/screens/business_admin/dialogs/day_applicants_dialog.dart',
         'lib/screens/business_admin/dialogs/work_applicants_dialog.dart',
       ]) {
         final s = _src(p);
-        expect(s.contains('final sealUid = business.ownerId;'), isTrue,
-            reason: p);
+        expect(s.contains('final sealUid = business.ownerId;'), isFalse,
+            reason: '$p — 앱이 owner 문서를 읽던 연결(늘 빈 값)이 남아 있으면 안 된다');
+        expect(s.contains(".collection('users').doc(sealUid)"), isFalse, reason: p);
+        expect(s.contains('BusinessPostingReadiness.employerSealReady('), isTrue,
+            reason: '$p — 있음/없음/모름을 서버에 묻는다');
+        expect(s.contains('signatureBytes: sealBytes'), isFalse,
+            reason: '$p — 발송 화면은 날인 바이트를 보내지 않는다');
         // 예전 규칙이 남아 있으면 co-admin 개인 날인이 다시 샌다.
         expect(s.contains("up.isSubAdmin ? business.ownerId"), isFalse,
             reason: p);
       }
       final day = _src(
           'lib/screens/business_admin/dialogs/day_applicants_dialog.dart');
-      expect('final sealUid = business.ownerId;'.allMatches(day).length, 2);
+      expect('BusinessPostingReadiness.employerSealReady(business.id)'
+          .allMatches(day).length, 2, reason: '일괄·개별 두 곳');
+      // 서버: owner 를 businessId 로 해석하고, owner 본인이 아니면 호출자 바이트를 쓰지 않는다
+      final fns = _src('functions/src/index.ts');
+      final i = fns.indexOf('async function srvResolveEmployerSignBytes(');
+      expect(i, greaterThan(-1));
+      final body = fns.substring(i, fns.indexOf('\n}\n', i));
+      expect(body.contains('db.collection("businesses").doc(bizId).get()'), isTrue);
+      expect(body.contains('callerUid === ownerId && typeof clientBase64 === "string"'), isTrue,
+          reason: '호출자 바이트는 owner 본인일 때만');
+      expect(body.contains('EMPLOYER_SEAL_MISSING'), isTrue,
+          reason: 'owner 날인이 없으면 개인 날인으로 대신하지 않고 거절');
     });
 
     test('SIGNER-01b 날인이 없으면 발송하지 않고 복구 경로를 준다', () {
@@ -374,20 +396,29 @@ void main() {
     // 과거 완료 계약이 현재 `users.sealBase64` 를 runtime 으로 렌더하면
     // 날인을 바꾼 순간 과거 계약의 도장이 바뀐다 — BLOCKER 가 된다.
     //
-    // 실제 구조(확인): 계약 문서는 base64 가 아니라 **서명 시점 Storage
-    // URL**(`employerSignatureUrl`)을 들고 있고, 렌더는 그 URL 을 **우선**
-    // 한다. base64 는 아직 서명 전 미리보기용 폴백이다.
+    // 실제 구조(확인): 계약 문서는 base64 가 아니라 **서명 시점에 저장된
+    // 파일**을 가리키고, 렌더는 그 파일을 **우선**한다. base64 는 아직 서명
+    // 전 미리보기용 폴백이다.
+    //
+    // [R8P6-SIG-CUTOVER] 가리키는 방식이 영구 토큰 URL → 계약 id + 역할로
+    //   바뀌었다. 묻는 성질은 그대로다: **과거 계약은 그때의 이미지를 쓴다.**
+    //   오히려 더 강해졌다 — 서버가 요청마다 새 attempt 경로에 저장하므로
+    //   그 파일은 덮어쓰이지 않는다.
     final model = _src('lib/models/core/employment_contract_model.dart');
-    expect(model.contains('final String? employerSignatureUrl;'), isTrue);
-    expect(model.contains("'employerSignatureUrl': employerSignatureUrl"),
-        isTrue);
+    expect(model.contains('final String? employerSignatureUrl;'), isTrue,
+        reason: '레거시 계약의 역산 근거이자 구버전 앱의 렌더 입력이다');
 
     final sign = _src('lib/screens/contract/contract_sign_screen.dart');
-    expect(
-        sign.contains('employerSignatureUrl: widget.contract.employerSignatureUrl'),
-        isTrue, reason: '계약 문서의 고정 URL 을 넘긴다');
-    expect(sign.contains('/// 미서명 상태의 미리보기용 base64 — imageUrl이 없을 때만 사용'),
-        isTrue, reason: 'base64 가 URL 을 덮으면 과거 계약이 바뀐다');
+    expect(sign.contains('hasEmployerSignature: widget.contract.hasEmployerSignature'),
+        isTrue, reason: '계약 문서가 말하는 서명 존재 여부를 넘긴다');
+    expect(sign.contains('contractId: widget.contract.id'), isTrue,
+        reason: '렌더는 계약을 가리키고, 링크는 서버가 그때 만든다');
+    // base64 는 여전히 **서명이 없을 때만** 쓰인다.
+    final block = _src('lib/screens/contract/contract_sign_screen.dart');
+    final imgAt = block.indexOf('child: hasUrl');
+    final b64At = block.indexOf('hasBase64', imgAt);
+    expect(imgAt, lessThan(b64At),
+        reason: 'base64 가 서명 이미지를 덮으면 과거 계약이 바뀐다');
   });
 
   test('SNAPSHOT-02 서명 화면도 owner 날인을 읽는다', () {

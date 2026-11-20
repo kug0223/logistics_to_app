@@ -222,7 +222,8 @@ void main() {
   // 03. 서명 lifecycle — 서버 계약
   // ══════════════════════════════════════════════════════════════
   group('03. 서명 lifecycle', () {
-    final emp = _after(cf, 'export const callableFinalizeEmployerSignature', 9000);
+    // [NOSHOW-CONTRACT-GUARD] 발행 PREAUTH·트랜잭션에 근태 판정이 들어가 본문이 길어졌다.
+    final emp = _after(cf, 'export const callableFinalizeEmployerSignature', 12000);
     final wrk = _after(cf, 'export const callableFinalizeWorkerSignature', 9000);
 
     test('03-a 사업주 서명 → pending_worker', () {
@@ -272,7 +273,11 @@ void main() {
   // 04. 중복·권한
   // ══════════════════════════════════════════════════════════════
   group('04. 중복과 권한', () {
-    final emp = _after(cf, 'export const callableFinalizeEmployerSignature', 9000);
+    // [ARCHIVE-SEQ-FENCE] 운영 종료 판정(두 트랜잭션)이 들어가 실패 정리 catch 가 뒤로 밀렸다 —
+    //   검사 내용은 그대로, 창만 넓힌다.
+    final emp = _after(cf, 'export const callableFinalizeEmployerSignature', 12000);
+    // [SERVER-INTEGRITY] 클라이언트가 보낼 수 있는 필드 목록.
+    final _allowlist = _after(cf, 'const CONTRACT_CLIENT_OWNED_FIELDS = [', 400);
 
     test('04-a 같은 지원서에 두 번째 계약서를 막는다 — TX 안에서도', () {
       final n = RegExp(r'srvIssuedContractExists\(').allMatches(emp).length;
@@ -303,8 +308,15 @@ void main() {
     });
 
     test('04-e 클라이언트가 보낸 서명 필드는 버린다', () {
-      expect(emp.contains('"workerSignatureUrl", "workerSignatureHash", "workerSignedAt",'),
-          true);
+      // [SERVER-INTEGRITY] 거부 목록 → **허용 목록**으로 뒤집었다.
+      //   서명 URL·hash·시각은 목록에 **없으므로** 버려진다. 거부 목록은
+      //   새 서버 필드가 생길 때마다 구멍이 났다(pdfUrl·경로가 실제로 샜다).
+      expect(emp.contains('for (const f of CONTRACT_CLIENT_OWNED_FIELDS)'), true,
+          reason: '허용 목록으로 입력을 구성해야 한다');
+      for (final f in ['workerSignatureUrl', 'workerSignatureHash',
+        'workerSignedAt', 'pdfUrl', 'pdfStoragePath']) {
+        expect(_allowlist.contains(f), false, reason: '$f 가 허용 목록에 있다');
+      }
     });
   });
 

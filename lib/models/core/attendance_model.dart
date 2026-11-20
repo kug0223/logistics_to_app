@@ -24,6 +24,23 @@ class AttendanceModel {
   static const String statusEarlyLeave = 'early_leave';
   static const String statusAbsent     = 'absent';
   static const String statusNoShow     = 'NO_SHOW';
+  /// 출근 기록은 있고 퇴근이 없어 스케줄러(processMissedCheckouts)가 표시한 상태 — 결근이 아니다.
+  static const String statusMissedCheckout = 'missed_checkout';
+  /// [UNKNOWN-ATTENDANCE] 저장된 status 가 없거나 알 수 없는 값 — **클라이언트 표시 전용, DB 에 쓰지 않는다.**
+  ///   통계가 원본에서 status 를 확인하지 못했을 때만 붙인다(fromMap 의 'absent' 기본값은 그대로).
+  static const String statusUnconfirmed = 'attendance_unconfirmed';
+
+  /// [UNKNOWN-ATTENDANCE] 서버가 근태 문서에 쓰는 status 여섯 가지. 그 밖(없음·빈 값·모르는 값)은
+  ///   '근태 확인 필요' — 결근도 출근도 아니다.
+  static const Set<String> knownStatuses = {
+    statusPresent, statusLate, statusEarlyLeave, statusAbsent, statusNoShow, statusMissedCheckout,
+  };
+
+  /// [ATTENDANCE-UNKNOWN-DEST.28] **원본 map** 의 status 를 화면 표시용으로 고른다 — 모르면 [statusUnconfirmed].
+  ///   `fromMap` 은 status 가 없으면 'absent' 로 채우므로(기본값은 그대로 둔다), 결근과 '모름'을 가려야 하는
+  ///   표시 경로(통계·당일 근태 화면)는 파싱 **전에** 이것을 거친다. DB 에 쓰지 않는다.
+  static String displayStatusOfRaw(Object? raw) =>
+      raw is String && knownStatuses.contains(raw) ? raw : statusUnconfirmed;
 
   // ── wageStatus 상수 ─────────────────────────────────────────
   static const String wagePending     = 'pending';
@@ -52,6 +69,49 @@ class AttendanceModel {
         status == statusEarlyLeave;
     if (!worked) return false;
     return wageStatus == wageConfirmed || wageStatus == wageTransferred;
+  }
+
+  /// [REVIEW-ABSENCE-METRIC] 관리자 월간 리뷰 작성창의 근태 요약 — **근무일과 같은**
+  ///   실근무 확정 행([isActualFinalizedWork])에서만 센다.
+  ///
+  ///   정시 = present·early_leave, 지각 = late — 월간 통계(`admin_stats_service`)와 같은 분류.
+  ///   그래서 workDays == onTime + late 이고, 작성창의 `근무일 − 정시 − 지각` 은 0 이다.
+  ///   예전엔 진입점이 정시·지각을 넘기지 않아(0·0) **근무한 날 전부가 결근**으로 그려졌다.
+  ///
+  ///   노쇼·결근 status 는 근무일에 들어가지 않으므로 여기서 결근 수를 만들지 않는다
+  ///   (작성창의 `결근` 정의는 제품 결정 대상).
+  /// [REVIEW-WORKER-SUMMARY] `callableGetWorkerReviewSummary` 응답 해석 — 근로자 상세 경로.
+  ///
+  ///   summaryVersion ≥ 2 : 서버가 [reviewAttendanceSummary] 와 같은 기준으로 센
+  ///                        실근무·정시·지각을 그대로 쓴다.
+  ///   그 밖(구 서버)      : 근무일은 `confirmedWorkDayCount`(wageStatus 만 — 노쇼·결근이
+  ///                        섞일 수 있음)뿐이고 정시·지각은 **모른다(null)**.
+  ///                        예전처럼 정시 = 근무일 전체로 추측하지 않는다.
+  static ({int workDays, int? onTime, int? late}) parseWorkerReviewSummary(
+      Map? data) {
+    final d = data ?? const {};
+    final v = d['summaryVersion'];
+    final a = d['actualWorkDayCount'], o = d['onTimeCount'], l = d['lateCount'];
+    if (v is num && v >= 2 && a is num && o is num && l is num) {
+      return (workDays: a.toInt(), onTime: o.toInt(), late: l.toInt());
+    }
+    final legacy = d['confirmedWorkDayCount'];
+    return (workDays: legacy is num ? legacy.toInt() : 0, onTime: null, late: null);
+  }
+
+  static ({int workDays, int onTime, int late}) reviewAttendanceSummary(
+      Iterable<Map> items) {
+    var onTime = 0, late = 0;
+    for (final m in items) {
+      final status = m['status'] as String?;
+      if (!isActualFinalizedWork(status, m['wageStatus'] as String?)) continue;
+      if (status == statusLate) {
+        late++;
+      } else {
+        onTime++;
+      }
+    }
+    return (workDays: onTime + late, onTime: onTime, late: late);
   }
 
   final String id;
@@ -555,6 +615,9 @@ class AttendanceModel {
       case statusAbsent:     return '결근';
       case statusEarlyLeave: return '조퇴';
       case statusNoShow:     return '노쇼';
+      // [ADMIN-MONTHLY-1] 출근은 했다 — '미출근'이 아니다(근태 현황 다이얼로그의 '퇴근미체크'와 같은 사건).
+      case statusMissedCheckout: return '퇴근 미확인';
+      case statusUnconfirmed: return '근태 확인 필요';
       default:               return '미출근';
     }
   }

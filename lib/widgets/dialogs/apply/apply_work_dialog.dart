@@ -13,8 +13,10 @@ import '../../../services/firestore_service.dart';
 import '../../../services/schedule_conflict_service.dart';
 import '../../../services/tax_identity_service.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../calendar/app_calendar.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
+import '../../../utils/text_layout.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../theme/app_colors.dart';
 import 'application_relation.dart';
@@ -33,6 +35,7 @@ import '../../../screens/user/apply_prerequisites_screen.dart';
 import '../../../services/tooltip_service.dart';
 import '../../../services/analytics_service.dart';
 import '../../../widgets/common/loading_widget.dart';
+import '../../../widgets/common/first_line_icon.dart';
 import '../styled_dialog.dart';
 
 /// 지원 다이얼로그 결과
@@ -500,7 +503,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     try {
       // [CF-MIGRATED 2026-07-15] applications list isSuperAdmin() only
       // → getMyConfirmedApplicationsForConflictCheck() CF 경유 (uid 서버 검증)
-      final allConfirmed = await _firestoreService.getMyConfirmedApplicationsForConflictCheck();
+      // [DU278 LT0] 읽기 경계를 지난다 — 주입이 없으면 지금처럼 서비스를 직접 부른다.
+      final allConfirmed = await (_reads.confirmedForConflictCheck ??
+          _firestoreService.getMyConfirmedApplicationsForConflictCheck)();
       
       debugPrint('📅 [장기충돌] 전체 CONFIRMED: ${allConfirmed.length}개');
       
@@ -691,57 +696,69 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+          // [DU273] 공고명 대표색·1줄 말줄임 → 본문색 w600, 줄바꿈(제목 말줄임 금지). 문구는 원문(시험 계약).
           Text(
             widget.mainTO.title,
             style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: theme.primaryColor,
+              color: AppColors.textPrimary,
               fontWeight: FontWeight.w600,
             ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
           ),
 
           SizedBox(height: ResponsiveHelper.spacing(context, 10)),
 
           // 사업장 & 날짜 정보
+          // [DU277 HD1] 한 Row 에서 사업장(Expanded)과 기간(Flexible)이 폭을 나눠, 320·2.0 에서 사업장명이 '강남 물류/센터'
+          //   로 낱말 안에서 끊기고 기간이 네 줄이 됐다(그룹·장기 공고). 사업장 줄, 그 아래 기간 줄로 나눈다.
+          //   아이콘은 첫 줄 옆(위 1 여백).
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
+              // [DU273] 아이콘 grey500·글자 grey600 → textSecondary, 사업장 말줄임 제거
+              // [DU454] 위 여백 1 · 고정 크기라 큰 글자에서 아이콘이 첫 줄 가운데보다 위에 떴다 — 공용 FirstLineIcon(크기 그대로).
+              FirstLineIcon(
                 Icons.business,
                 size: ResponsiveHelper.iconSize(context, 15),
-                color: AppColors.grey500,
+                color: AppColors.textSecondary,
+                textStyle: ResponsiveHelper.smallStyle(context),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
               Expanded(
+                // [DU277 HD2] 식별 이름 — 낱말 단위(긴 붙은 이름은 가운데에서만). 읽기 이름은 원문.
                 child: Text(
-                  widget.businessName,
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                  overflow: TextOverflow.ellipsis,
+                  TextLayout.identity(widget.businessName),
+                  semanticsLabel: widget.businessName,
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
                 ),
               ),
-
-              if (_isGroupTO || _isLongTerm) ...[
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                Icon(
+            ],
+          ),
+          if (_isGroupTO || _isLongTerm) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // [DU454] 사업장 줄과 같다 — 첫 줄 가운데(공용 FirstLineIcon · 크기 그대로).
+                FirstLineIcon(
                   Icons.calendar_today,
                   size: ResponsiveHelper.iconSize(context, 15),
-                  color: AppColors.grey500,
+                  color: AppColors.textSecondary,
+                  textStyle: ResponsiveHelper.smallStyle(context),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                Flexible(
+                Expanded(
                   child: Text(
                     _isGroupTO
                         ? () { final sortedDates = widget.groupTOsByDate!.keys.toList()..sort(); return '${dateFormat(sortedDates.first)} ~ ${dateFormat(sortedDates.last)} (${widget.groupTOsByDate!.length}일)'; }()
                         : widget.mainTO.hasPresetPeriod
                             ? widget.mainTO.contractPeriodLabel
                             : '${dateFormat(widget.mainTO.date)} ~ ${dateFormat(widget.mainTO.endDate ?? widget.mainTO.date)}',
-                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                    overflow: TextOverflow.ellipsis,
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
                   ),
                 ),
               ],
-            ],
-          ),
+            ),
+          ],
         ],
       ),
     );
@@ -784,39 +801,15 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             children: [
               Expanded(child: _buildSectionTitle(context, '업무 선택')),
               // ✅ 상세보기 버튼 추가
-              InkWell(
-                onTap: () => _goToJobPosting(widget.mainTO, widget.workDetails),
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 10),
-                    vertical: ResponsiveHelper.spacing(context, 6),
-                  ),
-                  decoration: BoxDecoration(
-                    color: theme.primaryColor.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: theme.primaryColor.withValues(alpha: 0.3)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.visibility_outlined,
-                        size: ResponsiveHelper.iconSize(context, 14),
-                        color: theme.primaryColor,
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                      Text(
-                        '상세보기',
-                        style: ResponsiveHelper.smallStyle(
-                          context,
-                          color: theme.primaryColor,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
+              // [DU273] 대표색 10% 면·선 칩(터치 약 28) → 공용 TextButton.icon(대표색 글자·48)
+              TextButton.icon(
+                onPressed: () => _goToJobPosting(widget.mainTO, widget.workDetails),
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(48, 48),
+                  textStyle: ResponsiveHelper.smallStyle(context, fontWeight: FontWeight.w600),
                 ),
+                icon: Icon(Icons.visibility_outlined, size: ResponsiveHelper.iconSize(context, 14)),
+                label: const Text('상세보기'),
               ),
             ],
           ),
@@ -826,10 +819,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+              // [DU273] 선 제거·radius 12, 글자 infoDark(4.03) → infoDeep
               decoration: BoxDecoration(
                 color: AppColors.infoBg,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.infoLight),
+                borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
                 children: [
@@ -842,7 +835,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                   Expanded(
                     child: Text(
                       '출퇴근 기록이 있어 단순 취소가 불가합니다.\n퇴사를 원하시면 내 스케줄 > 고정근무 관리를 이용하세요.',
-                      style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDeep),
                     ),
                   ),
                 ],
@@ -865,9 +858,16 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             );
             final application = match.application;
 
-            // ✅ 장기공고: 상단에 충돌 경고 박스가 있으므로 개별 카드 충돌 메시지 숨김
-            // ✅ 희망시작일 미선택 + 충돌 날짜 있으면 지원 불가
-            final hasConflictAndNoDate = _confirmedDatesInRange.isNotEmpty && _desiredStartDate == null;
+            // [DU280] 희망 시작일 미선택은 '시간 충돌'이 아니다 — 고르면 풀리는 준비 단계다(사용자 2026-11-10 결정).
+            //   충돌 유무와 상관없이 같은 모양: 배지는 업무 상태 그대로, '지원'은 누를 수 없고 중립 안내(applyGuidance).
+            //   '시간충돌'(blocked)은 피할 수 없는 겹침 — 기간 안에 고를 수 있는 시작일이 하나도 없을 때만 남긴다.
+            //   (이전: 충돌 있음 + 미선택이면 blocked '희망 시작일을 먼저 선택해주세요' → 카드가 '시간충돌'·'불가'를 붙였고,
+            //    충돌 없음 + 미선택이면 '지원'이 살아 있다가 누르면 토스트였다.)
+            final noStartPossible = _isLongTerm &&
+                _desiredStartDate == null &&
+                _confirmedDatesInRange.isNotEmpty &&
+                _firstSelectableDate == null;
+            final needsStartDate = _isLongTerm && _desiredStartDate == null && !noStartPossible;
             // [R7-APPLICATION-LIFECYCLE.1C] 단기는 **그 날짜의 업무별 판정**을
             //   쓴다. 예전에는 이 자리가 `ConflictInfo.ok` 로 고정이라, 같은
             //   시간에 확정된 근무가 있어도 카드가 `지원` 을 그렸다 — 위쪽
@@ -876,10 +876,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             final cachedConflict = _isLongTerm
                 ? null
                 : _conflictCache[_dateKey(widget.mainTO.date)]?[work.id];
-            final conflictInfo = hasConflictAndNoDate
-                ? ConflictInfo(
+            final conflictInfo = noStartPossible
+                ? const ConflictInfo(
                     level: ConflictLevel.blocked,
-                    message: '희망 시작일을 먼저 선택해주세요',
+                    message: '선택 가능한 시작일이 없어요',
                   )
                 : (cachedConflict ?? ConflictInfo.ok);
             final blockedByConflict =
@@ -896,8 +896,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               isLoading: _loadingWorkIds.contains(work.id),
               slotDate: widget.mainTO.date,
               isLongTerm: _isLongTerm,
+              applyGuidance: needsStartDate ? '희망 시작일을 먼저 선택해주세요' : null,
               // 관계가 있으면 지원 CTA 를 주지 않는다 — 서버도 막는다.
+              // [DU280] 희망 시작일을 고르기 전에는 누를 수 없다(카드 안내가 이유를 말한다).
               onApply: (blockedByConflict ||
+                      needsStartDate ||
                       _isSubmitting ||
                       match.relation.blocksNewApplication)
                   ? null
@@ -941,10 +944,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         horizontal: ResponsiveHelper.spacing(context, 16),
         vertical: ResponsiveHelper.spacing(context, 14),
       ),
+      // [DU273] 대표색 5% 면·15% 선 → brandSurface 면(선 없음)·radius 16, 아이콘 상자 흰 면
       decoration: BoxDecoration(
-        color: theme.primaryColor.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: theme.primaryColor.withValues(alpha: 0.15)),
+        color: AppColors.brandSurface,
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
         children: [
@@ -952,7 +955,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             width: ResponsiveHelper.spacing(context, 44),
             height: ResponsiveHelper.spacing(context, 44),
             decoration: BoxDecoration(
-              color: theme.primaryColor.withValues(alpha: 0.12),
+              color: AppColors.surface,
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(
@@ -968,15 +971,15 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               children: [
                 Text(
                   '근무 날짜',
-                  style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.grey500, fontWeight: FontWeight.w500),
+                  style: ResponsiveHelper.smallStyle(context, // [DU273] tiny grey500 2.5
+                      color: AppColors.textSecondary, fontWeight: FontWeight.w500),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 3)),
                 Text(
                   dateFormat(to.date),
                   style: ResponsiveHelper.subtitleStyle(context).copyWith(
                     fontWeight: FontWeight.bold,
-                    color: AppColors.grey800,
+                    color: AppColors.textPrimary, // [DU273] grey800
                   ),
                 ),
                 if (timeText.isNotEmpty) ...[
@@ -1003,13 +1006,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                         ),
                         child: Icon(Icons.access_time,
                             size: ResponsiveHelper.iconSize(context, 13),
-                            color: AppColors.grey500),
+                            color: AppColors.textSecondary), // [DU273] grey500
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                       Expanded(
                         child: Text(timeText,
                             style: ResponsiveHelper.smallStyle(context,
-                                color: AppColors.grey600)),
+                                color: AppColors.textSecondary)), // [DU273] grey600 4.3
                       ),
                     ],
                   ),
@@ -1056,10 +1059,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+      // [DU278 LT6] 선 제거·radius 12(다른 안내 면과 같다)
       decoration: BoxDecoration(
         color: AppColors.warningBg,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.warningLight),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1074,7 +1077,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Expanded(
                 child: Text(
-                  '기간 내 확정된 근무가 있습니다',
+                  TextLayout.keepWords('기간 내 확정된 근무가 있습니다'), // [DU278 LT6] B320 '근/무가'
                   style: ResponsiveHelper.bodyStyle(context, color: AppColors.warningDark).copyWith(
                     fontWeight: FontWeight.bold,
                   ),
@@ -1122,7 +1125,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 26)),
               child: Text(
                 '외 ${sortedDates.length - 3}개 날짜',
-                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary), // [DU278 LT6] grey600 4.3
               ),
             ),
           
@@ -1133,20 +1136,21 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
               children: [
                 Icon(
                   Icons.info_outline,
                   size: ResponsiveHelper.iconSize(context, 16),
-                  color: AppColors.info,
+                  color: AppColors.infoDeep, // [DU278 LT6] info 3.1 → infoDeep
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                 Expanded(
                   child: Text(
-                    selectableText,
-                    style: ResponsiveHelper.smallStyle(context, color: AppColors.info).copyWith(
+                    TextLayout.keepWords(selectableText),
+                    semanticsLabel: selectableText,
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDeep).copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -1178,53 +1182,51 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     
     return Column(
       children: [        
+        // [DU278 LT1] infoLight 선·그림자·infoBg 위 띠(infoDark 4.03) → 흰 r16·grey200 선, 흰 면 위 구역 제목 줄.
+        //   제목은 16 bold 본문색(O027-1 '업무 선택'과 같다), 낱말 단위(B320 '선택/하세요'). 문구 원문.
         Container(
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(
-              ResponsiveHelper.spacing(context, 12),
-            ),
-        border: Border.all(color: AppColors.infoLight),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.grey200),
           ),
-        ],
-      ),
       child: Column(
         children: [
           // 헤더: 희망 시작일 선택 안내
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-            decoration: BoxDecoration(
-              color: AppColors.infoBg,
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(ResponsiveHelper.spacing(context, 11)),
-                topRight: Radius.circular(ResponsiveHelper.spacing(context, 11)),
-              ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              ResponsiveHelper.spacing(context, 12),
+              ResponsiveHelper.spacing(context, 12),
+              ResponsiveHelper.spacing(context, 12),
+              0,
             ),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  Icons.touch_app,
-                  size: ResponsiveHelper.iconSize(context, 18),
-                  color: AppColors.infoDark,
+                Padding(
+                  padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 1)),
+                  child: Icon(
+                    Icons.touch_app,
+                    size: ResponsiveHelper.iconSize(context, 18),
+                    color: AppColors.brand,
+                  ),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Expanded(
                   child: Text(
-                    '희망 시작일을 선택하세요',
-                    style: ResponsiveHelper.bodyStyle(context, color: AppColors.infoDark).copyWith(
-                      fontWeight: FontWeight.w600,
+                    TextLayout.keepWords('희망 시작일을 선택하세요'),
+                    semanticsLabel: '희망 시작일을 선택하세요',
+                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary,
                     ),
                   ),
                 ),
               ],
             ),
           ),
-          
+
           // 캘린더
           TableCalendar(
             locale: 'ko_KR',
@@ -1234,8 +1236,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             calendarFormat: CalendarFormat.month,
             
             // 컴팩트한 사이즈
-            daysOfWeekHeight: ResponsiveHelper.spacing(context, 28),
-            rowHeight: ResponsiveHelper.spacing(context, 40),
+            daysOfWeekHeight: AppCalendar.scaledHeight(context, ResponsiveHelper.spacing(context, 28), fontSize: 13),
+            rowHeight: AppCalendar.scaledHeight(context, ResponsiveHelper.spacing(context, 40)),
             
             // ✅ 선택된 날짜 (희망 시작일)
             selectedDayPredicate: (day) {
@@ -1289,25 +1291,30 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             headerStyle: HeaderStyle(
               formatButtonVisible: false,
               titleCentered: true,
+              // [DU278 LT2] 월 제목 본문색·낱말 단위, 꺾쇠 보조색(DU276 그룹 달력과 같다)
+              titleTextFormatter: (date, locale) =>
+                  TextLayout.keepWords(DateFormat.yMMMM(locale).format(date)),
               titleTextStyle: ResponsiveHelper.subtitleStyle(context).copyWith(
                 fontWeight: FontWeight.bold,
+                color: AppColors.textPrimary,
               ),
               leftChevronIcon: Icon(
                 Icons.chevron_left,
-                color: AppColors.grey600,
+                color: AppColors.textSecondary,
                 size: ResponsiveHelper.iconSize(context, 20),
               ),
               rightChevronIcon: Icon(
                 Icons.chevron_right,
-                color: AppColors.grey600,
+                color: AppColors.textSecondary,
                 size: ResponsiveHelper.iconSize(context, 20),
               ),
             ),
             
             // 요일 헤더 스타일
             daysOfWeekStyle: DaysOfWeekStyle(
-              weekdayStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-              weekendStyle: ResponsiveHelper.smallStyle(context, color: AppColors.error),
+              // [DU278 LT2] 요일 grey600·주말 빨강(3.68) → 둘 다 보조색(시안·DU272)
+              weekdayStyle: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+              weekendStyle: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
             ),
             
             // 커스텀 빌더
@@ -1330,17 +1337,18 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             ),
           ),
           
-          // 범례
+          // 범례 — [DU278 LT4] '확정'·'대기'는 장기 달력 칸에 없는 상태였다(표식 없음). 화면 칸과 맞는 세 이름으로
+          //   (DU272 장기 시트와 같다). Row(flex 없음) → 가운데 Wrap.
           Padding(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              spacing: ResponsiveHelper.spacing(context, 12),
+              runSpacing: ResponsiveHelper.spacing(context, 4),
               children: [
-                _buildLegendItem(context, theme.primaryColor, '확정'),
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                _buildLegendItem(context, AppColors.warning, '대기'),
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                _buildLegendItem(context, AppColors.infoBg, '선택가능'),
+                _buildLegendItem(context, AppColors.brand, '선택됨'),
+                _buildLegendItem(context, AppColors.brandSurface, '선택가능', bordered: true),
+                _buildLegendItem(context, AppColors.grey200, '선택불가'),
               ],
             ),
           ),
@@ -1354,10 +1362,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               ResponsiveHelper.spacing(context, 12),
             ),
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+            // [DU278 LT5] 선 제거·radius 12, infoDark 4.03 → infoDeep, 두 문구 낱말 단위(B320 '지원됩니/다'·'지원/은')
             decoration: BoxDecoration(
               color: AppColors.infoBg,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.infoLight),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Column(
               children: [
@@ -1367,15 +1375,15 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                     Icon(
                       Icons.info_outline,
                       size: ResponsiveHelper.iconSize(context, 16),
-                      color: AppColors.infoDark,
+                      color: AppColors.infoDeep,
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
                       child: Text(
-                        _desiredStartDate != null
+                        TextLayout.keepWords(_desiredStartDate != null
                             ? '${FormatHelper.formatDateCompact(_desiredStartDate!)}부터 ${FormatHelper.formatDateShort(_effectiveEndDate)}까지 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}'
-                            : '희망 시작일을 선택하면 해당일부터 ${widget.mainTO.hasPresetPeriod ? widget.mainTO.contractPeriodLabel : "종료일"}까지 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}',
-                        style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                            : '희망 시작일을 선택하면 해당일부터 ${widget.mainTO.hasPresetPeriod ? widget.mainTO.contractPeriodLabel : "종료일"}까지 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}'),
+                        style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDeep),
                       ),
                     ),
                   ],
@@ -1387,13 +1395,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                     Icon(
                       Icons.lightbulb_outline,
                       size: ResponsiveHelper.iconSize(context, 16),
-                      color: AppColors.infoDark,
+                      color: AppColors.infoDeep,
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
                       child: Text(
-                        '같은 시간대에 여러 업무 지원 가능!\n확정 시 겹치는 지원은 자동 취소돼요.',
-                        style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                        TextLayout.keepWords('같은 시간대에 여러 업무 지원 가능!\n확정 시 겹치는 지원은 자동 취소돼요.'),
+                        style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDeep),
                       ),
                     ),
                   ],
@@ -1475,36 +1483,38 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     Color textColor;
     
     // 🔥 지원 완료 상태일 때 스타일
+    // [DU278 LT3] DU272 장기 시트와 같은 규칙 — 선택 = 대표색, 선택 가능·지원한 근무 기간 = brandSurface 위 brand
+    //   (이전 infoBg 위 infoDark 4.03), 선택 불가 grey400(1.6~1.9) → textTertiary. 다른 달 날짜는 그대로.
     if (isApplied && isInAppliedRange && isWorkDay) {
       // 지원된 근무 기간 (희망시작일 ~ 종료일)
-      bgColor = AppColors.infoBg;
-      textColor = AppColors.infoDark;
+      bgColor = AppColors.brandSurface;
+      textColor = AppColors.brand;
     } else if (isApplied && isInAppliedRange) {
       // 지원된 기간 내 휴무일
-      bgColor = AppColors.infoBg.withValues(alpha: 0.5);
-      textColor = AppColors.grey500;
+      bgColor = AppColors.grey100;
+      textColor = AppColors.textTertiary;
     } else if (isSelected) {
       // 선택된 날짜 (희망 시작일)
-      bgColor = AppColors.infoDark;
+      bgColor = AppColors.brand;
       textColor = Colors.white;
     } else if (isOutside) {
       bgColor = Colors.transparent;
       textColor = AppColors.grey300;
     } else if (isSelectable) {
       // 선택 가능한 날짜
-      bgColor = AppColors.infoBg;
-      textColor = AppColors.infoDark;
+      bgColor = AppColors.brandSurface;
+      textColor = AppColors.brand;
     } else if (isInRange && isWorkDay) {
       // 근무일이지만 과거 (선택 불가)
       bgColor = AppColors.grey200;
-      textColor = AppColors.grey400;
+      textColor = AppColors.textTertiary;
     } else if (isInRange) {
       // 휴무일
       bgColor = AppColors.grey100;
-      textColor = AppColors.grey400;
+      textColor = AppColors.textTertiary;
     } else {
       bgColor = Colors.transparent;
-      textColor = AppColors.grey400;
+      textColor = AppColors.textTertiary;
     }
     
     return Container(
@@ -1513,9 +1523,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         color: bgColor,
         shape: BoxShape.circle,
         border: isToday 
-            ? Border.all(color: Theme.of(context).primaryColor, width: 2)
+            ? Border.all(color: AppColors.brand, width: 2)
             : isSelected
-                ? Border.all(color: AppColors.infoDark, width: 2)
+                ? Border.all(color: AppColors.brand, width: 2)
                 : null,
       ),
       child: Center(
@@ -1530,7 +1540,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   }
 
   /// 범례 아이템
-  Widget _buildLegendItem(BuildContext context, Color color, String label) {
+  /// [DU276 GC5] 글자 grey600(grey50 띠 위 4.41) → 보조색. bordered: 옅은 면 점(날짜 칸과 같은 모양)에 대표색 테두리.
+  Widget _buildLegendItem(BuildContext context, Color color, String label, {bool bordered = false}) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1540,12 +1551,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           decoration: BoxDecoration(
             color: color,
             shape: BoxShape.circle,
+            border: bordered ? Border.all(color: AppColors.brand) : null,
           ),
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
         Text(
           label,
-          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
         ),
       ],
     );
@@ -1599,20 +1611,12 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     final now = DateTime.now();
     final todayOnly = DateTime(now.year, now.month, now.day);
     
+    // [DU276 GC1] radius 12×배율·그림자 → 흰 r16·grey200 선(시안·DU272 장기 시트 달력과 같다)
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(
-          ResponsiveHelper.spacing(context, 12),
-        ),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.grey200),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
       ),
       child: Column(
         children: [
@@ -1625,8 +1629,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             calendarFormat: CalendarFormat.month,
             
             // 컴팩트한 사이즈
-            daysOfWeekHeight: ResponsiveHelper.spacing(context, 28),
-            rowHeight: ResponsiveHelper.spacing(context, 40),
+            daysOfWeekHeight: AppCalendar.scaledHeight(context, ResponsiveHelper.spacing(context, 28), fontSize: 13),
+            rowHeight: AppCalendar.scaledHeight(context, ResponsiveHelper.spacing(context, 40)),
             
             // 선택된 날짜
             selectedDayPredicate: (day) {
@@ -1693,18 +1697,22 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             headerStyle: HeaderStyle(
               formatButtonVisible: false,
               titleCentered: true,
+              // [DU276 GC2] 월 제목 본문색·낱말 단위(B320 '2026년 11/월'), 꺾쇠 보조색(DU272 장기 달력과 같다)
+              titleTextFormatter: (date, locale) =>
+                  TextLayout.keepWords(DateFormat.yMMMM(locale).format(date)),
               titleTextStyle: ResponsiveHelper.subtitleStyle(context).copyWith(
                 fontWeight: FontWeight.bold,
+                color: AppColors.textPrimary,
               ),
               leftChevronIcon: Icon(
                 Icons.chevron_left,
                 size: ResponsiveHelper.iconSize(context, 24),
-                color: theme.primaryColor,
+                color: AppColors.textSecondary,
               ),
               rightChevronIcon: Icon(
                 Icons.chevron_right,
                 size: ResponsiveHelper.iconSize(context, 24),
-                color: theme.primaryColor,
+                color: AppColors.textSecondary,
               ),
               headerPadding: EdgeInsets.symmetric(
                 vertical: ResponsiveHelper.spacing(context, 8),
@@ -1713,13 +1721,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             
             // 요일 스타일
             daysOfWeekStyle: DaysOfWeekStyle(
+              // [DU276 GC2] 요일 grey600·주말 빨강 → 둘 다 보조색(시안 달력 머리는 중립, DU272)
               weekdayStyle: ResponsiveHelper.smallStyle(
                 context,
-                color: AppColors.grey600,
+                color: AppColors.textSecondary,
               ),
               weekendStyle: ResponsiveHelper.smallStyle(
                 context,
-                color: AppColors.errorDark,
+                color: AppColors.textSecondary,
               ),
             ),
             
@@ -1804,7 +1813,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                           width: ResponsiveHelper.spacing(context, 6),
                           height: ResponsiveHelper.spacing(context, 6),
                           decoration: const BoxDecoration(
-                            color: AppColors.success,
+                            color: AppColors.successDark, // [DU276 GC4] success 약 2.8 → 진한 토큰
                             shape: BoxShape.circle,
                           ),
                         ),
@@ -1815,7 +1824,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                           width: ResponsiveHelper.spacing(context, 6),
                           height: ResponsiveHelper.spacing(context, 6),
                           decoration: const BoxDecoration(
-                            color: AppColors.warning,
+                            color: AppColors.warningDark, // [DU276 GC4] warning 약 2.2 → 진한 토큰
                             shape: BoxShape.circle,
                           ),
                         ),
@@ -1826,23 +1835,20 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             ),
           ),
           
-          // 범례
-          Container(
+          // 범례 — [DU276 GC5] grey50 띠·Row(flex 없음) → 흰 면·가운데 Wrap(DU272). 점은 표식·날짜 칸과 같은 색.
+          Padding(
             padding: EdgeInsets.symmetric(
               horizontal: ResponsiveHelper.spacing(context, 12),
               vertical: ResponsiveHelper.spacing(context, 8),
             ),
-            decoration: BoxDecoration(
-              color: AppColors.grey50,
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              spacing: ResponsiveHelper.spacing(context, 16),
+              runSpacing: ResponsiveHelper.spacing(context, 4),
               children: [
-                _buildLegendItem(context, AppColors.success, '확정'),
-                SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-                _buildLegendItem(context, AppColors.warning, '대기'),
-                SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-                _buildLegendItem(context, theme.primaryColor, '지원가능'),
+                _buildLegendItem(context, AppColors.successDark, '확정'),
+                _buildLegendItem(context, AppColors.warningDark, '대기'),
+                _buildLegendItem(context, AppColors.brandSurface, '지원가능', bordered: true),
               ],
             ),
           ),
@@ -1856,23 +1862,23 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               ResponsiveHelper.spacing(context, 12),
               ResponsiveHelper.spacing(context, 12),
             ),
+            // [DU276 GC6] 선 제거·radius 12, infoDark 4.03 → infoDeep, 낱말 단위(B320 '지원/은')
             decoration: BoxDecoration(
               color: AppColors.infoBg,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.infoLight),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
               children: [
                 Icon(
                   Icons.lightbulb_outline,
                   size: ResponsiveHelper.iconSize(context, 16),
-                  color: AppColors.infoDark,
+                  color: AppColors.infoDeep,
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Expanded(
                   child: Text(
-                    '같은 시간대에 여러 업무 지원 가능! \n확정 시 겹치는 지원은 자동 취소돼요.',
-                    style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                    TextLayout.keepWords('같은 시간대에 여러 업무 지원 가능! \n확정 시 겹치는 지원은 자동 취소돼요.'),
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDeep),
                   ),
                 ),
               ],
@@ -1894,8 +1900,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     DateTime? publishAt,
     bool isClosed = false,
   }) {
-    final theme = Theme.of(context);
-
     Color backgroundColor;
     Color textColor;
     BoxBorder? border;
@@ -1911,37 +1915,39 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         child: Center(
           child: Text(
             '${day.day}',
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey400).copyWith(
+            // [DU276 GC3] grey400 1.72 → textTertiary(취소선 그대로)
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.textTertiary).copyWith(
               decoration: TextDecoration.lineThrough,
-              decorationColor: AppColors.grey400,
+              decorationColor: AppColors.textTertiary,
             ),
           ),
         ),
       );
     }
 
+    // [DU276 GC3] DU272 장기 달력과 같은 규칙 — 선택 = 대표색, 지원 가능 = brandSurface 위 brand(이전 대표색 5% 위 grey800),
+    //   오늘 = 같은 면 + 대표색 선, 불가 grey300(1.32) → textTertiary.
     if (isSelected) {
-      backgroundColor = theme.primaryColor;
+      backgroundColor = AppColors.brand;
       textColor = Colors.white;
     } else if (isToday && isAvailable) {
-      backgroundColor = theme.primaryColor.withValues(alpha: 0.1);
-      textColor = theme.primaryColor;
-      border = Border.all(color: theme.primaryColor, width: 1.5);
+      backgroundColor = AppColors.brandSurface;
+      textColor = AppColors.brand;
+      border = Border.all(color: AppColors.brand, width: 1.5);
     } else if (isAvailable) {
-      backgroundColor = theme.primaryColor.withValues(alpha: 0.05);
-      textColor = AppColors.grey800;
+      backgroundColor = AppColors.brandSurface;
+      textColor = AppColors.brand;
     } else {
       backgroundColor = Colors.transparent;
-      textColor = AppColors.grey300;
+      textColor = AppColors.textTertiary;
     }
     // ✅ 예약 중이면 주황색 배경 (동그란 모양)
     if (isPendingPublish && isAvailable) {
       return Container(
         margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
         decoration: BoxDecoration(
-          color: AppColors.warningBg,
+          color: AppColors.warningBg, // [DU276 GC3] 선 제거
           shape: BoxShape.circle,
-          border: Border.all(color: AppColors.warningLight),
         ),
         child: Center(
           child: Text(
@@ -1991,12 +1997,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+      // [DU273] 선 제거·radius 12(다른 안내 면과 같음)
       decoration: BoxDecoration(
         color: AppColors.warningBg,
-        borderRadius: BorderRadius.circular(
-          ResponsiveHelper.spacing(context, 10),
-        ),
-        border: Border.all(color: AppColors.warningLight),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2070,7 +2074,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 26)),
             child: Text(
               '시간이 겹치는 업무는 지원할 수 없습니다',
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary), // [DU273] grey600 4.23
             ),
           ),
         ],
@@ -2084,21 +2088,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     ThemeData theme,
     DateTime date,
   ) {
-    const dateFormat = FormatHelper.formatDateCompact;
     final dateKey = DateTime.utc(date.year, date.month, date.day);
     final to = widget.groupTOsByDate![dateKey];
     final workDetails = widget.groupWorkDetailsByDate?[dateKey] ?? [];
 
     if (to == null || workDetails.isEmpty) {
-      return Container(
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
-        child: Center(
-          child: Text(
-            '해당 날짜에 등록된 업무가 없습니다',
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
-          ),
-        ),
-      );
+      // [DU276 GC9 r1] grey500(2.68) → 공용 빈 상태 값(AppEmptyState 와 같은 아이콘·글자 토큰).
+      //   AppEmptyState 는 높이가 정해진 자리용이라(안쪽 스크롤 + minHeight = 부모 높이) 이 스크롤 안에서 무한 높이로 깨진다.
+      return _inlineEmpty(context, Icons.event_busy, '해당 날짜에 등록된 업무가 없습니다');
     }
 
     // ✅ 예약 공개 체크
@@ -2107,76 +2104,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 날짜 헤더
-        Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 12),
-            vertical: ResponsiveHelper.spacing(context, 10),
-          ),
-          decoration: BoxDecoration(
-            color: theme.primaryColor.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(
-              ResponsiveHelper.spacing(context, 8),
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                Icons.calendar_today,
-                size: ResponsiveHelper.iconSize(context, 16),
-                color: theme.primaryColor,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Text(
-                dateFormat(date),
-                style: ResponsiveHelper.bodyStyle(context, color: theme.primaryColor).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const Spacer(),
-              Text(
-                '${workDetails.length}개 업무',
-                style: ResponsiveHelper.smallStyle(context, color: theme.primaryColor),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              // ✅ 상세보기 버튼 (텍스트 포함)
-              InkWell(
-                onTap: () => _goToJobPosting(to, workDetails),
-                borderRadius: BorderRadius.circular(6),
-                child: Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 8),
-                    vertical: ResponsiveHelper.spacing(context, 4),
-                  ),
-                  decoration: BoxDecoration(
-                    color: theme.primaryColor.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: theme.primaryColor.withValues(alpha: 0.3)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.visibility_outlined,
-                        size: ResponsiveHelper.iconSize(context, 14),
-                        color: theme.primaryColor,
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                      Text(
-                        '상세보기',
-                        style: ResponsiveHelper.smallStyle(
-                          context,
-                          color: theme.primaryColor,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+        // 날짜 헤더 — [DU276 GC7]
+        _buildDateHeader(context, to, workDetails, date),
         
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         
@@ -2186,10 +2115,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         ],
         
-        // 업무 목록 (예약 중이면 반투명)
-        Opacity(
-          opacity: isPending ? 0.4 : 1.0,
-          child: Column(
+        // 업무 목록 — [DU276 GC8] 예약 중 Opacity 0.4 제거: 카드가 '예약' 배지·'불가' 표시·바탕색 면으로
+        //   고를 수 없음을 말한다(DU274). 흐림은 글자 대비를 통째로 낮췄다.
+        Column(
             children: workDetails.map((work) {
               // [R7-P4.4E.7B] 그룹 TO 경로도 같은 resolver 를 지난다.
               final match = _relationAt(
@@ -2229,11 +2157,70 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                     : null,
               );
             }).toList(),
-          ),
         ),
       ],
     );
   }
+
+  /// 선택한 날짜 머리 — [DU276 GC7] 대표색 10% 면·대표색 글자·Spacer(flex 아님)·'상세보기' 칩(터치 약 28)
+  ///   → brandSurface r12, 날짜 본문색 굵게·건수 보조색, '상세보기' 글자 버튼 48(DU273 과 같은 코드).
+  ///   큰 글자: B320 에서 이 줄이 오른쪽으로 112px 넘쳐 '상세보기'가 화면 밖이었다 → '아이콘·날짜' / '건수 … 상세보기' 두 줄.
+  Widget _buildDateHeader(
+    BuildContext context,
+    TOModel to,
+    List<WorkDetailModel> workDetails,
+    DateTime date,
+  ) {
+    final icon = Icon(
+      Icons.calendar_today,
+      size: ResponsiveHelper.iconSize(context, 16),
+      color: AppColors.brand,
+    );
+    final dateText = Text(
+      FormatHelper.formatDateCompact(date),
+      style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+    );
+    final count = Text(
+      '${workDetails.length}개 업무',
+      style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+    );
+    final more = TextButton.icon(
+      onPressed: () => _goToJobPosting(to, workDetails),
+      style: TextButton.styleFrom(
+        minimumSize: const Size(48, 48),
+        textStyle: ResponsiveHelper.smallStyle(context, fontWeight: FontWeight.w600),
+      ),
+      icon: Icon(Icons.visibility_outlined, size: ResponsiveHelper.iconSize(context, 14)),
+      label: const Text('상세보기'),
+    );
+    final gap = SizedBox(width: ResponsiveHelper.spacing(context, 8));
+    final large = MediaQuery.textScalerOf(context).scale(10) >= 13;
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 12),
+        ResponsiveHelper.spacing(context, 4),
+        ResponsiveHelper.spacing(context, 4),
+        ResponsiveHelper.spacing(context, 4),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.brandSurface,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: large
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
+                  child: Row(children: [icon, gap, Expanded(child: dateText)]),
+                ),
+                Row(children: [Expanded(child: count), more]),
+              ],
+            )
+          : Row(children: [icon, gap, Expanded(child: dateText), count, more]),
+    );
+  }
+
   /// ✅ 예약 공개 대기 메시지
   Widget _buildPendingPublishNotice(BuildContext context, TOModel to) {
     final publishAt = to.publishAt;
@@ -2245,8 +2232,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
       decoration: BoxDecoration(
         color: AppColors.warningBg,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.warningLight),
+        borderRadius: BorderRadius.circular(12), // [DU276 GC8] 선 제거·radius 12
       ),
       child: Row(
         children: [
@@ -2258,7 +2244,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           Expanded(
             child: Text(
-              displayText,
+              TextLayout.keepWords(displayText), // [DU276 GC8] 낱말 단위(B320 '오/픈됩니다')
+              semanticsLabel: displayText,
               style: ResponsiveHelper.bodyStyle(context, color: AppColors.warningDark).copyWith(
                 fontWeight: FontWeight.w600,
               ),
@@ -2269,27 +2256,46 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     );
   }
 
+  /// [DU276 GC9] 직접 그린 빈 상태(grey400 아이콘·grey500/grey400 글자 1.9~2.68) → 공용 빈 상태 값(r1: _inlineEmpty).
+  ///   부제는 따를 안내라 보조색. (그룹 공고는 열 때 날짜를 자동 선택하므로 보통 보이지 않는다.)
   Widget _buildEmptyDateSelection(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 32)),
+    return _inlineEmpty(
+      context,
+      Icons.touch_app_outlined,
+      '캘린더에서 날짜를 선택하세요',
+      subtitle: '색이 있는 날짜만 지원 가능합니다',
+    );
+  }
+
+  /// [DU276 r1] 스크롤 안 빈 상태 — 공용 AppEmptyState 와 같은 값(아이콘 grey300 56·제목 subtitle w600 보조색·부제 보조색,
+  ///   낱말 단위·읽기 이름 원문). AppEmptyState 는 높이가 정해진 자리용이라 여기서 쓸 수 없다(후보: 공용 inline 변형).
+  Widget _inlineEmpty(BuildContext context, IconData icon, String title, {String? subtitle}) {
+    return Padding(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
       child: Center(
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              Icons.touch_app_outlined,
-              size: ResponsiveHelper.iconSize(context, 48),
-              color: AppColors.grey400,
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            Icon(icon, size: ResponsiveHelper.iconSize(context, 56), color: AppColors.grey300),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Text(
-              '캘린더에서 날짜를 선택하세요',
-              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+              TextLayout.keepWords(title),
+              semanticsLabel: title,
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                color: AppColors.textSecondary,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
             ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-            Text(
-              '색이 있는 날짜만 지원 가능합니다',
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
-            ),
+            if (subtitle != null) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              Text(
+                TextLayout.keepWords(subtitle),
+                semanticsLabel: subtitle,
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+                textAlign: TextAlign.center,
+              ),
+            ],
           ],
         ),
       ),
@@ -2300,11 +2306,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   // 공통 위젯
   // ═══════════════════════════════════════════════════════════
 
+  /// [DU273] 구역 제목 — 시안·O017/O022/O030 과 같은 16 bold 본문색(이전 17). 문구는 원문(시험 계약).
   Widget _buildSectionTitle(BuildContext context, String title) {
     return Text(
       title,
       style: ResponsiveHelper.subtitleStyle(context).copyWith(
+        fontSize: 16,
         fontWeight: FontWeight.bold,
+        color: AppColors.textPrimary,
       ),
     );
   }
@@ -2314,40 +2323,36 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       top: false,
       child: Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-      decoration: BoxDecoration(
+      // [DU273] 위 그림자 → 위 grey200 선(시안 하단 바·DU257 공용 바와 같음)
+      decoration: const BoxDecoration(
         color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, -5),
-          ),
-        ],
+        border: Border(top: BorderSide(color: AppColors.grey200)),
       ),
       child: SizedBox(
         width: double.infinity,
-        height: ResponsiveHelper.spacing(context, 52),
-        child: ElevatedButton(
+        // [DU273] 화면 폭 배율로 44~47 이 됐다 — 최소 48
+        height: ResponsiveHelper.spacing(context, 52).clamp(48.0, 80.0).toDouble(),
+        // [DU273] '닫기'는 주 행동이 아니다(주 행동은 업무 카드의 '지원') — 대표색 채움 → 중립 테두리(UI-1)
+        child: OutlinedButton(
             onPressed: () => Navigator.pop(
               context,
               ApplyDialogResult(hasChanges: _hasChanges,
                   policyChanged: _policyChangedDuringSubmit),
             ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: theme.primaryColor,
-              foregroundColor: Colors.white,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.textSecondary,
+              side: const BorderSide(color: AppColors.grey300),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(
                   ResponsiveHelper.spacing(context, 12),
                 ),
               ),
-              elevation: 0,
             ),
             child: Text(
               '닫기',
-              style: ResponsiveHelper.subtitleStyle(context, color: Colors.white).copyWith(
-                fontWeight: FontWeight.bold,
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary).copyWith(
+                fontWeight: FontWeight.w600,
                 height: 1.2,
               ),
             ),
@@ -2806,21 +2811,16 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       // [GAP-1] 5분 전 cutoff 기준 패널티 예측 (낙관적 UI 업데이트용)
       // 서버가 canonical 판정을 독립적으로 수행하므로 이 값은 UI 미리보기용임
       final workDateForPenalty = date ?? application.workDate;
-      final hasPenalty = () {
-        final parts = work.startTime.split(':');
-        if (parts.length == 2) {
-          final hh = int.tryParse(parts[0]);
-          final mm = int.tryParse(parts[1]);
-          if (hh != null && mm != null) {
-            final scheduledStart = FormatHelper.toKstDate(workDateForPenalty)
-                .add(Duration(hours: hh, minutes: mm));
-            final cutoff = scheduledStart.subtract(const Duration(minutes: 5));
-            return DateTime.now().isAfter(cutoff) ||
-                DateTime.now().isAtSameMomentAs(cutoff);
-          }
-        }
-        return _conflictService.shouldApplyPenalty(workDateForPenalty);
-      }();
+      // [E1-CUTOFF] 서버(`callableCancelConfirmedApplication`)와 같은 식을
+      //   쓴다. 예전에는 `toKstDate()` 가 돌려준 **UTC 자정**에 근무 시각을
+      //   더해, 근무 시작이 실제보다 9시간 늦게 잡혔다(기기 시간대 무관).
+      //   그 구간에 취소하면 서버는 노쇼로 기록하는데 화면은 "확정이
+      //   취소되었습니다"라고만 말했다.
+      final hasPenalty = _conflictService.isNoShowEquivalentCancel(
+            workDate: workDateForPenalty,
+            startTime: work.startTime,
+          ) ??
+          _conflictService.shouldApplyPenalty(workDateForPenalty);
 
       await _firestoreService.cancelConfirmedApplication(
         application.id,
@@ -3040,8 +3040,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     await _showAlertDialog(
       icon: Icons.schedule,
-      iconColor: AppColors.info,
-      bgColor: AppColors.infoBg,
+      iconColor: AppColors.infoDark,
       title: '$dateStr 안내',
       message: '이 날짜의 공고는 아직 오픈되지 않았습니다.',
       detail: '$publishStr에 오픈 예정입니다.',
@@ -3054,8 +3053,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     await _showAlertDialog(
       icon: Icons.lock,
-      iconColor: AppColors.error,
-      bgColor: AppColors.errorBg,
+      // [DU275 AL2] 마감은 위험이 아니다 — 빨강 대신 종료 중립(RS-H2·DU245)
+      iconColor: AppColors.textSecondary,
       title: '$dateStr 안내',
       message: '이 날짜의 모든 업무가 마감되었습니다.',
       detail: '다른 날짜를 선택해주세요.',
@@ -3075,8 +3074,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     await _showAlertDialog(
       icon: Icons.event_busy,
-      iconColor: AppColors.warning,
-      bgColor: AppColors.warningBg,
+      iconColor: AppColors.warningDark,
       title: '$dateStr 안내',
       message: '이 날짜에 확정된 근무가 있습니다.',
       detail: scheduleInfo,
@@ -3090,8 +3088,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     await _showAlertDialog(
       icon: Icons.info_outline,
-      iconColor: AppColors.warning,
-      bgColor: AppColors.warningBg,
+      iconColor: AppColors.warningDark,
       title: '$dateStr 안내',
       message: '일부 업무가 마감되었습니다.',
       detail: '지원 가능한 업무를 확인해주세요.',
@@ -3112,8 +3109,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     await _showAlertDialog(
       icon: Icons.event_busy,
-      iconColor: AppColors.warning,
-      bgColor: AppColors.warningBg,
+      iconColor: AppColors.warningDark,
       title: '장기공고 안내',
       message: '근무 기간 내 확정된 일정이 있습니다.',
       detail: '$conflictDatesStr$extraCount',
@@ -3122,124 +3118,73 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   }
 
   /// 공통 알림 다이얼로그
+  ///
+  /// [DU275 AL1] 앱 공용 대화 셸(DialogHelper.showCustom)로 옮겼다.
+  ///   이전: 자체 AlertDialog 내용이 스크롤 없는 Column 이라 320·2.0 에서 아래로 60~245px 넘쳤고
+  ///   (끝줄이 보이지 않았다), 제목이 의미색 글자(주황 1.98·빨강 3.25), '확인'이 의미색 채움 위 흰 글자(2.16)였다.
+  ///   공용 셸은 흰 머리·옅은 아이콘 상자·본문 스크롤·큰 글자 제목 배치를 갖는다.
+  ///   [AL3] 본문 셋은 낱말 안에서 끊지 않는다('마감되었습니/다'·'확정/된') — 읽기 이름은 원문.
+  ///   [AL4] 행동은 '확인' 하나 — 확인 대화의 주 행동이라 대표색 채움, 공용 확인 버튼과 같은 높이 52.
   Future<void> _showAlertDialog({
     required IconData icon,
     required Color iconColor,
-    required Color bgColor,
     required String title,
     required String message,
     String? detail,
     String? subMessage,
   }) async {
     if (!mounted) return;
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(ctx, 20)),
-        ),
-        contentPadding: EdgeInsets.zero,
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 헤더
+    Text words(String s, TextStyle style) =>
+        Text(TextLayout.keepWords(s), style: style, semanticsLabel: s);
+    await DialogHelper.showCustom<void>(
+      context,
+      // [DU275 r1] 공용 셸의 한 줄 판정(_fitsLine)은 locale 없이 재서 ko_KR 실제 폭보다 좁다 — 320·2.0 에서 '안/내' 로
+      //   끊겼다. 제목도 낱말 단위로만 줄을 바꾸게 넘긴다(공용 판정 교정은 별도 후보).
+      title: TextLayout.keepWords(title),
+      icon: icon,
+      iconColor: iconColor,
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          words(
+            message,
+            ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary, fontWeight: FontWeight.w600),
+          ),
+          if (detail != null) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Container(
               width: double.infinity,
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 20)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
               decoration: BoxDecoration(
-                color: bgColor,
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(ResponsiveHelper.spacing(ctx, 20)),
-                  topRight: Radius.circular(ResponsiveHelper.spacing(ctx, 20)),
-                ),
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(12),
               ),
-              child: Column(
-                children: [
-                  Container(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 12)),
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(icon, size: ResponsiveHelper.iconSize(ctx, 28), color: iconColor),
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
-                  Text(
-                    title,
-                    style: ResponsiveHelper.subtitleStyle(ctx).copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: iconColor,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // 내용
-            Padding(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 20)),
-              child: Column(
-                children: [
-                  Text(
-                    message,
-                    style: ResponsiveHelper.bodyStyle(ctx).copyWith(fontWeight: FontWeight.w600),
-                    textAlign: TextAlign.center,
-                  ),
-                  if (detail != null) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
-                    Container(
-                      width: double.infinity,
-                      padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 12)),
-                      decoration: BoxDecoration(
-                        color: AppColors.grey100,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        detail,
-                        style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey700),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ],
-                  if (subMessage != null) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
-                    Text(
-                      subMessage,
-                      style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey600),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ],
-              ),
+              child: words(detail, ResponsiveHelper.smallStyle(context, color: AppColors.textPrimary)),
             ),
           ],
-        ),
-        actions: [
-          SizedBox(
-            width: double.infinity,
-            child: TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              style: TextButton.styleFrom(
-                backgroundColor: iconColor,
-                foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(ctx, 12)),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              child: Text(
-                '확인',
-                style: ResponsiveHelper.bodyStyle(ctx, color: Colors.white).copyWith(fontWeight: FontWeight.bold),
-              ),
-            ),
-          ),
+          if (subMessage != null) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            words(subMessage, ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary)),
+          ],
         ],
-        actionsPadding: EdgeInsets.fromLTRB(
-          ResponsiveHelper.spacing(ctx, 20),
-          0,
-          ResponsiveHelper.spacing(ctx, 20),
-          ResponsiveHelper.spacing(ctx, 16),
-        ),
       ),
+      actions: [
+        Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.brand,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              minimumSize: const Size.fromHeight(52),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              textStyle: ResponsiveHelper.bodyStyle(ctx, fontWeight: FontWeight.bold),
+            ),
+            child: const Text('확인'),
+          ),
+        ),
+      ],
     );
   }
 
