@@ -783,13 +783,14 @@ class _PayrollPaymentDashboardScreenState
     return p == null ? n : '$n($p)';
   }
 
-  /// 확인 문구의 받는 사람 — `김지현(P-014)님께` / `이름 확인 불가(P-014) 근로자에게`.
+  /// 확인 문구의 받는 사람 — `김지현(P-014)님께` / `이름 확인 불가(P-014) 근무자에게`.
   ///   '이름 확인 불가님께'처럼 상태 문구에 호칭을 붙이지 않는다.
   String _addresseeOf(String uid, {bool possessive = false}) {
     final known = _knownDisplayName(uid) != null;
     final l = _confirmLabelOf(uid);
     if (known) return possessive ? '$l님의' : '$l님께';
-    return possessive ? '$l 근로자의' : '$l 근로자에게';
+    // [DU599b g1 · 판정156 Q3 :41 · 판정179 P4] 이름 미확인 받는 사람 = 번호 · 미확인 표현 그대로 + 확정 뒤 호칭 '근무자'(확인 문구 · 알림 payload 아님).
+    return possessive ? '$l 근무자의' : '$l 근무자에게';
   }
 
   /// 알림용 이름 표 — 아는 이름만 담는다(예전: `name ?? uid`).
@@ -967,7 +968,8 @@ class _PayrollPaymentDashboardScreenState
     if (info == null || info.ready) return null;
     if (_needsManualReview(recs)) return null;
     return switch (info.actor) {
-      PayrollActor.worker => '근로자 정보 보완 대기',
+      // [DU599b g1 · 판정156 Q3 :39 · 판정179 P4] 상태 문구 호칭 = '근무자'(화면 안내 · 분기 그대로).
+      PayrollActor.worker => '근무자 정보 보완 대기',
       PayrollActor.workerOrReview => '통장사본 확인 필요',
       _ => null,
     };
@@ -1073,8 +1075,9 @@ class _PayrollPaymentDashboardScreenState
           attendanceId: target.id,
         );
         if (!mounted) return;
+        // [DU599b g1 · 판정156 Q3 :39 · Q1 :25] 화면 안내 호칭 = 확정 뒤 '근무자'(급여 서식 · 문서 원문 아님 · 문구만 · 분기 그대로).
         ToastHelper.showSuccess(r.correctionOpened
-            ? '근로자에게 통장사본 재등록을 요청했습니다'
+            ? '근무자에게 통장사본 재등록을 요청했습니다'
             : '확인 완료했습니다. 지급정보를 갱신하면 이체할 수 있어요');
         // [R8-P2.1] 이 검토가 바꾸는 것은 지급 준비 판정뿐이다 —
         //   attendance 도 지원서도 쓰지 않는다. 그러니 판정만 다시 읽는다.
@@ -1857,9 +1860,15 @@ class _PayrollPaymentDashboardScreenState
                       FormatHelper.formatWage(plan.exportedTotal)),
                   if (plan.partialWorkers > 0) ...[
                     const SizedBox(height: 6),
+                    // [DU599b g1 · 판정156 Q3 :39 · 판정179 P1] 시트 안내 호칭 = '근무자'(인원 수 표현 그대로 · 엑셀 머리글 아님) ·
+                    //   낱말 사이에서만 줄을 바꾸고(keepWords) 읽는 이름은 제어문자 없는 원문(semanticsLabel). 값 · 문장 · 색 · 크기 · 분기 그대로.
                     Text(
-                      '일부 건만 포함된 근로자 ${plan.partialWorkers}명 — '
-                      '같은 사람이 포함과 확인 필요 양쪽에 있습니다.',
+                      TextLayout.keepWords(
+                          '일부 건만 포함된 근무자 ${plan.partialWorkers}명 — '
+                          '같은 사람이 포함과 확인 필요 양쪽에 있습니다.'),
+                      semanticsLabel:
+                          '일부 건만 포함된 근무자 ${plan.partialWorkers}명 — '
+                          '같은 사람이 포함과 확인 필요 양쪽에 있습니다.',
                       style: ResponsiveHelper.tinyStyle(ctx,
                           color: AppColors.grey600),
                     ),
@@ -1992,6 +2001,7 @@ class _PayrollPaymentDashboardScreenState
       if (picked == null || !mounted) return;
 
       // 2단계: 확인 다이얼로그
+      // [DU599b g1 · 판정156 Q3 :39 · Q1 :25] 확인창 안내 호칭 = '근무자'(알림 받는 사람 · 첫 줄 이름 호칭 그대로).
       final ok = await DialogHelper.showConfirm(
         context,
         title: '중간정산 승인',
@@ -1999,7 +2009,7 @@ class _PayrollPaymentDashboardScreenState
             '기간: ${req.periodLabel} (${req.recordCount}건)\n'
             '금액: ${FormatHelper.formatWage(req.netAmount)}\n'
             '이체 예정일: ${DateFormat('yyyy년 MM월 dd일').format(picked)}\n\n'
-            '승인 시 근로자에게 알림이 전송됩니다.',
+            '승인 시 근무자에게 알림이 전송됩니다.',
         confirmText: '승인',
         cancelText: '취소',
       );
@@ -2245,7 +2255,7 @@ class _PayrollPaymentDashboardScreenState
                       Tab(child: AppTabLabel(
                           label: '미이체',
                           count: _pendingBadgeCount,   // H1: 캐시
-                          badgeColor: AppColors.error,
+                          badgeColor: AppColors.brand,
                           urgent: _pendingIsUrgent)),   // H1: 캐시
                       Tab(child: AppTabLabel(label: '이체현황')),
                       // [R8-P1B] 아직 못 받았으면 배지를 그리지 않는다.
@@ -2255,7 +2265,7 @@ class _PayrollPaymentDashboardScreenState
                           label: '변경요청',
                           count: _changeRequestsLoaded
                               ? _changeRequests.length : null,
-                          badgeColor: AppColors.info)),
+                          badgeColor: AppColors.brand)),
                       Tab(child: AppTabLabel(
                           label: '중간정산',
                           count: _settlementsLoaded
@@ -2603,7 +2613,7 @@ class _PayrollPaymentDashboardScreenState
                   style: TextButton.styleFrom(
                     minimumSize: const Size(0, 26),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    foregroundColor: AppColors.infoDark,
+                    foregroundColor: AppColors.brand,
                     padding: const EdgeInsets.symmetric(horizontal: 6),
                     textStyle: ResponsiveHelper.tinyStyle(context, fontWeight: FontWeight.w600),
                   ),
@@ -2620,9 +2630,9 @@ class _PayrollPaymentDashboardScreenState
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size(0, 26),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    foregroundColor: _batchMode ? AppColors.error : AppColors.grey600,
+                    foregroundColor: _batchMode ? AppColors.textSecondary : AppColors.grey600,
                     side: BorderSide(
-                        color: _batchMode ? AppColors.error : AppColors.grey300),
+                        color: _batchMode ? AppColors.border : AppColors.grey300),
                     padding: const EdgeInsets.symmetric(horizontal: 6),
                     textStyle: ResponsiveHelper.tinyStyle(context, fontWeight: FontWeight.w600),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
@@ -3707,8 +3717,8 @@ class _RequestCard extends StatelessWidget {
                   OutlinedButton(
                     onPressed: onReject,
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.error,
-                      side: const BorderSide(color: AppColors.error),
+                      foregroundColor: AppColors.textSecondary,
+                      side: const BorderSide(color: AppColors.border),
                       padding: EdgeInsets.symmetric(
                         horizontal: ResponsiveHelper.spacing(context, 14),
                         vertical:   ResponsiveHelper.spacing(context, 6),
@@ -3737,7 +3747,7 @@ class _RequestCard extends StatelessWidget {
                   ElevatedButton(
                     onPressed: onApprove,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.success,
+                      backgroundColor: AppColors.brand,
                       foregroundColor: Colors.white,
                       padding: EdgeInsets.symmetric(
                         horizontal: ResponsiveHelper.spacing(context, 14),
@@ -3753,7 +3763,7 @@ class _RequestCard extends StatelessWidget {
                   ElevatedButton(
                     onPressed: onProcess,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.teal,
+                      backgroundColor: AppColors.brand,
                       foregroundColor: Colors.white,
                       padding: EdgeInsets.symmetric(
                         horizontal: ResponsiveHelper.spacing(context, 14),
@@ -3857,7 +3867,7 @@ class _DashboardSummaryHeader extends StatelessWidget {
                     style: TextButton.styleFrom(
                       minimumSize: const Size(0, 26),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      foregroundColor: AppColors.infoDark,
+                      foregroundColor: AppColors.brand,
                       padding:
                           const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
                       textStyle: ResponsiveHelper.tinyStyle(context,
@@ -4689,12 +4699,12 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
-                                  border: Border.all(color: AppColors.error.withValues(alpha: 0.5)),
+                                  border: Border.all(color: AppColors.border),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: Text('이체 취소',
                                     style: ResponsiveHelper.tinyStyle(ctx,
-                                        color: AppColors.error,
+                                        color: AppColors.textSecondary,
                                         fontWeight: FontWeight.w600)),
                               ),
                             ),
@@ -4795,7 +4805,7 @@ class _RejectReasonDialogState extends State<_RejectReasonDialog> {
                 }
               : null,
           style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.error,
+            backgroundColor: AppColors.errorDark,
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(vertical: 12),
           ),
@@ -4987,8 +4997,8 @@ class _PayrollBankReviewSheet extends StatelessWidget {
                     onPressed: () =>
                         Navigator.pop(context, 'REUPLOAD_REQUIRED'),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.errorFaded,
-                      side: const BorderSide(color: AppColors.errorFaded),
+                      foregroundColor: AppColors.textSecondary,
+                      side: const BorderSide(color: AppColors.border),
                       padding: EdgeInsets.symmetric(
                           vertical: ResponsiveHelper.spacing(context, 13)),
                       shape: RoundedRectangleBorder(
@@ -5003,7 +5013,7 @@ class _PayrollBankReviewSheet extends StatelessWidget {
                   child: ElevatedButton(
                     onPressed: () => Navigator.pop(context, 'REVIEWED_OK'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.infoDark,
+                      backgroundColor: AppColors.brand,
                       foregroundColor: Colors.white,
                       padding: EdgeInsets.symmetric(
                           vertical: ResponsiveHelper.spacing(context, 13)),

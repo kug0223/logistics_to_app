@@ -1,3 +1,5 @@
+// ignore_for_file: depend_on_referenced_packages
+// [DU615b] 위 줄 = 이 파일이 이미 쓰는 Firebase 대역 import 2(firebase_core_platform_interface · plugin_platform_interface) 전용 — 판정 필요 J-APS-LINT(README §13-1).
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -12,6 +14,8 @@ import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/user/apply_prerequisites_screen.dart';
 import 'package:ALfit/widgets/common/app_page_scaffold.dart';
 import 'package:ALfit/widgets/common/gradient_scaffold.dart';
+
+import 'support/visible_text.dart'; // [DU615b] keepWords 제목은 보이는 글자 정확 일치로 찾는다(find.text 와 같은 skipOffstage 기본)
 
 /// [R7-P2-2 P22-G] 지원 준비 화면의 shell 전환이 **헤더·본문·행동을 유지**하는지.
 
@@ -123,12 +127,12 @@ void main() {
     expect(find.byType(GradientScaffold), findsNothing,
         reason: '이 화면은 flat shell 로 전환됐다');
     expect(find.text('지원하기'), findsWidgets, reason: '헤더 제목이 남아 있어야 한다');
-    expect(find.text('지원 전 준비사항'), findsOneWidget, reason: '본문이 그대로여야 한다');
+    expect(findVisibleText('지원 전 준비사항'), findsOneWidget, reason: '본문이 그대로여야 한다');
   });
 
   testWidgets('APS-2 뒤로가 동작한다 — 호출 화면으로 돌아온다', (tester) async {
     await _pump(tester);
-    expect(find.text('지원 전 준비사항'), findsOneWidget);
+    expect(findVisibleText('지원 전 준비사항'), findsOneWidget);
 
     final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
     nav.pop();
@@ -136,7 +140,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
-    expect(find.text('지원 전 준비사항'), findsNothing);
+    expect(findVisibleText('지원 전 준비사항'), findsNothing);
     expect(find.text('열기'), findsOneWidget);
   });
 
@@ -157,7 +161,7 @@ void main() {
           (tester) async {
         await _pump(tester, size: size, textScale: scale);
         expect(tester.takeException(), isNull);
-        expect(find.text('지원 전 준비사항'), findsOneWidget);
+        expect(findVisibleText('지원 전 준비사항'), findsOneWidget);
       });
     }
   }

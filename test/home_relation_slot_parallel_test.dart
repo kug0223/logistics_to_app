@@ -94,9 +94,26 @@ class _UserDouble extends UserProvider {
   Future<void> refreshPendingContracts({bool joinInFlight = false}) async {}
 }
 
+/// [date1 · F268-SAT-CLOCK/F269-C1-ROW-CLOCK] 자정 가드 — 로컬 또는 KST 자정까지 [margin] 보다 적게 남았으면 자정을 넘길 때까지 실제로 기다린다.
+///   setUp(실시간 영역)에서 부른다. 그 뒤 잡은 '오늘'은 이 시험이 끝날 때까지(< margin) 화면의 DateTime.now() 와 같은 날이다.
+Future<void> _midnightGuard(Duration margin) async {
+  Duration left(DateTime n) => DateTime(n.year, n.month, n.day + 1).difference(n);
+  final local = DateTime.now();
+  final k = local.toUtc().add(const Duration(hours: 9));
+  final kst = DateTime(k.year, k.month, k.day, k.hour, k.minute, k.second, k.millisecond);
+  final wait = [left(local), left(kst)].where((d) => d < margin).fold<Duration>(Duration.zero, (a, b) => b > a ? b : a);
+  if (wait > Duration.zero) {
+    // ignore: avoid_print
+    print('[date1] 자정 가드 — ${wait.inSeconds + 1}초 기다림(로컬 $local)');
+    await Future<void>.delayed(wait + const Duration(seconds: 1));
+  }
+}
+
 const _biz = 'biz1';
+// [date1] 기준 시각 = 시험마다 setUp 에서 자정 가드 뒤 한 번(옛: 부를 때마다 now · main 의 `final d = _day(3)` 은 파일 로드 때 고정)
+late DateTime _base;
 DateTime _day(int offset) {
-  final n = DateTime.now();
+  final n = _base;
   return DateTime(n.year, n.month, n.day).add(Duration(days: offset));
 }
 
@@ -257,8 +274,12 @@ void main() {
     SharedPreferences.setMockInitialValues(
         {'tour_completed_user_home': true});
   });
-
-  final d = _day(3);
+  late DateTime d;
+  setUp(() async {
+    await _midnightGuard(const Duration(seconds: 120));
+    _base = DateTime.now();
+    d = _day(3);
+  });
 
   _SlotReads oneTo() {
     final r = _SlotReads(

@@ -102,7 +102,23 @@ DateTime _futureKstDay(int plusDays) {
   return _kstInstant(k.year, k.month, k.day);
 }
 
-final _day = _futureKstDay(2);
+// [date1] 옛: `final _day = _futureKstDay(2)` 파일 로드 때 한 번 → 시험마다 setUp 에서 자정 가드 뒤.
+late DateTime _day;
+
+/// [date1 · F268-SAT-CLOCK/F269-C1-ROW-CLOCK] 자정 가드 — 로컬 또는 KST 자정까지 [margin] 보다 적게 남았으면 자정을 넘길 때까지 실제로 기다린다.
+///   setUp(실시간 영역)에서 부른다. 그 뒤 잡은 '오늘'은 이 시험이 끝날 때까지(< margin) 화면의 DateTime.now() 와 같은 날이다.
+Future<void> _midnightGuard(Duration margin) async {
+  Duration left(DateTime n) => DateTime(n.year, n.month, n.day + 1).difference(n);
+  final local = DateTime.now();
+  final k = local.toUtc().add(const Duration(hours: 9));
+  final kst = DateTime(k.year, k.month, k.day, k.hour, k.minute, k.second, k.millisecond);
+  final wait = [left(local), left(kst)].where((d) => d < margin).fold<Duration>(Duration.zero, (a, b) => b > a ? b : a);
+  if (wait > Duration.zero) {
+    // ignore: avoid_print
+    print('[date1] 자정 가드 — ${wait.inSeconds + 1}초 기다림(로컬 $local)');
+    await Future<void>.delayed(wait + const Duration(seconds: 1));
+  }
+}
 
 WorkDetailData _wd({String id = 'wd-1', String type = 'QA 분류'}) =>
     WorkDetailData(
@@ -293,6 +309,10 @@ void main() {
     FirebasePlatform.instance = _FakeCore();
     await Firebase.initializeApp();
     await initializeDateFormatting('ko_KR', null);
+  });
+  setUp(() async {
+    await _midnightGuard(const Duration(seconds: 120));
+    _day = _futureKstDay(2);
   });
 
   testWidgets('TP-1 상세가 이미 떠 있으면 탭은 세무 조회를 다시 기다리지 않는다', (t) async {

@@ -1,3 +1,4 @@
+// ignore_for_file: depend_on_referenced_packages
 // [INVITE-CLOSURE-PROJECTION] 공개 지원 접수가 자동으로 끝나도 **이미 받은 초대**는
 // 유효 기한까지 수락할 수 있다 — 근로자 카드가 서버 수락 판정과 같은 말을 한다.
 //
@@ -16,7 +17,6 @@
 //   IC-E  역검증: 유효한 초대에서 `초대 정리` 가 어디에도 없다
 //   IC-F  320dp × 글자 2.0 넘침 없음 · 서버 필드 파싱
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import 'package:flutter/material.dart';
@@ -216,7 +216,7 @@ Future<void> _pump(
 }
 
 List<String> _texts(WidgetTester t) => t
-    .widgetList<Text>(find.byType(Text))
+    .widgetList<Text>(find.byWidgetPredicate((w) => w is Text))
     .map((w) => w.data ?? '')
     .where((s) => s.isNotEmpty)
     .toList();

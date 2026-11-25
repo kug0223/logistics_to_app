@@ -37,6 +37,7 @@ import '../../widgets/common/attendance_rule_guide_view.dart';
 import '../../widgets/common/common_widgets.dart';
 import '../../utils/text_layout.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/keep_words_text.dart';
 // WorkTypeIcon import removed — 업무카드 placeholder 아이콘 제거 (spec 요구)
 import '../../widgets/maps/kakao_map_widget.dart';
 import '../../widgets/common/defer_until_on_screen.dart';
@@ -140,6 +141,8 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   String? _applicantUid;
 
   String? _applyBlockReason;
+  // [DU591b · 판정171 §4 · 판정173 §3 J-b · 장부 151/040] 이용 제한일 때 읽는 안내 — 지원 준비 화면 배너(DU582c)와 같은 문장 · 버튼에는 행동 이름만 · [DU591c] 그리는 자리 = 본문 머리(판정175 §3-3 대안②).
+  String? _applyBlockNotice;
   bool get _isApplyable => _applyBlockReason == null;
   bool _isApplying = false;
   int _memCacheWidth = 800;
@@ -357,13 +360,20 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     if (widget.mode != TODetailMode.applicant) return;
     final user = context.read<UserProvider>().currentUser;
     String? newReason;
+    String? newNotice;
     if (user == null) {
       newReason = '로그인이 필요합니다';
     } else if (user.isBlacklisted) {
-      newReason = '이용 제한된 계정입니다';
+      // [DU582b · 판정156 Q4] isBlacklisted = '계정 이용 차단'(기간 제한 '이용 제한'과 구분 · 지원 준비 화면 · 운영자 S052 와 같은 말).
+      newReason = '계정 이용 차단 상태예요';
     } else if (user.isRestricted) {
-      final remainDays = user.restrictedUntil!.difference(DateTime.now()).inDays + 1;
-      newReason = '무단 결근 페널티 ($remainDays일 제한)';
+      // [DU571] 남은 일수(올림) 대신 실제로 끝나는 시각 — 기한 없는 제한은 날짜로 말하지 않는다(지원 준비 화면과 같은 표기).
+      final until = restrictionEndLabel(user.restrictedUntil!);
+      newReason = until != null ? '$until까지 이용이 제한돼요' : '이용 제한(기한 없음) 상태예요';
+      // [DU591b] 끝 시각 · 효과(이미 확정된 근무도 출근 체크 불가 = callableCheckIn 의 restrictedUntil 거절)를 지원 준비 화면 배너와 같은 문장으로(판정173 §3 J-c 채택 어휘).
+      newNotice = until != null
+          ? '$until까지 이용이 제한돼 지원할 수 없어요.\n이미 확정된 근무도 제한이 끝날 때까지 출근 체크를 할 수 없어요.'
+          : '이용 제한(기한 없음) 상태라 지원할 수 없어요.\n이미 확정된 근무도 해제 전까지 출근 체크를 할 수 없어요.';
     } else if (!user.isForeign && !user.isPassVerified) {
       // [PII-DOC-R1.5.3] 내국인만 PASS 필수 — 서버(srvIsForeignIdentity)와
       //   meetsApplyPrerequisites가 쓰는 조건과 같다. 예전에는 국적 구분 없이
@@ -383,7 +393,11 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       newReason = '통장사본 등록이 필요합니다';
     }
     if (newReason != _applyBlockReason) {
-      setState(() => _applyBlockReason = newReason);
+      // [DU591b] 안내는 사유와 같은 갈래 · 같은 끝 시각에서 정해진다 — 사유가 바뀔 때 함께 바꾼다(판정식 · 사유 문장 그대로).
+      setState(() {
+        _applyBlockReason = newReason;
+        _applyBlockNotice = newNotice;
+      });
     }
   }
 
@@ -806,6 +820,8 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // [DU591c · 판정175 §3-3 F175-JP-B-BAR 대안② · 판정176 §3] 이용 제한 안내는 본문 머리(앱 바 바로 아래 첫 블록)에서 읽는다 — 하단 고정 바는 주 CTA 만.
+                          if (_showApplyBlockNotice) _buildApplyBlockNotice(context),
                           _buildPostingHeader(context),
                           // [CROSS-DOMAIN-R5.3D] 초대라면 **수락하면 적용될
                           //   조건**이 결정의 유일한 근거다.
@@ -2289,6 +2305,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
   /// [CP05] 정밀 §8 상세 정보행 — 아이콘 18(outlined, 기본 #25325B) · 뒤 12 · 라벨 14/400 · 값 16/400 · 수직 padding 12.
   ///   값은 실제 값 그대로(미상값을 '없음'으로 바꾸지 않는다). 이동·복사·전화 같은 행동이 있으면 오른쪽에 receiver 48 하나.
+  ///   [DU613b · 판정198 §3 ③ F198-JP-ADDRESS-WORDS] breakAtSpaces = 값 · 보조 글을 낱말 사이에서만 줄바꿈(TextLayout.keepWords · 읽는 이름 = 원문) — 주소 행만 켠다.
   Widget _buildInfoRow(
     BuildContext context, {
     required IconData icon,
@@ -2298,6 +2315,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     Color? iconColor,
     TextStyle? valueStyle,
     Widget? trailing,
+    bool breakAtSpaces = false,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
@@ -2317,10 +2335,12 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                   Text(TextLayout.keepWords(label), semanticsLabel: label, style: ConceptText.infoLabel()),
                   const SizedBox(height: 2),
                 ],
-                Text(value, style: valueStyle ?? ConceptText.infoValue()),
+                Text(breakAtSpaces ? TextLayout.keepWords(value) : value,
+                    semanticsLabel: breakAtSpaces ? value : null, style: valueStyle ?? ConceptText.infoValue()),
                 if (sub != null) ...[
                   const SizedBox(height: 2),
-                  Text(sub, style: ConceptText.meta()),
+                  Text(breakAtSpaces ? TextLayout.keepWords(sub) : sub,
+                      semanticsLabel: breakAtSpaces ? sub : null, style: ConceptText.meta()),
                 ],
               ],
             ),
@@ -2439,6 +2459,8 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         label: '근무 장소',
         value: _business!.address,
         sub: _business!.detailAddress,
+        // [DU613b · 판정198 §3 ③] 주소는 낱말 사이에서만 줄을 바꾼다(B 에서 시 · 구 이름 안 음절 끊김) — 원주소 데이터 · 복사 글 · 지도는 그대로.
+        breakAtSpaces: true,
         trailing: IconButton(
           onPressed: () {
             final addr = _business!.detailAddress != null
@@ -2576,6 +2598,36 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     );
   }
 
+  /// [DU591c · 판정175 §3-3 F175-JP-B-BAR 대안② · 판정176 §3] 이용 제한 안내를 그리는가 — 하단 바가 이용 제한 갈래로 가는 조건과 같다
+  ///   (마감 아님 · 내 지원 진입 아님 · 관리자 미리보기와 로그인 전은 안내 글 자체가 없다). 판정식 · 사유 · 안내 문장은 그대로.
+  bool get _showApplyBlockNotice =>
+      _applyBlockNotice != null && !_isEffectivelyClosed && widget.myApplication == null;
+
+  /// [DU591c] 이용 제한 안내 — 본문 스크롤 영역 첫 블록(진입 첫 화면에서 앱 바 바로 아래 · 사업장 이름 위)에서 읽는다.
+  ///   문장 · 역할(meta 14 · textSecondary · 흰 면 5.92) · 낱말 사이 줄바꿈 · 원문 읽는 이름은 DU591b 그대로 · 여러 줄이라 시작 정렬(가운데 0).
+  ///   [DU613b · 판정168 :33 · 판정175 §3-3 J4 · 장부 040] 끝 시각은 날짜 덩어리('2030년 12월 31일') · 시각 덩어리('오후 11시 59분까지') 안에서 줄을 바꾸지 않는다(둘 사이에서만 · _noticeDisplay).
+  Widget _buildApplyBlockNotice(BuildContext context) {
+    final g = _gutter(context);
+    final notice = _applyBlockNotice!;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(g, 16, g, 0),
+      child: Text(_noticeDisplay(notice),
+          semanticsLabel: notice, style: ConceptText.meta()),
+    );
+  }
+
+  /// [DU613b · 장부 040 잔여 · 판정175 §3-3 J4 '낱말 brk0 은 날짜·시각 전체 덩어리 유지가 아니다'] 이용 제한 안내의 끝 시각(restrictionEndLabel 꼴 + '까지')을
+  ///   날짜 · 시각 두 덩어리로 묶는다(TextLayout.unit) — 줄은 두 덩어리 사이와 나머지 낱말 사이에서만 바뀐다. 끝 시각이 없는 갈래(기한 없음)는 keepWords 그대로.
+  ///   표시 글만 바뀐다 — 안내 문장 · 읽는 이름(semanticsLabel = 원문) · 판정식 그대로.
+  static final RegExp _untilChunk = RegExp(r'(\d{4}년 \d{1,2}월 \d{1,2}일) ((?:오전|오후) \d{1,2}시(?: \d{1,2}분)?까지)');
+
+  static String _noticeDisplay(String notice) {
+    final m = _untilChunk.firstMatch(notice);
+    if (m == null) return TextLayout.keepWords(notice);
+    return '${TextLayout.keepWords(notice.substring(0, m.start))}${TextLayout.unit(m.group(1)!)} '
+        '${TextLayout.unit(m.group(2)!)}${TextLayout.keepWords(notice.substring(m.end))}';
+  }
+
   // ── 하단 버튼 바 ──────────────────────────────
 
   Widget _buildBottomBar(BuildContext context) {
@@ -2596,6 +2648,8 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     // 버튼 텍스트 & 활성 여부
     final String buttonText;
     final bool isDisabled;
+    // [DU591b · DU591c] 이용 제한이면 버튼 글은 행동 이름만(아래 !_isApplyable 갈래) — 안내 글은 본문 머리 _buildApplyBlockNotice 가 그린다(판정175 §3-3).
+    String? blockNotice;
     // 서류 미완료 차단 여부 — 신분증·통장 관련만 바텀시트로 안내
     final bool isDocumentBlock = !isClosed && !_isApplyable && _isDocumentBlocked;
 
@@ -2610,7 +2664,9 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       isDisabled = false;
     } else if (!_isApplyable) {
       // 블랙리스트·페널티·본인인증 차단: 기존대로 버튼 비활성
-      buttonText = _applyBlockReason ?? '지원 불가';
+      // [DU591b · 판정171 §4 '옅은 비활성 버튼에 설명을 몰아넣지 않는다' · 장부 040 B 2→4줄] 이용 제한은 사유 · 효과를 읽는 안내로 옮기고 버튼은 행동 이름만 — [DU591c] 안내 자리 = 본문 머리(고정 바 = 주 CTA).
+      blockNotice = _applyBlockNotice;
+      buttonText = blockNotice != null ? '지원하기' : (_applyBlockReason ?? '지원 불가');
       isDisabled = true;
     } else if (_isApplying) {
       buttonText = '처리 중...';
@@ -2652,6 +2708,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                 style: ConceptText.meta().copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
           ],
+          // [DU591c · 판정175 §3-3] 이용 제한 안내 줄은 본문 머리로 옮겼다 — 고정 바 = 선택 수 줄(있을 때) + 주 CTA.
           SizedBox(
           width: double.infinity,
           child: ElevatedButton(
@@ -2661,13 +2718,13 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     ? () => _showDocumentReadinessSheet(context)
                     : _showConfirmAndApply),
             style: ElevatedButton.styleFrom(
-              // 서류 미완료: 연한 파란 배경 + 진한 파란 텍스트 (경고색 사용 안 함)
+              // 서류 미완료: brandSurface 면 + brand 글(보조 행동 · B5 I1 · 경고색 사용 안 함)
               backgroundColor: isDisabled
                   ? null
-                  : (isDocumentBlock ? AppColors.infoBg : theme.primaryColor),
+                  : (isDocumentBlock ? AppColors.brandSurface : theme.primaryColor),
               foregroundColor: isDisabled
                   ? null
-                  : (isDocumentBlock ? AppColors.infoDark : Colors.white),
+                  : (isDocumentBlock ? AppColors.brand : Colors.white),
               disabledBackgroundColor: AppColors.grey100,
               disabledForegroundColor: AppColors.grey400,
               // [DU1-F7] 주 행동 최소 높이 52(글자 배율이 크면 늘어난다)
@@ -3025,7 +3082,8 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                         final sched = work.payScheduleTypeLabel;
                         return sched.isNotEmpty ? '$base  ·  $sched' : base;
                       }(),
-                      valueColor: AppColors.successDark,
+                      // [DU577b] 업무 상세 시트 급여 값 = brand(판정170 §5 · BL-04) — 값 문장 · 정산 방식 표기 그대로.
+                      valueColor: AppColors.brand,
                     ),
                     if (work.payScheduleDetail.isNotEmpty) ...[
                       SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -3339,8 +3397,9 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       case AppStatus.contractPending:
         if (contract == null) {
           badgeLabel  = '계약 진행 중';
-          badgeColor  = AppColors.infoDark;
-          badgeBgColor = AppColors.infoBg;
+          // [DU591b · 판정139 §3 PP-STATUS-PAIR · 장부 011] 일반정보 상태 = brandSurface/brand(info 짝 약 4.03 미달 → 약 4.99 · 일정 카드 DU576 과 같은 짝).
+          badgeColor  = AppColors.brand;
+          badgeBgColor = AppColors.brandSurface;
           mainMessage = '채용이 결정되었어요.\n관리자가 계약서를 준비하고 있습니다.';
         } else {
           switch (contract.status) {
@@ -3352,8 +3411,9 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
               showContractAction = true;
             case ContractStatus.pendingEmployer:
               badgeLabel  = '계약 진행 중';
-              badgeColor  = AppColors.infoDark;
-              badgeBgColor = AppColors.infoBg;
+              // [DU591b · 판정139 §3 PP-STATUS-PAIR · 장부 011] 일반정보 상태 = brandSurface/brand(info 짝 약 4.03 미달 → 약 4.99 · 일정 카드 DU576 과 같은 짝).
+              badgeColor  = AppColors.brand;
+              badgeBgColor = AppColors.brandSurface;
               mainMessage = '계약서 작성이 완료되었어요.\n관리자 서명을 기다리고 있습니다.';
             default:
               badgeLabel  = '계약 완료';
@@ -3404,8 +3464,9 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
       case AppStatus.invited:
         badgeLabel  = '근무 초대';
-        badgeColor  = AppColors.infoDark;
-        badgeBgColor = AppColors.infoBg;
+        // [DU591b · 판정139 §3 PP-STATUS-PAIR · 장부 011] 일반정보 상태 = brandSurface/brand(info 짝 약 4.03 미달 → 약 4.99 · 일정 카드 DU576 과 같은 짝).
+        badgeColor  = AppColors.brand;
+        badgeBgColor = AppColors.brandSurface;
         mainMessage = '새로운 근무 초대가 도착했어요.';
         showInviteActions = true;
 
@@ -3608,6 +3669,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           // 지원 취소 링크 (PENDING)
           if (showCancelAction) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+            // [DU575] 일반 취소 진입 = 중립 textSecondary 밑줄 글(판정139 §4 544-11 · 내 지원 '취소' 진입과 같다) — errorDark 는 최종 취소 확인에만.
             GestureDetector(
               onTap: _isCancellingApplication ? null : _cancelApplicationFromDetail,
               child: Text(
@@ -3615,10 +3677,10 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                 style: TextStyle(
                   fontSize: 12,
                   color: _isCancellingApplication
-                      ? AppColors.grey400 : AppColors.errorDark,
+                      ? AppColors.grey400 : AppColors.textSecondary,
                   decoration: TextDecoration.underline,
                   decorationColor: _isCancellingApplication
-                      ? AppColors.grey400 : AppColors.errorDark,
+                      ? AppColors.grey400 : AppColors.textSecondary,
                 ),
               ),
             ),
@@ -3779,7 +3841,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       // [R5.3D.1] 제안 수락의 결과 — 이력은 남지만 취소가 아니다.
       case 'REASSIGNMENT_ACCEPTED':
         return '제안받은 다른 업무로 확정되어\n이 지원은 정리되었어요.\n'
-            '취소·노쇼 불이익은 적용되지 않습니다.';
+            '이 정리는 노쇼로 기록되지 않았어요.';
       default:
         return '지원이 자동으로 취소되었어요.';
     }
@@ -3795,7 +3857,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     final confirmed = await DialogHelper.showCancelConfirm(
       context,
       title: '지원 취소',
-      message: '지원을 취소하시겠습니까?',
+      message: '지원을 취소할까요?',
     );
     if (!confirmed || !mounted) return;
 
@@ -3804,12 +3866,12 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       final success = await _firestoreService.cancelApplication(
           widget.myApplication!.id, uid);
       if (mounted && success) {
-        ToastHelper.showSuccess('지원이 취소되었습니다.');
+        ToastHelper.showSuccess('지원을 취소했어요.');
         Navigator.pop(context, true);
       }
     } catch (e) {
       debugPrint('❌ 지원 취소 오류: $e');
-      if (mounted) ToastHelper.showError('취소 중 오류가 발생했습니다.');
+      if (mounted) ToastHelper.showError('지원을 취소하지 못했어요.');
     } finally {
       if (mounted) setState(() => _isCancellingApplication = false);
     }
@@ -3833,6 +3895,21 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     } finally {
       if (mounted) setState(() => _isContractSignOpening = false);
     }
+  }
+
+  /// [DU575] 초대/제안 수락 확인창의 행동 두 개(취소 글자 단추 · 채운 주 행동) — 내 지원 화면 _acceptDialogActions 와 같은 배치.
+  ///   큰 글자(배율>1.0)에서 반 칸에 든 주 행동 글이 낱말 안에서 끊겼다(내 지원 같은 확인창 320·2.0 · DU573 관측) —
+  ///   공용 확인창 행동(DialogHelper F48-1 · StyledDialog SD4)과 같이 그때는 세로 전체 폭으로 쌓고 주 행동을 위에 둔다.
+  ///   기본 배율(1.0)은 지금 가로 두 칸 그대로(셸 showCustom 이 행동마다 반 칸). 반환값 · 누를 때 동작은 각 단추가 그대로 가진다.
+  List<Widget> _acceptDialogActions({required Widget cancel, required Widget accept}) {
+    if (MediaQuery.textScalerOf(context).scale(1) <= 1.0) return [cancel, accept];
+    return [
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [accept, SizedBox(height: ResponsiveHelper.spacing(context, 8)), cancel],
+      ),
+    ];
   }
 
   Future<void> _acceptInviteFromDetail() async {
@@ -3864,37 +3941,42 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       context,
       title: isOffer ? '다른 업무 제안 수락' : '초대 수락',
       icon: isOffer ? Icons.swap_horiz : Icons.check_circle_outline,
-      iconColor: AppColors.success,
+      // [DU575] 머리 아이콘 = grey600(판정139 §4 544-7 · 초대 · 제안 모두) — 확정 의미 초록을 확인창에 쓰지 않는다.
+      iconColor: AppColors.grey600,
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          KeepWordsText(
             isOffer
                 // 제안은 초대와 결과가 다르다 — 기존 지원이 접힌다는 것을 먼저 말한다.
-                ? '제안받은 업무로 확정되고, 기존 지원'
+                ? '수락하면 제안받은 업무로 확정되고, 기존 지원'
                     '${app.sourceWorkType != null ? "(${app.sourceWorkType})" : ""}'
                     // [R5.3D.1] 이력은 남는다 — 사라지는 것은 불이익이다.
-                    "은 '다른 업무로 확정됨'으로 정리됩니다.\n"
-                    '취소·노쇼 불이익은 적용되지 않습니다.'
-                : '이 업무에 참여하시겠습니까?\n수락 후 일정 충돌이 없으면 확정됩니다.',
+                    "은 '다른 업무로 확정됨'으로 정리돼요.\n"
+                    '이 정리는 노쇼로 기록되지 않아요.'
+                : '이 근무 초대를 수락할까요?\n확정된 다른 근무와 시간이 겹치면 수락할 수 없어요. 수락이 완료되면 근무가 확정돼요.',
           ),
           const SizedBox(height: 12),
           DocumentAccessConsent.inviteCard(app.businessName),
         ],
       ),
-      actions: [
-        TextButton(
+      actions: _acceptDialogActions(
+        cancel: TextButton(
           onPressed: () => Navigator.of(context, rootNavigator: true).pop(false),
           child: const Text('취소'),
         ),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
+        accept: ElevatedButton(
+          // [DU575] 주 행동 = brand 채움 + 흰 글(판정139 §4 544-7 · 내 지원 수락 확인창 · 이 화면 아래 '초대 수락' 단추와 같다).
+          style: ElevatedButton.styleFrom(backgroundColor: AppColors.brand),
           onPressed: () => Navigator.of(context, rootNavigator: true).pop(true),
-          child: Text(isOffer ? '동의하고 제안 수락' : '동의하고 초대 수락',
+          // [DU575] 내 지원 확인창(.29-A1)과 같이 띄어쓰기에서만 줄바꿈 — 읽는 이름은 원문.
+          child: Text(TextLayout.keepWords(isOffer ? '동의하고 제안 수락' : '동의하고 초대 수락'),
+              semanticsLabel: isOffer ? '동의하고 제안 수락' : '동의하고 초대 수락',
+              textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white)),
         ),
-      ],
+      ),
     );
     if (confirmed != true || !mounted) return;
 
@@ -3909,12 +3991,12 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         'documentAccessConsentVersion': DocumentAccessConsent.inviteVersion,
       });
       if (!mounted) return;
-      ToastHelper.showSuccess('초대를 수락했습니다!');
+      ToastHelper.showSuccess('수락했어요. 근무가 확정됐어요.');
       Navigator.pop(context, true);
     } on FirebaseFunctionsException catch (e) {
-      if (mounted) ToastHelper.showError(e.message ?? '수락 중 오류가 발생했습니다.');
+      if (mounted) ToastHelper.showError(e.message ?? '수락하지 못했어요.');
     } catch (e) {
-      if (mounted) ToastHelper.showError('수락 중 오류가 발생했습니다.');
+      if (mounted) ToastHelper.showError('수락하지 못했어요.');
     } finally {
       if (mounted) setState(() => _isAcceptingInvite = false);
     }
@@ -3935,12 +4017,12 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         'declineIntent': 'EXPLICIT',
       });
       if (!mounted) return;
-      ToastHelper.showInfo('초대를 거절했습니다.');
+      ToastHelper.showInfo('초대를 거절했어요.');
       Navigator.pop(context, true);
     } on FirebaseFunctionsException catch (e) {
-      if (mounted) ToastHelper.showError(e.message ?? '거절 중 오류가 발생했습니다.');
+      if (mounted) ToastHelper.showError(e.message ?? '거절하지 못했어요.');
     } catch (e) {
-      if (mounted) ToastHelper.showError('거절 중 오류가 발생했습니다.');
+      if (mounted) ToastHelper.showError('거절하지 못했어요.');
     } finally {
       if (mounted) setState(() => _isDecliningInvite = false);
     }

@@ -696,7 +696,7 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
                 _expandedKeys.clear();
               }),
               backgroundColor: AppColors.grey100,
-              selectedColor: AppColors.infoBg,
+              selectedColor: AppColors.brandSurface,
               checkmarkColor: AppColors.brand,
               side: selected
                   ? const BorderSide(color: AppColors.brand, width: 1.2)
@@ -1147,8 +1147,8 @@ class _ActionButtons extends StatelessWidget {
         OutlinedButton(
           onPressed: onReject,
           style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.error,
-            side: const BorderSide(color: AppColors.errorLight, width: 1),
+            foregroundColor: AppColors.textSecondary,
+            side: const BorderSide(color: AppColors.border, width: 1),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             minimumSize: const Size(0, 32),
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,

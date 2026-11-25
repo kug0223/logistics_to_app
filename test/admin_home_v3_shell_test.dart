@@ -75,7 +75,9 @@ void main() {
     });
 
     test('01-b 이름이 22 bold → 15 w700 (§5)', () {
-      expect(_flat(header).contains('fontSize: 15, fontWeight: FontWeight.w700'),
+      // [DU586b · PP-TYPOGRAPHY T1-d] 의도된 역할 변경(타이포 결정 §7 old→new): 이름 15/1.2/700/−0.2 → 카드 · 목록 제목 역할 roleCardTitle 17/1.3/700/0.
+      //   보호 의도(이름이 22 bold 로 돌아가 위계를 뒤집지 않는다)는 그대로 — 아래 22 금지 단언 유지. 시험 이름은 이력 그대로 둔다.
+      expect(_flat(header).contains(r"semanticsLabel: '$name님', style: AppTextStyles.roleCardTitle())"),
           true);
       expect(header.contains('fontSize: 22'), false);
     });

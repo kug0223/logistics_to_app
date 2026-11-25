@@ -462,7 +462,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
                         value: 'approve',
                         child: Row(
                           children: [
-                            Icon(Icons.check_circle_outline, color: AppColors.success),
+                            Icon(Icons.check_circle_outline, color: AppColors.textSecondary),
                             SizedBox(width: 8),
                             Text('승인'),
                           ],
@@ -473,7 +473,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
                         value: 'deactivate',
                         child: Row(
                           children: [
-                            Icon(Icons.pause_circle_outline, color: AppColors.warning),
+                            Icon(Icons.pause_circle_outline, color: AppColors.textSecondary),
                             SizedBox(width: 8),
                             Text('비활성화'),
                           ],
@@ -484,7 +484,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
                         value: 'reactivate',
                         child: Row(
                           children: [
-                            Icon(Icons.play_circle_outline, color: AppColors.success),
+                            Icon(Icons.play_circle_outline, color: AppColors.textSecondary),
                             SizedBox(width: 8),
                             Text('재활성화'),
                           ],
@@ -500,7 +500,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
               SizedBox(height: ResponsiveHelper.spacing(context, 4)),
               Text(
                 '비활성화: ${FormatHelper.formatDateISO(business.deactivatedAt!)}',
-                style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+                style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary),
               ),
             ],
 
@@ -510,14 +510,14 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
               icon: Icons.person,
               label: '관리자',
               value: '${item.ownerName}${item.ownerEmail.isNotEmpty ? " (${item.ownerEmail})" : ""}${item.adminCount > 1 ? " 외 ${item.adminCount - 1}명" : ""}',
-              color: AppColors.purple,
+              color: AppColors.textSecondary,
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             _buildInfoRow(
               icon: Icons.numbers,
               label: '사업자번호',
               value: business.formattedBusinessNumber,
-              color: Theme.of(context).primaryColor,
+              color: AppColors.textSecondary,
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             _buildLicenseRow(item),
@@ -526,14 +526,14 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
               icon: Icons.category,
               label: '업종',
               value: '${business.category} / ${business.subCategory}',
-              color: AppColors.success,
+              color: AppColors.textSecondary,
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             _buildInfoRow(
               icon: Icons.location_on,
               label: '주소',
               value: business.address,
-              color: AppColors.error,
+              color: AppColors.textSecondary,
             ),
             if (business.phone != null) ...[
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -541,7 +541,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
                 icon: Icons.phone,
                 label: '연락처',
                 value: business.phone!,
-                color: AppColors.warning,
+                color: AppColors.textSecondary,
               ),
             ],
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),

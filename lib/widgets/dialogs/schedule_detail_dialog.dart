@@ -135,7 +135,8 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
   ({String label, Color bg, Color fg}) get _statusInfo {
     final status = widget.application.status;
     if (status == AppStatus.contractPending) {
-      return (label: '계약 진행 중', bg: AppColors.infoBg, fg: AppColors.infoDark);
+      // [DU576] 일반정보 상태 계약 진행 중 = brandSurface/brand(판정139 §3 PP-STATUS-PAIR · 일정 카드와 같은 짝).
+      return (label: '계약 진행 중', bg: AppColors.brandSurface, fg: AppColors.brand);
     }
     if (AppStatus.confirmedStatuses.contains(status)) {
       return (label: '확정', bg: AppColors.successBg, fg: AppColors.successDark);

@@ -444,7 +444,7 @@ void main() {
       expect(badge, contains('AppColors.infoDeep'));
       final day = _codeOf(_read(
           'lib/screens/business_admin/dialogs/day_applicants_dialog.dart'));
-      expect(day, contains('인력 현황을 불러오지 못했어요'));
+      expect(day, contains('지원·근무 현황을 불러오지 못했어요'));
     });
   });
 }

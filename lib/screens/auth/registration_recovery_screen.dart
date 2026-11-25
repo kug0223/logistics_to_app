@@ -362,12 +362,17 @@ class _RegistrationRecoveryScreenState
 
   // ── CASE B/C/D: 외국인등록증 재입력 ──────────────────────────
   Widget _buildForeignDocStep() {
-    return Padding(
+    // [F272-OVF-RECOVERY] 큰 글자(B 2.0)에서 화면 높이를 넘는 안내·단추를 스크롤로 — 보통 크기에서는 Spacer 로 단추가 아래에 붙는 배치 그대로
+    return LayoutBuilder(builder: (_, box) => SingleChildScrollView(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: box.maxHeight),
+        child: IntrinsicHeight(
+          child: Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildIcon(Icons.credit_card_outlined, Colors.blue),
+          _buildIcon(Icons.credit_card_outlined, AppColors.brand),
           const SizedBox(height: 20),
           Text(TextLayout.keepWords('외국인등록증 정보 등록 필요'),
               style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
@@ -393,7 +398,7 @@ class _RegistrationRecoveryScreenState
                 ),
               ),
               icon: const Icon(Icons.credit_card),
-              label: const Text('외국인 가입 이어서 완료'),
+              label: Text(TextLayout.keepWords('외국인 가입 이어서 완료')), // [F273-RRCF-WRAP] 큰 글자 '이/어서' 음절 끊김 → 낱말 단위
               style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
             ),
           ),
@@ -401,7 +406,10 @@ class _RegistrationRecoveryScreenState
           _buildSignOutButton(),
         ],
       ),
-    );
+    ),
+        ),
+      ),
+    ));
   }
 
   // ── 오류 화면 ────────────────────────────────────────────────
@@ -411,7 +419,7 @@ class _RegistrationRecoveryScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildIcon(Icons.error_outline, Colors.red),
+          _buildIcon(Icons.error_outline, AppColors.errorDark),
           const SizedBox(height: 20),
           Text(TextLayout.keepWords('상태 확인 실패'),
               style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),

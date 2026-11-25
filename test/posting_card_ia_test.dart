@@ -621,7 +621,7 @@ void main() {
     //   이름이 셋이었다.
     test('08-a 카피는 `인력 현황` — 집계 숫자를 넣지 않는다 (§15)', () {
       final body = _codeOf(_bodyOf(src, 'Widget _buildActionBar('));
-      expect(body.contains("'인력 현황'"), true);
+      expect(body.contains("'지원·근무 현황'"), true);
       expect(body.contains('명 보기'), false);
     });
 
@@ -707,7 +707,7 @@ void main() {
       expect(menu.contains("'지원 현황'"), false);
       // 기존 메뉴 항목은 그대로 유지
       for (final label in [
-        "'인력 초대'",
+        "'근무 초대'",
         "'보낸 초대 관리'",
         "'관리용 카드명 변경'",
         "'다시 모집하기'",

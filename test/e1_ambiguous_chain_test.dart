@@ -24,7 +24,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다
 import 'package:firebase_core/firebase_core.dart';
+// ignore: depend_on_referenced_packages
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
+// ignore: depend_on_referenced_packages
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 
@@ -339,7 +341,7 @@ void main() {
     }
 
     Future<void> sendDirect(WidgetTester t) async {
-      final cta = find.textContaining('인력 초대');
+      final cta = find.textContaining('근무 초대');
       expect(cta, findsWidgets, reason: '부족 2 — 초대 CTA');
       await t.tap(cta.first);
       await _settle(t);

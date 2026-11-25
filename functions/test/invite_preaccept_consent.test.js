@@ -1,3 +1,4 @@
+// [CONSENT-R4d 후보 사본] 원본 A/functions/test/invite_preaccept_consent.test.js sha256=df6c68428a64a5a678e65311cd1285af27aa84ea38574f6e636719042e22e8f5 · 바뀐 자리는 R/work/consent-copy-preparation-r4d-20261119/manifests/test_change_map.tsv
 /**
  * [INVITE-PREACCEPT] 초대 수락 전 서류 동의 → 사업장 검토 → 수락 — 실제 소스 실행.
  *
@@ -17,6 +18,23 @@
  *     PA-F  수락 tx·목록 reader 계약(실행으로 못 보는 자리)
  */
 'use strict';
+// [r5 · 판정 consent1121 §3] 외부 HTTP · 소켓 · DNS · fetch 진입점 차단 — 닿으면 그 자리에서 throw 하고 기록한다.
+//   에뮬레이터 · DEV · 네트워크 0. 기록이 하나라도 있으면 끝에서 그 사실을 마지막 줄로 남기고 rc 1(성공 줄 '통과 N / 실패 0' 이 마지막 줄이 아니게 된다).
+const R5_NET = [];
+for (const [m, ks] of [['http', ['request', 'get']], ['https', ['request', 'get']], ['net', ['connect', 'createConnection']],
+  ['tls', ['connect']], ['dns', ['lookup', 'resolve', 'resolve4', 'resolve6']]]) {
+  const mod = require(m);
+  for (const k of ks) {
+    mod[k] = () => { R5_NET.push(`${m}.${k}`); throw new Error(`[r5 차단] ${m}.${k}`); };
+  }
+}
+globalThis.fetch = () => { R5_NET.push('fetch'); throw new Error('[r5 차단] fetch'); };
+process.on('exit', () => {
+  if (R5_NET.length) {
+    console.log('[r5 차단] 외부 진입 시도: ' + R5_NET.join(', '));
+    process.exitCode = 1;
+  }
+});
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
@@ -87,15 +105,21 @@ const CONSTS = ['SRV_KST_MS', 'CONFIRMED_STATUSES', 'DOC_MATCH_MISSING',
   'REVIEW_OK', 'MR_READY_AUTO', 'MR_READY_MANUAL', 'MR_ID_MISSING',
   'MR_ID_MISMATCH', 'MR_ID_OCR_UNCERTAIN', 'MR_ID_UNASSESSED',
   'DOCUMENT_ACCESS_CONSENT_V3', 'DOCUMENT_ACCESS_CONSENT_INVITE_V1',
+  // [CONSENT-R4 후보 사본] 새 상수 — 추출 목록(하네스 모양)만 늘린다.
+  'DOCUMENT_ACCESS_CONSENT_V4', 'DOCUMENT_ACCESS_CONSENT_INVITE_V2',
   'REVIEW_PURPOSE_CONSENT_VERSIONS', 'DOCUMENT_ACCESS_CONSENT_V1',
-  'DOCUMENT_ACCESS_CONSENT_V2', 'SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS',
+  'DOCUMENT_ACCESS_CONSENT_V2', 'RETIRED_DOCUMENT_ACCESS_CONSENT_VERSIONS',
+  'NEW_REQUEST_CONSENT_VERSION_GENERAL', 'NEW_REQUEST_CONSENT_VERSION_INVITE',
+  'SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS',
   'APPLICANT_REVIEW_STATUSES', 'ACCOUNT_STATUS_DELETING',
   'SRV_INVITE_READINESS_WORKER_MESSAGE',
   // [INVITE-LIFECYCLE] 동의·검토·수락 공통 모집 종료 판정
   'SRV_INTAKE_AUTO_UNIT_REASON', 'SRV_INTAKE_AUTO_TO_REASONS',
   'SRV_INVITE_RECRUIT_ENDED_MESSAGE'];
 const FNS = ['srvDocumentVersionsOf', 'srvBuildMatchingProvenance',
-  'srvAssertNotDeletingAccount',
+  'srvAssertNotDeletingAccount', 'srvConsentVersionReject', 'srvPrevConsentEvidence',
+  // [CONSENT-R4b] 같은 세대 유효 판정(동의 전용 writer 중복 판정)
+  'srvConsentAtValidMs', 'srvConsentValidSameGeneration',
   'resolveDocumentAccessConsentVersion', 'srvResolveCommitmentConsentVersion',
   'srvConsentCoversApplicantReview', 'srvInviteReviewWindowOpen',
   'srvApplicantReviewAccessBlockAsync', 'srvHasActiveIdentityDocumentPurpose',
@@ -123,7 +147,9 @@ class FakeDate extends Date {
 }
 const admin = {firestore: {
   Timestamp: {now: () => new Ts(NOW), fromMillis: (ms) => new Ts(ms)},
-  FieldValue: {arrayUnion: (...x) => ({__arrayUnion: x})},
+  FieldValue: {arrayUnion: (...x) => ({__arrayUnion: x}),
+    // [CONSENT-R4b 후보 사본] 낡은 승계 parent 삭제 표식 — 후보 writer 가 parent 가 있을 때만 부른다.
+    delete: () => ({__delete: true})},
 }};
 
 // 아주 작은 Firestore: path → data
@@ -204,8 +230,12 @@ const K = 9 * 3600e3;
 const kst = (y, mo, d, h = 0, mi = 0) => Date.UTC(y, mo - 1, d, h, mi) - K;
 const DAY = kst(2026, 10, 20);
 const START = kst(2026, 10, 20, 20);
-const V3 = '2026-09-18-v3';
-const INV = '2026-10-15-invite-v1';
+// [CONSENT-R4 후보 사본] fixture 판본 = 새 세대. 이름(V3·INV)은 줄 차이를 줄이려 그대로 둔다 —
+//   'V3' = 검토 목적을 담은 **현재** 일반 판본, 'INV' = 현재 초대 판본이라는 역할이다.
+const V3 = '2026-11-18-v4';
+const INV = '2026-11-18-invite-v2';
+const V3_RETIRED = '2026-09-18-v3';
+const INV1_RETIRED = '2026-10-15-invite-v1';
 const SLOT = {date: new Ts(DAY), workDetails: [
   {wdId: 'wd-1', workType: 'QA', startTime: '20:00', endTime: '22:00'}]};
 const invite = (o = {}) => Object.assign({
@@ -213,8 +243,11 @@ const invite = (o = {}) => Object.assign({
   status: 'INVITED', type: 'short', startTime: '20:00', endTime: '22:00',
   workDate: new Ts(DAY), inviteExpiresAt: new Ts(START),
 }, o);
+// [CONSENT-R4b 후보 사본] 저장된 동의는 언제나 At 을 가진다(writer 가 함께 쓴다) — fixture 를 그 모양으로.
+//   At 결손 동의의 기대는 PA-44b 가 따로 고정한다.
 const consented = (o = {}) => invite(Object.assign(
-    {documentAccessConsentGiven: true, documentAccessConsentVersion: V3}, o));
+    {documentAccessConsentGiven: true, documentAccessConsentVersion: V3,
+      documentAccessConsentAt: new Ts(kst(2026, 10, 1))}, o));
 const userWith = (o = {}) => Object.assign(
     {idCardImagePath: 'id/w1.jpg', idDocumentVersion: 2}, o);
 
@@ -336,7 +369,9 @@ async function cell(id, name, fn) {
       workDetailCounts: {'wd-1': {pendingCount: 1, confirmedCount: 0}}}, slot));
     STORE.set('tos/t1', {totalPending: 1, totalConfirmed: 0});
   };
-  const req = (uid, data) => ({auth: {uid}, data});
+  // [CONSENT-R4b 후보 사본 · C-R4-1] 후보 클라이언트는 '동의하기' 뒤 given:true 를 싣는다 — 같은 모양.
+  //   given 결손·false 의 거절 기대는 아래 PA-27g 가 따로 고정한다.
+  const req = (uid, data) => ({auth: {uid}, data: Object.assign({documentAccessConsentGiven: true}, data)});
   await cell('PA-27', '기간 안 초대 → 동의 필드만 기록, status·집계 불변', async () => {
     NOW = START - 3600e3; seed(invite());
     const out = await call(req('w1', {applicationId: 'a1', documentAccessConsentVersion: INV}));
@@ -345,11 +380,26 @@ async function cell(id, name, fn) {
     assert.strictEqual(WRITES[0].path, 'applications/a1');
     const keys = Object.keys(WRITES[0].patch).sort();
     assert.deepStrictEqual(keys, ['documentAccessConsentAt', 'documentAccessConsentGiven',
+      'documentAccessConsentSource', // [CONSENT-R4] 출처 필드 추가(동의 축 안 · Claude 해석)
       'documentAccessConsentVersion', 'idCardConsentAt', 'idCardConsentGiven', 'statusHistory']);
     const a = STORE.get('applications/a1');
     assert.strictEqual(a.status, 'INVITED');
     assert.strictEqual(STORE.get('tos/t1/slots/s1').pendingCount, 1);
     assert.strictEqual(STORE.get('tos/t1').totalPending, 1);
+  });
+  await cell('PA-27g', '[CONSENT-R4b · C-R4-1] given 결손·false·문자열 → CONSENT_NOT_GIVEN, 쓰기 0 (상태·집계 불변)', async () => {
+    for (const g of [undefined, false, 'true']) {
+      NOW = START - 3600e3; seed(invite());
+      const data = {applicationId: 'a1', documentAccessConsentVersion: INV};
+      if (g !== undefined) data.documentAccessConsentGiven = g;
+      await assert.rejects(call({auth: {uid: 'w1'}, data}),
+          (e) => e.code === 'invalid-argument' && e.details.code === 'CONSENT_NOT_GIVEN', String(g));
+      assert.strictEqual(WRITES.length, 0, String(g));
+      assert.strictEqual(STORE.get('applications/a1').status, 'INVITED');
+    }
+    // 뒤 셀(PA-28)이 PA-27 의 기록을 이어 쓰므로 같은 상태로 되돌린다.
+    NOW = START - 3600e3; seed(invite());
+    await call(req('w1', {applicationId: 'a1', documentAccessConsentVersion: INV}));
   });
   await cell('PA-28', '같은 요청 반복 → 쓰기 0, 처음 동의 시각 보존', async () => {
     NOW = START - 3000e3;
@@ -386,15 +436,17 @@ async function cell(id, name, fn) {
       assert.strictEqual(WRITES.length, 0, st);
     }
   });
-  await cell('PA-33', 'V3 가 아닌 버전 → 거절(구 클라이언트·변조)', async () => {
+  await cell('PA-33', '새 세대가 아닌 버전 → 거절(구 클라이언트·변조) [CONSENT-R4: 은퇴 판본 추가 · 없음=failed-precondition]', async () => {
     NOW = START - 3600e3; seed(invite());
-    for (const v of [undefined, '2026-09-12-v2', 'v9']) {
+    await assert.rejects(call(req('w1', {applicationId: 'a1', documentAccessConsentVersion: undefined})),
+        (e) => e.code === 'failed-precondition' && e.details.code === 'CONSENT_VERSION_MISSING', 'undefined');
+    for (const v of ['2026-09-12-v2', 'v9', V3_RETIRED, INV1_RETIRED]) {
       await assert.rejects(call(req('w1', {applicationId: 'a1', documentAccessConsentVersion: v})),
           (e) => e.code === 'invalid-argument', String(v));
     }
     assert.strictEqual(WRITES.length, 0);
   });
-  await cell('PA-34', '직접 지원(PENDING) v2→v3 재동의는 기존대로 기록된다', async () => {
+  await cell('PA-34', '직접 지원(PENDING) v2→v4 재동의는 새로 기록된다 [CONSENT-R4]', async () => {
     NOW = START + 99e7;
     seed(invite({status: 'PENDING', inviteExpiresAt: undefined,
       documentAccessConsentGiven: true, documentAccessConsentVersion: '2026-09-12-v2'}));
@@ -472,10 +524,19 @@ async function cell(id, name, fn) {
     assert.strictEqual(STORE.get('applications/a1').documentAccessConsentVersion, V3,
         '이미 본 문장의 기록을 바꾸지 않는다');
   });
+  await cell('PA-44b', '[CONSENT-R4b · C-R4-2] 같은 세대인데 At 결손 → 이미 동의가 아니다 — 이번 판본으로 새로 기록', async () => {
+    NOW = START - 3600e3; seed(consented({documentAccessConsentAt: undefined}));
+    const out = await call(req('w1', {applicationId: 'a1', documentAccessConsentVersion: INV}));
+    assert.strictEqual(out.alreadyConsented, false);
+    assert.strictEqual(WRITES.length, 1);
+    assert.strictEqual(STORE.get('applications/a1').documentAccessConsentVersion, INV);
+  });
   await cell('PA-45', '확정 후 신분증 접근창: 초대 v1 은 V3 와 같은 기준점(마지막 근무일)을 쓴다', () => {
     const i = SRC.indexOf('function srvIdWindowOpen(');
     const body = SRC.slice(i, SRC.indexOf('\n}\n', i));
-    assert.ok(/v === DOCUMENT_ACCESS_CONSENT_V2 \|\| v === DOCUMENT_ACCESS_CONSENT_V3 \|\|\s*v === DOCUMENT_ACCESS_CONSENT_INVITE_V1\) \{\s*base = srvIdWindowLastWorkDay\(app\);/.test(body));
+    // [CONSENT-R4] 은퇴 판본(v1·v2·v3·invite-v1)은 기준점이 없다 — 새 세대 두 판본만 마지막 근무일 기준.
+    assert.ok(/v === DOCUMENT_ACCESS_CONSENT_V4 \|\| v === DOCUMENT_ACCESS_CONSENT_INVITE_V2\) \{\s*base = srvIdWindowLastWorkDay\(app\);/.test(body));
+    assert.ok(!/DOCUMENT_ACCESS_CONSENT_V1|DOCUMENT_ACCESS_CONSENT_V2|DOCUMENT_ACCESS_CONSENT_V3|DOCUMENT_ACCESS_CONSENT_INVITE_V1/.test(body));
   });
   await cell('PA-46', '초대 v1 으로 동의한 초대도 열람 접근이 열린다(기간 안)', () => {
     assert.strictEqual(block(invite({documentAccessConsentGiven: true,
@@ -488,7 +549,11 @@ async function cell(id, name, fn) {
     assert.throws(() => f(INV, true, false), (e) => e.code === 'invalid-argument');
     assert.throws(() => f(INV, true), (e) => e.code === 'invalid-argument');
     assert.strictEqual(f(V3, true, false), V3, '지원은 V3');
-    assert.strictEqual(f(V3, true, true), V3, '구 앱의 초대 수락은 V3 호환');
+    // [CONSENT-R4] 구 앱 호환 수용 제외(r4 보충 §5·§7) — 초대 화면에 일반 판본은 화면 불일치로 거절.
+    assert.throws(() => f(V3, true, true), (e) => e.code === 'invalid-argument' &&
+        e.details.code === 'CONSENT_VERSION_SCREEN_MISMATCH');
+    assert.throws(() => f(V3_RETIRED, true, false), (e) => e.details.code === 'CONSENT_VERSION_RETIRED');
+    assert.throws(() => f(INV1_RETIRED, true, true), (e) => e.details.code === 'CONSENT_VERSION_RETIRED');
   });
   await cell('PA-60', '호출부: 초대 수락만 allowInviteCopy=true', () => {
     const at = (name) => {

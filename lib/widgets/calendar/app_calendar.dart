@@ -111,7 +111,7 @@ class AppCalendar extends StatelessWidget {
             child: Text(
               '${day.day}',
               style: TextStyle(
-                color: isWeekend ? AppColors.errorLight : AppColors.grey400,
+                color: isWeekend ? AppColors.grey400 : AppColors.grey400,
                 fontWeight: FontWeight.normal,
               ),
             ),
@@ -147,7 +147,7 @@ class AppCalendar extends StatelessWidget {
         cellMargin: cellMargin ?? const CalendarStyle().cellMargin,
         markersMaxCount: 3,
         weekendTextStyle: const TextStyle(
-          color: AppColors.errorFaded,
+          color: AppColors.textPrimary,
           fontWeight: FontWeight.w500,
         ),
         todayDecoration: BoxDecoration(

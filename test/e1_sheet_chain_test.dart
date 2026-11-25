@@ -25,7 +25,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다
 import 'package:firebase_core/firebase_core.dart';
+// ignore: depend_on_referenced_packages
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
+// ignore: depend_on_referenced_packages
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 
@@ -337,7 +339,7 @@ Future<void> _openWorkDialog(WidgetTester t) async {
 }
 
 Future<void> _openSheet(WidgetTester t) async {
-  await t.tap(find.textContaining('인력 초대').first);
+  await t.tap(find.textContaining('근무 초대').first);
   await _settle(t);
   await t.tap(find.text('근무 가능 인력'));
   await _settle(t, 40);

@@ -1993,7 +1993,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
         builder: (ctx) => StyledDialog(
           title: '${invitation.businessName} 초대',
           icon: Icons.person_add_outlined,
-          headerColor: AppColors.teal,
+          headerColor: AppColors.brand,
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2003,7 +2003,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
                 style: ResponsiveHelper.bodyStyle(ctx),
               ),
               SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
-              StyledDialogInfoCard.info(
+              StyledDialogInfoCard.notice(
                 '부여 권한\n${invitation.permissions.summaryText}',
               ),
             ],
@@ -2060,7 +2060,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
             builder: (ctx) => StyledDialog(
               title: '초대 수락 완료',
               icon: Icons.admin_panel_settings_outlined,
-              headerColor: AppColors.teal,
+              headerColor: AppColors.brand,
               content: Text(
                 '${invitation.businessName} 관리자로 초대를 수락했습니다.\n지금 관리자 모드로 전환하시겠습니까?',
                 style: ResponsiveHelper.bodyStyle(ctx),

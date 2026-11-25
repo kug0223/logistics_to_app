@@ -1660,7 +1660,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                     Flexible(
                       child: Text(
                         // [R7-P1-7 §15] 여는 화면의 이름과 같게 한다.
-                        '인력 현황',
+                        '지원·근무 현황',
                         style: ResponsiveHelper.smallStyle(context,
                                 color: Theme.of(context).primaryColor)
                             .copyWith(fontWeight: FontWeight.w600),
@@ -2027,7 +2027,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
             if (_canInviteNow())
               AppMenuSheetItem(
                 icon: Icons.person_add_outlined,
-                label: '인력 초대',
+                label: '근무 초대',
                 color: AppColors.success,
                 onTap: () => _showInviteWorkerDialog(context),
               ),
@@ -2115,7 +2115,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
               if (_canInviteNow())
                 AppMenuSheetItem(
                   icon: Icons.person_add_outlined,
-                  label: '인력 초대',
+                  label: '근무 초대',
                   color: AppColors.success,
                   onTap: () => _showInviteWorkerDialog(context),
                 ),
@@ -2174,7 +2174,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
               if (_canInviteNow())
                 AppMenuSheetItem(
                   icon: Icons.person_add_outlined,
-                  label: '인력 초대',
+                  label: '근무 초대',
                   color: AppColors.success,
                   onTap: () => _showInviteWorkerDialog(context),
                 ),
@@ -2494,7 +2494,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
             subtitle: '종료한 ${reopenSlots.length}개 날짜를 다시 열까요?',
             icon: Icons.lock_open,
             headerColor: AppColors.success,
-            content: StyledDialogInfoCard.info(
+            content: StyledDialogInfoCard.notice(
               '선택한 날짜가 모집 중으로 전환됩니다.\n'
               '이미 거절된 지원자는 재지원이 필요합니다.',
             ),

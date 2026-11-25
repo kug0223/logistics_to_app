@@ -710,7 +710,7 @@ class _AvailableWorkersBottomSheetState
                         : const Text('필터'),
                     style: TextButton.styleFrom(
                       foregroundColor: _activeFilterCount > 0
-                          ? AppColors.info
+                          ? AppColors.brand
                           : AppColors.textSecondary,
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 4),
@@ -792,7 +792,9 @@ class _AvailableWorkersBottomSheetState
     }
 
     if (_error != null) {
-      return Padding(
+      // [F272-OVF-AVAILABLE-ERROR] 큰 글자에서 시트 본문 높이를 넘을 수 있는 오류 안내를 스크롤로 — 글·단추 그대로
+      return SingleChildScrollView(
+        child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -819,28 +821,32 @@ class _AvailableWorkersBottomSheetState
               ),
           ],
         ),
+        ),
       );
     }
 
     // 기본 pool 자체 비어있음 (§48)
     if (_recommendedOrder.isEmpty && !_hasMore) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.person_search_outlined,
-                size: 48, color: AppColors.grey400),
-            const SizedBox(height: 12),
-            // [R2.3 §20] SUCCESS_ZERO — 조회는 됐고, 해당하는 사람이 없다.
-            //   자격이 거주지가 아니라 **초대 동의**로 바뀌었으므로 이유도 그렇게 말한다.
-            Text(
-              '이 지역의 근무 초대를 받도록\n설정한 인력이 아직 없어요.',
-              style: ResponsiveHelper.bodyStyle(
-                  context, color: AppColors.grey500),
-              textAlign: TextAlign.center,
-            ),
-          ],
+      // [F267-OVF-AVAILABLE] 큰 글자(B 2.0)에서 시트 본문 높이를 넘는 0 명 안내를 스크롤로 — 글·아이콘 그대로
+      return SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.person_search_outlined,
+                  size: 48, color: AppColors.grey400),
+              const SizedBox(height: 12),
+              // [R2.3 §20] SUCCESS_ZERO — 조회는 됐고, 해당하는 사람이 없다.
+              //   자격이 거주지가 아니라 **초대 동의**로 바뀌었으므로 이유도 그렇게 말한다.
+              Text(
+                '이 지역의 근무 초대를 받도록\n설정한 인력이 아직 없어요.',
+                style: ResponsiveHelper.bodyStyle(
+                    context, color: AppColors.grey500),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -848,7 +854,9 @@ class _AvailableWorkersBottomSheetState
     // FULL_POOL filter 결과 없음 (§49-50)
     // poolComplete==true일 때만 — false empty 금지 (PAGED partial 기반 empty state 금지)
     if (_isFullPool && _displayCandidates.isEmpty && _activeFilterCount > 0) {
-      return Padding(
+      // [F272-OVF-AVAILABLE-FILTER0] 큰 글자에서 시트 본문 높이를 넘을 수 있는 필터 0 안내를 스크롤로 — 글·단추 그대로
+      return SingleChildScrollView(
+        child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -868,6 +876,7 @@ class _AvailableWorkersBottomSheetState
               child: const Text('필터 초기화'),
             ),
           ],
+        ),
         ),
       );
     }
@@ -1036,8 +1045,8 @@ class _AvailableWorkersBottomSheetState
             OutlinedButton(
               onPressed: () => _verifyInvite(worker),
               style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.warningDark,
-                side: const BorderSide(color: AppColors.warningDark),
+                foregroundColor: AppColors.brand,
+                side: const BorderSide(color: AppColors.brand),
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 minimumSize: Size.zero,
@@ -1046,15 +1055,15 @@ class _AvailableWorkersBottomSheetState
               child: Text(
                 '다시 확인',
                 style: ResponsiveHelper.smallStyle(
-                    context, color: AppColors.warningDark),
+                    context, color: AppColors.brand),
               ),
             )
           else
             OutlinedButton(
               onPressed: () => _invite(worker),
               style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.info,
-                side: const BorderSide(color: AppColors.info),
+                foregroundColor: AppColors.brand,
+                side: const BorderSide(color: AppColors.brand),
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 minimumSize: Size.zero,
@@ -1064,7 +1073,7 @@ class _AvailableWorkersBottomSheetState
               child: Text(
                 '근무 제안',
                 style: ResponsiveHelper.smallStyle(
-                    context, color: AppColors.info),
+                    context, color: AppColors.brand),
               ),
             ),
         ],

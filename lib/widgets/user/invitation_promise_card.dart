@@ -17,6 +17,7 @@ import '../../theme/light_app_bar_style.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/text_layout.dart';
+import '../common/keep_words_text.dart';
 
 class InvitationPromiseCard extends StatelessWidget {
   final InvitationProjection projection;
@@ -144,9 +145,9 @@ class InvitationPromiseCard extends StatelessWidget {
                   //   reassignedToApplicationId로 B와 연결된다.
                   //   없어지는 것은 기록이 아니라 **불이익**이다:
                   //   신뢰도·노쇼·취소 누적 어디에도 들어가지 않는다.
-                  Text(
-                    "수락하면 기존 지원은 '다른 업무로 확정됨'으로 정리되며,\n"
-                    '취소·노쇼 불이익은 적용되지 않습니다.',
+                  KeepWordsText(
+                    "수락하면 기존 지원은 '다른 업무로 확정됨'으로 정리돼요.\n"
+                    '이 정리는 노쇼로 기록되지 않아요.',
                     style: ResponsiveHelper.tinyStyle(context,
                         color: AppColors.textSecondary),
                   ),

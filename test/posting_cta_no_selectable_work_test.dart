@@ -16,7 +16,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
+// ignore: depend_on_referenced_packages
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
+// ignore: depend_on_referenced_packages
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -24,12 +26,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ALfit/models/core/application_model.dart';
 import 'package:ALfit/models/core/business_model.dart';
-import 'package:ALfit/models/core/business_work_type_model.dart';
 import 'package:ALfit/models/core/slot_model.dart';
 import 'package:ALfit/models/core/to_model.dart';
 import 'package:ALfit/models/core/user_model.dart';
 import 'package:ALfit/models/core/user_region.dart';
-import 'package:ALfit/models/core/work_detail_data.dart';
 import 'package:ALfit/models/core/work_detail_model.dart';
 import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
@@ -240,9 +240,10 @@ void main() {
     await initializeDateFormatting('ko_KR', null);
   });
 
+  // [DU591c · 판정175 §3-2] CTA-01/04 positive · CTA-02 negative 는 지금 CTA 글('선택해 주세요' · CP05 띄어쓰기)을 본다 — 고를 업무가 있을 때만 고르라고 하는 뜻 그대로.
   testWidgets('CTA-01 고를 업무가 있으면 고르라고 한다', (t) async {
     await _pump(t, _reads(details: [_wd()]));
-    expect(_texts(t), contains('지원할 업무를 선택해주세요'));
+    expect(_texts(t), contains('지원할 업무를 선택해 주세요'));
   });
 
   testWidgets('CTA-02 유일한 업무가 지원완료면 고르라고 하지 않는다', (t) async {
@@ -254,7 +255,7 @@ void main() {
     final texts = _texts(t);
     expect(texts, contains('지원완료'), reason: '카드 상태 칩은 그대로다');
     expect(texts, contains('지금 지원할 수 있는 업무가 없어요'));
-    expect(texts.contains('지원할 업무를 선택해주세요'), isFalse);
+    expect(texts.contains('지원할 업무를 선택해 주세요'), isFalse);
   });
 
   testWidgets('CTA-03 확정된 업무도 마찬가지다', (t) async {
@@ -272,7 +273,7 @@ void main() {
     ));
     final texts = _texts(t);
     expect(texts, contains('지원완료'));
-    expect(texts, contains('지원할 업무를 선택해주세요'),
+    expect(texts, contains('지원할 업무를 선택해 주세요'),
         reason: '남은 업무가 있으면 문구를 바꾸지 않는다');
   });
 

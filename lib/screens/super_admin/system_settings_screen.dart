@@ -279,7 +279,7 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
         TextLayout.keepWords(item.title),
         style: ResponsiveHelper.bodyStyle(context).copyWith(
           fontWeight: FontWeight.w600,
-          // [DU502] 비활성 제목 grey400(1.88) → textTertiary(5.25 · DU489 비활성 이름과 같다). '준비 중' 은 흐린 정도로만 말한다.
+          // [DU502] 비활성 제목 grey400(1.88) → textTertiary(5.25 · DU489 비활성 이름과 같다). [DU603b] '준비 중' 은 오른쪽 표시 · 비활성 상태로도 말한다.
           color: item.isDisabled ? AppColors.textTertiary : null,
         ),
       ),
@@ -288,11 +288,30 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
         // [DU502] 부제 grey500(2.68) → 보조 글자색(5.92).
         style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
       ),
-      trailing: Icon(
-        Icons.chevron_right,
-        color: item.isDisabled ? AppColors.grey300 : AppColors.grey400,
-      ),
+      // [DU603b · 판정114 §6 S063] 준비 중 메뉴는 꺾쇠(다른 화면으로 간다는 표시) 대신 '준비 중' 표시 — 슈퍼관리자 홈 메뉴 행(DU240)과 같은 꼴.
+      trailing: item.isDisabled
+          ? Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 8),
+                vertical: ResponsiveHelper.spacing(context, 3),
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.grey100,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                '준비 중',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+              ),
+            )
+          : const Icon(
+              Icons.chevron_right,
+              color: AppColors.grey400,
+            ),
       onTap: item.isDisabled ? null : item.onTap,
+      // [DU603b] 읽기 도구에도 '사용 불가'로 알린다(누르기 0 은 위 onTap 그대로 · 기능 활성화 0).
+      enabled: !item.isDisabled,
     );
   }
 

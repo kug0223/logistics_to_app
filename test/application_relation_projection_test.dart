@@ -23,15 +23,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'support/visible_text.dart'; // [DU255] keepWords 문구는 보이는 글자로 찾는다
-import 'package:firebase_core/firebase_core.dart';
+// ignore: depend_on_referenced_packages
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
+// ignore: depend_on_referenced_packages
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ALfit/models/core/application_model.dart';
 import 'package:ALfit/models/core/business_model.dart';
-import 'package:ALfit/models/core/business_work_type_model.dart';
 import 'package:ALfit/models/core/slot_model.dart';
 import 'package:ALfit/models/core/to_model.dart';
 import 'package:ALfit/models/core/user_model.dart';
@@ -41,7 +41,6 @@ import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/common/job_posting_reads.dart';
 import 'package:ALfit/services/work_type_guide_resolver.dart';
 import 'package:ALfit/screens/common/job_posting_screen.dart';
-import 'package:ALfit/services/firestore_service.dart';
 import 'package:ALfit/services/schedule_conflict_service.dart';
 import 'package:ALfit/utils/navigation_key.dart';
 import 'package:ALfit/widgets/dialogs/apply/application_relation.dart';
@@ -493,7 +492,8 @@ void main() {
       expect(find.text('선택됨'), findsNothing);
 
       // 업무 카드와 상세보기는 그대로 유지한다.
-      expect(find.text('업무 자세히 보기'), findsOneWidget,
+      // [DU591c · 판정175 §3-2] 상세보기 · CTA 글은 keepWords(U+2060) 글 — 보이는 글자 정확 일치(findVisibleText · find.text 와 같은 skipOffstage 기본)로 찾는다.
+      expect(findVisibleText('업무 자세히 보기'), findsOneWidget,
           reason: '업무를 숨기지 않는다 — 비교할 수 있어야 한다');
 
       // CTA 의 N 은 신규 지원 가능한 것만 센다.
@@ -501,8 +501,8 @@ void main() {
       // [ISG2-CTA] 유일한 업무가 이미 `지원완료` 면 고를 것이 없다 —
       //   예전에는 여기서도 `지원할 업무를 선택해주세요` 라고 해서
       //   할 수 없는 일을 시켰다(에뮬레이터 실측).
-      expect(find.text('지원할 업무를 선택해주세요'), findsNothing);
-      expect(find.text('지금 지원할 수 있는 업무가 없어요'), findsOneWidget);
+      expect(findVisibleText('지원할 업무를 선택해 주세요'), findsNothing);
+      expect(findVisibleText('지금 지원할 수 있는 업무가 없어요'), findsOneWidget);
     });
 
     testWidgets('ARP-31 CONFIRMED 업무는 확정으로 보여준다', (tester) async {

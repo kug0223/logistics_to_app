@@ -1,3 +1,4 @@
+// [CONSENT-R4d 후보 사본] 원본 A/test/consent_version_contract_test.dart sha256=9b114218b65c2b77454f9c2a17b4abb7f12a55236d07fcf764f0a0d70b3ebb7b · 바뀐 자리는 R/work/consent-copy-preparation-r4d-20261119/manifests/test_change_map.tsv
 import 'dart:io';
 
 import 'package:ALfit/widgets/dialogs/apply/document_access_consent.dart';
@@ -21,9 +22,9 @@ import 'package:flutter_test/flutter_test.dart';
 const _indexPath = 'functions/src/index.ts';
 const _v1 = '2026-08-21-v1';
 const _v2 = '2026-09-12-v2';
-// [R1.2] 채용 검토 목적 열람을 명시한 문구. v2 이하는 '근무 확정 시
-//   소득신고·급여처리 목적'만 동의했으므로 자동 승격하지 않는다.
-const _v3 = '2026-09-18-v3';
+// [CONSENT-R4 후보 사본] 현재 세대 판본.
+const _v4 = '2026-11-18-v4';
+const _inv2 = '2026-11-18-invite-v2';
 
 /// 지원 요청을 서버로 보내는 모든 UI 경로.
 /// 각 경로는 고지 카드를 표시해야 한다 — 표시 없이 버전만 기록되면 안 된다.
@@ -68,9 +69,10 @@ String _between(String source, String startMarker, String endMarker) {
 
 class UnsupportedConsentVersion implements Exception {}
 
+// [CONSENT-R4 후보 사본] 새 세대 단일 전환 — 추론 0 · 새 요청은 v4 / invite-v2 만(서버 srvConsentVersionReject).
 String? resolveVersion(String? raw, {required bool clientSentDocConsent}) {
-  if (raw == null) return clientSentDocConsent ? _v1 : null;
-  if (raw != _v1 && raw != _v2 && raw != _v3) throw UnsupportedConsentVersion();
+  if (raw == null) throw UnsupportedConsentVersion();
+  if (raw != _v4 && raw != _inv2) throw UnsupportedConsentVersion();
   return raw;
 }
 
@@ -88,25 +90,30 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('DS08B5-01 v2 클라이언트 → v2 기록', () {
     test('전송한 버전을 그대로 기록한다', () {
-      expect(resolveVersion(_v2, clientSentDocConsent: true), _v2);
+      expect(resolveVersion(_v4, clientSentDocConsent: true), _v4);
+      expect(() => resolveVersion(_v2, clientSentDocConsent: true),
+          throwsA(isA<UnsupportedConsentVersion>()), reason: '[CONSENT-R4] 은퇴 판본');
     });
 
     // [R1.2] 버전 문자열 자체를 고정하지 않는다. 고정할 것은
     //   '클라이언트가 보내는 버전과 서버 allowlist의 최신이 같다'이다.
     test('클라이언트 상수가 서버가 아는 최신 버전이다', () {
-      expect(DocumentAccessConsent.version, _v3);
+      expect(DocumentAccessConsent.version, _v4);
       final cf = _src(_indexPath);
-      expect(cf.contains('DOCUMENT_ACCESS_CONSENT_V3 = "$_v3"'), isTrue);
+      expect(cf.contains('DOCUMENT_ACCESS_CONSENT_V4 = "$_v4"'), isTrue);
     });
 
     test('표시 문구와 버전이 같은 파일에 있다 — drift 방지', () {
       final consent =
           _src('lib/widgets/dialogs/apply/document_access_consent.dart');
-      expect(consent.contains("static const String version = '$_v3'"), isTrue);
-      expect(consent.contains('마지막 근무일로부터 7일 후'), isTrue);
-      expect(consent.contains('갱신된 근무관계에도 승계됩니다'), isTrue);
+      expect(consent.contains("static const String version = '$_v4'"), isTrue);
+      // [CONSENT-R4b] 새 문안 — 신분증 7일 · 계좌 = 근무 중 + 마지막 지급 30일(예외 L30) · 동일 고용관계 갱신 · 채용 검토 목적.
+      expect(consent.contains('신분증은 마지막 근무일부터 7일 동안'), isTrue);
+      expect(consent.contains('급여계좌·통장사본은 근무하는 동안과 마지막 급여 지급부터 30일 동안'), isTrue);
+      expect(consent.contains('다음 경우에는 마지막 근무일(한국 시간) 0시부터 30일 동안 볼 수 있습니다.'), isTrue);
+      expect(consent.contains('계약이 갱신되면 이 동의는 갱신된 근무에도 그대로 적용됩니다'), isTrue);
       // [R1.2] 새 목적이 문구에 실제로 적혀 있어야 버전이 의미를 갖는다.
-      expect(consent.contains('지원자 확인 및 채용 검토'), isTrue);
+      expect(consent.contains('· 채용 검토: 지원이 끝날 때까지'), isTrue);
     });
 
     test('클라이언트가 그 상수를 그대로 전송한다', () {
@@ -122,17 +129,21 @@ void main() {
   });
 
   group('DS08B5-02 구버전 클라이언트 호환', () {
-    test('버전 없음 + 서류동의 전송 → v1', () {
-      expect(resolveVersion(null, clientSentDocConsent: true), _v1);
+    // [CONSENT-R4 후보 사본] 구버전 호환 수용 제외(출시 전 단일 전환) — 아래 셋은 **거절**이 기대다.
+    test('버전 없음 + 서류동의 전송 → 거절(v1 추론 0)', () {
+      expect(() => resolveVersion(null, clientSentDocConsent: true),
+          throwsA(isA<UnsupportedConsentVersion>()));
     });
 
-    test('버전 없음 + 서류동의 미전송 → 기록 없음', () {
-      expect(resolveVersion(null, clientSentDocConsent: false), isNull,
-          reason: '서류 접근 고지를 본 적 없는 cohort에 버전을 붙이면 안 된다');
+    test('버전 없음 + 서류동의 미전송 → 거절', () {
+      expect(() => resolveVersion(null, clientSentDocConsent: false),
+          throwsA(isA<UnsupportedConsentVersion>()),
+          reason: '서류 접근 고지를 본 적 없는 요청에 버전을 붙이지 않는다');
     });
 
-    test('v1을 v2로 승격하지 않는다', () {
-      expect(resolveVersion(_v1, clientSentDocConsent: true), _v1);
+    test('v1을 승격하지 않는다 — 은퇴 판본은 거절', () {
+      expect(() => resolveVersion(_v1, clientSentDocConsent: true),
+          throwsA(isA<UnsupportedConsentVersion>()));
     });
   });
 
@@ -161,10 +172,9 @@ void main() {
         'export const callableGetIdCardSignedUrl',
       );
       expect(resolver.contains('"invalid-argument"'), isTrue);
-      expect(
-        resolver.contains('SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS.includes'),
-        isTrue,
-      );
+      // [CONSENT-R4] 새 요청 판정은 저장 이력 읽기 집합이 아니라 새 요청/은퇴 판정 하나로 한다.
+      expect(resolver.contains('srvConsentVersionReject('), isTrue);
+      expect(resolver.contains('SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS.includes'), isFalse);
     });
   });
 
@@ -288,8 +298,11 @@ void main() {
         'const SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS',
         'function resolveDocumentAccessConsentVersion',
       );
-      expect(list.contains('DOCUMENT_ACCESS_CONSENT_V1'), isTrue);
-      expect(list.contains('DOCUMENT_ACCESS_CONSENT_V2'), isTrue);
+      // [CONSENT-R4] 저장 이력 읽기 집합 = v4 · invite-v2. v1·v2 는 은퇴(상수는 은퇴 집합에만).
+      expect(list.contains('DOCUMENT_ACCESS_CONSENT_V1'), isFalse);
+      expect(list.contains('DOCUMENT_ACCESS_CONSENT_V2'), isFalse);
+      expect(list.contains('DOCUMENT_ACCESS_CONSENT_V4'), isTrue);
+      expect(list.contains('DOCUMENT_ACCESS_CONSENT_INVITE_V2'), isTrue);
       expect(code.contains('const DOCUMENT_ACCESS_CONSENT_V1 = "$_v1"'), isTrue);
       expect(code.contains('const DOCUMENT_ACCESS_CONSENT_V2 = "$_v2"'), isTrue);
     });

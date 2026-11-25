@@ -1,3 +1,4 @@
+// ignore_for_file: depend_on_referenced_packages
 // [ISG2] 초대 수락 **마감**을 지원자에게 정확히 말한다.
 //
 // ── 무엇이 틀려 있었나 ────────────────────────────────────────────────
@@ -14,7 +15,6 @@
 //   IDL-B  분류(`isLongTermInvite`) — slotId 가 있으면 단기
 //   IDL-C  실제 `MyApplicationsScreen` 을 띄워 카드 문구·버튼 상태
 //   IDL-D  홈 배너 문구가 한쪽만 말하지 않는다
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -200,7 +200,7 @@ Future<void> _pump(
 }
 
 List<String> _texts(WidgetTester t) => t
-    .widgetList<Text>(find.byType(Text))
+    .widgetList<Text>(find.byWidgetPredicate((w) => w is Text))
     .map((w) => w.data ?? '')
     .where((s) => s.isNotEmpty)
     .toList();
@@ -342,7 +342,7 @@ void main() {
     testWidgets('IDL-14 초대 카드는 390dp 폭에서 넘치지 않는다', (t) async {
       await _pump(t, [_invite(expiry: _storedExpiryAfterShift)],
           _shiftStart.add(const Duration(minutes: 1)));
-      expect(tester_hasOverflow(), isFalse);
+      expect(testerHasOverflow(), isFalse);
     });
 
     testWidgets('IDL-15 마감 표기는 기기 시간대에 흔들리지 않는다', (t) async {
@@ -378,7 +378,7 @@ void main() {
 }
 
 /// 렌더 중 오버플로가 있었는가 — FlutterError 수집 대신 예외 기록을 본다.
-bool tester_hasOverflow() {
+bool testerHasOverflow() {
   final e = TestWidgetsFlutterBinding.instance.takeException();
   if (e == null) return false;
   return e.toString().contains('overflowed');

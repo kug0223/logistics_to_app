@@ -660,7 +660,8 @@ class _UserTOCardState extends State<UserTOCard> {
                       semanticsLabel: _compactWageAmount,
                       style: ResponsiveHelper.subtitleStyle(context).copyWith(
                         fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
+                        // [DU577b] 공고 목록 카드 급여 금액 = brand(판정170 §5 · BL-04 · 실제 소비 compact 카드) — 금액 계산 · 단위 · 줄바꿈 그대로.
+                        color: AppColors.brand,
                         letterSpacing: -0.3,
                       ),
                     ),
@@ -1021,12 +1022,12 @@ class _UserTOCardState extends State<UserTOCard> {
   Widget _buildWageRow(BuildContext context) {
     final hint = _workHint;
     final recruit = _recruitText;
-    final pill = _pill(context, _wageLabel, AppColors.successBg, AppColors.successDark,
-        border: AppColors.successLight);
+    final pill = _pill(context, _wageLabel, AppColors.brandSurface, AppColors.brand,
+        border: AppColors.brandSurface);
     final amount = Text(
       _wageAmount,
       style: ResponsiveHelper.subtitleStyle(context).copyWith(
-        color: AppColors.successDark,
+        color: AppColors.brand,
         fontWeight: FontWeight.bold,
       ),
       overflow: TextOverflow.ellipsis,
@@ -1438,13 +1439,13 @@ class _UserTOCardState extends State<UserTOCard> {
               : theme.primaryColor,
           borderRadius: BorderRadius.circular(6),
           border: hasApplied
-              ? Border.all(color: AppColors.info)
+              ? Border.all(color: AppColors.brand)
               : null,
         ),
         child: Text(
           hasApplied ? '지원관리' : '지원하기',
           style: ResponsiveHelper.tinyStyle(context,
-              color: hasApplied ? AppColors.info : Colors.white,
+              color: hasApplied ? AppColors.brand : Colors.white,
               fontWeight: FontWeight.bold),
         ),
       ),
@@ -1911,12 +1912,12 @@ class _WorkItem extends StatelessWidget {
               vertical: ResponsiveHelper.spacing(context, 2),
             ),
             decoration: BoxDecoration(
-              color: AppColors.infoBg,
+              color: AppColors.grey100,
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text('${work.startTime}~${work.endTime}',
                 style: ResponsiveHelper.tinyStyle(context,
-                    color: AppColors.info, fontWeight: FontWeight.bold)),
+                    color: AppColors.textSecondary, fontWeight: FontWeight.bold)),
           )
         else
           // [DU444] B(320 · 2.0)에서 '10:00~14:00' 한 덩어리가 행 글 칸보다 넓어 행마다 넘쳤다.
@@ -1942,7 +1943,7 @@ class _WorkItem extends StatelessWidget {
         Text(
           FormatHelper.formatWage(work.wage),
           style: ResponsiveHelper.smallStyle(context).copyWith(
-            color: AppColors.successDark,
+            color: AppColors.brand,
             fontWeight: FontWeight.bold,
           ),
         ),

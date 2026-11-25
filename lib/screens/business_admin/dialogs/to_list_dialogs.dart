@@ -112,7 +112,6 @@ class TOListDialogs {
           ),
           StyledDialogButton.primary(
             text: '종료',
-            backgroundColor: AppColors.warning,
             onPressed: () => Navigator.pop(dialogCtx, true),
           ),
         ],

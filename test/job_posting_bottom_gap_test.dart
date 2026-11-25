@@ -12,8 +12,11 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/visible_text.dart'; // [DU591c · 판정175 §3-2] keepWords 제목은 보이는 글자 정확 일치로 찾는다(find.text 와 같은 skipOffstage 기본)
 import 'package:firebase_core/firebase_core.dart';
+// ignore: depend_on_referenced_packages
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
+// ignore: depend_on_referenced_packages
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -21,12 +24,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ALfit/models/core/application_model.dart';
 import 'package:ALfit/models/core/business_model.dart';
-import 'package:ALfit/models/core/business_work_type_model.dart';
 import 'package:ALfit/models/core/slot_model.dart';
 import 'package:ALfit/models/core/to_model.dart';
 import 'package:ALfit/models/core/user_model.dart';
 import 'package:ALfit/models/core/user_region.dart';
-import 'package:ALfit/models/core/work_detail_data.dart';
 import 'package:ALfit/models/core/work_detail_model.dart';
 import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
@@ -202,7 +203,7 @@ Future<void> _toBottom(WidgetTester t) async {
 double _lastPanelBottom(WidgetTester t) => t
     .getRect(find
         .ancestor(
-            of: find.text('찾아오는 길'),
+            of: findVisibleText('찾아오는 길'),
             matching: find.byWidgetPredicate(
                 (w) => w is Container && w.color == Colors.white))
         .first)

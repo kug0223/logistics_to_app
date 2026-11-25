@@ -34,7 +34,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
+// ignore: depend_on_referenced_packages
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
+// ignore: depend_on_referenced_packages
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -57,6 +59,7 @@ import 'package:ALfit/screens/user/user_home_screen.dart';
 import 'package:ALfit/screens/user/user_tab_scope.dart';
 import 'package:ALfit/services/payroll_correction_service.dart';
 import 'support/checkin_contract_fixture.dart';
+import 'support/visible_text.dart';
 import 'package:ALfit/utils/format_helper.dart';
 
 // ── Firebase 가짜 코어 ──────────────────────────────────────────────────
@@ -220,11 +223,10 @@ Future<void> _pumpHome(
 
 List<String> _texts(WidgetTester t) => t
     .widgetList<Text>(find.byType(Text))
-    .map((w) => w.data ?? '')
+    .map((w) => visibleText(w.data ?? ''))
     .where((s) => s.isNotEmpty)
     .toList();
 
-String _shown(WidgetTester t) => _texts(t).join('\n');
 
 bool _hasText(WidgetTester t, String s) => _texts(t).contains(s);
 
@@ -237,17 +239,26 @@ double? _progressValue(WidgetTester t) {
   return t.widget<LinearProgressIndicator>(_bar().first).value;
 }
 
-/// Hero 진행 상자 안의 라벨. 진행 바와 **같은 Column** 의 첫 Text 다.
+/// Hero 진행 라벨: 같은 Column의 막대 바로 앞 8px 간격 앞에 있는 Text만 읽는다.
 ///
 ///   전체 화면 문자열로 검사하면 안 된다 — `근무 완료` 는 수입 섹션의
 ///   금액 라벨에도 쓰이는 말이라, Hero 가 멀쩡해도 단정이 걸린다(실측).
 ///   이 Phase 가 보는 것은 **Hero 가 무엇을 주장하는가** 하나다.
 String? _progressLabel(WidgetTester t) {
-  if (_bar().evaluate().isEmpty) return null;
+  if (_bar().evaluate().length != 1) return null;
   final col = find.ancestor(of: _bar().first, matching: find.byType(Column));
-  final texts = t.widgetList<Text>(
-      find.descendant(of: col.first, matching: find.byType(Text)));
-  return texts.isEmpty ? null : texts.first.data;
+  if (col.evaluate().isEmpty) return null;
+  final children = t.widget<Column>(col.first).children;
+  final slots = <int>[
+    for (var i = 0; i < children.length; i++)
+      if (children[i] is ClipRRect &&
+          (children[i] as ClipRRect).child is LinearProgressIndicator) i,
+  ];
+  if (slots.length != 1 || slots.single < 2) return null;
+  final gap = children[slots.single - 1];
+  final label = children[slots.single - 2];
+  if (gap is! SizedBox || gap.height != 8 || label is! Text) return null;
+  return visibleText(label.data ?? '');
 }
 
 /// Hero CTA 버튼. `ElevatedButton.icon` 은 비공개 서브클래스를 만들어

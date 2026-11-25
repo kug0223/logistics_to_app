@@ -1556,9 +1556,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           }
 
           // ── 로컬 헬퍼 ──────────────────────────────────────────────────
+          // [DU593b · 판정128 :60 · 장부 031] 반복 행은 중립 면(surface) · 중립 선(border) · 본문 글(textPrimary)로 낮춘다 —
+          //   실제 상태는 작은 아이콘 색(color 인자)과 명시 문구(label)로만 말한다. '확인하기 →' 이동은 진입이라 brand 글(C5 · C2).
+          //   문구 · 차단 · 이동 행동 · 아이콘 · 크기 · 여백 그대로.
           Widget blockRow({
             required Color color,
-            required Color bgColor,
             required IconData icon,
             required String label,
             required String? navKey,
@@ -1567,37 +1569,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
-                color: bgColor,
+                color: AppColors.surface,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: color.withValues(alpha: 0.3)),
+                border: Border.all(color: AppColors.border),
               ),
-              child: Row(
-                children: [
-                  Icon(icon, size: 16, color: color),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(label,
-                        style: ResponsiveHelper.tinyStyle(ctx, color: color)
-                            .copyWith(height: 1.4)),
-                  ),
-                  if (navKey != null)
-                    TextButton(
-                      onPressed: () {
-                        navTarget = navKey;
-                        Navigator.pop(ctx, null);
-                      },
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 2),
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        foregroundColor: color,
-                      ),
-                      child:
-                          const Text('확인하기 →', style: TextStyle(fontSize: 12)),
+              // [DU593c · 판정175 §2 :21 F175-WITHDRAW-READ-TAP] 행 글은 낱말 사이에서만 줄을 바꾸고(읽는 이름 = 원문) '확인하기 →' 받는 자리는
+              //   최소 48×48(같은 앱 글자 링크 기준). 남은 폭이 좁거나 글자가 크면(320 · 글자 2.0 에서 글 칸이 약 3자로 눌렸다) 이동을 글 아래
+              //   오른쪽으로 내린다 — 넓으면 이전 한 줄 배치 그대로. 기준 200 = 글자 배율 1.0 에서 아이콘+간격 24 + '확인하기 →' 약 76 + 가장 긴
+              //   낱말 약 96(TextLayout.fits 가 사용자 배율을 곱한다 · DU590c 와 같은 값). 문구 · 색 · 글자 크기 · 아이콘 · 이동 행동 그대로.
+              child: LayoutBuilder(builder: (lc, cons) {
+                final wide = TextLayout.fits(lc, cons.maxWidth, 200);
+                final go = navKey == null
+                    ? null
+                    : TextButton(
+                        onPressed: () {
+                          navTarget = navKey;
+                          Navigator.pop(ctx, null);
+                        },
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          minimumSize: const Size(48, 48),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          foregroundColor: AppColors.brand,
+                        ),
+                        child:
+                            const Text('확인하기 →', style: TextStyle(fontSize: 12)),
+                      );
+                final head = Row(
+                  children: [
+                    Icon(icon, size: 16, color: color),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(TextLayout.keepWords(label),
+                          semanticsLabel: label,
+                          style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.textPrimary)
+                              .copyWith(height: 1.4)),
                     ),
-                ],
-              ),
+                    if (go != null && wide) go,
+                  ],
+                );
+                if (go == null || wide) return head;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [head, go],
+                );
+              }),
             );
           }
 
@@ -1695,7 +1712,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       style: ResponsiveHelper.titleStyle(ctx)
                           .copyWith(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 4),
-                  Text('처리 필요 항목을 먼저 완료해 주세요',
+                  // [DU593c · F175] 안내 문장은 낱말 사이에서만 줄을 바꾼다(읽는 이름 = 원문 · 글 · 색 · 크기 그대로).
+                  Text(TextLayout.keepWords('처리 필요 항목을 먼저 완료해 주세요'),
+                      semanticsLabel: '처리 필요 항목을 먼저 완료해 주세요',
                       style: ResponsiveHelper.smallStyle(ctx,
                           color: AppColors.grey500)),
                   const SizedBox(height: 20),
@@ -1716,15 +1735,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     )
                   else ...[
                     if (hardBlocks.isNotEmpty) ...[
+                      // [DU593b · 판정128 :60 · 장부 031] 구역 제목은 중립 본문 글(textPrimary) — 상태색은 행의 작은 아이콘에만 남는다(C6).
                       Text('처리 필요 항목',
                           style: ResponsiveHelper.smallStyle(ctx,
-                              color: AppColors.errorDeep,
+                              color: AppColors.textPrimary,
                               fontWeight: FontWeight.w600)),
                       const SizedBox(height: 8),
                       for (final b in hardBlocks)
                         blockRow(
                           color: AppColors.error,
-                          bgColor: AppColors.errorBg,
                           icon: Icons.block_rounded,
                           label: blockLabel(b),
                           navKey: blockNavKey(b),
@@ -1736,36 +1755,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       //   바로 위 hardBlocks 는 이미 error/errorBg 를 쓰고 있었다.
                       Text('확인 권장 사항',
                           style: ResponsiveHelper.smallStyle(ctx,
-                              color: AppColors.warningDark,
+                              color: AppColors.textPrimary,
                               fontWeight: FontWeight.w600)),
                       const SizedBox(height: 8),
                       for (final w in warnings)
                         blockRow(
                           color: AppColors.warningDark,
-                          bgColor: AppColors.warningBg,
                           icon: Icons.warning_amber_rounded,
                           label: warnLabel(w),
                           navKey: warnNavKey(w),
                         ),
                       const SizedBox(height: 12),
                     ],
+                    // [DU593b · 판정130 :76 (b) · 장부 032] 정상 '탈퇴 가능' 안내는 중립 면/선 · 본문 글 + 작은 체크(아이콘 그대로) — 넓은 초록 면 0.
                     if (hardBlocks.isEmpty && warnings.isEmpty)
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
-                          color: AppColors.successBg,
+                          color: AppColors.surface,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: AppColors.successLight),
+                          border: Border.all(color: AppColors.border),
                         ),
                         child: Row(
                           children: [
+                            // [DU593c · J3 · 판정175 :49] 작은 체크는 흰 면 비문자 대비 ≥3(success 2.78 → successDark 약 7.1) — 같은 화면 아이콘(iconColor successDark)과 같은 토큰.
                             const Icon(Icons.check_circle_outline,
-                                size: 18, color: AppColors.success),
+                                size: 18, color: AppColors.successDark),
                             const SizedBox(width: 8),
                             Expanded(
-                              child: Text('탈퇴 가능한 상태입니다.',
+                              child: Text(TextLayout.keepWords('탈퇴 가능한 상태입니다.'),
+                                  semanticsLabel: '탈퇴 가능한 상태입니다.',
                                   style: ResponsiveHelper.smallStyle(ctx,
-                                      color: AppColors.successDark)),
+                                      color: AppColors.textPrimary)),
                             ),
                           ],
                         ),
@@ -1990,7 +2011,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       confirmText: '실행',
       cancelText: '취소',
       icon: Icons.access_time_filled,
-      iconColor: AppColors.info,
+      iconColor: AppColors.brand,
     );
 
     if (confirmed != true || !context.mounted) return;
@@ -2841,28 +2862,42 @@ class _DeleteAccountSheetState extends State<_DeleteAccountSheet> {
                   .copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 4),
+            // [DU593c · F175] 부제 · 주의 제목 · 네 항목은 낱말 사이에서만 줄을 바꾼다(읽는 이름 = 원문 · 글 · 색 · 크기 · 순서 그대로).
             Text(
-              '탈퇴 후 계정 복구는 불가능합니다',
+              TextLayout.keepWords('탈퇴 후 계정 복구는 불가능합니다'),
+              semanticsLabel: '탈퇴 후 계정 복구는 불가능합니다',
               style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
             ),
             const SizedBox(height: 16),
 
             // 통합 안내 박스
+            // [DU593b · 판정130 :76 (b) · 장부 033] 중립 면/선 · 본문 글 + 작은 경고 아이콘 · 분명한 주의 제목 — 넓은 빨강 면 0.
+            //   네 항목 전문 · 읽기 순서 · 비밀번호/버튼/최종 확인 흐름 그대로(감추거나 접지 않는다).
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: AppColors.errorBg,
+                color: AppColors.surface,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.errorLight),
+                border: Border.all(color: AppColors.border),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    '탈퇴 시 아래 사항을 확인해주세요',
-                    style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.errorDeep,
-                        fontWeight: FontWeight.w600),
+                  Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded,
+                          size: 18, color: AppColors.error),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          TextLayout.keepWords('탈퇴 시 아래 사항을 확인해주세요'),
+                          semanticsLabel: '탈퇴 시 아래 사항을 확인해주세요',
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 10),
                   for (final text in <String>[
@@ -2878,11 +2913,12 @@ class _DeleteAccountSheetState extends State<_DeleteAccountSheet> {
                         children: [
                           Text('• ',
                               style: ResponsiveHelper.tinyStyle(context,
-                                  color: AppColors.errorDeep)),
+                                  color: AppColors.textPrimary)),
                           Expanded(
-                            child: Text(text,
+                            child: Text(TextLayout.keepWords(text),
+                                semanticsLabel: text,
                                 style: ResponsiveHelper.tinyStyle(context,
-                                        color: AppColors.errorDeep)
+                                        color: AppColors.textPrimary)
                                     .copyWith(height: 1.4)),
                           ),
                         ],

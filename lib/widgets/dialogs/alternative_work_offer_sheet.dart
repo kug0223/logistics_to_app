@@ -112,9 +112,9 @@ class AlternativeWorkOfferSheet {
                   Text(
                     sourceIsConfirmed
                         ? '제안을 보내도 지금 확정된 근무는 그대로입니다.\n'
-                            '근로자가 수락한 순간에만 변경이 반영됩니다.'
-                        : '제안을 보내면 근로자가 조건을 보고 직접 선택합니다.\n'
-                            '지금 지원은 그대로 유지되고, 근로자가 제안을 수락할 때만 정리됩니다.',
+                            '근무자가 수락한 순간에만 변경이 반영됩니다.'
+                        : '제안을 보내면 지원자가 조건을 보고 직접 선택합니다.\n'
+                            '지금 지원은 그대로 유지되고, 지원자가 제안을 수락할 때만 정리됩니다.',
                     style: ResponsiveHelper.smallStyle(ctx,
                         color: AppColors.grey600),
                   ),
@@ -206,7 +206,7 @@ class AlternativeWorkOfferSheet {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          '이 근로자에게만 적용되는 제안 급여입니다.\n'
+                          '제안을 받은 분에게만 적용되는 제안 급여입니다.\n'
                           '공고의 기본 급여는 변경되지 않습니다.',
                           style: ResponsiveHelper.smallStyle(ctx,
                               color: AppColors.infoDeep),
@@ -334,8 +334,8 @@ class AlternativeWorkOfferSheet {
       message: '$workerName님에게 ‘${target.workType}’ 업무를 제안합니다.\n'
           '${target.startTime}~${target.endTime} · $offeredText'
           '${isMatch ? ' (기존 지원 급여 유지)' : ''}\n\n'
-          '${isMatch ? '이 급여는 이 근로자에게만 적용되며 공고의 기본 급여는 변경되지 않습니다.\n\n' : ''}'
-          '근로자가 수락하면 그때 이 업무로 확정되고, 기존 지원은 자동으로 '
+          '${isMatch ? '이 급여는 제안을 받은 분에게만 적용되며 공고의 기본 급여는 변경되지 않습니다.\n\n' : ''}'
+          '제안을 받은 분이 수락하면 그때 이 업무로 확정되고, 기존 지원은 자동으로 '
           '정리됩니다. 거절하면 기존 지원은 대기 상태 그대로입니다.',
       confirmText: '제안 보내기',
       cancelText: '취소',

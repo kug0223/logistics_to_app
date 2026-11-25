@@ -52,7 +52,8 @@ class ScheduleCard extends StatelessWidget {
     return Padding(
       padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
       child: Material(
-        color: AppColors.yellowWarnBg,
+        // [DU581b] 근로자 서명 필요 줄 = warningBg 면 · warningDark 아이콘/글(판정139 §4 545-R6 · 이 줄은 서명 대기 계약이 있을 때만 그린다).
+        color: AppColors.warningBg,
         borderRadius: BorderRadius.circular(8),
         child: InkWell(
           borderRadius: BorderRadius.circular(8),
@@ -74,13 +75,13 @@ class ScheduleCard extends StatelessWidget {
             child: Row(children: [
               Icon(Icons.draw_outlined,
                   size: ResponsiveHelper.iconSize(context, 14),
-                  color: AppColors.yellowWarnDark),
+                  color: AppColors.warningDark),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Expanded(
                 child: Text(
                   '계약서 서명이 필요해요',
                   style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: AppColors.yellowWarnText,
+                    color: AppColors.warningDark,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -88,13 +89,14 @@ class ScheduleCard extends StatelessWidget {
               Text(
                 '계약서 확인',
                 style: ResponsiveHelper.smallStyle(context).copyWith(
-                  color: AppColors.yellowWarnDark,
+                  // [DU581b] 조작(계약서 확인 글 · 화살표) = brand(판정139 §4 545-R6).
+                  color: AppColors.brand,
                   fontWeight: FontWeight.w700,
                 ),
               ),
               Icon(Icons.chevron_right,
                   size: ResponsiveHelper.iconSize(context, 14),
-                  color: AppColors.yellowWarnDark),
+                  color: AppColors.brand),
             ]),
           ),
         ),
@@ -121,7 +123,7 @@ class ScheduleCard extends StatelessWidget {
             offset: const Offset(0, 2),
           ),
         ],
-        border: Border.all(color: const Color(0xFFE8E9ED)),
+        border: Border.all(color: AppColors.borderLight),
       ),
       child: Material(
         color: Colors.transparent,
@@ -184,13 +186,13 @@ class ScheduleCard extends StatelessWidget {
                       Container(
                         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 3)),
                         decoration: BoxDecoration(
-                          color: AppColors.purple.withValues(alpha: 0.15),
+                          color: AppColors.grey100,
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Icon(
                           Icons.work,
                           size: ResponsiveHelper.iconSize(context, 12),
-                          color: AppColors.purple,
+                          color: AppColors.grey600,
                         ),
                       ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 4)),
@@ -280,8 +282,9 @@ class ScheduleCard extends StatelessWidget {
                       horizontal: ResponsiveHelper.spacing(context, 10),
                       vertical: ResponsiveHelper.spacing(context, 6),
                     ),
+                    // [DU545] 고정근무 띠 = 근무 유형 안내 — 중립 면 · 회색 별 · 본문/보조 글(문구 · 기하 그대로)
                     decoration: BoxDecoration(
-                      color: AppColors.purple.withValues(alpha: 0.1),
+                      color: AppColors.grey100,
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Row(
@@ -290,12 +293,12 @@ class ScheduleCard extends StatelessWidget {
                         Icon(
                           Icons.star,
                           size: ResponsiveHelper.iconSize(context, 12),
-                          color: AppColors.purple,
+                          color: AppColors.grey600,
                         ),
                         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                         Text(
                           '고정근무',
-                          style: ResponsiveHelper.tinyStyle(context, color: AppColors.purple).copyWith(
+                          style: ResponsiveHelper.tinyStyle(context, color: AppColors.textPrimary).copyWith(
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -303,7 +306,7 @@ class ScheduleCard extends StatelessWidget {
                         Flexible(
                           child: Text(
                             '${application.workDaysDisplay ?? ""} · ${application.workPeriodDisplay}',
-                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.purple),
+                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -326,8 +329,9 @@ class ScheduleCard extends StatelessWidget {
         horizontal: ResponsiveHelper.spacing(context, 10),
         vertical: ResponsiveHelper.spacing(context, 4),
       ),
+      // [DU545] 상태 칩 = StatusBadge 짝(옅은 면 + 진한 글) — 원색 15% 면 · 원색 글(1.92–3.07)을 대신한다.
       decoration: BoxDecoration(
-        color: info.color.withValues(alpha: 0.15),
+        color: info.bg,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -370,7 +374,7 @@ class ScheduleCard extends StatelessWidget {
     return IconButton(
       icon: const Icon(Icons.receipt_long_outlined),
       iconSize: 20,
-      color: AppColors.info,
+      color: AppColors.brand,
       tooltip: '급여 명세서',
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
@@ -418,43 +422,45 @@ class ScheduleCard extends StatelessWidget {
     switch (status) {
       case AppStatus.confirmed:
         return _StatusInfo(
-          color: AppColors.success,
+          color: AppColors.successDark, bg: AppColors.successBg,
           text: '확정',
           icon: Icons.check_circle,
         );
       case AppStatus.pending:
         return _StatusInfo(
-          color: AppColors.warning,
+          color: AppColors.warningDark, bg: AppColors.warningBg,
           text: '대기',
           icon: Icons.schedule,
         );
       case AppStatus.contractPending:
         return _StatusInfo(
-          color: AppColors.info,
+          // [DU576] 일반정보 상태 계약 진행 중 = brandSurface/brand(판정139 §3 PP-STATUS-PAIR · info 짝 4.03 미달 → 약 4.99).
+          color: AppColors.brand, bg: AppColors.brandSurface,
           text: '계약 진행 중',
           icon: Icons.assignment_outlined,
         );
       case AppStatus.rejected:
         return _StatusInfo(
-          color: AppColors.error,
+          // [DU576] 지원 거절 결과 = 중립 grey100/textSecondary(판정139 §3 · 노쇼 error 짝은 그대로).
+          color: AppColors.textSecondary, bg: AppColors.grey100,
           text: '거절',
           icon: Icons.cancel,
         );
       case AppStatus.canceled:
         return _StatusInfo(
-          color: AppColors.grey500,
+          color: AppColors.textSecondary, bg: AppColors.grey100,
           text: '취소',
           icon: Icons.remove_circle_outline,
         );
       case AppStatus.autoCanceled:
         return _StatusInfo(
-          color: AppColors.warning,
+          color: AppColors.textSecondary, bg: AppColors.grey100,
           text: '자동 취소',
           icon: Icons.block,
         );
       default:
         return _StatusInfo(
-          color: AppColors.grey500,
+          color: AppColors.textSecondary, bg: AppColors.grey100,
           text: '알 수 없음',
           icon: Icons.help_outline,
         );
@@ -470,14 +476,15 @@ class ScheduleCard extends StatelessWidget {
       if (attendance!.status == AttendanceModel.statusNoShow) {
         return _StatusInfo(
           text: '노쇼',
-          color: AppColors.error,
+          color: AppColors.errorDark, bg: AppColors.errorBg,
           icon: Icons.cancel,
         );
       }
       if (attendance!.status == AttendanceModel.statusAbsent) {
         return _StatusInfo(
           text: '결근',
-          color: AppColors.warning,
+          // [DU576] 명시 결근 결과 = errorBg/errorDark(판정139 §3 · 출근 기록 없음 · 정산 대기 warning 짝은 그대로).
+          color: AppColors.errorDark, bg: AppColors.errorBg,
           icon: Icons.event_busy,
         );
       }
@@ -494,7 +501,7 @@ class ScheduleCard extends StatelessWidget {
       if (application.hasShiftEndedAt(DateTime.now())) {
         return _StatusInfo(
           text: '출근 기록 없음',
-          color: AppColors.warning,
+          color: AppColors.warningDark, bg: AppColors.warningBg,
           icon: Icons.event_busy,
         );
       }
@@ -502,7 +509,7 @@ class ScheduleCard extends StatelessWidget {
     if (attendance == null) {
       return _StatusInfo(
         text: '확정',
-        color: AppColors.success,
+        color: AppColors.successDark, bg: AppColors.successBg,
         icon: Icons.check_circle,
       );
     }
@@ -511,7 +518,8 @@ class ScheduleCard extends StatelessWidget {
     if (attendance!.isWageConfirmed || attendance!.isWageTransferred) {
       return _StatusInfo(
         text: attendance!.isWageTransferred ? '송금 완료' : '정산 완료',
-        color: AppColors.info,
+        // [DU576] 정산 완료 · 송금 완료 = successBg/successDark(판정139 §3 · 상태명 · 지급 판단 그대로).
+        color: AppColors.successDark, bg: AppColors.successBg,
         icon: Icons.verified,
       );
     }
@@ -520,7 +528,7 @@ class ScheduleCard extends StatelessWidget {
     if (attendance!.wageStatus == 'calculated') {
       return _StatusInfo(
         text: '정산 대기',
-        color: AppColors.warning,
+        color: AppColors.warningDark, bg: AppColors.warningBg,
         icon: Icons.hourglass_bottom,
       );
     }
@@ -530,7 +538,8 @@ class ScheduleCard extends StatelessWidget {
     if (attendance!.checkOut != null) {
       return _StatusInfo(
         text: '정산 중',
-        color: AppColors.purple,
+        // [DU576] 정산 중 작은 칩 = 중립 grey100/textSecondary(판정139 §3 · checkedOut/purple 전역 토큰 그대로).
+        color: AppColors.textSecondary, bg: AppColors.grey100,
         icon: Icons.task_alt,
       );
     }
@@ -539,7 +548,8 @@ class ScheduleCard extends StatelessWidget {
     if (attendance!.checkIn != null) {
       return _StatusInfo(
         text: '근무 중',
-        color: AppColors.teal,
+        // [DU576] 근무 중 = successBg/successDark(판정139 §3 · 확정과는 이름 · 아이콘으로 구별).
+        color: AppColors.successDark, bg: AppColors.successBg,
         icon: Icons.work,
       );
     }
@@ -547,7 +557,7 @@ class ScheduleCard extends StatelessWidget {
     // 8. 기본 - 확정
     return _StatusInfo(
       text: '확정',
-      color: AppColors.success,
+      color: AppColors.successDark, bg: AppColors.successBg,
       icon: Icons.check_circle,
     );
   }
@@ -574,11 +584,13 @@ class ScheduleCard extends StatelessWidget {
 /// 상태 정보 클래스
 class _StatusInfo {
   final Color color;
+  final Color bg; // [DU545] 칩 옅은 면(StatusBadge 짝) — color 는 진한 글 · 아이콘
   final String text;
   final IconData icon;
 
   _StatusInfo({
     required this.color,
+    required this.bg,
     required this.text,
     required this.icon,
   });

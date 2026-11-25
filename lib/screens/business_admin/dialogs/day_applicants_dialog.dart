@@ -1091,7 +1091,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             child: _isLoading
                 ? const Padding(
                     padding: EdgeInsets.all(40),
-                    child: LoadingWidget(message: '인력 현황 불러오는 중...'),
+                    child: LoadingWidget(message: '지원·근무 현황 불러오는 중...'),
                   )
                 : _buildStatsAndBody(context),
           ),
@@ -1156,7 +1156,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       //   하는 두 화면이 서로 다른 이름을 갖고 있었고, 어느 쪽도 이 화면이
       //   실제로 하는 일을 담지 못했다 — 여기서는 지원만 보는 게 아니라
       //   확정·초대·계약·서류 후속까지 처리한다.
-      title: '인력 현황',
+      title: '지원·근무 현황',
       // [COMMON-TEXT-LAYOUT.28] 좁은 폭에서 다음 줄이 '· 업무 3개' 로 시작했다 — 구분점을 앞 조각에 붙인다.
       // [DU1 후속38 B2-L] joinParts 는 조각('2026년 9월 29일 (화)')을 한 덩어리로 묶어, 칸보다 길면 Flutter 가 '29|일' 로
       //   강제로 끊었다(320·2.0). phrases 는 구분점을 앞 조각에 붙이는 규칙은 같고, 조각 안 **공백에서만** 줄을 바꾼다.
@@ -1396,7 +1396,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                 child: AppEmptyState(
                   icon: Icons.error_outline,
                   iconColor: AppColors.error,
-                  title: '인력 현황을 불러오지 못했어요',
+                  title: '지원·근무 현황을 불러오지 못했어요',
                   subtitle: '지원자와 부족 인원을 확인할 수 없습니다.',
                 ),
               ),
@@ -1413,7 +1413,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           child: AppEmptyState(
             icon: Icons.error_outline,
             iconColor: AppColors.error,
-            title: '인력 현황을 불러오지 못했어요',
+            title: '지원·근무 현황을 불러오지 못했어요',
             subtitle: '지원자와 부족 인원을 확인할 수 없습니다.',
             action: retry,
           ),
@@ -1886,7 +1886,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           ? TextButton.icon(
               onPressed: () => _openInviteMethod(g, slotId),
               icon: const Icon(Icons.person_add_outlined, size: 16),
-              label: Text('인력 초대 ($shortage명 부족)'),
+              label: Text('근무 초대 ($shortage명 부족)'),
               style: TextButton.styleFrom(
                 foregroundColor: AppColors.grey600,
                 alignment: Alignment.centerLeft,
@@ -1897,7 +1897,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           : OutlinedButton.icon(
               onPressed: () => _openInviteMethod(g, slotId),
               icon: const Icon(Icons.person_add_outlined, size: 16),
-              label: Text('인력 초대 ($shortage명 부족)'),
+              label: Text('근무 초대 ($shortage명 부족)'),
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.brand,
                 side: const BorderSide(color: AppColors.brand),
@@ -1918,14 +1918,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '공개 지원은 마감됐어요 · 근무 시작 전까지 인력 초대는 가능해요',
+            '공개 지원은 마감됐어요 · 근무 시작 전까지 근무 초대는 가능해요',
             style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
           ),
           const SizedBox(height: 4),
           OutlinedButton.icon(
             onPressed: () => _openInviteMethod(g, slotId),
             icon: const Icon(Icons.person_add_outlined, size: 16),
-            label: Text('인력 초대 ($shortage명 부족)'),
+            label: Text('근무 초대 ($shortage명 부족)'),
             style: OutlinedButton.styleFrom(
               foregroundColor: AppColors.brand,
               side: const BorderSide(color: AppColors.brand),
@@ -2357,7 +2357,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                       border: Border.all(color: AppColors.warning, width: 1),
                     ),
                     child: Text(
-                      '대체 충원 진행 중',
+                      // [DU592b · 판정169 §3 :47 · J144] 사람 부재로 읽히던 배지 이름 → 처리 결과 이름(앱의 노쇼 처리됨 · 계약 무효 처리됨 칩 꼴 ·
+                      //   성공 토스트와 같은 낱말). 조건(staffingReleasedAt 처리 이력) · 색 · 크기 · 자리 그대로 — 현재 모집 상태를 말하지 않는다.
+                      '자리 비움 처리됨',
                       style: ResponsiveHelper.captionStyle(context).copyWith(
                         color: AppColors.warning,
                         fontWeight: FontWeight.w600,
@@ -2389,8 +2391,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                         !isRecruitClosed) ...[
                       _actionButton(
                         context,
-                        label: '대체 인력 충원',
-                        role: _ActionRole.urgent,
+                        label: '빈자리 다시 모집',
+                        // [DU584b] 결원 복구(좌석 반납 · 다시 모집)는 일반 운영 실행 = primary 역할(brand 채움 · 흰 글) — 판정170 §5. 표시 조건 · 콜백 · 노쇼 상태 그대로.
+                        role: _ActionRole.primary,
                         onTap: () => _releaseNoshowSeat(app),
                       ),
                     ],
@@ -2433,6 +2436,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   ///   secondary   — 부가 행동(다른 업무 제안): 테두리 없는 보조 글자, 같은 자리 유지
   ///   destructive — 되돌리기 어려운 행동(거절·확정취소): 테두리 없는 절제된 빨간 글자. 확인 창은 그대로
   ///   urgent      — 사고 대응(노쇼 대체 충원): 경고색 채움
+  ///   [DU584b] 이 파일의 노쇼 결원 복구 행동은 판정170 §5 로 primary — urgent 매핑은 남긴다(이 파일 호출 0 · 공용 전역 치환 0).
   ///   높이·여백·모서리는 넷 다 같다. 예전에는 파랑·빨강·초록이 같은 무게로 행마다 반복됐다.
   /// [UI-SCREEN-CONSISTENCY.1 · 2차] 행 버튼 줄 — 보조 행동은 왼쪽(줄을 넘길 수 있음), 주요 행동은 카드 오른쪽 끝에 고정.
   ///   예전에는 버튼이 왼쪽부터 나열돼 확정이 묶음의 마지막 항목처럼 보였다.
@@ -2631,7 +2635,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       case 'voided':
         return _chip(context,
             label: '무효',
-            color: AppColors.error,
+            // [DU592b · 판정138 R3 :46] 무효 = 작은 errorDark/errorBg 상태 표시(글 error → errorDark · 면 · 테두리 식 그대로 · O003 DU589b 와 같은 짝).
+            color: AppColors.errorDark,
             bgColor: AppColors.errorBg);
       default:
         return _chip(context,
@@ -2828,9 +2833,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             child: Text.rich(
               TextSpan(
                 text: TextLayout.keepWords(
-                    '인력 현황을 확인하지 못해 충원이 필요한지 알 수 없어요.\n새로고침 후 다시 확인해 주세요.'),
+                    '모집 정원을 확인하지 못해 부족한 자리가 있는지 알 수 없어요.\n다시 여세요.'),
                 semanticsLabel:
-                    '인력 현황을 확인하지 못해 충원이 필요한지 알 수 없어요.\n새로고침 후 다시 확인해 주세요.',
+                    '모집 정원을 확인하지 못해 부족한 자리가 있는지 알 수 없어요.\n다시 여세요.',
               ),
               style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
             ),
@@ -3721,13 +3726,13 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final user = _userMap[app.uid];
     final confirmed = await DialogHelper.showConfirm(
       context,
-      title: '대체 인력 충원',
+      title: '빈자리 다시 모집',
       message:
-          '${user?.name ?? '해당 근무자'}의 NO_SHOW 자리를 반납하여 대체 인력 모집을 시작합니다.\n'
-          '기존 확정 이력은 유지되며, 모집 정원이 복구됩니다.',
-      confirmText: '충원 시작',
+          '${user?.name ?? '해당 근무자'}님의 오늘 근무가 노쇼로 기록됐어요. 이 자리를 비우고 다시 모집해요.\n'
+          '확정 기록은 그대로 남고, 이 근무가 차지하던 1자리를 모집 정원으로 돌려요.',
+      confirmText: '다시 모집',
       cancelText: '취소',
-      confirmColor: AppColors.warning,
+      // [DU584b] confirmColor 지정 없음 = 셸 기본 brand(채움 · 머리 아이콘) — 판정170 §5 · O001 같은 행동 확인창과 같다. 제목 · 본문 · 확인 글 · 뒤 실행 그대로.
     );
     if (!confirmed || !mounted) return;
     // [R7-P1-CORR] await 뒤 재확인. ActionGuard가 이미 막지만, 이 가드는
@@ -3739,7 +3744,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       if (!mounted) return;
       if (success) {
         _hasChanges = true;
-        ToastHelper.showSuccess('대체 인력 모집이 시작되었습니다');
+        ToastHelper.showSuccess('자리 비움 처리를 완료했어요');
         await _load();
       }
     } catch (e) {

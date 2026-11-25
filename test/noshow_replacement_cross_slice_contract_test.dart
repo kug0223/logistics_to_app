@@ -185,7 +185,7 @@ void main() {
     test('지원자 화면도 종료된 모집 단위에는 대체충원을 권하지 않는다', () {
       final d = _flat(_codeOf(
           _src('lib/screens/business_admin/dialogs/day_applicants_dialog.dart')));
-      expect('_isReplacementActionable && !isRecruitClosed'.allMatches(d).length >= 1, true);
+      expect('_isReplacementActionable && !isRecruitClosed'.allMatches(d).isNotEmpty, true);
       expect(d.contains('_isReplacementActionable && !isRecruitClosed) ...['), true);
       expect(d.contains('isRecruitClosed: g.canonicalClosed))'), true,
           reason: '마감 여부는 이미 slot에서 내려오는 canonical 값을 쓴다');
@@ -232,7 +232,7 @@ void main() {
 
     test('거절 사유가 그대로 관리자에게 전달된다', () {
       final s = _flat(_codeOf(_src('lib/services/firestore/application_firestore.dart')));
-      expect(s.contains("ToastHelper.showError(e.message ?? '대체 충원 처리에 실패했습니다');"),
+      expect(s.contains("ToastHelper.showError(e.message ?? '빈자리 다시 모집 처리 결과를 확인하지 못했어요');"),
           true, reason: 'generic 문구로 덮으면 재오픈하면 된다는 것을 알 수 없다');
       expect(s.contains("if (e.code == 'already-exists')"), true);
     });

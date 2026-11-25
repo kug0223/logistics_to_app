@@ -117,20 +117,20 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     // 홈/알림/새로고침 버튼 제거: 2차 Task 화면이므로 불필요
     // Bottom Navigation 제거: 지원 준비 작업 플로우 집중, 뒤로가기로 복귀
     final appBar = AppBar(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       elevation: 0,
       scrolledUnderElevation: 0,
       surfaceTintColor: Colors.transparent,
       leading: IconButton(
         icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20,
-            color: Color(0xFF1F2937)),
+            color: AppColors.textPrimary),
         onPressed: () => NavigationHelper.pop(context, changed: _hasChanges),
         tooltip: '뒤로',
       ),
       title: const Text(
         '내 서류 관리',
         style: TextStyle(
-          color: Color(0xFF111827),
+          color: AppColors.textPrimary,
           fontSize: 20,
           fontWeight: FontWeight.w700,
           letterSpacing: -0.3,
@@ -139,20 +139,21 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       titleSpacing: 0,
       bottom: PreferredSize(
         preferredSize: const Size.fromHeight(0.5),
-        child: Container(height: 0.5, color: const Color(0xFFE5E7EB)),
+        child: Container(height: 0.5, color: AppColors.borderLight),
       ),
     );
 
     if (user == null) {
       return Scaffold(
-        backgroundColor: AppColors.grey50,
+        backgroundColor: AppColors.background,
         appBar: appBar,
         body: const Center(child: Text('사용자 정보를 불러올 수 없습니다')),
       );
     }
 
     return Scaffold(
-      backgroundColor: AppColors.grey50,
+      // [DU627b · 판정207 D-SCREEN-BG] 화면 바탕 = 앱 화면 바탕 background(#F6F7FA · AppPageScaffold 기본과 같다) — 예전 grey50 은 같은 역할의 다른 거의-흰.
+      backgroundColor: AppColors.background,
       appBar: appBar,
       body: _isLoading
           ? LoadingWidget(message: _loadingMessage)
@@ -429,10 +430,11 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                       },
                       icon: const Icon(Icons.refresh, size: 14),
                       label: Text('재업로드',
-                          style: ResponsiveHelper.smallStyle(context)),
+                          style: ResponsiveHelper.smallStyle(context, color: AppColors.brand)),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.infoDark,
-                        side: const BorderSide(color: AppColors.infoDark),
+                        // [DU627b · 판정207 §4] 재업로드 = 행동 brand(글 · 아이콘 · 선 한 짝 — '사업자 정보 수정' 외곽 단추와 같다 · 예전 글 grey600 · 선 infoDark 두 색).
+                        foregroundColor: AppColors.brand,
+                        side: const BorderSide(color: AppColors.brand),
                         padding: EdgeInsets.symmetric(
                             vertical: ResponsiveHelper.spacing(context, 8)),
                         shape: RoundedRectangleBorder(
@@ -448,8 +450,8 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                       label: Text('삭제',
                           style: ResponsiveHelper.smallStyle(context)),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.error,
-                        side: const BorderSide(color: AppColors.error),
+                        foregroundColor: AppColors.textSecondary,
+                        side: const BorderSide(color: AppColors.border),
                         padding: EdgeInsets.symmetric(
                             vertical: ResponsiveHelper.spacing(context, 8)),
                         shape: RoundedRectangleBorder(
@@ -788,9 +790,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     final Color badgeColor = isComplete
         ? AppColors.success
         : isError
-            ? const Color(0xFFEF4444)   // 빨강 — mismatch
+            ? AppColors.errorDark   // 빨강 — mismatch
             : isPending
-                ? const Color(0xFFF59E0B) // 앰버 — review_required
+                ? AppColors.warningDark // 앰버 — review_required
                 : theme.primaryColor;   // 파랑 — 미완료
 
     // 배지 아이콘/텍스트
@@ -1145,6 +1147,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   ({String label, Color color, IconData icon}) _bankbookStatus(UserModel user) =>
       _docStatus(user.bankbookDocumentState);
 
+  // [DU627b · 판정207 §4] 상태 칩 글/아이콘 = 실제 상태 의미색의 읽히는 짝(success/error/warning → *Dark · 13/w600 글 4.5 이상) — 세무 칩과 같은 짝. '제출 완료' infoDark(정보 상태)는 그대로.
   ({String label, Color color, IconData icon}) _docStatus(String? state) {
     switch (state) {
       case 'MANUAL_APPROVED':
@@ -1152,34 +1155,34 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
           label: '확인 완료',
           // [R7-P1-7 P17-D] 같은 함수의 다른 분기는 error/warning/infoDark 를 쓰는데
           //   이 한 줄만 raw 초록이었다 — 앱의 success 초록과 달라 '완료'가 두 색이 된다.
-          color: AppColors.success,
+          color: AppColors.successDark,
           icon: Icons.check_circle_rounded
         );
       case 'MANUAL_REJECTED':
       case 'REUPLOAD_REQUIRED':
         return (
           label: '다시 등록 필요',
-          color: AppColors.error,
+          color: AppColors.errorDark,
           icon: Icons.error_outline
         );
       case 'SELF_CHECK_OVERRIDDEN':
       case 'MANUAL_REVIEW_REQUIRED':
         return (
           label: '관리자 확인 중',
-          color: AppColors.warning,
+          color: AppColors.warningDark,
           icon: Icons.hourglass_top
         );
       case 'SELF_CHECK_PASSED':
         return (
           label: '제출 완료',
-          color: AppColors.infoDark,
+          color: AppColors.textSecondary,
           icon: Icons.task_alt
         );
       default:
         // 상태가 없는 기존 제출물. 통과로 읽지 않는다 — 제출됐다고만 말한다.
         return (
           label: '제출 완료',
-          color: AppColors.infoDark,
+          color: AppColors.textSecondary,
           icon: Icons.task_alt
         );
     }
@@ -1268,7 +1271,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
             children: [
               Icon(Icons.receipt_long_outlined,
                   size: 22,
-                  color: registered ? AppColors.infoDark : AppColors.grey400),
+                  color: registered ? AppColors.textSecondary : AppColors.grey400),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               // [DU1 구현137 ②] 제목 · 부제 묶음과 상태 칩을 Wrap 으로(C128-3 과 같은 원칙) — 한 줄에 들어가면 칩이 예전처럼 오른쪽,
               //   모자라면(좁은 폭 · 큰 글자) 칩이 아래 줄로 가서 제목 '세무정보' · 부제가 음절로 끊기지 않는다(구현134 B 관측: 세 / 무 / 정 / 보).
@@ -1451,9 +1454,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               Icon(
                 Icons.badge_outlined,
                 size: 22,
-                // 완료 시 green → infoDark: 아이콘은 항목 식별 역할이므로 중립 파랑.
-                // semantic green은 우측 ✓ 등록완료 영역에서만 사용.
-                color: hasIdCard ? AppColors.infoDark : AppColors.grey400,
+                // [DU627b · 판정207 §4] 항목 식별 아이콘 = 장식 → 중립 textSecondary(등록됨) / grey400(미등록) — 행의 강조는 오른쪽 상태 칩 하나.
+                // 예전 infoDark 는 같은 카드의 brand 단추 · 상태 칩 옆 두 번째 파랑이었다(세무 · 급여 계좌 아이콘도 같은 값).
+                color: hasIdCard ? AppColors.textSecondary : AppColors.grey400,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               // [DU1 구현137 ②] 세무 머리와 같은 Wrap — B 320×2.0 에서 칩 옆 부제가 '주민등록 / 증 또는 운 / 전면허증' 으로 끊겼다(구현136 관측).
@@ -1600,7 +1603,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       // B: 계좌만 있고 통장사본 없음 — '미등록' 표시 금지 (BANKBOOK-UX-01 수정)
       statusBadge = Text('계좌 등록됨',
           style: ResponsiveHelper.smallStyle(context,
-              color: AppColors.infoDark, fontWeight: FontWeight.w500));
+              color: AppColors.textSecondary, fontWeight: FontWeight.w500));
     } else {
       // A: 완전 미등록
       // [DU1 후속110 S038] 세무·신분증 미등록과 같은 중립 표시 — chevron 은 탭 동작 없는 상태 행에 '이동'을 암시했다.
@@ -1658,7 +1661,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 Icons.account_balance_wallet_outlined,
                 size: 22,
                 // 계좌가 등록되면 아이콘 색상 활성화 (통장사본 여부 무관)
-                color: hasBankAccount ? AppColors.infoDark : AppColors.grey400,
+                color: hasBankAccount ? AppColors.textSecondary : AppColors.grey400,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               // [DU1 구현130 C128-3] 제출 완료에서는 묶음과 상태 칩을 Wrap 으로 — 한 줄에 들어가면 칩이 예전처럼 오른쪽,

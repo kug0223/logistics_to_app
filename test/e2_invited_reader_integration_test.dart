@@ -1,3 +1,4 @@
+// ignore_for_file: depend_on_referenced_packages
 // [ALFIT-E2-INVITED-READER-INTEGRATION-AND-DEVICE-RECHECK.1]
 //
 //   **실제 위젯 트리**로 한 초대를 끝까지 따라간다.
@@ -439,7 +440,7 @@ void main() {
     await _pumpCard(t, apps: [invite], expanded: true);
     await _openWorkDialog(t);
     final s = _texts(t);
-    expect(s, contains('인력 현황을 불러오지 못했어요'));
+    expect(s, contains('지원·근무 현황을 불러오지 못했어요'));
     expect(s, isNot(contains('지원자가 없습니다')));
     expect(s, isNot(contains('초대: ')), reason: '모르는 초대 수를 0 으로도 1 로도 말하지 않는다');
     _overflows(t);

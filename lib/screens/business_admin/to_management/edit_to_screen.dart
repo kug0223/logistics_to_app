@@ -20,7 +20,6 @@ import '../../../utils/posting_readiness_reason.dart';
 import 'package:provider/provider.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/responsive_helper.dart';
-import '../../../utils/text_layout.dart';
 import '../../../utils/dialog_helper.dart';
 
 // Widgets
@@ -1016,7 +1015,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           ),
           StyledDialogButton.primary(
             text: '계속 저장',
-            backgroundColor: AppColors.warning,
             onPressed: () => Navigator.pop(ctx, true),
           ),
         ],
@@ -1036,7 +1034,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         builder: (ctx) => StyledDialog(
           title: '${slots.length}개 날짜 일괄 적용',
           icon: Icons.edit_calendar_outlined,
-          headerColor: AppColors.info,
+          headerColor: AppColors.brand,
           content: Text(
             '선택한 ${slots.length}개 날짜의 기존 업무 설정이 현재 설정으로 교체됩니다.\n\n'
             '날짜별로 다르게 설정된 업무·시간·급여도 동일하게 변경됩니다.',
@@ -1409,19 +1407,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                   workStartAvailableFrom: widget.to.workStartAvailableFrom,
                   workStartAvailableUntil: widget.to.workStartAvailableUntil,
                 ),
-                Padding(
-                  padding: EdgeInsets.only(
-                      left: ResponsiveHelper.spacing(context, 4),
-                      bottom: ResponsiveHelper.spacing(context, 4)),
-                  // [DU482] grey500(밝은 면 위 약 2.5) → textTertiary(보조 안내 · 기준 4.5 이상).
-                  // [DU483] 큰 글자에서 '공고 생 / 성 후'처럼 음절 사이에서 끊겼다 — 낱말 사이에서만 줄을 바꾼다. 읽기 도구에는 원문.
-                  child: Text(
-                    TextLayout.keepWords('날짜·근무요일은 공고 생성 후 변경할 수 없습니다'),
-                    semanticsLabel: '날짜·근무요일은 공고 생성 후 변경할 수 없습니다',
-                    style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.textTertiary),
-                  ),
-                ),
+                // [DU542b · 감사138 4-5] 같은 뜻의 변경 불가 줄은 위 날짜 선택기 안내 한 곳으로 합쳤다(중복 제거 · 수정 가능 범위 그대로).
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 TOTitleSection(titleController: _titleController),
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),

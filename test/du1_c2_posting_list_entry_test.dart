@@ -475,7 +475,7 @@ void main() {
       final arrowIcon = find.descendant(of: card, matching: find.byIcon(Icons.keyboard_arrow_down));
       expect(arrowIcon, findsOneWidget);
       final arrow = find.ancestor(of: arrowIcon, matching: find.byType(InkWell)).first;
-      final staffText = find.descendant(of: card, matching: find.text('인력 현황'));
+      final staffText = find.descendant(of: card, matching: find.text('지원·근무 현황'));
       expect(staffText, findsOneWidget, reason: '다음 행동 라벨 = 인력 현황');
       final staff = find.ancestor(of: staffText, matching: find.byType(InkWell)).first;
       out('   header InkWell ${rr(header)}');
@@ -566,7 +566,7 @@ void main() {
       final pos = t.state<ScrollableState>(listScrollable()).position;
       out('   최종 scroll offset=${finalOffset.toStringAsFixed(1)} max=${pos.maxScrollExtent.toStringAsFixed(1)} viewport=${pos.viewportDimension}');
       final arrowUp = find.ancestor(of: find.descendant(of: card, matching: find.byIcon(Icons.keyboard_arrow_up)), matching: find.byType(InkWell)).first;
-      final staff2 = find.ancestor(of: find.descendant(of: card, matching: find.text('인력 현황')), matching: find.byType(InkWell)).first;
+      final staff2 = find.ancestor(of: find.descendant(of: card, matching: find.text('지원·근무 현황')), matching: find.byType(InkWell)).first;
       out('   펼침 뒤 제목 ${titleReport()}');
       out('   펼침 뒤 arrow(up) ${rr(arrowUp)} · 인력 현황 ${rr(staff2)}');
       final rowF = find.descendant(of: card, matching: find.text('미충원 3'));

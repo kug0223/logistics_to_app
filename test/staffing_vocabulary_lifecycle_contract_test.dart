@@ -212,14 +212,14 @@ void main() {
 
     test('VOC-Z2 부족 CTA·초대 진입이 그대로다 (§24)', () {
       expect(card, contains('_buildStaffingLine('));
-      expect(day, contains('인력 초대 (\$shortage명 부족)'));
+      expect(day, contains('근무 초대 (\$shortage명 부족)'));
       // [DU530] 소스 형태(`label: Text(…)`)가 아니라 계약을 본다(감사129 §6) — 부족 CTA 자리에서
       //   보이는 글 = 원문에 줄바꿈 규칙만 얹은 것 · 읽는 이름 = 원문 · CTA 조건과 초대 진입 그대로.
       //   실제 그려진 글 · 읽는 이름의 실행 대조는 du1_o003_b_states_530_test.dart(att inv)가 한다.
       final cta = _slice(work, 'Widget _buildStaffingActionRow(', 'Widget _buildLongTermShortageRoute(');
-      expect(cta, contains("TextLayout.keepWords('인력 초대 (\$shortage명 부족)')"));
-      expect(cta, contains("semanticsLabel: '인력 초대 (\$shortage명 부족)'"));
-      expect(TextLayout.plain(TextLayout.keepWords('인력 초대 (3명 부족)')), '인력 초대 (3명 부족)');
+      expect(cta, contains("TextLayout.keepWords('근무 초대 (\$shortage명 부족)')"));
+      expect(cta, contains("semanticsLabel: '근무 초대 (\$shortage명 부족)'"));
+      expect(TextLayout.plain(TextLayout.keepWords('근무 초대 (3명 부족)')), '근무 초대 (3명 부족)');
       expect(cta, contains('if (capacity != InviteCapacityState.available) {'));
       expect(cta, contains('if (shortage <= 0) return const SizedBox.shrink();'));
       expect(cta, contains('onPressed: () => _openInviteMethod(work, toId, slotId, shortage),'));

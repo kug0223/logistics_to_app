@@ -3,7 +3,7 @@
 // 이 앱의 모달은 두 셸로 그려진다.
 //   · `DialogHelper._buildDialog` — showAlert/showConfirm/showError 등이 쓴다
 //   · `StyledDialog` 위젯 — 화면·위젯 30여 곳이 직접 쓴다
-// 머리·버튼·색은 같은 값을 쓰고 있다(radius 24, 아이콘 44×44, 제목 #111827).
+// 머리·버튼·색은 같은 값을 쓰고 있다(radius 24, 아이콘 44×44, 제목 AppColors.textPrimary — DU629b 전 #111827).
 // **좌우 여백만 다르다** — 32 vs 16. 그래서 같은 폰에서 두 다이얼로그의
 // 폭이 다르다. 소스만 보면 "둘 다 표준 셸"로 읽히므로 실제로 재서 못박는다.
 //
@@ -12,6 +12,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:ALfit/theme/app_colors.dart';
 import 'package:ALfit/utils/dialog_helper.dart';
 import 'package:ALfit/widgets/dialogs/styled_dialog.dart';
 
@@ -143,7 +144,7 @@ void main() {
       expect(box, findsOneWidget, reason: '아이콘 상자 44×44');
 
       final title = t.widget<Text>(find.text('안내'));
-      expect(title.style?.color, const Color(0xFF111827), reason: '제목 색');
+      expect(title.style?.color, AppColors.textPrimary, reason: '제목 색(DU629b · 두 셸 같은 토큰)');
       expect(t.takeException(), isNull);
     }
   });

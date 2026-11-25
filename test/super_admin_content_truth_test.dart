@@ -7,7 +7,9 @@ import 'support/visible_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
+// ignore: depend_on_referenced_packages
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
+// ignore: depend_on_referenced_packages
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 
@@ -236,11 +238,11 @@ void main() {
         reads: AllUsersReads(
             allUsersRaw: () async => throw Exception('unavailable')));
 
-    expect(findVisibleText('사용자 목록을 불러오지 못했습니다'), findsOneWidget);
-    expect(findVisibleText('해당하는 사용자가 없다는 뜻이 아닙니다.'), findsOneWidget);
+    expect(findVisibleText('사용자 목록을 불러오지 못했어요'), findsOneWidget);
+    expect(findVisibleText('해당하는 사용자가 없다는 뜻은 아니에요.'), findsOneWidget);
     expect(findVisibleText('다시 시도'), findsOneWidget);
     // 이 문구가 남아 있으면 문의 대상이 없다고 단정한 것이다.
-    expect(findVisibleText('해당하는 사용자가 없습니다'), findsNothing);
+    expect(findVisibleText('해당하는 사용자가 없어요'), findsNothing);
   });
 
   testWidgets('[SAU-4] 정말 비었을 때는 여전히 "없습니다" 라고 말한다 (양성 대조)',
@@ -248,8 +250,8 @@ void main() {
     await _pumpUsers(tester,
         reads: AllUsersReads(allUsersRaw: () async => const []));
 
-    expect(findVisibleText('해당하는 사용자가 없습니다'), findsOneWidget);
-    expect(findVisibleText('사용자 목록을 불러오지 못했습니다'), findsNothing);
+    expect(findVisibleText('해당하는 사용자가 없어요'), findsOneWidget);
+    expect(findVisibleText('사용자 목록을 불러오지 못했어요'), findsNothing);
   });
 
   testWidgets('[SAU-5] 320dp × 2.0 — 이름·식별자가 예외 없이 그려진다', (tester) async {
@@ -283,13 +285,13 @@ void main() {
     },
   ];
 
-  ToLimitReads _okLimit() => ToLimitReads(
+  ToLimitReads okLimit() => ToLimitReads(
         globalConfigRaw: () async => {'maxActiveTOPerBusiness': 7},
         businessAdminsRaw: () async => adminRows,
       );
 
   testWidgets('[TOL-1] 전역/개별 구분과 draft 예외를 본문이 말한다', (tester) async {
-    await _pumpLimit(tester, reads: _okLimit());
+    await _pumpLimit(tester, reads: okLimit());
 
     expect(findVisibleText('현재 기본 한도: 7개'), findsOneWidget);
     expect(
@@ -300,7 +302,7 @@ void main() {
   });
 
   testWidgets('[TOL-2] 사업장 수와 한도가 각각 다른 수로 나란히 뜬다', (tester) async {
-    await _pumpLimit(tester, reads: _okLimit());
+    await _pumpLimit(tester, reads: okLimit());
     await tester.tap(findVisibleText('관리자별 한도'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
@@ -370,7 +372,7 @@ void main() {
   testWidgets('[TOL-6] 320dp × 2.0 — 한도 수치와 저장 행동이 예외 없이 그려진다',
       (tester) async {
     await _pumpLimit(tester,
-        reads: _okLimit(),
+        reads: okLimit(),
         size: const Size(320, 2600),
         textScale: 2.0);
 

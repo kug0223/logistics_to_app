@@ -231,7 +231,8 @@ class StyledDialog extends StatelessWidget {
             : null;
         final gap = ResponsiveHelper.spacing(c, 12);
         final titleStyle = ResponsiveHelper.subtitleStyle(c).copyWith(
-          color: const Color(0xFF111827),
+          // [DU629b · 판정207 §4 · H1] 제목 = textPrimary(하드코딩 #111827 → 앱 토큰 · DialogHelper 제목과 같은 값).
+          color: AppColors.textPrimary,
           fontWeight: FontWeight.bold,
         );
         final subStyle = ResponsiveHelper.smallStyle(c).copyWith(color: AppColors.textSecondary);
@@ -467,8 +468,9 @@ class StyledDialogButton extends StatelessWidget {
     } else if (isOutlined) {
       // 취소 버튼 — 흰 배경 + 얇은 테두리
       bgColor = Colors.white;
-      fgColor = const Color(0xFF4B5563);
-      border = Border.all(color: const Color(0xFFE5E7EB));
+      // [DU629b · H1] 외곽(취소) 글 textSecondary · 선 border — 하드코딩 #4B5563 · #E5E7EB → 앱 중립 토큰(DialogHelper 취소와 같은 값).
+      fgColor = AppColors.textSecondary;
+      border = Border.all(color: AppColors.border);
     } else {
       fgColor = foregroundColor ?? Colors.white;
       // [DU287 RF4] 흰 글 채움일 때만 밝은 의미색을 읽히는 짝으로(다른 글색을 고른 호출부는 그대로)
@@ -643,13 +645,22 @@ class StyledDialogInfoCard extends StatelessWidget {
   ///   null 이면 기존처럼 `message` 하나를 그린다(기존 호출부 동작 불변).
   final List<String>? segments;
 
+  /// [DU629c · D-INFO-NOTICE] 정상 반복 안내 = 중립 카드. 전용 팩토리 `.notice` 로만 켠다(색 값으로 추측하지 않는다).
+  final bool _neutral;
+
   const StyledDialogInfoCard({
     super.key,
     required this.message,
     this.icon = Icons.info_outline,
     this.color = AppColors.info,
     this.segments,
-  });
+  }) : _neutral = false;
+
+  const StyledDialogInfoCard._notice({required this.message})
+      : icon = Icons.info_outline,
+        color = AppColors.textSecondary,
+        segments = null,
+        _neutral = true;
 
   /// Info 카드 (파란색)
   factory StyledDialogInfoCard.info(String message) {
@@ -658,6 +669,13 @@ class StyledDialogInfoCard extends StatelessWidget {
       icon: Icons.info_outline,
       color: AppColors.info,
     );
+  }
+
+  /// [DU629c · D-INFO-NOTICE] 안내 카드(중립) — 정상 반복 안내 · 권유 · 실행 전 결과 안내.
+  ///   동의 카드(document_access_consent `_NeutralPanel`)와 같은 짝: 면 background · 선 borderLight · 글 textPrimary ·
+  ///   아이콘 info_outline textSecondary. 실제 상태(주의 · 실패 · 완료)는 의미색 팩토리를 쓴다(.info 는 그대로).
+  factory StyledDialogInfoCard.notice(String message) {
+    return StyledDialogInfoCard._notice(message: message);
   }
 
   /// Warning 카드 (주황색)
@@ -707,7 +725,7 @@ class StyledDialogInfoCard extends StatelessWidget {
     final style = ResponsiveHelper.smallStyle(context, color: _textColor(color));
     final scaler = MediaQuery.textScalerOf(context);
     final iconSz = ResponsiveHelper.iconSize(context, 18);
-    final iconW = Icon(icon, color: _getShade(color, 700), size: iconSz);
+    final iconW = Icon(icon, color: _neutral ? AppColors.textSecondary : _iconColor(color), size: iconSz);
     final body = segments == null
         ? _words(message, style)
         : Column(
@@ -758,10 +776,11 @@ class StyledDialogInfoCard extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         // [리디자인] 배경 6-8%, 테두리 20-25% — 과도한 색상 강도 낮춤
-        color: color.withValues(alpha: 0.07),
+        // [DU629c] .notice = 불투명 중립 면 · 옅은 중립 선(동의 카드와 같은 값). 의미색 카드는 위 식 그대로.
+        color: _neutral ? AppColors.background : color.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: color.withValues(alpha: 0.22),
+          color: _neutral ? AppColors.borderLight : color.withValues(alpha: 0.22),
         ),
       ),
       child: inner,
@@ -777,11 +796,20 @@ class StyledDialogInfoCard extends StatelessWidget {
   /// [DU1-F2] 읽는 본문 글자색 — 의미색을 18% 어둡게 한 값은 주황 경고에서 3.0:1 이었다(7% 바탕 위).
   ///   공통 기준의 진한 글자 토큰에 연결한다: warning 4.96 · success 6.68 · error 6.00 · info(infoDeep). 그 밖은 예전 방식.
   Color _textColor(Color color) {
+    if (_neutral) return AppColors.textPrimary; // [DU629c] .notice 본문 = 중립(동의 카드와 같은 값)
     if (color == AppColors.warning) return AppColors.warningDark;
     if (color == AppColors.success) return AppColors.successDark;
     if (color == AppColors.error) return AppColors.errorDark;
     if (color == AppColors.info) return AppColors.infoDeep;
     return _getShade(color, 800);
+  }
+
+  /// [F629c-WARN-ICON] 의미색 아이콘 색 — 경고만 진한 경고 토큰에 잇는다(머리 아이콘 readableFill · 본문 _textColor 와 같은 값).
+  ///   예전 _getShade(warning, 700) = #E08600 은 흰 위 warning 7% 면(약 #FFF8ED) 에서 약 2.62:1(비글자 3:1 미달) → warningDark 약 4.96:1.
+  ///   성공 · 오류 · 정보 · 그 밖은 예전 식 그대로 — 공용 _getShade 는 바꾸지 않는다.
+  Color _iconColor(Color color) {
+    if (color == AppColors.warning) return AppColors.warningDark;
+    return _getShade(color, 700);
   }
 
   /// 색상 shade 가져오기 (MaterialColor가 아닌 경우 대체)
@@ -942,10 +970,10 @@ class AppModalShell extends StatelessWidget {
 /// flat white + 3px brand accent bar + title / optional subtitle +
 /// optional trailing (사업장 드롭다운 등) + close 버튼 + grey200 하단 구분선.
 ///
-/// 기본 accent는 [Theme.of(context).primaryColor] (#1565C0).
+/// 기본 accent는 [Theme.of(context).primaryColor] = brand #3859E8(RoleTheme light · DU1). 옛 주석의 #1565C0 은 업무 색 workTypeBlue 다(DU629b 정정).
 /// 특별한 이유가 있는 화면만 [accentColor]로 override.
 class AppModalHeader extends StatelessWidget {
-  /// 굵은 제목 — [AppTextStyles.jobTitle()] (17sp / w700)
+  /// 굵은 제목 — [AppTextStyles.jobTitle()] (17sp / w700) · 말줄임 없이 낱말(공백) 단위로 줄을 바꾼다 · 읽는 이름 = 원문(DU561).
   final String title;
 
   /// 부제목 — 날짜·설명 등 — [AppTextStyles.meta()] (14sp / w400, 선택)
@@ -1001,7 +1029,14 @@ class AppModalHeader extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: AppTextStyles.jobTitle()),
+                    // [DU561 · 판정160 §3 요청1] 말줄임을 빼고 줄은 공백에서만 바꾼다(구분점은 앞 낱말에 붙는다 — TextLayout.phrases).
+                    //   역할(jobTitle 17/700/textPrimary)은 그대로 두고 이 머리에서만 말줄임을 끈다(jobTitle 전체 변경 0 · O003 머리 DU530 선례).
+                    //   읽는 이름 = 원문(span semanticsLabel) · find.text(제목) 도 원문으로 찾는다.
+                    Text.rich(
+                      TextSpan(text: TextLayout.phrases(title), semanticsLabel: title),
+                      style: AppTextStyles.jobTitle(),
+                      overflow: TextOverflow.visible,
+                    ),
                     if (subtitle != null)
                       Text(subtitle!,
                           semanticsLabel: TextLayout.plain(subtitle!),

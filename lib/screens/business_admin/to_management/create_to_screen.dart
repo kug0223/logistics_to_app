@@ -655,6 +655,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   /// 기존 공고 불러오기 — 바텀시트 버전 (DialogHelper.showSheet 전용)
   Widget _buildLoadFromExistingSheet() {
     String searchQuery = '';
+    // [DU600b · 판정114 S030] 아래 안내 원문 — 화면 글(낱말 사이 · '·' 뒤에서만 줄바꿈)과 읽기 이름이 같은 원문을 쓴다.
+    const loadNote = '공고 제목·관리용 카드명·공통 안내·근무유형·요일·업무 설정을 불러옵니다. 날짜와 공개 설정은 포함되지 않습니다.';
     return StatefulBuilder(
       builder: (context, setSheetState) {
         final theme = Theme.of(context);
@@ -665,8 +667,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 .where((to) => to.title.toLowerCase().contains(searchQuery))
                 .toList();
 
+        // [DU600b · 판정114 S030] 큰 글자(B 320 · 2.0)에서 머리 · 검색 · 아래 안내 띠가 커져 빈 목록이 안내 띠 앞에서 반쯤 잘렸다(DU488 B) —
+        //   보통 글자(배율 1.0)는 이전 그대로 화면 높이의 72%, 글자를 키운 만큼 시트도 키워(최대 = 시트가 허용하는 높이) 본문 칸을 먼저 확보한다.
+        //   본문(빈 목록 · 목록)은 그 안에서 따로 스크롤하고 아래 안내 띠는 자연 높이 그대로다.
         return SizedBox(
-          height: MediaQuery.of(context).size.height * 0.72,
+          height: MediaQuery.of(context).size.height *
+              (0.72 * MediaQuery.textScalerOf(context).scale(14) / 14).clamp(0.72, 1.0),
           child: Column(
             children: [
               // 시트 헤더
@@ -773,8 +779,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
                       // [DU487] grey600(grey100 위 4.23) → textSecondary(중립 칩 짝 textSecondary/grey100 과 같다 · 기준 4.5 이상).
+                      // [DU600b · 판정114 S030] 가운뎃점 덩어리가 B 폭보다 길어 낱말 안에서 끊겼다('…요 / 일…' · DU488 B) — 낱말 사이와 '·' 뒤에서만 줄을 바꾼다
+                      //   (DU349 OCR 안내 · 계약서 미리보기 안내와 같은 꼴 · 문구 그대로 · 읽기 도구에는 원문).
                       child: Text(
-                        '공고 제목·관리용 카드명·공통 안내·근무유형·요일·업무 설정을 불러옵니다. 날짜와 공개 설정은 포함되지 않습니다.',
+                        TextLayout.keepWords(loadNote).replaceAll('·\u2060', '·\u200B'),
+                        semanticsLabel: loadNote,
                         style: ResponsiveHelper.smallStyle(context,
                             color: AppColors.textSecondary),
                       ),
@@ -1455,6 +1464,70 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
 
+  /// [DU606b · 판정182 §2] 앱 바 '불러오기' 글 단추 — 툴바 오른쪽 또는 툴바 바로 아래 줄, 한 곳에만 놓인다(같은 위젯 · 같은 동작).
+  Widget _buildLoadAction() {
+    return Padding(
+      padding: EdgeInsets.only(
+          right: ResponsiveHelper.spacing(context, 8)),
+      child: TextButton.icon(
+        onPressed: _selectedBusiness != null
+            ? _showLoadFromExistingDialog
+            : null,
+        icon: const Icon(Icons.file_copy_outlined),
+        label: const Text('불러오기'),
+      ),
+    );
+  }
+
+  /// [DU606b] 머리 제목 글 스타일 — AppPageScaffold `_titleStyle`(app_page_scaffold.dart :51)과 같은 값. 툴바 자리 재기에만 쓴다.
+  static const _kHeadTitleStyle = TextStyle(
+    fontSize: 20,
+    fontWeight: FontWeight.w800,
+    color: AppColors.textPrimary,
+    letterSpacing: -0.5,
+  );
+
+  /// [DU606b · 판정182 §2] 좁은 폭(320 · 글자 1.0)에서 '불러오기' 글 단추 + 알림이 툴바 오른쪽을 차지해 머리 제목이 '공고 …' 로 잘렸다.
+  ///   AppPageScaffold 는 액션을 48 씩으로 어림해 제목이 들어간다고 보고 툴바에 둔다. 실제 글 단추 폭(글 폭 + 아이콘 18 + 간격 8 +
+  ///   안쪽 여백 12 · 16 — 글자 1.0 의 최댓값이라 경계 폭에서는 아래 줄 쪽으로 기운다)으로 다시 재서 제목 자리에 안 들어가면 참.
+  ///   AppPageScaffold 가 이미 제목을 툴바 아래 줄로 내리는 폭 · 배율(B 320 · 2.0)에서는 거짓 — 이전과 같다. 글자는 줄이지 않는다.
+  bool _loadActionBelow(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final scaler = MediaQuery.textScalerOf(context);
+    final dir = Directionality.of(context);
+    final canPop = ModalRoute.of(context)?.impliesAppBarDismissal ?? false;
+    final lead = canPop ? kToolbarHeight : NavigationToolbar.kMiddleSpacing;
+    const middle = NavigationToolbar.kMiddleSpacing * 2;
+    double textW(String s, TextStyle style) {
+      final p = TextPainter(
+          text: TextSpan(text: s, style: style), textDirection: dir, textScaler: scaler, maxLines: 1)
+        ..layout();
+      final x = p.width;
+      p.dispose();
+      return x;
+    }
+
+    // 제목 = AppPageScaffold 가 재는 것과 같은 글 · 스타일(DefaultTextStyle 위 _titleStyle) · 배율.
+    final title = textW('공고 등록', DefaultTextStyle.of(context).style.merge(_kHeadTitleStyle));
+    if (title > width - lead - 2 * 48.0 - 4 - middle) return false;
+    final label = textW('불러오기', Theme.of(context).textTheme.labelLarge ?? const TextStyle(fontSize: 14));
+    final load = ResponsiveHelper.spacing(context, 8) + 12 + 18 + 8 + label + 16;
+    return title > width - lead - load - 48.0 - 4 - middle;
+  }
+
+  /// [DU606b] 툴바 아래 줄 높이 — 글 단추 한 줄(배율 반영) + 위아래 8, 최소 터치 48.
+  double _loadRowHeight(BuildContext context) {
+    final p = TextPainter(
+        text: TextSpan(text: '불러오기', style: Theme.of(context).textTheme.labelLarge ?? const TextStyle(fontSize: 14)),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+        maxLines: 1)
+      ..layout();
+    final h = p.height + 16;
+    p.dispose();
+    return h < 48 ? 48.0 : h;
+  }
+
   @override
   Widget build(BuildContext context) {
     // [SCAFFOLD_MIGRATION] Scaffold → AppPageScaffold (loading state)
@@ -1469,6 +1542,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     if (!_formUnlocked) {
       return _buildPrerequisiteScreen();
     }
+
+    // [DU606b · 판정182 §2] 제목 자리가 모자라면 '불러오기' 는 같은 앱 바의 툴바 아래 줄로(뒤로가기 · 알림 · 제목은 툴바 그대로).
+    final loadBelow = _loadActionBelow(context);
 
     return PopScope(
       canPop: !_isCreating && !_hasChanges,
@@ -1489,20 +1565,17 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         title: '공고 등록',
         // B: 아이콘 전용 → TextButton.icon "불러오기" + 알림
         actions: [
-          Padding(
-            padding: EdgeInsets.only(
-                right: ResponsiveHelper.spacing(context, 8)),
-            child: TextButton.icon(
-              onPressed: _selectedBusiness != null
-                  ? _showLoadFromExistingDialog
-                  : null,
-              icon: const Icon(Icons.file_copy_outlined),
-              label: const Text('불러오기'),
-            ),
-          ),
+          if (!loadBelow) _buildLoadAction(),
           // [M1-FIX] 등록 진행 중에는 다른 화면 이동 차단
           _buildNotificationAction(disabled: _isCreating),
         ],
+        // [DU606b] 툴바 아래 줄 — 오른쪽 끝에 같은 글 단추(AppPageScaffold 가 아래 1px 구분선을 붙인다).
+        bottom: loadBelow
+            ? PreferredSize(
+                preferredSize: Size.fromHeight(_loadRowHeight(context)),
+                child: Align(alignment: AlignmentDirectional.centerEnd, child: _buildLoadAction()),
+              )
+            : null,
         body: Form(
           key: _formKey,
           child: ListView(
@@ -1767,6 +1840,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             items: _myBusinesses,
             labelOf: (b) => b.name,
             prefixIcon: Icons.business,
+            // [DU606b · 판정126 §4 · 판정182 §2 장부146] 긴 사업장 이름이 B(320 · 2.0)에서 'QA 평택 제2…' 로 잘렸다(DU600b TA att bz full=false) —
+            //   이 칸만 낱말 단위로 두 줄까지 보인다(그래도 남으면 끝 말줄임 · 전체 이름은 선택 목록 · 읽는 이름 원문). 공용 기본값 그대로 · O002 와 같은 opt-in.
+            wrapLabel: true,
             onChanged: (value) {
               if (value != null) {
                 setState(() {

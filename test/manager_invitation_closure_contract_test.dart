@@ -256,7 +256,7 @@ void main() {
       expect(day.contains('g.capacityState == InviteCapacityState.available &&'),
           isTrue, reason: 'CTA가 available일 때만 서야 한다');
       expect(day.contains('_buildCapacityUnknownNotice'), isTrue);
-      expect(day.contains('인력 현황을 확인하지 못해 충원이 필요한지 알 수 없어요'), isTrue);
+      expect(day.contains('모집 정원을 확인하지 못해 부족한 자리가 있는지 알 수 없어요'), isTrue);
     });
 
     test('01b-g UNKNOWN 초대 행은 `초대 중`도 `모집 완료`도 아니다', () {
@@ -655,7 +655,7 @@ void main() {
       expect(day.contains('g.capacityState == InviteCapacityState.available &&'),
           isTrue);
       // 기존 CTA 문구·부족 계산은 그대로다.
-      expect(dayRaw.contains(r"'인력 초대 ($shortage명 부족)'"), isTrue);
+      expect(dayRaw.contains(r"'근무 초대 ($shortage명 부족)'"), isTrue);
     });
   });
 

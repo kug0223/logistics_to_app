@@ -584,7 +584,7 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
       child: AppModalShell(
         children: [
           AppModalHeader(
-            title: widget.isContextualMode ? '직접 초대' : '인력 초대',
+            title: widget.isContextualMode ? '직접 초대' : '근무 초대',
             subtitle: subtitle,
             onClose: _busy ? null : _close,
           ),
@@ -649,13 +649,13 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
             Container(
               padding: EdgeInsets.all(8 * s),
               decoration: BoxDecoration(
-                color: AppColors.info.withValues(alpha: 0.1),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
                 Icons.work_outline,
                 size: ResponsiveHelper.iconSize(context, 16),
-                color: AppColors.info,
+                color: AppColors.textSecondary,
               ),
             ),
             SizedBox(width: 10 * s),
@@ -700,7 +700,7 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
       child: Container(
         padding: EdgeInsets.all(12 * s),
         decoration: BoxDecoration(
-          color: unknown ? AppColors.warningBg : AppColors.infoBg,
+          color: unknown ? AppColors.warningBg : AppColors.grey100,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(
@@ -709,7 +709,7 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
             Icon(
               unknown ? Icons.help_outline : Icons.info_outline,
               size: ResponsiveHelper.iconSize(context, 16),
-              color: unknown ? AppColors.warningDark : AppColors.info,
+              color: unknown ? AppColors.warningDark : AppColors.textSecondary,
             ),
             SizedBox(width: 8 * s),
             Expanded(
@@ -824,9 +824,9 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 14 * s, vertical: 12 * s),
       decoration: BoxDecoration(
-        color: AppColors.successBg,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.success.withValues(alpha: 0.4)),
+        border: Border.all(color: AppColors.borderLight),
       ),
       child: Row(
         children: [
@@ -834,7 +834,7 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
             width: 36 * s,
             height: 36 * s,
             decoration: BoxDecoration(
-              color: AppColors.success.withValues(alpha: 0.15),
+              color: AppColors.grey100,
               shape: BoxShape.circle,
             ),
             alignment: Alignment.center,
@@ -844,7 +844,7 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                   : '?',
               style: ResponsiveHelper.bodyStyle(context).copyWith(
                 fontWeight: FontWeight.bold,
-                color: AppColors.successDark,
+                color: AppColors.textSecondary,
               ),
             ),
           ),
@@ -863,14 +863,14 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                   Text(
                     FormatHelper.formatPhone(_found!['phone'] as String),
                     style: ResponsiveHelper.tinyStyle(context,
-                        color: AppColors.grey500),
+                        color: AppColors.textSecondary),
                   ),
               ],
             ),
           ),
           Icon(
             Icons.check_circle,
-            color: AppColors.success,
+            color: AppColors.successDark,
             size: ResponsiveHelper.iconSize(context, 20),
           ),
         ],

@@ -141,7 +141,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              StyledDialogInfoCard.info(
+              StyledDialogInfoCard.notice(
                 '상세 정보(설명, 이미지 등)를 추가하면 지원자에게 더 많은 정보를 제공할 수 있어요!',
               ),
             ],

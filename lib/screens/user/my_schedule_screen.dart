@@ -1069,7 +1069,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           vertical: ResponsiveHelper.spacing(context, 8),
         ),
         decoration: BoxDecoration(
-          color: AppColors.infoBg,
+          color: AppColors.grey100,
           borderRadius: BorderRadius.circular(8),
         ),
         // [SCALE-BALANCE.34] 큰 글자에서 안내가 5줄이 되면 아이콘·'등록'이 세로 가운데에 떴다 — 첫 줄에 맞춘다.
@@ -1078,7 +1078,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           children: [
             Padding(
               padding: EdgeInsets.only(top: ((MediaQuery.textScalerOf(context).scale(13) * 1.4 - 16) / 2).clamp(0.0, 30.0)),
-              child: const Icon(Icons.info_outline, size: 16, color: AppColors.info),
+              child: const Icon(Icons.info_outline, size: 16, color: AppColors.textSecondary),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             Expanded(
@@ -1087,7 +1087,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                 TextLayout.keepWords(descText),
                 semanticsLabel: descText,
                 style: ResponsiveHelper.smallStyle(
-                    context, color: AppColors.infoDark),
+                    context, color: AppColors.textPrimary),
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
@@ -1099,7 +1099,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                 '등록',
                 style: ResponsiveHelper.smallStyle(
                   context,
-                  color: AppColors.infoDark,
+                  color: AppColors.brand,
                 ).copyWith(fontWeight: FontWeight.w600),
               ),
             ),
@@ -1119,14 +1119,14 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         vertical: ResponsiveHelper.spacing(context, 8),
       ),
       decoration: BoxDecoration(
-        color: AppColors.infoBg,
+        color: AppColors.grey100,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Icon(Icons.event_available_outlined,
-              size: 16, color: AppColors.info),
+              size: 16, color: AppColors.textSecondary),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           Expanded(
             child: Column(
@@ -1140,7 +1140,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                       : '근무 가능일 $count일 등록됨',
                   // [DU311 A2] '..copyWith' 는 결과를 버려 w600 이 적용되지 않았다 → '.copyWith'.
                   style: ResponsiveHelper.smallStyle(
-                      context, color: AppColors.infoDark)
+                      context, color: AppColors.textPrimary)
                     .copyWith(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 2),
@@ -1149,7 +1149,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                   TextLayout.keepWords(descText),
                   semanticsLabel: descText,
                   style: ResponsiveHelper.tinyStyle(
-                      context, color: AppColors.infoDark),
+                      context, color: AppColors.textPrimary),
                 ),
               ],
             ),
@@ -1163,7 +1163,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               '수정',
               style: ResponsiveHelper.smallStyle(
                 context,
-                color: AppColors.infoDark,
+                color: AppColors.brand,
               ).copyWith(fontWeight: FontWeight.w600),
             ),
           ),
@@ -1501,7 +1501,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
 
   Widget _buildFilterChipsRow() {
     final theme = Theme.of(context);
-    const bgSurface = Color(0xFFF5F6F8);
+    const bgSurface = AppColors.grey100;
     final filters = [
       ('ALL', '전체'),
       (AppStatus.confirmed, '확정'),
@@ -1558,7 +1558,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         vertical: ResponsiveHelper.spacing(context, 10),
       ),
       decoration: BoxDecoration(
-        color: const Color(0xFFF5F6F8),
+        color: AppColors.grey100,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(

@@ -9,6 +9,13 @@
 //
 //   두 조건을 나란히 놓고 **바뀌는 항목만** 강조한다. 전부 같은 무게로
 //   보여주면 무엇이 달라지는지 근로자가 직접 대조해야 한다.
+//
+// [CONSENT-R4] 후보(DRAFT). '변경 수락'은 먼저 동의 값 없이(INHERIT) 보낸다 — 서버가 원 근무의
+//   동의를 승계할 수 있으면 그대로 확정한다. 서버가 CONSENT_REQUIRED(쓰기 0 · 제안 열림)로
+//   답하면 **같은 시트에서** 일반 동의 카드(v4)와 '취소' / '동의하고 변경 수락'을 보인다.
+//     취소 = 이번 요청을 보내지 않는다(제안은 열린 채, 기존 근무 그대로).
+//     동의하고 변경 수락 = 방금 보인 판본으로 EXPLICIT 재호출. 서버가 기한·대상·좌석·자격을 다시 본다.
+//   예전처럼 카드를 보이지 않은 채 판본 문자열을 보내지 않는다.
 
 import 'package:flutter/material.dart';
 
@@ -31,6 +38,7 @@ class ConfirmedReassignmentSheet {
   ///
   /// [R1.2] 문자열을 복제하지 않는다. 버전과 문구는 한 곳에서만 올라간다 —
   /// 복제해 두면 문구를 고칠 때 한쪽만 바뀌어 기록이 거짓이 된다.
+  /// [CONSENT-R4] 이 값은 **카드를 보인 뒤의 EXPLICIT 재호출에서만** 보낸다.
   static String get consentVersion => DocumentAccessConsent.version;
 
   /// 근로자에게 변경 제안을 보여주고 결정을 받는다.
@@ -64,9 +72,22 @@ class ConfirmedReassignmentSheet {
   }
 }
 
-class _DecisionSheet extends StatelessWidget {
+class _DecisionSheet extends StatefulWidget {
   final ConfirmedReassignmentProposal proposal;
   const _DecisionSheet({required this.proposal});
+
+  @override
+  State<_DecisionSheet> createState() => _DecisionSheetState();
+}
+
+class _DecisionSheetState extends State<_DecisionSheet> {
+  /// [CONSENT-R4] 서버가 CONSENT_REQUIRED 로 답한 뒤 — 같은 시트에 카드와 두 버튼.
+  bool _consentNeeded = false;
+
+  /// 같은 버튼 두 번 누름 방지(서버 호출 중).
+  bool _busy = false;
+
+  ConfirmedReassignmentProposal get proposal => widget.proposal;
 
   @override
   Widget build(BuildContext context) {
@@ -142,12 +163,8 @@ class _DecisionSheet extends StatelessWidget {
             //   임금이다(위 두 칸이 그것만 비교한다). 근태·급여 처리 기준은
             //   지금 확정된 근무의 것이 그대로 따라간다 — 사업장이 그 사이
             //   기준을 바꿨더라도 이 변경을 계기로 적용되지 않는다.
-            //   그래서 숫자를 다시 보여주지 않고 **바뀌지 않는다는 사실**을
-            //   말한다(값을 위해 문서를 더 읽지도 않는다).
             // [R7-PAYROLL-POLICY.4B §31] 숫자를 다시 보여주지 않는 대신
-            //   **어디서 볼 수 있는지** 말한다. 지금 확정된 근무의 기준은 그
-            //   근무의 근로계약서에 7개 항목으로 적혀 있다(같은 snapshot 이다).
-            //   값을 위해 사업장 문서를 읽지 않는다.
+            //   **어디서 볼 수 있는지** 말한다.
             _note(
               context,
               '근태·급여 처리 기준은 지금 확정된 근무와 동일하게 유지됩니다.\n'
@@ -161,19 +178,44 @@ class _DecisionSheet extends StatelessWidget {
               '기존 조건을 유지하면 아무것도 바뀌지 않습니다.',
             ),
             const SizedBox(height: 16),
-            // [DU270] 보통 글자는 왼쪽 '기존 조건 유지'·오른쪽 '변경 수락', 큰 글자는 같은 순서로 위·아래.
-            if (stacked) ...[
-              SizedBox(width: double.infinity, child: _keepButton(context)),
-              const SizedBox(height: 10),
-              SizedBox(width: double.infinity, child: _changeButton(context)),
-            ] else
-              Row(
-                children: [
-                  Expanded(child: _keepButton(context)),
-                  const SizedBox(width: 10),
-                  Expanded(child: _changeButton(context)),
-                ],
+            if (_consentNeeded) ...[
+              // [CONSENT-R4] 서버가 원 동의를 승계할 수 없다고 답했다 — 카드를 **보인 뒤에만** 판본을 보낸다.
+              Text(
+                TextLayout.keepWords('서류 열람 동의'),
+                semanticsLabel: '서류 열람 동의',
+                style: ResponsiveHelper.bodyStyle(context,
+                    color: AppColors.textPrimary, fontWeight: FontWeight.w600),
               ),
+              const SizedBox(height: 8),
+              DocumentAccessConsent.card(proposal.businessName),
+              const SizedBox(height: 16),
+              if (stacked) ...[
+                SizedBox(width: double.infinity, child: _consentCancelButton(context)),
+                const SizedBox(height: 10),
+                SizedBox(width: double.infinity, child: _consentAcceptButton(context)),
+              ] else
+                Row(
+                  children: [
+                    Expanded(child: _consentCancelButton(context)),
+                    const SizedBox(width: 10),
+                    Expanded(child: _consentAcceptButton(context)),
+                  ],
+                ),
+            ] else ...[
+              // [DU270] 보통 글자는 왼쪽 '기존 조건 유지'·오른쪽 '변경 수락', 큰 글자는 같은 순서로 위·아래.
+              if (stacked) ...[
+                SizedBox(width: double.infinity, child: _keepButton(context)),
+                const SizedBox(height: 10),
+                SizedBox(width: double.infinity, child: _changeButton(context)),
+              ] else
+                Row(
+                  children: [
+                    Expanded(child: _keepButton(context)),
+                    const SizedBox(width: 10),
+                    Expanded(child: _changeButton(context)),
+                  ],
+                ),
+            ],
           ],
         ),
       ),
@@ -187,8 +229,7 @@ class _DecisionSheet extends StatelessWidget {
     required bool muted,
     required Set<String> changed,
   }) {
-    // [DU270] 현재 칸은 덜 강조하되 읽히게(grey100 위 grey500 2.46·grey600 4.23 → 바탕색 면 위 textSecondary 5.5),
-    //   제안 칸은 흰 면·대표색 2 선 유지, 값 본문색. 시안 카드 radius 16.
+    // [DU270] 현재 칸은 덜 강조하되 읽히게, 제안 칸은 흰 면·대표색 2 선 유지, 값 본문색. 시안 카드 radius 16.
     final fg = muted ? AppColors.textSecondary : AppColors.textPrimary;
     return Container(
       width: double.infinity,
@@ -240,7 +281,7 @@ class _DecisionSheet extends StatelessWidget {
           '${p.wageType == 'hourly' ? ' (시급)' : ''}'
           '${p.wageType == 'daily' ? ' (일급)' : ''}';
 
-  /// [DU270] 안내 문장 — grey600(4.61)·grey700 → textSecondary, 표시만 낱말 단위(semanticsLabel 원문).
+  /// [DU270] 안내 문장 — textSecondary, 표시만 낱말 단위(semanticsLabel 원문).
   Widget _note(BuildContext context, String s) => Text(
         TextLayout.keepWords(s),
         semanticsLabel: s,
@@ -248,7 +289,6 @@ class _DecisionSheet extends StatelessWidget {
       );
 
   /// [DU270] 공용 OutlinedButton 테마(brand 글자·grey300 선·radius 12). 결정·서비스 호출은 그대로다.
-  ///   [r1] 나란한 '변경 수락'(Elevated 테마 16 bold·상하 14 → 51)과 높이·글자를 맞춘다(UI-1, 이전 48 vs 51).
   Widget _keepButton(BuildContext context) => OutlinedButton(
         style: OutlinedButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -268,28 +308,58 @@ class _DecisionSheet extends StatelessWidget {
         child: const Text('기존 조건 유지'),
       );
 
-  /// [DU270] 공용 ElevatedButton 테마(brand·흰 글자·48·radius 12) — 직접 지정한 색·모양(값 같음)을 걷었다.
+  /// [DU270] 공용 ElevatedButton 테마. [CONSENT-R4] 첫 호출은 INHERIT(동의 값 없음).
   Widget _changeButton(BuildContext context) => ElevatedButton(
-        onPressed: () async {
-          final ok = await ConfirmedReassignmentService.instance
-              .accept(
-            proposalId: proposal.proposalId,
-            documentAccessConsentVersion:
-                ConfirmedReassignmentSheet.consentVersion,
-          );
-          if (!context.mounted) return;
-          Navigator.pop(
-              context,
-              ok
-                  ? ReassignmentDecision.changed
-                  : ReassignmentDecision.dismissed);
-        },
+        onPressed: _busy ? null : () => _accept(shownConsentVersion: null),
         child: const Text('변경 수락'),
       );
 
+  /// [CONSENT-R4] 취소 = 이번 요청을 보내지 않는다. 제안은 열린 채로 남는다.
+  Widget _consentCancelButton(BuildContext context) => OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          textStyle: ResponsiveHelper.bodyStyle(context, fontWeight: FontWeight.bold)
+              .copyWith(fontSize: 16),
+        ),
+        onPressed: _busy
+            ? null
+            : () => Navigator.pop(context, ReassignmentDecision.dismissed),
+        child: const Text('취소'),
+      );
+
+  /// [CONSENT-R4] 방금 보인 카드의 판본으로 EXPLICIT 재호출.
+  Widget _consentAcceptButton(BuildContext context) => ElevatedButton(
+        onPressed: _busy
+            ? null
+            : () => _accept(
+                shownConsentVersion: ConfirmedReassignmentSheet.consentVersion),
+        child: Text(TextLayout.keepWords('동의하고 변경 수락'),
+            semanticsLabel: '동의하고 변경 수락', textAlign: TextAlign.center),
+      );
+
+  Future<void> _accept({required String? shownConsentVersion}) async {
+    setState(() => _busy = true);
+    final r = await ConfirmedReassignmentService.instance.accept(
+      proposalId: proposal.proposalId,
+      shownConsentVersion: shownConsentVersion,
+    );
+    if (!mounted) return;
+    switch (r) {
+      case ReassignAcceptResult.accepted:
+        Navigator.pop(context, ReassignmentDecision.changed);
+      case ReassignAcceptResult.consentRequired:
+        // 시트를 닫지 않는다 — 카드와 두 버튼을 보인다(명시 재호출 뒤에도 같으면 그대로 둔다).
+        setState(() {
+          _consentNeeded = true;
+          _busy = false;
+        });
+      case ReassignAcceptResult.failed:
+        Navigator.pop(context, ReassignmentDecision.dismissed);
+    }
+  }
+
   Widget _row(BuildContext context, String label, String value,
       {required bool highlight, required Color fg, String? shown}) {
-    // [DU270] 이름 grey500(2.46~2.68) → textTertiary, '변경' 표시 brand 12% 면(4.71) → brandSurface 토큰·w600·radius 8
     final labelText = Text(label,
         style: ResponsiveHelper.smallStyle(context, color: AppColors.textTertiary));
     final valueText = Text(
@@ -313,8 +383,7 @@ class _DecisionSheet extends StatelessWidget {
                     color: AppColors.brand, fontWeight: FontWeight.w600)),
           )
         : null;
-    // [DU270] 큰 글자(DU256 규칙)에서는 이름·'변경'을 윗줄, 값을 아래 전체 폭에 둔다 — 폭 44 칸에서 '업/무'·'급/여',
-    //   값 칸에서 '포장 및 검/수'로 끊겼다.
+    // [DU270] 큰 글자(DU256 규칙)에서는 이름·'변경'을 윗줄, 값을 아래 전체 폭에 둔다.
     if (MediaQuery.textScalerOf(context).scale(10) >= 13) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 3),

@@ -1,3 +1,4 @@
+// [CONSENT-R4d 후보 사본] 원본 A/test/renewal_consent_inheritance_test.dart sha256=471b919517785b7228b4ada01c34333a091816f893ee742bf2e336a981058946 · 바뀐 자리는 R/work/consent-copy-preparation-r4d-20261119/manifests/test_change_map.tsv
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -273,9 +274,11 @@ void main() {
       final consent = File(
         'lib/widgets/dialogs/apply/document_access_consent.dart',
       ).readAsStringSync();
-      expect(consent.contains('마지막 근무일로부터 7일 후'), isTrue);
-      expect(consent.contains('급여처리 관계가 유효한 동안'), isTrue);
-      expect(consent.contains('갱신된 근무관계에도 승계됩니다'), isTrue);
+      // [CONSENT-R4 후보 사본] 새 문안 v4 — 신분증 7일 · 계좌 30일(옛 '급여처리 관계가 유효한 동안' 대체) · 동일 고용관계 갱신.
+      expect(consent.contains('신분증은 마지막 근무일부터 7일 동안'), isTrue);
+      expect(consent.contains('마지막 급여 지급부터 30일 동안'), isTrue);
+      expect(consent.contains('급여처리 관계가 유효한 동안'), isFalse);
+      expect(consent.contains('같은 고용관계에서 근로계약이 갱신된 근무'), isTrue);
       expect(consent.contains('확정일로부터 7일간'), isFalse,
           reason: '구 문구가 남아 있으면 안 된다');
 

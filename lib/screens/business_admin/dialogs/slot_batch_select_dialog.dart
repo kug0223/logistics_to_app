@@ -354,11 +354,11 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
           ),
           decoration: BoxDecoration(
             color: isSelected
-                ? AppColors.warning.withValues(alpha: 0.08)
+                ? AppColors.brand.withValues(alpha: 0.06)
                 : AppColors.grey50,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: isSelected ? AppColors.warning : AppColors.border,
+              color: isSelected ? AppColors.brand : AppColors.border,
             ),
           ),
           child: Row(
@@ -370,7 +370,7 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
               SizedBox(width: ResponsiveHelper.spacing(context, 10)),
               Icon(Icons.warning_amber_rounded,
                   size: ResponsiveHelper.iconSize(context, 18),
-                  color: AppColors.warning),
+                  color: AppColors.warningDark),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Expanded(
                 child: Column(
@@ -411,7 +411,7 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
         children: [
           Icon(Icons.warning_amber_rounded,
               size: ResponsiveHelper.iconSize(context, 18),
-              color: AppColors.warning),
+              color: AppColors.warningDark),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Expanded(
             child: Text(

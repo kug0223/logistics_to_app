@@ -71,6 +71,32 @@ class WageConfirmDialog extends StatefulWidget {
   State<WageConfirmDialog> createState() => _WageConfirmDialogState();
 }
 
+/// [DU630b] 탭 본문 — 탭 칸이 420 × 글자 배율(TextLayout.fits · 표시 휴리스틱)보다 낮으면 같은 자식을 한 스크롤에 차례로 둔다
+///   (320×640 · 2.0 에서 목록 미노출 · 하단 행동이 창 밖). 그 밖은 이전 배치(Column). 글 · 색 · 순서 · 위젯 그대로 — 배치만.
+class _WageTabColumn extends StatelessWidget {
+  const _WageTabColumn({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, c) {
+      if (TextLayout.fits(context, c.maxHeight, 420)) return Column(children: children);
+      return CustomScrollView(slivers: [
+        for (final w in children)
+          switch (w) {
+            Expanded(child: final ListView list) =>
+              SliverPadding(padding: list.padding ?? EdgeInsets.zero, sliver: SliverList(delegate: list.childrenDelegate)),
+            _ => SliverToBoxAdapter(child: w),
+          },
+      ]);
+    });
+  }
+}
+
+/// [DU630b · 판정223 §4] 표시 글은 낱말 안 WORD JOINER(TextLayout.keepWords) · 읽는 이름(semanticsLabel)과 찾는 글(toPlainText)은 원문.
+TextSpan _keepSpan(String s) => TextSpan(text: TextLayout.keepWords(s), semanticsLabel: s);
+
 class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTickerProviderStateMixin {
   // ═══════════════════════════════════════════════════════════
   // 상태 변수
@@ -320,7 +346,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             '아래 금액을 확인한 뒤 다시 확정해 주세요.\n\n$body'),
         style: ResponsiveHelper.bodyStyle(context),
       ),
-      actions: [_buildConfirmButton(context, '확인', AppColors.warning)],
+      actions: [_buildConfirmButton(context, '확인', AppColors.brand)],
     );
   }
 
@@ -992,7 +1018,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             failedNames: failedNames,
             message: '해당 근무자를 개별 선택하여 다시 시도하거나, 잠시 후 재시도해주세요.',
           ),
-          actions: [_buildConfirmButton(context, '확인', AppColors.warning)],
+          actions: [_buildConfirmButton(context, '확인', AppColors.brand)],
         );
       }
     } on FirebaseFunctionsException catch (e) {
@@ -1205,7 +1231,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.warning,
+              backgroundColor: AppColors.brand,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
@@ -1939,7 +1965,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             failedNames: failedNames,
             message: '해당 근무자를 개별 선택하여 다시 시도해주세요.',
           ),
-          actions: [_buildConfirmButton(context, '확인', AppColors.warning)],
+          actions: [_buildConfirmButton(context, '확인', AppColors.brand)],
         );
       }
     }
@@ -1970,6 +1996,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         title: '마감 취소',
         message: '선택한 ${targetIds.length}명을 확정내역으로 되돌리시겠습니까?',
         confirmText: '마감 취소',
+        confirmColor: AppColors.errorDark,
       );
       if (confirmed != true || !mounted) {
         // [BUG-04] 확인 다이얼로그 취소 시 _isProcessing 고착 방지
@@ -2245,20 +2272,18 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       groups.putIfAbsent(_getGroupKey(app), () => []).add(app);
     }
 
-    return Column(
+    final groupEntries = groups.entries.toList();
+    return _WageTabColumn(
       children: [
         _buildRatesBanner(context),
         _buildSelectionBar(context, theme, _pendingWorkers, _pendingSelectedIds, true),
         Expanded(
-          child: Builder(builder: (context) {
-            final groupEntries = groups.entries.toList();
-            return ListView.builder(
+          child: ListView.builder(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
               itemCount: groupEntries.length,
               itemBuilder: (_, i) => _buildGroupSection(
                   context, theme, groupEntries[i].value, _pendingSelectedIds),
-            );
-          }),
+            ),
         ),
         _buildBottomSection(context, theme, _pendingSelectedIds, true),
       ],
@@ -2275,7 +2300,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       );
     }
 
-    return Column(
+    return _WageTabColumn(
       children: [
         _buildSelectionBar(context, theme, _calculatedWorkers, _calculatedSelectedIds, false),
         Expanded(
@@ -2337,7 +2362,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     final isAllSelected = confirmedIds.isNotEmpty &&
         _transferredSelectedIds.containsAll(confirmedIds);
 
-    return Column(
+    return _WageTabColumn(
       children: [
         // 안내 바: 최종확정 N명 / 송금완료 N명 + 전체선택
         Container(
@@ -2348,7 +2373,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               if (confirmedCount > 0) ...[
                 AppCheckbox(
                   value: isAllSelected,
-                  activeColor: AppColors.warning,
+                  activeColor: AppColors.brand,
                   onTap: () {
                     setState(() {
                       if (isAllSelected) {
@@ -2403,7 +2428,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(
-                      color: isSelected ? AppColors.warning : AppColors.grey200,
+                      color: isSelected ? AppColors.brand : AppColors.grey200,
                       width: isSelected ? 1.5 : 1,
                     ),
                     boxShadow: [
@@ -2416,13 +2441,18 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                   ),
                   child: Padding(
                     padding: ResponsiveHelper.cardPadding(context),
-                    child: Row(
+                    // [DU630b] 카드 안 폭이 200 × 글자 배율보다 좁으면 상태 배지 · 금액을 이름 블록 아래로(세로 Flex · 표시 휴리스틱).
+                    child: LayoutBuilder(builder: (context, c) {
+                    final wide = TextLayout.fits(context, c.maxWidth, 200);
+                    return Flex(
+                      direction: wide ? Axis.horizontal : Axis.vertical,
+                      crossAxisAlignment: wide ? CrossAxisAlignment.center : CrossAxisAlignment.start,
                       children: [
                         // 체크박스 (wageConfirmed만)
                         if (isConfirmed) ...[
                           AppCheckbox(
                             value: isSelected,
-                            activeColor: AppColors.warning,
+                            activeColor: AppColors.brand,
                             onTap: () {
                               setState(() {
                                 if (isSelected) {
@@ -2437,6 +2467,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                         ],
                         // 좌측: 이름 + 파트 + 시간
                         Expanded(
+                          flex: wide ? 1 : 0,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -2489,7 +2520,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                             ],
                           ),
                         ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 12), height: ResponsiveHelper.spacing(context, 6)),
                         // 우측: 배지 + 금액
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
@@ -2520,7 +2551,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                           ],
                         ),
                       ],
-                    ),
+                    );
+                    }),
                   ),
                 ),
               ));
@@ -2534,9 +2566,15 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             color: theme.scaffoldBackgroundColor,
             border: Border(top: BorderSide(color: theme.dividerColor)),
           ),
-          child: Row(
+          // [DU626b r9 · 판정254 §5] 폭이 240 × 글자 배율보다 좁으면 세로로 쌓는다(「마감 취소 (N명)」 낱말 안 끊김 · 같은 파일 하단 묶음 선례 · 표시 휴리스틱).
+          child: LayoutBuilder(builder: (context, c) {
+          final wide = TextLayout.fits(context, c.maxWidth, 240);
+          return Flex(
+            direction: wide ? Axis.horizontal : Axis.vertical,
+            crossAxisAlignment: wide ? CrossAxisAlignment.center : CrossAxisAlignment.stretch,
             children: [
               Expanded(
+                flex: wide ? 1 : 0,
                 child: OutlinedButton(
                   onPressed: () => Navigator.pop(context, _hasChanges),
                   style: OutlinedButton.styleFrom(
@@ -2556,8 +2594,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                 ),
               ),
               if (_transferredSelectedIds.isNotEmpty) ...[
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8), height: ResponsiveHelper.spacing(context, 8)),
                 Expanded(
+                  flex: wide ? 1 : 0,
                   child: ElevatedButton.icon(
                     onPressed: _isProcessing ? null : _reverseCloseWages,
                     icon: _isProcessing
@@ -2578,7 +2617,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                           .copyWith(color: Colors.white, fontWeight: FontWeight.bold),
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.warning,
+                      backgroundColor: AppColors.brand,
                       foregroundColor: Colors.white,
                       padding: EdgeInsets.symmetric(
                         vertical: ResponsiveHelper.spacing(context, 14),
@@ -2591,7 +2630,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                 ),
               ],
             ],
-          ),
+          );
+          }),
         ),
       ],
     );
@@ -2609,7 +2649,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             .map((a) => a.id)
             .toSet();
     final selectAll = eligibleIds.isNotEmpty && selectedIds.containsAll(eligibleIds);
-    final accentColor = isPending ? AppColors.warning : theme.primaryColor;
+    final accentColor = theme.primaryColor;
 
     return Container(
       padding: ResponsiveHelper.symmetricPadding(context, horizontal: 16, vertical: 10),
@@ -2628,6 +2668,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             }),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          // [DU630b] '전체 선택' 뒤 알약이 한 줄에 안 들어가면 알약이 다음 줄로(320×640 · 2.0 오른쪽 넘침 39).
+          Expanded(child: Wrap(spacing: ResponsiveHelper.spacing(context, 6), runSpacing: ResponsiveHelper.spacing(context, 4), crossAxisAlignment: WrapCrossAlignment.center, children: [
           Text(
             '전체 선택',
             style: ResponsiveHelper.smallStyle(context).copyWith(
@@ -2636,7 +2678,6 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             ),
           ),
           if (hasSelection) ...[
-            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             Container(
               padding: ResponsiveHelper.symmetricPadding(context, horizontal: 7, vertical: 2),
               decoration: BoxDecoration(
@@ -2652,7 +2693,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               ),
             ),
           ],
-          const Spacer(),
+          ])),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           Text(
             '총 ${workers.length}명',
             style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
@@ -2679,7 +2721,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     final totalAmount = hasDeductions
         ? wage.formattedNetWage
         : (wage?.formattedTotal ?? '계산 중...');
-    final accentColor = isPending ? AppColors.warning : theme.primaryColor;
+    final accentColor = theme.primaryColor;
     // [Phase 3.1] 총 적용 휴게시간 — 계산 완료 후에는 wageDetail에서, 미계산 상태는 추정값
     final breakMins = wage?.breakMinutes ?? _getEffectiveBreak(app);
     // break 상세: 계약 휴게 조정 여부 + 추가 여부
@@ -3033,7 +3075,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
     const additionalPresets = [0, 30, 60, 90];
 
-    final accentColor = needsReview ? AppColors.warning : AppColors.info;
+    final accentColor = AppColors.brand;
 
     final result = await DialogHelper.showSheet<(int, int)>(
       ctx,
@@ -3123,10 +3165,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                           decoration: BoxDecoration(
-                            color: isSelected ? AppColors.info : AppColors.grey100,
+                            color: isSelected ? AppColors.brand : AppColors.grey100,
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
-                              color: isSelected ? AppColors.info : AppColors.grey300,
+                              color: isSelected ? AppColors.brand : AppColors.grey300,
                             ),
                           ),
                           child: Text(
@@ -3255,7 +3297,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     final hasSelection = selectedIds.isNotEmpty;
     final totalWage = _getSelectedTotal(selectedIds);
     
-    final buttonColor = isPending ? AppColors.warning : theme.primaryColor;
+    final buttonColor = theme.primaryColor;
     final buttonText = '급여 확정 (${selectedIds.length}명)';
     
     return Container(
@@ -3285,6 +3327,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                     size: ResponsiveHelper.iconSize(context, 20),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  // [DU630b] 금액이 한 줄에 안 들어가면 다음 줄(가운데)로(320×640 · 2.0 오른쪽 넘침 129).
+                  Flexible(child: Wrap(alignment: WrapAlignment.center, crossAxisAlignment: WrapCrossAlignment.center, children: [
                   Text(
                     '선택 급여 합계: ',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(color: AppColors.grey800),
@@ -3296,6 +3340,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                       color: buttonColor,
                     ),
                   ),
+                  ])),
                 ],
               ),
             ),
@@ -3323,17 +3368,18 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                       });
                       _closeWages();
                     },
-                    icon: Icon(Icons.lock_outline, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.success),
-                    label: Text(
-                      '전체 일괄 마감 ($closableCount명)',
+                    icon: Icon(Icons.lock_outline, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.brand),
+                    // [DU626b r3 · 판정238 §4-1] E9 국소 확장 — 「전체 일괄 확정」 과 같은 꼴: 표시 글만 WORD JOINER 로 낱말 묶음(읽는 이름 = 원문) · 줄은 공백에서만.
+                    label: Text.rich(
+                      _keepSpan('전체 일괄 마감 ($closableCount명)'),
                       style: ResponsiveHelper.bodyStyle(context).copyWith(
-                        color: AppColors.success,
+                        color: AppColors.brand,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.success,
-                      side: BorderSide(color: AppColors.success.withValues(alpha: 0.6)),
+                      foregroundColor: AppColors.brand,
+                      side: BorderSide(color: AppColors.brand.withValues(alpha: 0.6)),
                       padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
@@ -3359,20 +3405,21 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                           height: ResponsiveHelper.spacing(context, 16),
                           child: CircularProgressIndicator(
                             strokeWidth: ResponsiveHelper.spacing(context, 2),
-                            color: AppColors.warning,
+                            color: AppColors.brand,
                           ),
                         )
-                      : Icon(Icons.done_all, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.warning),
-                  label: Text(
-                    _isInitializing ? '계산 중...' : '전체 일괄 확정 (${_pendingWorkers.length}명)',
+                      : Icon(Icons.done_all, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.brand),
+                  // [DU630b · 판정223 §4] 좁은 폭 · 큰 글자에서 낱말 안에서 끊기지 않게 — 표시 글만 WORD JOINER 로 묶고(읽는 이름 = 원문) 줄은 공백에서만 · 높이는 글이 필요한 만큼.
+                  label: Text.rich(
+                    _keepSpan(_isInitializing ? '계산 중...' : '전체 일괄 확정 (${_pendingWorkers.length}명)'),
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      color: AppColors.warning,
+                      color: AppColors.brand,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.warning,
-                    side: BorderSide(color: AppColors.warning.withValues(alpha: 0.6)),
+                    foregroundColor: AppColors.brand,
+                    side: BorderSide(color: AppColors.brand.withValues(alpha: 0.6)),
                     padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
@@ -3382,10 +3429,15 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               ),
             ),
 
-          // 버튼
-          Row(
+          // 버튼 — [DU630b] 폭이 240 × 글자 배율보다 좁으면 세로로 쌓는다(버튼 글 낱말 안 끊김 · 표시 휴리스틱).
+          LayoutBuilder(builder: (context, c) {
+          final wide = TextLayout.fits(context, c.maxWidth, 240);
+          return Flex(
+            direction: wide ? Axis.horizontal : Axis.vertical,
+            crossAxisAlignment: wide ? CrossAxisAlignment.center : CrossAxisAlignment.stretch,
             children: [
               Expanded(
+                flex: wide ? 1 : 0,
                 child: OutlinedButton(
                   onPressed: _isProcessing ? null : () => Navigator.pop(context, _hasChanges),
                   style: OutlinedButton.styleFrom(
@@ -3404,10 +3456,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                   ),
                 ),
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12), height: ResponsiveHelper.spacing(context, 8)),
               // 확정내역 탭: 확정 취소 + 마감하기
               if (!isPending) ...[
                 Expanded(
+                  flex: wide ? 1 : 0,
                   child: ElevatedButton.icon(
                     onPressed: (hasSelection && !_isProcessing) ? _cancelSelectedWages : null,
                     icon: _isProcessing
@@ -3439,9 +3492,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                     ),
                   ),
                 ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8), height: ResponsiveHelper.spacing(context, 8)),
                 Expanded(
-                  flex: 2,
+                  flex: wide ? 2 : 0,
                   child: Builder(builder: (context) {
                     final closableSelected = _calculatedSelectedIds.where((id) =>
                       widget.attendanceMap[id]?.wageStatus == AttendanceModel.wageCalculated
@@ -3466,7 +3519,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                         ),
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: closableSelected > 0 ? AppColors.success : theme.disabledColor,
+                        backgroundColor: closableSelected > 0 ? AppColors.brand : theme.disabledColor,
                         foregroundColor: Colors.white,
                         padding: EdgeInsets.symmetric(
                           vertical: ResponsiveHelper.spacing(context, 14),
@@ -3482,7 +3535,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               // 미확정 탭: 급여 확정
               if (isPending)
               Expanded(
-                flex: 2,
+                flex: wide ? 2 : 0,
                 child: ElevatedButton.icon(
                   onPressed: (hasSelection && !_isProcessing && !_isInitializing)
                       ? _confirmWages
@@ -3520,7 +3573,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                 ),
               ),
             ],
-          ),
+          );
+          }),
         ],
       ),
     );
@@ -3617,13 +3671,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: AppColors.warning.withValues(alpha: 0.12),
+                  color: AppColors.brand.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
                   workType,
                   style: ResponsiveHelper.tinyStyle(context).copyWith(
-                    color: AppColors.warning,
+                    color: AppColors.brand,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -3686,9 +3740,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                   padding: ResponsiveHelper.symmetricPadding(
                       context, horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: isSelected ? AppColors.amberDark : Colors.white,
+                    color: isSelected ? AppColors.brand : Colors.white,
                     border: Border.all(
-                      color: isSelected ? AppColors.amberDark : AppColors.grey300,
+                      color: isSelected ? AppColors.brand : AppColors.grey300,
                       width: isSelected ? 1.5 : 1,
                     ),
                     borderRadius: BorderRadius.circular(6),

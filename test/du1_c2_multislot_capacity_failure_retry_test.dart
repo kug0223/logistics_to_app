@@ -511,7 +511,7 @@ void main() {
       final arrowIcon = find.descendant(of: card, matching: find.byIcon(Icons.keyboard_arrow_down));
       expect(arrowIcon, findsOneWidget);
       final arrow = find.ancestor(of: arrowIcon, matching: find.byType(InkWell)).first;
-      final staffText = find.descendant(of: card, matching: find.text('인력 현황'));
+      final staffText = find.descendant(of: card, matching: find.text('지원·근무 현황'));
       expect(staffText, findsOneWidget, reason: '다음 행동 라벨 = 인력 현황');
       final staff = find.ancestor(of: staffText, matching: find.byType(InkWell)).first;
       out('   header InkWell ${rr(header)}');

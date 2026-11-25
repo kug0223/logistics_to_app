@@ -32,6 +32,7 @@ import 'payroll/payroll_payment_dashboard_screen.dart';
 // payroll_payment_service.dart — home screen에서 직접 사용 없음 (canonical summary로 대체됨)
 import '../../theme/app_colors.dart';
 import '../../theme/concept_tokens.dart';
+import '../../theme/app_text_styles.dart';
 import '../../models/core/business_member_model.dart'; // [R5.1F.5] MemberPermissions
 import '../../models/core/business_model.dart';
 import 'support_review_queue_screen.dart';
@@ -1033,15 +1034,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               SizedBox(width: 10 * s),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('사업장 등록',
-                      style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary)),
+                  // [DU586b · PP-TYPOGRAPHY T1-c] 카드 제목 17/1.3/700 · 다음 단계 본문 16/1.5/400 textPrimary(역할표 §5 · :78 · J4).
+                  Text('사업장 등록', style: AppTextStyles.roleCardTitle()),
                   const SizedBox(height: 2),
-                  Text('사업장을 등록하면 공고·계약·급여 관리를 시작할 수 있어요',
-                      style: TextStyle(
-                          fontSize: 12, color: AppColors.textSecondary)),
+                  Text(TextLayout.keepWords('사업장을 등록하면 공고·계약·급여 관리를 시작할 수 있어요'),
+                      semanticsLabel: '사업장을 등록하면 공고·계약·급여 관리를 시작할 수 있어요',
+                      style: AppTextStyles.roleBody()),
                 ]),
               ),
             ]),
@@ -1050,9 +1048,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               width: double.infinity,
               child: ElevatedButton.icon(
                 icon: Icon(Icons.add_business, size: 16 * s),
-                label: Text('사업장 등록',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                // [DU586b · T1-c] 조작 16/1.3/700(roleAction) — ButtonStyle.textStyle 의 색은 쓰이지 않고 foregroundColor(흰색)가 글자색이다.
+                label: const Text('사업장 등록'),
                 style: ElevatedButton.styleFrom(
+                  textStyle: AppTextStyles.roleAction(),
                   backgroundColor: theme.primaryColor,
                   foregroundColor: Colors.white,
                   padding: EdgeInsets.symmetric(vertical: 10 * s),
@@ -1099,15 +1098,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           SizedBox(width: 10 * s),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title,
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary)),
+              // [DU586b · PP-TYPOGRAPHY T1-c] 카드 제목 17/1.3/700 · 제한 원인 · 다음 단계 본문 16/1.5/400 textPrimary(역할표 §5 · :78 · J4).
+              Text(TextLayout.keepWords(title), semanticsLabel: title, style: AppTextStyles.roleCardTitle()),
               const SizedBox(height: 2),
-              Text(subtitle,
-                  style: TextStyle(
-                      fontSize: 12, color: AppColors.textSecondary)),
+              Text(TextLayout.keepWords(subtitle), semanticsLabel: subtitle, style: AppTextStyles.roleBody()),
             ]),
           ),
         ]),
@@ -1379,14 +1373,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 // [CP04 · CP01 인계] 표시만 낱말 묶음 — 긴 이름의 마지막 낱말과 `님`이 갈리지 않게(의미 이름 원문).
+                // [DU586b · PP-TYPOGRAPHY T1-d · J5] 이름 = 역할표 '사람 이름' 카드 · 목록 제목 17/1.3/700/0(이전 15/1.2/700/−0.2 · 음수 자간 없음).
                 Text(TextLayout.keepWords('$name님'),
                     semanticsLabel: '$name님',
-                    style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        height: 1.2,
-                        color: AppColors.textPrimary,
-                        letterSpacing: -0.2)),
+                    style: AppTextStyles.roleCardTitle()),
                 isSub ? _subAdminBadge(context, s, up, theme) : _adminBadge(s, theme),
               ],
             ),
@@ -1441,7 +1431,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     const wd = ['월', '화', '수', '목', '금', '토', '일'];
     final dateText = '${today.month}월 ${today.day}일 ${wd[today.weekday - 1]}요일';
     const title = '오늘 운영을 한눈에';
-    final actionStyle = ConceptText.count().copyWith(height: 1.3);
+    final actionStyle = AppTextStyles.roleAction(); // [DU555] 조작 16/1.3/700 brand(이전 14/1.3)
     final actionDisplay = '+${String.fromCharCode(0xA0)}${TextLayout.keepWords('공고 등록')}';
     Widget? action;
     if (_canCreatePosting(up)) {
@@ -1467,18 +1457,18 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         ),
       );
     }
-    final date = Text(dateText, style: ConceptText.meta());
+    final date = Text(dateText, style: AppTextStyles.roleSupport()); // [DU555] 날짜 부연 = 보조 14/1.45 textSecondary(이전 14/1.4)
     final act = action;
     return Padding(
       padding: EdgeInsets.fromLTRB(g, _kHeadToHero, g, 0), // [DU307 §12.1] 머리 →8→ 큰 운영 머리
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Text(TextLayout.keepWords(title), semanticsLabel: title, style: ConceptText.hero()),
+        Text(TextLayout.keepWords(title), semanticsLabel: title, style: AppTextStyles.roleHomeHero()), // [DU555] Home 대표 문구 26/1.25/700/−0.2(이전 24/1.3)
         const SizedBox(height: ConceptSpace.heroToDate),
         if (act == null)
           Align(alignment: Alignment.centerLeft, child: date)
         else
           LayoutBuilder(builder: (context, c) {
-            final need = _oneLineWidth(context, dateText, ConceptText.meta()) + 8 +
+            final need = _oneLineWidth(context, dateText, AppTextStyles.roleSupport()) + 8 +
                 _oneLineWidth(context, actionDisplay, actionStyle);
             if (need <= c.maxWidth) {
               return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: date), const SizedBox(width: 8), act]);
@@ -1531,13 +1521,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               child: Text(
                 TextLayout.keepWords(message),
                 semanticsLabel: message,
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
-                  height: 1.35,
-                  color: AppColors.textPrimary,
-                  letterSpacing: -0.2,
-                ),
+                style: AppTextStyles.roleCardTitle(), // [DU555] R-5 카드 제목 17/1.3/700/0(이전 직접 지정 17/1.35/700/−0.2 · textPrimary 그대로)
               ),
             ),
           ]),
@@ -1548,7 +1532,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               // [ADMIN-HOME.31] '사업장 · 업무 · 시각' — 큰 글자에서 낱말 안이 끊기지 않게(표시만, 원문은 접근성 이름).
               child: Text(TextLayout.phrases(supporting),
                   semanticsLabel: supporting,
-                  style: ConceptText.meta()),
+                  style: AppTextStyles.roleBody()), // [DU555] R-5 · R-6 판단 본문 16/1.5/400 textPrimary(이전 14/1.4 textSecondary)
             ),
           ],
           if (body != null) ...[
@@ -1575,7 +1559,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
                       Flexible(
                         child: Text(TextLayout.keepWords(ctaLabel),
-                            semanticsLabel: cta, style: ConceptText.count().copyWith(height: 1.3)),
+                            semanticsLabel: cta, style: AppTextStyles.roleAction()),
                       ),
                       const Icon(Icons.chevron_right, size: 18, color: AppColors.brand),
                     ]),
@@ -2066,11 +2050,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // [SCALE-BALANCE.34] 큰 글자에서 테두리·채움 배지가 이름과 같은 무게로 커졌다(392·2.0 기기).
     //   역할은 본인이 아는 낮은 우선순위 정보 — 헤더 폭이 모자라는 배율이면 장식 없이 글자만 둔다.
     //   (하위관리자 배지는 사업장 이름을 말하므로 그대로 둔다.)
-    final label = Text('관리자',
-        style: TextStyle(
-            color: theme.primaryColor,
-            fontSize: 12,
-            fontWeight: FontWeight.w600));
+    // [DU639a · PP-TYPOGRAPHY T1-d 잔여(판정173 '역할 배지')] 상태 배지 14/1.3/700(역할표 §5 · 이전 12/w600) · 색 brand · 배지/글자만 분기 그대로.
+    final label = Text('관리자', style: AppTextStyles.roleBadge(color: theme.primaryColor));
     if (!TextLayout.fits(context, MediaQuery.sizeOf(context).width, 360)) return label;
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 10 * s, vertical: 4 * s),
@@ -2240,13 +2221,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   ///   행동을 제목 아래 오른쪽 줄로 내린다(말줄임·축소 없음). 좌우 여백은 홈 gutter(<360 16, 그 밖 20).
   Widget _sectionHeader(BuildContext context, double s, String title,
       {String? action, VoidCallback? onAction, String? subtitle}) {
-    final titleText = Text(TextLayout.keepWords(title), style: ConceptText.section(), semanticsLabel: title);
+    // [DU555] 섹션 20/1.3/700/0(이전 자간 −0.2) · 부제 = 보조 14/1.45 textSecondary · 행동 = 조작 16/1.3/700 brand(이전 14).
+    final titleText = Text(TextLayout.keepWords(title), style: AppTextStyles.roleSection(), semanticsLabel: title);
     final head = subtitle == null
         ? titleText
         : Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
             titleText,
             const SizedBox(height: 4),
-            Text(TextLayout.keepWords(subtitle), style: ConceptText.meta(), semanticsLabel: subtitle),
+            Text(TextLayout.keepWords(subtitle), style: AppTextStyles.roleSupport(), semanticsLabel: subtitle),
           ]);
     final gutter = ConceptSpace.gutter(MediaQuery.sizeOf(context).width);
     if (action == null || onAction == null) {
@@ -2255,7 +2237,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           child: Align(alignment: Alignment.centerLeft, child: head));
     }
     Widget actionWidget({required bool wrap}) {
-      final label = Text(TextLayout.keepWords(action), style: ConceptText.count().copyWith(height: 1.3), semanticsLabel: action);
+      final label = Text(TextLayout.keepWords(action), style: AppTextStyles.roleAction(), semanticsLabel: action);
       return Semantics(
         container: true,
         button: true,
@@ -2279,8 +2261,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: gutter),
       child: LayoutBuilder(builder: (context, c) {
-        final need = _oneLineWidth(context, title, ConceptText.section()) + 8 +
-            _oneLineWidth(context, action, ConceptText.count().copyWith(height: 1.3)) + 18;
+        final need = _oneLineWidth(context, title, AppTextStyles.roleSection()) + 8 +
+            _oneLineWidth(context, action, AppTextStyles.roleAction()) + 18;
         if (need <= c.maxWidth) {
           return Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
             Expanded(child: head),
@@ -2371,13 +2353,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                     child: Text(
                       TextLayout.keepWords('공고 등록까지 ${FirstPostingReadiness.totalTasks - done}단계 남았어요'),
                       semanticsLabel: '공고 등록까지 ${FirstPostingReadiness.totalTasks - done}단계 남았어요',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                        height: 1.35,
-                        color: AppColors.textPrimary,
-                        letterSpacing: -0.2,
-                      ),
+                      // [DU586b · PP-TYPOGRAPHY T1-b] 카드 제목 17/1.3/700/0(이전 17/1.35/bold/−0.2 · 판정147 R-5 Hero 상태 문장과 같은 역할).
+                      style: AppTextStyles.roleCardTitle(),
                     ),
                   ),
                   // [R7-P4.4E.4] `2 / 4 완료` 를 뺐다.
@@ -2543,10 +2520,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     //    올바른 다음 행동은 업무가 아니라 사업자등록증이다)
     final actionable = r.isActionable(task) && (done || onTap != null);
     final hint = done ? null : (actionable ? pendingHint : lockedHint);
+    // [DU639a · 판정173 DU586b 잔여 '행높이40/m48=false'] 누를 수 있는 행만 받는 자리 최소 48 — 보이는 글 · 아이콘 · 여백 · 콜백 조건 그대로.
+    final tappable = !(done || !actionable);
 
     return InkWell(
       onTap: done || !actionable ? null : onTap,
-      child: Padding(
+      child: Container(
+        constraints: BoxConstraints(minHeight: tappable ? 48 : 0),
         padding: EdgeInsets.symmetric(horizontal: 14 * s, vertical: 10 * s),
         child: Row(
           children: [
@@ -2575,9 +2555,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 children: [
                   Text(
                     label,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w500,
+                    // [DU586b · PP-TYPOGRAPHY T1-b · J1] 할 일 이름 = 카드 · 목록 제목 17/1.3/700(이전 12.5/500) · 상태색(완료 · 지금 가능 · 선행 필요)은 그대로.
+                    style: AppTextStyles.roleCardTitle().copyWith(
                       color: done
                           ? AppColors.textSecondary
                           : (actionable
@@ -2593,30 +2572,29 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                   if (purpose != null && !done) ...[
                     SizedBox(height: 2 * s),
                     Text(
-                      purpose,
-                      // 힌트 슬롯과 같은 12px — 이 화면의 하한이다.
-                      // 새 typography scale 을 만들지 않는다.
+                      TextLayout.keepWords(purpose),
+                      semanticsLabel: purpose,
+                      // [DU586b · PP-TYPOGRAPHY T1-b] 보조 · 도움말 14/1.45/400 textSecondary(역할표 §5 · 이전 12/1.35 — 옛 12 하한 문구 폐기) · 표시만 낱말 묶음.
                       //
                       // [R7-P4.4E.4] 색을 한 단계 올렸다. grey400 은 이 화면에서
                       //   **비활성**을 뜻하는 톤이라, 읽으라고 쓴 설명이 꺼진
                       //   항목처럼 보였다. 설명문은 본문보다 약하되 분명히
                       //   읽히는 보조 텍스트다.
-                      style: TextStyle(
-                        fontSize: 12,
-                        height: 1.35,
-                        color: AppColors.textSecondary,
-                      ),
+                      style: AppTextStyles.roleSupport(),
                     ),
+                  ],
+                  // [DU586b · J2 · J3] 힌트(가용 여부 · 원인 · 확인 실패) = 본문 16/1.5/400 — 오른쪽 칸이 아니라 라벨 묶음 아래 줄이다(B 에서 라벨을
+                  //   음절로 쪼개지 않게 · [R7-P4.4E.2] 목적 설명을 아래 줄로 옮긴 것과 같은 이유). 읽는 순서(라벨 → 목적 → 힌트).
+                  // [DU639a · 판정173 DU586b 잔여] 힌트 색 = 판단 본문 textPrimary(이전 grey400 — 흰 면 위 1.88:1 비활성 톤). 가용 여부 · 원인 · 확인 실패는 읽어야 할 판단 정보다.
+                  if (hint != null) ...[
+                    SizedBox(height: 2 * s),
+                    Text(TextLayout.keepWords(hint), semanticsLabel: hint,
+                        style: AppTextStyles.roleBody(color: AppColors.textSecondary)), // [F263-HINT-ROLE · 판정263 §3] 힌트 = roleBody textSecondary(16/1.5/400 · 문구 · 조건 그대로)
                   ],
                 ],
               ),
             ),
-            if (hint != null)
-              Text(
-                hint,
-                style: TextStyle(fontSize: 12, color: AppColors.grey400),
-              )
-            else if (!done && actionable)
+            if (hint == null && !done && actionable)
               // [R7-P4.4E.4] 지금 할 수 있는 행동은 chevron **하나만** 파랗다.
               //
               //   완료는 초록 체크로 이미 분명한데, 미완료는 회색 아이콘 ·
@@ -2676,7 +2654,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                 child: Text(TextLayout.phrases('확정 근무 · $mergedContext'),
-                    semanticsLabel: '확정 근무 · $mergedContext', style: ConceptText.meta()),
+                    semanticsLabel: '확정 근무 · $mergedContext', style: AppTextStyles.roleBody()), // [DU555] R-6 확정 근무 = 판단 본문 16/1.5 textPrimary
               ),
             ]));
     }
@@ -2808,9 +2786,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final tail = allStaffed ? ' 전원 확정' : ' 확정';
     final staffLine = Text.rich(
       TextSpan(children: [
-        TextSpan(text: lead, style: allStaffed ? ConceptText.adminStaffStrong() : ConceptText.adminStaffRegular()),
-        if (strong.isNotEmpty) TextSpan(text: strong, style: ConceptText.adminStaffStrong()),
-        TextSpan(text: tail, style: ConceptText.adminStaffRegular()),
+        // [DU555] R-1 확정 수량만 목록 수량 18/1.3/700 · 라벨/단위(중 · 확정 · 전원 확정) = 본문 16/1.5/400 · R-6 textPrimary(이전 모두 18/1.3 · 라벨 textSecondary).
+        TextSpan(text: lead, style: allStaffed ? AppTextStyles.roleListValue() : AppTextStyles.roleBody()),
+        if (strong.isNotEmpty) TextSpan(text: strong, style: AppTextStyles.roleListValue()),
+        TextSpan(text: tail, style: AppTextStyles.roleBody()),
       ]),
       semanticsLabel: summaryText,
     );
@@ -2820,7 +2799,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             decoration: ConceptSurface.staffingNeed(),
             child: Text(TextLayout.keepWords('$shortage명 추가 필요'),
                 semanticsLabel: '$shortage명 추가 필요',
-                style: ConceptText.pill(AppColors.conceptStaffingNeedText)),
+                style: AppTextStyles.roleBadge(color: AppColors.conceptStaffingNeedText)), // [DU555] 상태 배지 14/1.3/700(이전 13 — 판단 상태 13 금지)
           )
         : null;
     final workTime = _todayWorkTimeSummary;
@@ -2831,11 +2810,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         padding: EdgeInsets.fromLTRB(16, 16, 16, partial ? 8 : 12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           if (scopeLabel != null) ...[
-            Text(TextLayout.keepWords(scopeLabel), semanticsLabel: scopeLabel, style: ConceptText.meta()),
+            Text(TextLayout.keepWords(scopeLabel), semanticsLabel: scopeLabel, style: AppTextStyles.roleBody()), // [DU578 · 판정148 F148-R6] 집계 범위 머리표 = 판단 본문 16/1.5/400 textPrimary(이전 보조 14/1.45 textSecondary)
             const SizedBox(height: 4),
           ],
           if (_todayWorkTimeIsSingle && workTime != null) ...[
-            Text(TextLayout.phrases(workTime), semanticsLabel: workTime, style: ConceptText.adminWorkTime()),
+            Text(TextLayout.phrases(workTime), semanticsLabel: workTime, style: AppTextStyles.roleCardTime()), // [DU555] 카드 안 강조 시간 20/1.3/700(이전 20/1.25)
             const SizedBox(height: 8),
           ],
           Wrap(
@@ -2944,14 +2923,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   Widget? _shortageDetailRow({required String? where, required bool scopeDiffers, VoidCallback? onTap}) {
     final lines = <Widget>[
       if (where != null)
-        Text(TextLayout.phrases(where), semanticsLabel: where, style: ConceptText.meta()),
+        Text(TextLayout.phrases(where), semanticsLabel: where, style: AppTextStyles.roleBody()), // [DU555] R-4 부족 위치 · 집계 기준 = 판단 본문 16/1.5/400 · R-6 textPrimary(이전 14/1.4)
       if (scopeDiffers)
-        Text(TextLayout.keepWords(_shortageScopeNote), semanticsLabel: _shortageScopeNote, style: ConceptText.meta()),
+        Text(TextLayout.keepWords(_shortageScopeNote), semanticsLabel: _shortageScopeNote, style: AppTextStyles.roleBody()),
     ];
     if (onTap == null && lines.isEmpty) return null;
     final body = Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
       if (onTap != null) Text(TextLayout.keepWords('인원 현황 보기'), semanticsLabel: '인원 현황 보기',
-          style: ConceptText.count().copyWith(height: 1.3)),
+          style: AppTextStyles.roleAction()), // [DU555] 조작 16/1.3/700(이전 14)
       for (var i = 0; i < lines.length; i++) ...[
         if (i > 0 || onTap != null) const SizedBox(height: 4),
         lines[i],
@@ -2993,6 +2972,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     bool quiet = false,
   }) {
     // [CP04] 글자 16/700(조용하면 400)·note 14 전문(말줄임 제거). 행 전체 receiver ≥48·의미 node(같은 콜백).
+    // [DU555] 글자 = 카드 · 목록 제목 17/1.3/700(조용하면 400 · 이전 16/1.45) · note(수치 범위) = 판단 본문 16/1.5/400 textPrimary([DU578] 판정148 F148-R6 · 이전 보조 14/1.45). 아이콘 · 꺾쇠는 그 첫 줄 높이에 맞춘다.
+    final labelStyle = AppTextStyles.roleCardTitle().copyWith(fontWeight: quiet ? FontWeight.w400 : FontWeight.w700);
+    final firstLine = MediaQuery.textScalerOf(context).scale(labelStyle.fontSize!) * labelStyle.height!;
     final row = ConstrainedBox(
       constraints: const BoxConstraints(minHeight: ConceptSpace.minTouch),
       child: Padding(
@@ -3000,7 +2982,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         // [SCALE-BALANCE.34] 아이콘·chevron 은 여러 줄 글자의 세로 가운데가 아니라 첫 줄에 맞춘다.
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Padding(
-            padding: EdgeInsets.only(top: ((MediaQuery.textScalerOf(context).scale(16) * 1.45 - 20) / 2).clamp(0, 40)),
+            padding: EdgeInsets.only(top: ((firstLine - 20) / 2).clamp(0, 40)),
             child: Icon(icon, size: 20, color: color),
           ),
           const SizedBox(width: 12),
@@ -3012,10 +2994,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 // [ADMIN-HOME.31] 낱말 단위로 줄을 바꾸고 줄 수를 막지 않는다.
                 Text(TextLayout.phrases(label),
                     semanticsLabel: label,
-                    style: ConceptText.body().copyWith(fontWeight: quiet ? FontWeight.w400 : FontWeight.w700)),
+                    style: labelStyle),
                 if (note != null) ...[
                   const SizedBox(height: 4),
-                  Text(TextLayout.keepWords(note), semanticsLabel: note, style: ConceptText.meta()),
+                  Text(TextLayout.keepWords(note), semanticsLabel: note, style: AppTextStyles.roleBody()),
                 ],
               ],
             ),
@@ -3023,7 +3005,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           // chevron은 실제로 갈 곳이 있을 때만 — 권한이 없으면 상태만 남는다.
           if (onTap != null)
             Padding(
-              padding: EdgeInsets.only(top: ((MediaQuery.textScalerOf(context).scale(16) * 1.45 - 18) / 2).clamp(0, 40)),
+              padding: EdgeInsets.only(top: ((firstLine - 18) / 2).clamp(0, 40)),
               child: const Icon(Icons.chevron_right, size: 18, color: AppColors.conceptChevron),
             ),
         ]),
@@ -3080,8 +3062,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // [DU307 Standards §12.2] 부분 실패 = 작은 주의 표시 + 중립 설명 + brand `다시 시도`. 문장 전체 warningDark(호박색)를
     //   중립 메타(14/400 textSecondary)로 낮추고 앞에 작은 주의 아이콘 하나를 둔다(_partialMark). 완전 실패 행(errorDark)과 구별된다.
     final msg = '사업장 ${sr.failedBusinessCount}곳의 정보를 불러오지 못해 나머지 사업장 기준으로 표시했어요';
-    final msgStyle = ConceptText.meta();
-    final retryStyle = ConceptText.count().copyWith(height: 1.3);
+    final msgStyle = AppTextStyles.roleBody(); // [DU555] R-6 부분합 = 판단 본문 16/1.5/400 textPrimary(이전 14/1.4 textSecondary)
+    final retryStyle = AppTextStyles.roleAction(); // [DU555] 조작 16/1.3/700(이전 14)
     void retry() => unawaited(_loadStaffingReadiness());
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
@@ -3152,7 +3134,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         alignment: Alignment.centerLeft,
         child: Text(text,
             semanticsLabel: dueNow == 0 ? text : '출근 ${_todayCheckedIn!}명, 현재까지 출근 대상 $dueNow명',
-            style: ConceptText.meta()),
+            style: AppTextStyles.roleBadge(color: AppColors.textPrimary)), // [DU555] R-4 짧은 현황 14/1.3/700(이전 14/1.4/400) · [DU578] 판정148 F148-R6 textPrimary(이전 textSecondary)
       ),
     );
   }
@@ -3168,10 +3150,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     required VoidCallback onRetry,
     bool partial = false,
   }) {
-    final msgStyle = partial
-        ? ConceptText.meta()
-        : ConceptText.meta().copyWith(color: AppColors.errorDark);
-    final retryStyle = ConceptText.count().copyWith(height: 1.3);
+    // [DU555] 오류 · 다음 단계 = 본문 16/1.5/400(이전 14/1.4) · 완전 실패 errorDark 그대로 · 일부 실패 = R-6 textPrimary(이전 textSecondary) · 다시 시도 = 조작 16/1.3/700.
+    final msgStyle = AppTextStyles.roleBody(color: partial ? AppColors.textPrimary : AppColors.errorDark);
+    final retryStyle = AppTextStyles.roleAction();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Builder(builder: (context) {
@@ -3365,11 +3346,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       bottomRight: Radius.circular(isLast  ? 16 : 0),
     );
 
-    // [CP04] 정밀 §4 다가오는 7일 — 날짜 16/700(전문, 말줄임 없음)·나머지 14/400, 부족은 `N명 추가 필요` 14/700 textSecondary(필·빨강 없음).
+    // [CP04] 정밀 §4 다가오는 7일 — 날짜 16/700(전문, 말줄임 없음)·나머지 14/400, 부족은 `N명 추가 필요` 14/700(필·빨강 없음 · 색은 [DU578] 판정148 F148-R6 textPrimary · 이전 textSecondary).
     //   부족 글자·꺾쇠는 본문이 좁아지면 아래 오른쪽 줄로 내린다(_rowWithTrailing). 값·정렬·목적지·권한 그대로.
     final detail = parts.join(' · ');
-    final dateStyle = ConceptText.body().copyWith(fontWeight: FontWeight.w700, height: 1.35);
-    final needStyle = ConceptText.meta().copyWith(fontWeight: FontWeight.w700);
+    // [DU555] 날짜 = 행의 주어 → 목록 제목 17/1.3/700(이전 16/1.35) · 상태 = R-2 판단 본문 16/1.5/400 · R-6 textPrimary(이전 14/1.4 textSecondary) · 부족 = 짧은 카운트 14/1.3/700(이전 14/1.4) · [DU578] 판정148 F148-R6 색 textPrimary(이전 textSecondary · 빨강/주의면 0).
+    final dateStyle = AppTextStyles.roleCardTitle();
+    final detailStyle = AppTextStyles.roleBody();
+    final needStyle = AppTextStyles.roleBadge(color: AppColors.textPrimary);
     final hasTrailing = shortage > 0 || canNavigate;
     final trailingW = (shortage > 0 ? _oneLineWidth(context, '$shortage명 추가 필요', needStyle) : 0.0) +
         (shortage > 0 && canNavigate ? 4 : 0) +
@@ -3386,10 +3369,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             Text(TextLayout.keepWords(dateLabel), semanticsLabel: dateLabel, style: dateStyle),
             const SizedBox(height: 4),
             // [ADMIN-HOME.31] 320·1.3 에서 '[합|성] E7 사업장' 으로 끊겼다 — 낱말 단위, 사업장명 말줄임 없음.
-            Text(TextLayout.phrases(detail), semanticsLabel: detail, style: ConceptText.meta()),
+            Text(TextLayout.phrases(detail), semanticsLabel: detail, style: detailStyle),
           ],
         ),
-        bodyTexts: [(TextLayout.keepWords(dateLabel), dateStyle), (TextLayout.phrases(detail), ConceptText.meta())],
+        bodyTexts: [(TextLayout.keepWords(dateLabel), dateStyle), (TextLayout.phrases(detail), detailStyle)],
         trailingWidth: trailingW,
         trailing: !hasTrailing
             ? null
@@ -3425,6 +3408,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   /// [CP04] 행 = (선택) 앞 아이콘 · 본문 · 뒤(숫자 알약·부족 글자·꺾쇠).
   ///   같은 줄 조건은 지원자 홈 C1 r3 에서 수용된 식과 같다: 본문에 남는 폭 ≥ 본문 표시 조각(공백으로 나눈 낱말) 중
   ///   가장 넓은 것의 한 줄 폭, 그리고 ≥ 안쪽 전체 폭의 절반. 아니면 뒤를 본문 아래 오른쪽 줄로 내린다(정밀 §5 행 기하·§8 B 규칙 5).
+  ///   [DU585b · 판정148 F148-B-TASK-READING] [pairWords] 를 켠 소비처(할 일 행)만 하나 더 본다 — 같은 글의 이웃한 두 낱말이 남는 폭에
+  ///   한 줄로 들지 않으면(낱말이 한 줄에 하나씩 쌓이면) 뒤를 아래 오른쪽 줄로 내려 본문 폭을 확보한다. 끈 소비처(다가오는 근무 · 다시 시도)는 조건 그대로.
   ///   말줄임·축소·고정 높이 없음. 행 탭·목적지는 호출부 그대로다.
   Widget _rowWithTrailing(
     BuildContext context, {
@@ -3436,6 +3421,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     Widget? trailing,
     double trailingWidth = 0,
     double trailingGap = 8,
+    bool pairWords = false,
   }) {
     if (trailing == null) {
       return Row(children: [
@@ -3452,8 +3438,19 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           if (w > need) need = w;
         }
       }
+      // [DU585b] 이웃한 두 낱말(같은 글 안)의 한 줄 폭 — pairWords 소비처만 잰다. 끈 곳은 0 이라 아래 같은 줄 조건이 그대로다.
+      var needPair = 0.0;
+      if (pairWords) {
+        for (final (text, style) in bodyTexts) {
+          final units = text.split(' ').where((u) => u.isNotEmpty).toList();
+          for (var i = 1; i < units.length; i++) {
+            final w = _oneLineWidth(context, '${units[i - 1]} ${units[i]}', style);
+            if (w > needPair) needPair = w;
+          }
+        }
+      }
       final inlineBody = c.maxWidth - leadingWidth - leadingGap - trailingGap - trailingWidth;
-      if (inlineBody >= need && inlineBody >= c.maxWidth * 0.5) {
+      if (inlineBody >= need && inlineBody >= c.maxWidth * 0.5 && inlineBody >= needPair) {
         return Row(children: [
           if (leading != null) ...[leading, SizedBox(width: leadingGap)],
           Expanded(child: body),
@@ -3626,7 +3623,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(TextLayout.keepWords('처리할 업무가 없어요'),
-                        semanticsLabel: '처리할 업무가 없어요', style: ConceptText.taskDescription()),
+                        semanticsLabel: '처리할 업무가 없어요', style: AppTextStyles.roleBody()), // [DU555] R-6 안심 문구 = 본문 16/1.5 textPrimary(이전 14/1.35 textSecondary)
                   ),
                 ]),
               ),
@@ -4109,25 +4106,27 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
   /// [CP04] 처리할 일 한 행(정밀 §5). 상자 없는 Material outlined 아이콘 24(진남색) · 제목 17/700 · 정확 일반 설명 14 ·
   ///   보조줄(실제 metadata, 긴급·연체·만료만 errorDark) · 숫자 알약(#E3EAFE, 기본 숫자만·99+ 없음) · 꺾쇠 18(#45474E).
-  ///   행 min 68·H16/V10, 내용이 크면 자연 확장. 뒤(알약·꺾쇠)가 본문을 압박하면 아래 오른쪽 줄(_rowWithTrailing).
+  ///   행 min 68·H16/V10, 내용이 크면 자연 확장. 뒤(알약·꺾쇠)가 본문을 압박하면 아래 오른쪽 줄(_rowWithTrailing) — [DU585b] 이웃 두 낱말이 한 줄에 못 들 때도(pairWords).
   ///   행 전체가 receiver 하나 — 의미 이름 `제목, 설명[, 보조줄], 열기`(아이콘·알약 장식, 같은 콜백). 색은 행 종류로 칠하지 않는다.
   Widget _buildActionRowWidget(
     BuildContext context, double s,
     _TaskRow item,
     {required bool isLast}
   ) {
+    // [DU555] 이름 = 카드 · 목록 제목 17/1.3/700(이전 17/1.25) · 설명(다음 행동) = R-3 판단 본문 16/1.5/400 · R-6 textPrimary(이전 14/1.35 textSecondary) ·
+    //   보조줄(운영 판단) = R-3 본문 16/1.5 · tone 색과 400/700 그대로 · 설명 → 보조줄 4(R-7 · 이전 2) · 알약 = 짧은 카운트 14/1.3/700(이전 14/1.2) · 폭 측정(bodyTexts)도 같은 스타일.
+    TextStyle subStyle(_TaskSub sub) =>
+        AppTextStyles.roleBody(color: sub.color).copyWith(fontWeight: sub.tone == _SubTone.neutral ? FontWeight.w400 : FontWeight.w700);
     final body = Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-      Text(TextLayout.keepWords(item.label), semanticsLabel: item.label, style: ConceptText.taskTitle()),
+      Text(TextLayout.keepWords(item.label), semanticsLabel: item.label, style: AppTextStyles.roleCardTitle()),
       const SizedBox(height: 4),
-      Text(TextLayout.keepWords(item.desc), semanticsLabel: item.desc, style: ConceptText.taskDescription()),
+      Text(TextLayout.keepWords(item.desc), semanticsLabel: item.desc, style: AppTextStyles.roleBody()),
       for (final sub in item.subs) ...[
-        const SizedBox(height: 2),
-        Text(TextLayout.keepWords(sub.text), semanticsLabel: sub.text,
-            style: ConceptText.taskDescription().copyWith(
-                color: sub.color, fontWeight: sub.tone == _SubTone.neutral ? FontWeight.w400 : FontWeight.w700)),
+        const SizedBox(height: 4),
+        Text(TextLayout.keepWords(sub.text), semanticsLabel: sub.text, style: subStyle(sub)),
       ],
     ]);
-    final pillStyle = ConceptText.count();
+    final pillStyle = AppTextStyles.roleBadge(color: AppColors.brand);
     final pillW = _oneLineWidth(context, item.pill, pillStyle) + 20;
     final trailing = Row(mainAxisSize: MainAxisSize.min, children: [
       Container(
@@ -4160,12 +4159,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 leadingGap: 12,
                 body: body,
                 bodyTexts: [
-                  (TextLayout.keepWords(item.label), ConceptText.taskTitle()),
-                  (TextLayout.keepWords(item.desc), ConceptText.taskDescription()),
-                  for (final sub in item.subs) (TextLayout.keepWords(sub.text), ConceptText.taskDescription()),
+                  (TextLayout.keepWords(item.label), AppTextStyles.roleCardTitle()),
+                  (TextLayout.keepWords(item.desc), AppTextStyles.roleBody()),
+                  for (final sub in item.subs) (TextLayout.keepWords(sub.text), subStyle(sub)),
                 ],
                 trailing: trailing,
                 trailingWidth: (pillW < 36 ? 36 : pillW) + 8 + 18,
+                // [DU585b] 판정148 F148-B-TASK-READING — 낱말이 한 줄에 하나씩 쌓이면 알약·꺾쇠를 아래 줄로(본문 폭 확보 · 행 탭/의미 이름/순서 그대로).
+                pairWords: true,
               ),
             ),
           ),
@@ -4213,7 +4214,7 @@ class _TaskSub {
   Color get color => switch (tone) {
         _SubTone.urgent => AppColors.errorDark,
         _SubTone.warning => AppColors.warningDark,
-        _SubTone.neutral => AppColors.textSecondary,
+        _SubTone.neutral => AppColors.textPrimary, // [DU578] 판정148 F148-R6 운영 판단 보조줄 textPrimary(이전 textSecondary) · warning/urgent 의미색 · 700 그대로
       };
 }
 

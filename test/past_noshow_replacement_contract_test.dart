@@ -152,7 +152,8 @@ void main() {
       final d = _codeOf(_src(_dayDialogPath));
       // 배지 블록은 isStaffingReleased만 보고 날짜를 보지 않는다.
       final guardAt = d.indexOf('if (app.isStaffingReleased) ...[');
-      final badgeAt = d.indexOf("'대체 충원 진행 중'");
+      // [DU592b · J144] 배지 이름이 처리 결과 이름으로 바뀌었다 — 같은 배지 리터럴의 위치를 본다(기대 의미 · 단언 수 그대로).
+      final badgeAt = d.indexOf("'자리 비움 처리됨'");
       expect(guardAt > 0 && badgeAt > guardAt, true,
           reason: '배지가 isStaffingReleased 분기 안에 있어야 한다');
       final block = d.substring(guardAt, badgeAt);

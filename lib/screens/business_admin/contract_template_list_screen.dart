@@ -410,7 +410,7 @@ class _ContractTemplateListScreenState
               icon: const Icon(Icons.refresh),
               label: const Text('다시 시도'),
               style: TextButton.styleFrom(
-                foregroundColor: AppColors.warningDark,
+                foregroundColor: AppColors.brand,
                 minimumSize: const Size(48, 48),
               ),
             ),
@@ -880,7 +880,7 @@ class _OtherBusinessTemplateSheetState
                                 Text(
                                   '가져올 수 있는 템플릿이 없습니다',
                                   style: ResponsiveHelper.bodyStyle(context,
-                                      color: AppColors.grey500),
+                                      color: AppColors.textSecondary),
                                   textAlign: TextAlign.center,
                                 ),
                                 SizedBox(
@@ -889,7 +889,7 @@ class _OtherBusinessTemplateSheetState
                                 Text(
                                   '다른 사업장에 등록된 템플릿이 없거나\n관리 중인 사업장이 이 사업장 하나뿐입니다.',
                                   style: ResponsiveHelper.smallStyle(context,
-                                      color: AppColors.grey400),
+                                      color: AppColors.textTertiary),
                                   textAlign: TextAlign.center,
                                 ),
                               ],

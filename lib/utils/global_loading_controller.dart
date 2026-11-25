@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'navigation_key.dart';
+import 'responsive_helper.dart';
+import 'text_layout.dart';
 import '../theme/app_colors.dart';
 
 /// CF 함수 호출 등 비동기 작업 중 전역 로딩 오버레이를 표시합니다.
@@ -65,17 +67,19 @@ class _GlobalLoadingOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // [DU642 · B03] 하드코딩 Colors.black/white → 테마 scrim/shadow 역할 · AppColors.surface(앱 테마에서 같은 값 · 알파 그대로).
+    final scheme = Theme.of(context).colorScheme;
     return Material(
-      color: Colors.black.withValues(alpha: 0.45),
+      color: scheme.scrim.withValues(alpha: 0.45),
       child: Center(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.surface,
             borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.15),
+                color: scheme.shadow.withValues(alpha: 0.15),
                 blurRadius: 20,
                 offset: const Offset(0, 8),
               ),
@@ -91,13 +95,11 @@ class _GlobalLoadingOverlay extends StatelessWidget {
                 strokeWidth: 3,
               ),
               const SizedBox(height: 16),
+              // [DU642 · B03 · BL148] 메시지 — 하드코딩 14/w500/grey700 → RH 본문 양식 · 보조 글 토큰 · 낱말 단위 줄바꿈 · 가운데(showLoading 과 같은 양식).
               Text(
-                message,
-                style: const TextStyle(
-                  color: AppColors.grey700,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                ),
+                TextLayout.keepWords(message),
+                textAlign: TextAlign.center,
+                style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary),
               ),
             ],
           ),

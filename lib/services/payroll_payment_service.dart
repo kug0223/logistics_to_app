@@ -623,7 +623,7 @@ class PayrollPaymentService {
       'periodStart': periodStart.toIso8601String(),
       'periodEnd': periodEnd.toIso8601String(),
     });
-    return result.data['requestId'] as String;
+    return result.data['settlementRequestId'] as String;
   }
 
   /// 내 중간정산 요청 목록 조회 (근로자용 CF 경유)

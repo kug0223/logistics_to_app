@@ -423,11 +423,11 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
           Tab(child: AppTabLabel(label: '작성',
               count: _writtenReviews.length, badgeColor: theme.primaryColor)),
           Tab(child: AppTabLabel(label: '받음',
-              count: _receivedReviews.length, badgeColor: AppColors.info)),
+              count: _receivedReviews.length, badgeColor: AppColors.brand)),
           Tab(child: AppTabLabel(
               label: '미작성',
               count: _pendingRequests.length,
-              badgeColor: AppColors.error,
+              badgeColor: AppColors.brand,
               urgent: _pendingIsUrgent)),
         ],
       ),

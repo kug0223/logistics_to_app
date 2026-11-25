@@ -550,7 +550,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
           else
           PopupMenuItem(
             value: 'delete',
-            child: Text('삭제', style: ResponsiveHelper.bodyStyle(context, color: AppColors.error)),
+            child: Text('삭제', style: ResponsiveHelper.bodyStyle(context, color: AppColors.errorDark)),
           ),
         ],
       ),

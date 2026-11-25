@@ -185,12 +185,12 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
             decoration: BoxDecoration(
-              color: theme.primaryColor.withValues(alpha: 0.1),
+              color: AppColors.grey100,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
               Icons.calendar_today,
-              color: theme.primaryColor,
+              color: AppColors.grey600,
               size: ResponsiveHelper.iconSize(context, 24),
             ),
           ),
@@ -247,13 +247,13 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            theme.primaryColor.withValues(alpha: 0.1),
-            theme.primaryColor.withValues(alpha: 0.05),
+            AppColors.grey100,
+            AppColors.grey100,
           ],
         ),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: theme.primaryColor.withValues(alpha: 0.3),
+          color: AppColors.borderLight,
         ),
       ),
       child: Row(
@@ -261,7 +261,7 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
         children: [
           Icon(
             Icons.check_circle,
-            color: theme.primaryColor,
+            color: AppColors.textSecondary,
             size: ResponsiveHelper.iconSize(context, 20),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -273,7 +273,7 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
               semanticsLabel: FormatHelper.formatDateLong(_selectedDate!),
               textAlign: TextAlign.center,
               style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: theme.primaryColor,
+                color: AppColors.textPrimary,
                 fontWeight: FontWeight.bold,
               ),
             ),

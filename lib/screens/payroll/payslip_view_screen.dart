@@ -113,11 +113,11 @@ class _PayslipViewScreenState extends State<PayslipViewScreen> {
   //   이 화면은 ALfit 메인 내비게이션 화면이 아니라 공식 문서를 열어보는 뷰어다.
   //   상단 전체 Blue Header + Home/Notification 버튼은 문서 집중을 방해한다.
   //   Brand Blue는 인쇄/공유 액션 accent으로만 사용한다.
-  static const _kViewerBg  = Color(0xFFF5F6F8); // 문서 주변 배경
-  static const _kBarBg     = Colors.white;       // AppBar 배경
-  static const _kBarDivider = Color(0xFFEEEEEE); // AppBar 하단 divider
-  static const _kBackIcon   = Color(0xFF212121); // 뒤로가기 아이콘 (dark neutral)
-  static const _kTitleColor = Color(0xFF212121); // 제목 텍스트
+  static const _kViewerBg  = AppColors.background; // 문서 주변 배경
+  static const _kBarBg     = AppColors.surface;       // AppBar 배경
+  static const _kBarDivider = AppColors.borderLight; // AppBar 하단 divider
+  static const _kBackIcon   = AppColors.textPrimary; // 뒤로가기 아이콘 (dark neutral)
+  static const _kTitleColor = AppColors.textPrimary; // 제목 텍스트
   static const _kActionColor = AppColors.brand;  // 인쇄/공유 아이콘 (#1565C0)
 
   @override
@@ -207,7 +207,7 @@ class _PayslipViewScreenState extends State<PayslipViewScreen> {
               message.replaceAll('Exception: ', ''),
               textAlign: TextAlign.center,
               style: ResponsiveHelper.smallStyle(context,
-                  color: AppColors.grey500),
+                  color: AppColors.textSecondary),
             ),
           ],
         ),

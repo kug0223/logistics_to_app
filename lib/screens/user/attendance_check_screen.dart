@@ -505,7 +505,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         message: PrivacyDisclosure.location.asMessage,
         confirmText: '계속',
         icon: Icons.my_location,
-        iconColor: AppColors.info,
+        // [DU628b · 판정207 §4] 위치 고지 머리 아이콘 = brand — 행동 '계속'(brand)과 같은 계열 · 같은 화면 '퇴근 확인' 창의 기본 머리색과 같다.
+        iconColor: AppColors.brand,
       );
       if (!agreed) return null;
     }
@@ -1030,15 +1031,17 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
           key: const ValueKey('checkin-contract-gate'),
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
           decoration: BoxDecoration(
-            color: AppColors.yellowWarnBg,
+            // [DU581b] 근로자 서명 필요(signable)일 때만 warningBg 면 · warningDark 아이콘/제목 · 설명 textSecondary(판정139 §4 545-R6) — 사업주 서명 대기 · 계약 없음 · 확인 실패 안내와 테두리는 그대로.
+            color: signable != null ? AppColors.warningBg : AppColors.yellowWarnBg,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: AppColors.yellowWarnBorder),
+            // [DU581c] 서명 필요 안내 테두리 = 중립선 grey200(판정171 §4 DU581b '후속 중립선 정렬 가능' · 감사171 하위 선택) — 그 밖 갈래 테두리는 그대로.
+            border: Border.all(color: signable != null ? AppColors.grey200 : AppColors.yellowWarnBorder),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.draw_outlined,
-                  color: AppColors.yellowWarnDark, size: 18),
+              Icon(Icons.draw_outlined,
+                  color: signable != null ? AppColors.warningDark : AppColors.yellowWarnDark, size: 18),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Expanded(
                 child: Column(
@@ -1047,7 +1050,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
                     Text(
                       title,
                       style: ResponsiveHelper.smallStyle(context).copyWith(
-                        color: AppColors.yellowWarnText,
+                        color: signable != null ? AppColors.warningDark : AppColors.yellowWarnText,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -1055,7 +1058,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
                     Text(
                       body,
                       style: ResponsiveHelper.smallStyle(context).copyWith(
-                        color: AppColors.yellowWarnText,
+                        color: signable != null ? AppColors.textSecondary : AppColors.yellowWarnText,
                       ),
                     ),
                   ],
@@ -1066,6 +1069,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         if (signable != null) ...[
+          // [DU581c] 이 안내가 보이는 동안 하단 서명 띠를 중립면으로 낮춘다(대표 주의 = 이 안내 · 판정171 §4 DU581b) — 크기 0 · 누르기 0.
+          const _SignNoticeHold(),
           OutlinedButton.icon(
             onPressed: () => Navigator.push(
               context,
@@ -1085,8 +1090,9 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
             icon: const Icon(Icons.description_outlined, size: 18),
             label: const Text('계약서 확인하고 동의하기'),
             style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.yellowWarnDark,
-              side: const BorderSide(color: AppColors.yellowWarnBorder),
+              // [DU581b] 계약서 확인하고 동의하기 = brand 글 · brand 외곽선(판정139 §4 545-R6 조작 brand · 이 단추는 서명 필요일 때만 있다).
+              foregroundColor: AppColors.brand,
+              side: const BorderSide(color: AppColors.brand),
               minimumSize: const Size(double.infinity, 44),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8)),
@@ -1288,7 +1294,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
           children: [
             Text(
               '내일 근무 · $dateLabel',
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark)
+              // [DU628b · 판정207 §4] '내일 근무 · 날짜' 머리 글 = 일반 강조 brand(같은 카드의 두 번째 파랑 infoDark 정리 · 흰 카드 위 5.58).
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.brand)
                   .copyWith(fontWeight: FontWeight.bold),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 6)),
@@ -1401,7 +1408,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
                       ? null
                       : () => _respondToReconfirm(work, 'confirmed'),
                   style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.infoDark,
+                    // [DU628b · 판정207 §4] '네, 출근합니다' = 대표 행동 brand 채움(흰 글 5.58 · 출근하기 · 퇴근하기와 같은 색).
+                    backgroundColor: AppColors.brand,
                     padding: EdgeInsets.symmetric(
                       vertical: ResponsiveHelper.spacing(context, 8),
                     ),
@@ -1461,14 +1469,16 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
 
   Widget _buildNoShowBanner(String status) {
     final isNoShow = status == AttendanceModel.statusNoShow;
+    // [DU596b · 판정139 §3 :44 PP-STATUS-PAIR · 판정177 §6 :60] 명시 결근 결과 = 노쇼와 같은 error 짝(면 errorBg · 선 errorLight · 아이콘/글 errorDark).
+    //   시간이 지난 미출근 배너(_buildShiftEndedBanner)는 warning 그대로 — 노쇼/결근 문구만 isNoShow 로 가른다.
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
       decoration: BoxDecoration(
-        color: isNoShow ? AppColors.errorBg : AppColors.warningBg,
+        color: AppColors.errorBg,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: isNoShow ? AppColors.errorLight : AppColors.warningLight,
+          color: AppColors.errorLight,
         ),
       ),
       child: Row(
@@ -1476,7 +1486,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         children: [
           Icon(
             Icons.block,
-            color: isNoShow ? AppColors.errorDark : AppColors.warningDark,
+            color: AppColors.errorDark,
             size: ResponsiveHelper.iconSize(context, 20),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -1484,7 +1494,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
             isNoShow ? '노쇼 처리됨' : '결근 처리됨',
             style: ResponsiveHelper.bodyStyle(context).copyWith(
               fontWeight: FontWeight.bold,
-              color: isNoShow ? AppColors.errorDark : AppColors.warningDark,
+              color: AppColors.errorDark,
             ),
           ),
         ],
@@ -1617,4 +1627,40 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       ),
     );
   }
+}
+
+// [DU581c] 근로자 서명 필요 출근 안내(_buildCheckInArea 의 signable 갈래)가 **보이는 화면에** 붙어 있는 동안 PendingContractBar.bodyNoticeCount 를 하나 올린다.
+//   보임 = TickerMode 켜짐 — 불투명 화면에 덮인 route 와 셸의 숨은 탭(user_root_screen 이 탭마다 TickerMode 로 감싼다)에서는 내린다.
+//   ContractSignScreen.openCount 와 같은 꼴 — 빌드 · 폐기 도중 띠를 다시 그리게 하지 않도록 한 박자 뒤(microtask)에 바꾼다.
+//   표시만: 글 · 분기 · 진입 · 쓰기 0. 셸 띠(UserRootScreen) · 화면 띠(셸 밖) 둘 다 같은 값을 본다(판정171 §4 DU581b).
+class _SignNoticeHold extends StatefulWidget {
+  const _SignNoticeHold();
+
+  @override
+  State<_SignNoticeHold> createState() => _SignNoticeHoldState();
+}
+
+class _SignNoticeHoldState extends State<_SignNoticeHold> {
+  bool _held = false;
+
+  void _hold(bool on) {
+    if (on == _held) return;
+    _held = on;
+    Future.microtask(() => PendingContractBar.bodyNoticeCount.value += on ? 1 : -1);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _hold(TickerMode.of(context));
+  }
+
+  @override
+  void dispose() {
+    _hold(false);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }

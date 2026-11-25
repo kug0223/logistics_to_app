@@ -3,6 +3,7 @@
 // 기기 결함(Pixel 5, 11-02): callableGetAllUsers 가 Timestamp 를 {_seconds,_nanoseconds} 맵으로 보내
 //   제재 중인 근로자가 상세에서 '정상 · 이용 제한 없음'으로 보였고 해제 버튼이 없었다.
 // 쓰기(callableResetPenalty)는 한 번도 호출하지 않는다 — 확인 창은 '취소'로 닫는다.
+// ignore_for_file: depend_on_referenced_packages
 import 'support/visible_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -123,7 +124,7 @@ Future<void> _openDetail(
 }
 
 Future<void> _openResetDialog(WidgetTester tester) async {
-  final btn = findVisibleTextContaining('제재 해제 (노쇼 카운트 초기화)');
+  final btn = findVisibleTextContaining('노쇼 제한 해제 (기록 초기화)');
   // 작은 화면에서는 시트 아래쪽 버튼이 아직 지어지지 않았다 — 시트를 끌어 올린다.
   final sheetScroll = find
       .descendant(of: find.byType(BottomSheet), matching: find.byType(Scrollable))
@@ -148,14 +149,14 @@ void main() {
     expect(findVisibleTextContaining('노쇼 자동 제한 ${_kst(_auto)}까지'),
         findsOneWidget);
     expect(findVisibleTextContaining('이용 제한 없음'), findsNothing);
-    expect(findVisibleTextContaining('제재 해제 (노쇼 카운트 초기화)'), findsOneWidget);
+    expect(findVisibleTextContaining('노쇼 제한 해제 (기록 초기화)'), findsOneWidget);
   });
 
   testWidgets('[RR57-b] 자동만 — 확인 창: 대상·풀리는 것·바로 이용 가능, 취소=쓰기 0',
       (tester) async {
     await _openDetail(tester, row: _worker());
     await _openResetDialog(tester);
-    expect(findVisibleText('노쇼 제재 해제'), findsOneWidget);
+    expect(findVisibleText('노쇼 제한 해제'), findsOneWidget);
     expect(findVisibleTextContaining('박근로'), findsWidgets);
     expect(findVisibleTextContaining('@worker01'), findsWidgets);
     expect(
@@ -163,14 +164,14 @@ void main() {
         findsOneWidget);
     expect(findVisibleTextContaining('노쇼 기록 초기화: 3회(최근 90일 3회) → 0회'),
         findsOneWidget);
-    expect(findVisibleTextContaining('해제 뒤 바로 로그인·지원할 수 있습니다.'),
+    expect(findVisibleTextContaining('해제 뒤 바로 로그인·지원할 수 있어요.'),
         findsOneWidget);
     expect(findVisibleTextContaining('남는 것'), findsNothing);
 
     await tester.tap(findVisibleText('취소'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(findVisibleText('노쇼 제재 해제'), findsNothing);
+    expect(findVisibleText('노쇼 제한 해제'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -182,9 +183,9 @@ void main() {
     await _openResetDialog(tester);
     expect(
         findVisibleTextContaining(
-            '남는 것: 관리자 수동 제한(${_kst(_manual)}까지) — 이 버튼으로는 풀리지 않습니다'),
+            '남는 것: 관리자 수동 제한(${_kst(_manual)}까지) — 이 버튼으로는 풀리지 않아요'),
         findsOneWidget);
-    expect(findVisibleTextContaining('해제 뒤에도 로그인·지원이 제한됩니다.'),
+    expect(findVisibleTextContaining('해제 뒤에도 로그인·지원이 제한돼요.'),
         findsOneWidget);
     expect(findVisibleTextContaining('바로 로그인'), findsNothing);
     expect(findVisibleTextContaining('즉시 이용 가능'), findsNothing);
@@ -204,14 +205,14 @@ void main() {
       expect(tester.takeException(), isNull);
       await _openResetDialog(tester);
       expect(tester.takeException(), isNull);
-      expect(findVisibleTextContaining('이 버튼으로는 풀리지 않습니다'), findsOneWidget);
+      expect(findVisibleTextContaining('이 버튼으로는 풀리지 않아요'), findsOneWidget);
     });
   }
 
   testWidgets('[RR57-f] 블랙리스트 해제 창 — 남은 이용 제한이 있으면 로그인 가능이라고 하지 않는다',
       (tester) async {
     await _openDetail(tester, row: {..._worker(), 'isBlacklisted': true, 'blacklistReason': '시험'});
-    final btn = findVisibleText('블랙리스트 해제');
+    final btn = findVisibleText('계정 이용 차단 해제');
     await tester.dragUntilVisible(btn.last,
         find.descendant(of: find.byType(BottomSheet), matching: find.byType(Scrollable)).first,
         const Offset(0, -200));
@@ -220,9 +221,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(
         findVisibleTextContaining(
-            '이용 제한(${_kst(_auto)}까지)은 이 버튼으로 풀리지 않아, 해제 뒤에도 로그인·지원이 제한됩니다.'),
+            '이용 제한(${_kst(_auto)}까지)은 이 버튼으로 풀리지 않아 해제 뒤에도 로그인·지원이 제한돼요.'),
         findsOneWidget);
-    expect(findVisibleTextContaining('해제 후 로그인이 가능해집니다'), findsNothing);
+    expect(findVisibleTextContaining('다시 로그인할 수 있어요'), findsNothing);
     await tester.tap(findVisibleText('취소'));
     await tester.pump(const Duration(milliseconds: 400));
   });
@@ -241,20 +242,20 @@ void main() {
     test('영구(출처 permanent·없음) = 사유 단정 없음', () {
       for (final s in ['permanent', null]) {
         final m = AuthService.restrictionLoginMessage(DateTime.utc(9999, 1, 1), s);
-        expect(m, contains('영구 제한'));
+        expect(m, contains('이용 제한(기한 없음)'));
         expect(m, isNot(contains('노쇼')));
       }
     });
     test('[.58] 서버 영구 경계(KST 9999-01-01 = UTC 9998-12-31 15:00)는 출처가 없어도 영구', () {
       final m = AuthService.restrictionLoginMessage(DateTime.utc(9998, 12, 31, 15), null);
-      expect(m, contains('영구 제한'));
+      expect(m, contains('이용 제한(기한 없음)'));
       expect(m, isNot(contains('9998')));
     });
     // [.58] 출처 없음(원장 이전)도 노쇼라고 단정하지 않는다 — 서버 지원 거절 후보와 같은 원칙.
     test('legacy·unverified·출처 없음 = 사유 단정 없음', () {
       for (final s in ['legacy', 'unverified', null]) {
         final m = AuthService.restrictionLoginMessage(until, s);
-        expect(m, startsWith('${_kst(until)}(한국시간)까지 이용이 제한됩니다.'));
+        expect(m, startsWith('${_kst(until)}(한국시간)까지 이용이 제한돼요.'));
         expect(m, isNot(contains('노쇼')));
       }
     });

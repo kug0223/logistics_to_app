@@ -1,3 +1,4 @@
+// [CONSENT-R4d 후보 사본] 원본 A/test/transfer_export_truth_contract_test.dart sha256=18faa04f81618878f8901378397ee3b81a93ea026c22449a72533a71c79e064b · 바뀐 자리는 R/work/consent-copy-preparation-r4d-20261119/manifests/test_change_map.tsv
 // [PII-DOC-R0.1] 지원 단계 개인정보 최소화 + 이체 자료의 truth
 //
 // 이 파일이 고정하는 것:
@@ -548,7 +549,8 @@ void main() {
   group('R1.2 회귀 — 기존 계약이 그대로다', () {
     test('26 지원 검토 purpose와 계좌 DTO 게이트가 유지된다', () {
       expect(cf, contains('APPLICANT_REVIEW_ALLOWED'));
-      expect(_flat(cf), contains('canSeeDocs ? { bank: {'));
+      // [CONSENT-R4] 계좌 DTO 게이트 = canSeeDocs AND consentBlock == null(강화).
+      expect(_flat(cf), contains('canSeeDocs && consentBlock == null ? { bank: {'));
     });
 
     test('27 급여 확정의 계좌 검토 가드가 유지된다', () {

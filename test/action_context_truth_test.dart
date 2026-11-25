@@ -5,6 +5,7 @@
 //  P33-X2 TO 한도의 단위·적용 시점 (F6)
 //
 // 쓰기는 한 번도 실행하지 않는다 — 확인창을 여는 데까지만 간다.
+// ignore_for_file: depend_on_referenced_packages
 import 'support/visible_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -367,13 +368,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(findVisibleText('@minsu01 · 지원자'), findsOneWidget);
 
-    await tester.tap(findVisibleText('블랙리스트 해제'));
+    await tester.tap(findVisibleText('계정 이용 차단 해제'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
     // 상세 시트는 닫혔다 — 그런데도 대상이 그대로 보인다.
     expect(findVisibleTextContaining('@minsu01'), findsOneWidget);
-    expect(findVisibleTextContaining('이 계정의 블랙리스트를 해제하시겠습니까?'),
+    expect(findVisibleTextContaining('이 계정의 이용 차단을 해제할까요?'),
         findsOneWidget);
     // 쓰기는 하지 않는다 — 확인창을 여는 데까지만.
   });
@@ -387,7 +388,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(findVisibleText('@minsu77 · 지원자'), findsOneWidget);
 
-    await tester.tap(findVisibleText('블랙리스트 등록'));
+    await tester.tap(findVisibleText('계정 이용 차단하기'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
@@ -403,7 +404,7 @@ void main() {
     await tester.tap(findVisibleText('김민수').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(findVisibleText('블랙리스트 해제'));
+    await tester.tap(findVisibleText('계정 이용 차단 해제'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 

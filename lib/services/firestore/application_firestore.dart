@@ -1250,7 +1250,7 @@ extension ApplicationFirestore on FirestoreService {
   /// - 성공 시: staffingReleasedAt 마커 설정 + TO/slot/wdCount 감소 (단일 TX).
   /// - 실패 시 false 반환 + Toast.
   Future<bool> releaseNoshowSeat({required String applicationId}) async {
-    GlobalLoadingController.show('대체 인력 충원 처리 중...');
+    GlobalLoadingController.show('빈자리 다시 모집 처리 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableReleaseNoshowSeat',
@@ -1270,11 +1270,11 @@ extension ApplicationFirestore on FirestoreService {
         return true;
       }
       debugPrint('❌ [R5.1] releaseNoshowSeat CF 실패: code=${e.code}, message=${e.message}');
-      ToastHelper.showError(e.message ?? '대체 충원 처리에 실패했습니다');
+      ToastHelper.showError(e.message ?? '빈자리 다시 모집 처리 결과를 확인하지 못했어요');
       return false;
     } catch (e) {
       debugPrint('❌ [R5.1] releaseNoshowSeat 실패: $e');
-      ToastHelper.showError('대체 충원 처리에 실패했습니다');
+      ToastHelper.showError('빈자리 다시 모집 처리 결과를 확인하지 못했어요');
       return false;
     } finally {
       GlobalLoadingController.hide();

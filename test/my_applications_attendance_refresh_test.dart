@@ -1,3 +1,4 @@
+// ignore_for_file: depend_on_referenced_packages
 // [ATTENDANCE-SCREEN-REFRESH] 내 지원 — 새로고침·재시도가 근태를 다시 읽는가.
 //   DEVICE 10/20 12:38: 출근 뒤 당겨서 새로고침해도 '오늘 근무 예정이에요', 근태 월 조회 0(월 키 영구 보관).
 //   CODE: 실패 표시(_attendanceFailed)도 true 가 되면 되돌아오지 않았다.
@@ -145,40 +146,6 @@ TOModel _to() => TOModel(
       statusUpdatedAt: _dayOffset(-10),
     );
 
-/// 읽은 (year, month) 를 기록해 **몇 번 나갔는지** 셀 수 있게 한다.
-class _ReadLog {
-  final List<String> months = [];
-}
-
-MyApplicationsReads _reads(
-  List<ApplicationModel> apps, {
-  List<AttendanceModel> attendances = const [],
-  Object? attendanceError,
-  _ReadLog? log,
-}) =>
-    MyApplicationsReads(
-      myApplicationsPaged: (
-              {required String uid,
-              required int pageSize,
-              String? startAfterDocId}) async =>
-          {'items': apps, 'lastDocId': null, 'hasMore': false},
-      toOrFailure: (id) async => (to: _to(), failed: false),
-      contractsByWorker: (uid) async => const <EmploymentContractModel>[],
-      autoExpirePending: (uid) async {},
-      monthlyAttendances: (
-          {required String userId, required int year, required int month}) async {
-        log?.months.add('$year-$month');
-        if (attendanceError != null) throw attendanceError;
-        return attendances
-            .where((a) =>
-                a.workDate.toUtc().year == year &&
-                a.workDate.toUtc().month == month)
-            .toList();
-      },
-      reviewById: (key) async => null,
-      taxStatus: () async => const TaxIdentityStatus.unknown(),
-    );
-
 Future<void> _pump(WidgetTester t, MyApplicationsReads reads) async {
   t.view.physicalSize = const Size(390, 2400);
   t.view.devicePixelRatio = 1.0;
@@ -205,21 +172,14 @@ Future<void> _pump(WidgetTester t, MyApplicationsReads reads) async {
 }
 
 List<String> _texts(WidgetTester t) => t
-    .widgetList<Text>(find.byType(Text))
+    .widgetList<Text>(find.byWidgetPredicate((w) => w is Text))
     .map((w) => w.data ?? '')
     .where((s) => s.isNotEmpty)
     .toList();
 
 bool _has(WidgetTester t, String s) => _texts(t).contains(s);
 
-const _kReview = '리뷰를 작성해 주세요';
-const _kDone = '근무 완료';
-const _kNoShow = '노쇼 처리됐어요';
-const _kAbsent = '결근 처리됐어요';
-const _kNoRecord = '근무 기록이 없어요';
-const _kNoCheckIn = '출근 기록이 없어요';
 const _kWorking = '근무 중이에요';
-const _kEnded = '근무가 끝났어요 · 근태 확인 중';
 const _kUnknown = '근무 상태를 확인하지 못했어요';
 const _kTodayPlanned = '오늘 근무 예정이에요';
 

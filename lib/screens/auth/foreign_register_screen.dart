@@ -2148,10 +2148,10 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
-              color: Colors.orange.shade100,
+              color: AppColors.warningBg,
               borderRadius: BorderRadius.circular(4),
             ),
-            child: Text('직접 입력 필요', style: TextStyle(fontSize: 12, color: Colors.orange.shade800)),
+            child: Text('직접 입력 필요', style: TextStyle(fontSize: 12, color: AppColors.warningDark)),
           ),
         ],
         if (isOptional) ...[
@@ -2170,14 +2170,14 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
           isDense: true,
           contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           filled: true,
-          fillColor: failed ? Colors.orange.shade50 : AppColors.grey50,
+          fillColor: failed ? AppColors.warningBg : AppColors.grey50,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: failed ? Colors.orange.shade300 : AppColors.grey300),
+            borderSide: BorderSide(color: failed ? AppColors.warningLight : AppColors.grey300),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: failed ? Colors.orange.shade300 : AppColors.grey200),
+            borderSide: BorderSide(color: failed ? AppColors.warningLight : AppColors.grey200),
           ),
         ),
       ),

@@ -368,7 +368,7 @@ void main() {
     });
 
     test('PSP-Q 이력 진입을 지우지 않았다', () {
-      expect(card, contains('인력 현황'));
+      expect(card, contains('지원·근무 현황'));
     });
 
     test('PSP-R 원래 필요 인원 데이터는 그대로다', () {

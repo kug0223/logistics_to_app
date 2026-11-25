@@ -3,6 +3,7 @@
 // 서버(callableReleaseManualRestriction, A 묶음 00001-yex)는 base(수동·영구·기존) 성분만 지운다 —
 //   노쇼 자동 제한·원장·블랙리스트는 그대로. 낡은 화면은 expectedBaseUntilMs 로 거절된다.
 // 쓰기는 한 번도 호출하지 않는다 — 사유 창은 '취소'로 닫는다.
+// ignore_for_file: depend_on_referenced_packages
 import 'support/visible_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -163,16 +164,16 @@ void main() {
       (tester) async {
     await _openDetail(tester, row: _row(base: _manual, baseSource: 'manual'));
     expect(findVisibleTextContaining('관리자 수동 제한 ${_kst(_manual)}까지'), findsOneWidget);
-    expect(findVisibleText('제재 해제 (노쇼 카운트 초기화)'), findsNothing);
+    expect(findVisibleText('노쇼 제한 해제 (기록 초기화)'), findsNothing);
     await _tapAction(tester, '관리자 수동 제한 해제');
 
     expect(findVisibleText('관리자 수동 제한 해제'), findsOneWidget); // 창 제목
     expect(findVisibleTextContaining('박근로 · @worker01 · 지원자'), findsOneWidget);
     expect(findVisibleTextContaining('해제할 것: 관리자 수동 제한(${_kst(_manual)}까지)'),
         findsOneWidget);
-    expect(findVisibleTextContaining('해제 뒤 바로 로그인·지원할 수 있습니다.'), findsOneWidget);
+    expect(findVisibleTextContaining('해제 뒤 바로 로그인·지원할 수 있어요.'), findsOneWidget);
     expect(findVisibleTextContaining('남는 것'), findsNothing);
-    expect(findVisibleTextContaining('사유는 감사 기록에만 남고 이 사용자에게는 보이지 않습니다.'),
+    expect(findVisibleTextContaining('사유는 감사 기록에만 남고 이 사용자에게는 보이지 않아요.'),
         findsOneWidget);
     await _cancel(tester);
     expect(findVisibleTextContaining('해제할 것'), findsNothing);
@@ -183,34 +184,34 @@ void main() {
     await _openDetail(tester,
         row: _row(auto: _auto, base: _manual, baseSource: 'manual', blacklisted: true, noShow: 3));
     // 두 행동이 따로 있다.
-    expect(findVisibleText('제재 해제 (노쇼 카운트 초기화)'), findsOneWidget);
+    expect(findVisibleText('노쇼 제한 해제 (기록 초기화)'), findsOneWidget);
     await _tapAction(tester, '관리자 수동 제한 해제');
     expect(
         findVisibleTextContaining(
-            '남는 것: 노쇼 자동 제한(${_kst(_auto)}까지) — 이 버튼으로는 풀리지 않습니다'),
+            '남는 것: 노쇼 자동 제한(${_kst(_auto)}까지) — 이 버튼으로는 풀리지 않아요'),
         findsOneWidget);
-    expect(findVisibleTextContaining('남는 것: 블랙리스트 — 이 버튼으로는 풀리지 않습니다'),
+    expect(findVisibleTextContaining('남는 것: 계정 이용 차단 — 이 버튼으로는 풀리지 않아요'),
         findsOneWidget);
-    expect(findVisibleTextContaining('해제 뒤에도 로그인·지원이 제한됩니다.'), findsOneWidget);
+    expect(findVisibleTextContaining('해제 뒤에도 로그인·지원이 제한돼요.'), findsOneWidget);
     expect(findVisibleTextContaining('바로 로그인'), findsNothing);
     await _cancel(tester);
   });
 
   testWidgets('[RM58-b2] 노쇼 리셋 창도 남는 블랙리스트를 말한다', (tester) async {
     await _openDetail(tester, row: _row(auto: _auto, blacklisted: true, noShow: 3));
-    await _tapAction(tester, '제재 해제 (노쇼 카운트 초기화)');
-    expect(findVisibleTextContaining('남는 것: 블랙리스트 — 이 버튼으로는 풀리지 않습니다'),
+    await _tapAction(tester, '노쇼 제한 해제 (기록 초기화)');
+    expect(findVisibleTextContaining('남는 것: 계정 이용 차단 — 이 버튼으로는 풀리지 않아요'),
         findsOneWidget);
-    expect(findVisibleTextContaining('해제 뒤에도 로그인·지원이 제한됩니다.'), findsOneWidget);
+    expect(findVisibleTextContaining('해제 뒤에도 로그인·지원이 제한돼요.'), findsOneWidget);
     await _cancel(tester);
   });
 
   testWidgets('[RM58-c] 영구 — 이름이 영구 제한 해제, 만료처럼 말하지 않는다', (tester) async {
     await _openDetail(tester, row: _row(base: _perm, baseSource: 'permanent'));
-    expect(findVisibleText('영구 제한'), findsOneWidget); // 상태 카드 설명(시각 없음)
-    expect(findVisibleTextContaining('영구 제한 영구'), findsNothing);
-    await _tapAction(tester, '영구 제한 해제');
-    expect(findVisibleTextContaining('해제할 것: 영구 제한(영구)'), findsOneWidget);
+    expect(findVisibleText('이용 제한(기한 없음)'), findsOneWidget); // 상태 카드 설명(시각 없음)
+    expect(findVisibleTextContaining('이용 제한(기한 없음) 기한 없음'), findsNothing);
+    await _tapAction(tester, '이용 제한(기한 없음) 해제');
+    expect(findVisibleTextContaining('해제할 것: 이용 제한(기한 없음)\n'), findsOneWidget);
     await _cancel(tester);
   });
 
@@ -224,7 +225,7 @@ void main() {
     expect(findVisibleText('제한 상태 확인 불가'), findsOneWidget);
     expect(findVisibleText('정상'), findsNothing);
     expect(findVisibleTextContaining('제한 해제'), findsNothing);
-    expect(findVisibleText('제재 해제 (노쇼 카운트 초기화)'), findsNothing);
+    expect(findVisibleText('노쇼 제한 해제 (기록 초기화)'), findsNothing);
   });
 
   testWidgets('[RM58-e] 성분 기록 없는 원장 이전 문서 — 서버와 같이 기존 제한으로 해석',
@@ -253,7 +254,7 @@ void main() {
           textScale: c.$2);
       await _tapAction(tester, '관리자 수동 제한 해제');
       expect(tester.takeException(), isNull);
-      expect(findVisibleTextContaining('해제 뒤에도 로그인·지원이 제한됩니다.'), findsOneWidget);
+      expect(findVisibleTextContaining('해제 뒤에도 로그인·지원이 제한돼요.'), findsOneWidget);
       await _cancel(tester);
     });
   }

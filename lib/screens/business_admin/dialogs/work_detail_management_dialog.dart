@@ -102,7 +102,7 @@ class WorkDetailManagementDialog {
             title: '업무별 마감 관리',
             subtitle: toItem.to.title,
             icon: Icons.task_alt,
-            headerColor: AppColors.purple,
+            headerColor: AppColors.brand,
             maxHeightRatio: 0.85,
             fillHeight: true,
             content: SingleChildScrollView(
@@ -335,18 +335,22 @@ class WorkDetailManagementDialog {
                             color: AppColors.grey500,
                           ),
                           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                          Text(
-                            '${work.startTime} ~ ${work.endTime}',
-                            style: ResponsiveHelper.smallStyle(
-                              context,
-                              color: AppColors.grey600,
+                          // [F267-OVF-WORK-DETAIL] 큰 글자(B 2.0)에서 우측 넘침 → 남은 폭 안에서 줄바꿈(말줄임 0)
+                          Flexible(
+                            child: Text(
+                              '${work.startTime} ~ ${work.endTime}',
+                              style: ResponsiveHelper.smallStyle(
+                                context,
+                                color: AppColors.grey600,
+                              ),
                             ),
                           ),
                         ],
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                      // 인원
-                      Row(
+                      // 인원 — [F267-OVF-WORK-DETAIL] 큰 글자(B 2.0)에서 '(대기 N명)' 이 우측 25px 넘침 → Wrap 으로 다음 줄
+                      Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           Icon(
                             Icons.people,
@@ -402,14 +406,14 @@ class WorkDetailManagementDialog {
       case _WDS.active:
         return StyledDialogButton.primary(
           text: '${selectedWorks.length}개 마감',
-          backgroundColor: AppColors.warning,
+          backgroundColor: AppColors.brand,
           onPressed: () => _handleBulkClose(selectedWorks),
         );
 
       case _WDS.closed:
         return StyledDialogButton.primary(
           text: '${selectedWorks.length}개 재오픈',
-          backgroundColor: AppColors.success,
+          backgroundColor: AppColors.brand,
           onPressed: () => _handleBulkReopen(selectedWorks),
         );
 
@@ -429,7 +433,7 @@ class WorkDetailManagementDialog {
       case _WDS.full:
         return StyledDialogButton.primary(
           text: '${selectedWorks.length}개 인원충족',
-          backgroundColor: AppColors.success,
+          backgroundColor: AppColors.brand,
           onPressed: () {
             DialogHelper.showInfo(
               context,
@@ -463,7 +467,7 @@ class WorkDetailManagementDialog {
       case _WDS.emergency:
         return StyledDialogButton.primary(
           text: '긴급모집 종료',
-          backgroundColor: AppColors.warning,
+          backgroundColor: AppColors.brand,
           onPressed: () => _handleBulkStopEmergency(selectedWorks),
         );
 

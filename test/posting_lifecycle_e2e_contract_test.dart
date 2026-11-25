@@ -251,14 +251,14 @@ void main() {
       final s = _flat(_codeOf(_src('lib/screens/user/my_applications_screen.dart')));
       // [MW-52] 낱말 단위 줄바꿈(TextLayout.keepWords)은 글자를 바꾸지 않는다 — 서버 문장 그대로 전달은 같다.
       expect(
-          s.contains("ToastHelper.showError(e.message ?? '수락 중 오류가 발생했습니다.');") ||
-              s.contains("ToastHelper.showError(TextLayout.keepWords(e.message ?? '수락 중 오류가 발생했습니다.'));"),
+          s.contains("ToastHelper.showError(e.message ?? '수락하지 못했어요.');") ||
+              s.contains("ToastHelper.showError(TextLayout.keepWords(e.message ?? '수락하지 못했어요.'));"),
           true, reason: 'generic 문구로 덮으면 왜 안 되는지 알 수 없다');
     });
 
     test('공고 상세', () {
       final s = _flat(_codeOf(_src('lib/screens/common/job_posting_screen.dart')));
-      expect(s.contains("ToastHelper.showError(e.message ?? '수락 중 오류가 발생했습니다.');"), true);
+      expect(s.contains("ToastHelper.showError(e.message ?? '수락하지 못했어요.');"), true);
     });
 
     test('수락은 언제나 서버를 거친다', () {

@@ -55,8 +55,9 @@ String _superSrc(String name) =>
 void main() {
   // ══════════════════════════════════════════════════════════
   group('P16-M 관리 탭 shell — 역할 경계를 지킨다', () {
-    late String s;
-    setUpAll(() => s = _src(_settings));
+    // [DU593b] 같은 원문을 group 선언 때 한 번 읽는다(세 시험 단언 · 읽기 식 그대로) — group 안 준비 단계의 숨은 시험 이름에 group 이름이 붙어
+    //   회귀 실행기(lkit · compare_r10)가 받지 못하므로 M-3 갱신을 회귀로 돌리려고 형식만 바꿨다.
+    final s = _src(_settings);
 
     test('M-1 관리자 역할만 flat admin shell 을 쓴다', () {
       expect(s.contains('final useAdminShell ='), isTrue);
@@ -104,9 +105,12 @@ void main() {
         expect(s.contains(hex), isFalse, reason: hex);
       }
       expect(s.contains('color: AppColors.warningDark'), isTrue);
-      expect(s.contains('bgColor: AppColors.warningBg'), isTrue);
-      expect(s.contains('color: AppColors.successBg'), isTrue);
-      expect(s.contains('AppColors.successLight'), isTrue);
+      // [DU593b · 판정128 :60 · 판정130 :76] 반복 행 면 · 정상 '탈퇴 가능' 면은 넓은 상태색 대신 중립 토큰으로 낮췄다 —
+      //   면 AppColors.surface · 선 AppColors.border · 상태는 작은 아이콘 색(warningDark · successDark)만. 하드코딩 hex 0 은 위 그대로.
+      expect(s.contains('color: AppColors.surface,'), isTrue);
+      expect(s.contains('border: Border.all(color: AppColors.border),'), isTrue);
+      // [DU593c · J3] 정상 안내 작은 체크 = successDark(흰 면 비문자 대비 ≥3 · 같은 화면 아이콘과 같은 토큰).
+      expect(s.contains('size: 18, color: AppColors.successDark),'), isTrue);
     });
   });
 
@@ -304,14 +308,25 @@ void main() {
       expect(d.contains('isError: '), isFalse);
     });
 
-    test('D-3 중립 회색은 상태·행동 의미가 없어 그대로 둔다', () {
+    test('D-3 머리(뒤로·제목·아래 선)는 상태·행동 의미 없는 중립 토큰을 쓴다', () {
       // 개수 자체는 결함 근거가 아니다 — 판정을 기록으로 남긴다.
       // [DU1 구현89 S038] 0xFF9CA3AF 는 '미등록' 상태 글자·chevron 에 쓰였고 실제 PNG 대비 2.54:1(작은 글자 4.5 미달)이라
       //   AppColors.textSecondary 로 바꿨다 — 읽어야 하는 상태 글자는 '의미 없는 중립 회색' 판정 대상이 아니었다.
-      //   나머지 세 값의 판정(유지)은 그대로 검사한다.
+      // [v1g apply3 3c] 머리의 세 hex(0xFF1F2937 · 0xFF111827 · 0xFFE5E7EB)는 같은 중립 의미의 토큰으로 바뀌었다.
+      //   파일 아무 데나 contains 가 아니라 각 자리(뒤로 아이콘 · 제목 글 · 아래 0.5 선)의 바로 뒤 창에서 정확한 토큰을 확인한다.
       for (final hex in const ['0xFF1F2937', '0xFF111827', '0xFFE5E7EB']) {
-        expect(d.contains(hex), isTrue, reason: '$hex 는 이번 판정에서 유지');
+        expect(d.contains(hex), isFalse, reason: '$hex 는 중립 토큰으로 바뀌었다(apply3 3c)');
       }
+      String win(String anchor, int n) {
+        final i = d.indexOf(anchor);
+        expect(i, greaterThan(-1), reason: '$anchor 자리 있음');
+        expect(d.indexOf(anchor, i + 1), -1, reason: '$anchor 자리 1 곳');
+        return d.substring(i, (i + n).clamp(0, d.length));
+      }
+      expect(win('Icons.arrow_back_ios_new_rounded', 90).contains('color: AppColors.textPrimary)'), isTrue, reason: '뒤로 아이콘 = textPrimary');
+      expect(win("'내 서류 관리',", 80).contains('color: AppColors.textPrimary,'), isTrue, reason: '제목 글 = textPrimary');
+      expect(win('preferredSize: const Size.fromHeight(0.5),', 110).contains('Container(height: 0.5, color: AppColors.borderLight)'), isTrue,
+          reason: '아래 0.5 선 = borderLight');
       expect(d.contains('0xFF9CA3AF'), isFalse, reason: '미등록 상태 글자는 읽기 대비 토큰으로 바뀌었다(구현89)');
     });
   });

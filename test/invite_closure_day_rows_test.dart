@@ -11,7 +11,9 @@ import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
+// ignore: depend_on_referenced_packages
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
+// ignore: depend_on_referenced_packages
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 
@@ -181,7 +183,7 @@ void main() {
     expect(s, contains('초대 중 · 공개 모집 마감 (1명)'));
     expect(s, contains('초대 중 · 서류 확인 가능'));
     expect(s.contains('모집 종료 (1명)'), isFalse);
-    expect(s.contains('인력 초대 ('), isFalse, reason: '새 초대·공개 모집 CTA 를 열지 않는다');
+    expect(s.contains('근무 초대 ('), isFalse, reason: '새 초대·공개 모집 CTA 를 열지 않는다');
   });
 
   testWidgets('DR-02 초대 효력 종료(수동 마감 등) → 모집 종료', (t) async {
@@ -215,21 +217,21 @@ void main() {
   testWidgets('DR-07 지원자 0명인 자동 마감 단위 — 서버가 inviteOpen 이면 그룹이 서고 `인력 초대` 가 뜬다', (t) async {
     await _open(t, _row(closed: true, inviteEnded: false, inviteOpen: true), invites: const []);
     final s = _texts(t);
-    expect(s, contains('공개 지원은 마감됐어요 · 근무 시작 전까지 인력 초대는 가능해요'));
-    expect(s, contains('인력 초대 (2명 부족)'));
+    expect(s, contains('공개 지원은 마감됐어요 · 근무 시작 전까지 근무 초대는 가능해요'));
+    expect(s, contains('근무 초대 (2명 부족)'));
   });
 
   testWidgets('DR-08 수동 마감(inviteEnded) → 초대 행동 없음', (t) async {
     await _open(t, _row(closed: true, inviteEnded: true, inviteOpen: false));
     final s = _texts(t);
-    expect(s.contains('인력 초대 ('), isFalse);
+    expect(s.contains('근무 초대 ('), isFalse);
     expect(s.contains('공개 지원은 마감됐어요'), isFalse);
   });
 
   testWidgets('DR-09 근무 시작 경과·구버전 서버(inviteOpen false) → 마감 단위로 새 그룹·CTA 없음', (t) async {
     await _open(t, _row(closed: true, inviteEnded: false), invites: const []);
     final s = _texts(t);
-    expect(s.contains('인력 초대 ('), isFalse);
+    expect(s.contains('근무 초대 ('), isFalse);
     expect(s.contains('홀서빙'), isFalse, reason: '채울 수 없는 마감 단위로 그룹을 세우지 않는다');
   });
 

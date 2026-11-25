@@ -741,7 +741,7 @@ void main() {
   group('scope guard', () {
     test('permission gate 변경 없음', () {
       final card = _codeOf(_src(_cardPath));
-      expect(card.contains("label: '인력 초대',"), isTrue,
+      expect(card.contains("label: '근무 초대',"), isTrue,
           reason: '카드 메뉴 초대 진입점이 사라졌다 — 이번 Phase 범위 아님');
       expect(
         'onTap: () => _showInviteWorkerDialog(context),'

@@ -5,6 +5,7 @@ import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
 import '../../services/tax_identity_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/format_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/text_layout.dart';
@@ -69,10 +70,10 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
     return u != null && u.isRestricted;
   }
 
-  int? get _restrictedRemainDays {
+  /// [DU571] 제한이 끝나는 시각(KST · 로그인 안내와 같은 표기) — 기한 없는 제한이면 null(남은 일수 올림 'N일' 대신 · 판정156 §5).
+  String? get _restrictedUntilLabel {
     final until = _user?.restrictedUntil;
-    if (until == null) return null; // 영구 제한 — 일수 없음
-    return until.difference(DateTime.now()).inDays + 1;
+    return until == null ? null : restrictionEndLabel(until);
   }
 
   bool get _allPrerequisitesMet {
@@ -120,7 +121,8 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                       icon: Icons.block,
                       color: AppColors.errorDark, // [DU251] 글자용 진한 토큰(옅은 바탕 위 ≥4.5)
                       background: AppColors.errorBg,
-                      message: '이용이 영구 제한된 계정입니다. 지원이 불가합니다.',
+                      // [DU582b · 판정156 Q4] isBlacklisted = '계정 이용 차단'(운영자 S052 · 공고 상세와 같은 말) · 자동 만료 없음 = '해제 전까지'('영구' 0).
+                      message: '계정 이용 차단 상태라 해제 전까지 지원할 수 없어요.',
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                   ] else if (_isRestricted) ...[
@@ -128,9 +130,10 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                       icon: Icons.timer_off_outlined,
                       color: AppColors.warningDark, // [DU251]
                       background: AppColors.warningBg,
-                      message: _restrictedRemainDays != null
-                          ? '무단 결근 패널티로 $_restrictedRemainDays일간 지원이 제한됩니다.'
-                          : '무단 결근 패널티로 이용이 제한되어 있습니다.',
+                      // [DU582c · 판정171 §4 · 판정166 결정②] 이미 확정된 근무도 출근 체크가 막힌다(callableCheckIn 이 restrictedUntil 을 먼저 거절)는 효과를 이 배너(읽는 안내)에 둔다 — 끝 시각 = 같은 restrictedUntil 표기 · 공고 상세 비활성 버튼 글에는 넣지 않는다 · 근무 취소 같은 효과는 말하지 않는다.
+                      message: _restrictedUntilLabel != null
+                          ? '$_restrictedUntilLabel까지 이용이 제한돼 지원할 수 없어요.\n이미 확정된 근무도 제한이 끝날 때까지 출근 체크를 할 수 없어요.'
+                          : '이용 제한(기한 없음) 상태라 지원할 수 없어요.\n이미 확정된 근무도 해제 전까지 출근 체크를 할 수 없어요.',
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                   ],
@@ -139,27 +142,33 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                   Container(
                     width: double.infinity,
                     padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                    // [DU615b F199-AP-HEADER-TOKENS] 안내 상자 = 앱 토큰 직접(판정199 §3 :54): 면 brandSurface · 선 brand α0.2(이전 선 강도 그대로) · 아이콘 brand.
+                    //   이전 theme.primaryColor α0.08 면과 불투명 brandSurface 는 같은 색이 아니다(동등 주장 0). 전역 theme/AppColors 변경 0 · 크기/반경/여백 그대로.
                     decoration: BoxDecoration(
-                      color: theme.primaryColor.withValues(alpha: 0.08),
+                      color: AppColors.brandSurface,
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: theme.primaryColor.withValues(alpha: 0.2)),
+                      border: Border.all(color: AppColors.brand.withValues(alpha: 0.2)),
                     ),
                     child: Row(
                       children: [
                         Icon(Icons.assignment_outlined,
-                            color: theme.primaryColor,
+                            color: AppColors.brand,
                             size: ResponsiveHelper.iconSize(context, 28)),
                         SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('지원 전 준비사항',
+                              // [DU615b F199-AP-PREP-WORDS] 큰 글자에서 낱말 단위로만 줄을 바꾼다(B '준비사 / 항' 음절 끊김 · 판정199 §3 :54). 읽기 도구에는 원문.
+                              //   문구 · 가변 개수 · 글 크기/배율 · 폭 · 배치 그대로(같은 파일 배너 · 준비 항목 카드와 같은 opt-in 짝).
+                              Text(TextLayout.keepWords('지원 전 준비사항'),
+                                  semanticsLabel: '지원 전 준비사항',
                                   style: ResponsiveHelper.subtitleStyle(context)
                                       .copyWith(fontWeight: FontWeight.bold)),
                               SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                               Text(
-                                '아래 $_totalItemCount가지를 모두 완료해야 지원할 수 있습니다.',
+                                TextLayout.keepWords('아래 $_totalItemCount가지를 모두 완료해야 지원할 수 있습니다.'),
+                                semanticsLabel: '아래 $_totalItemCount가지를 모두 완료해야 지원할 수 있습니다.',
                                 style: ResponsiveHelper.smallStyle(context,
                                     color: AppColors.textSecondary), // [DU251]
                               ),
@@ -312,7 +321,9 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
           SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           Expanded(
             child: Text(
-              message,
+              // [DU571] 큰 글자에서 낱말 단위로만 줄을 바꾼다(B 음절 끊김 0). 읽기 도구에는 원문.
+              TextLayout.keepWords(message),
+              semanticsLabel: message,
               style: ResponsiveHelper.smallStyle(context).copyWith(
                 color: color,
                 fontWeight: FontWeight.w600,
@@ -502,3 +513,11 @@ bool meetsApplyPrerequisites(UserModel user,
   }
   return true;
 }
+
+/// [DU571] 이용 제한이 끝나는 시각 — 로그인 안내(AuthService.restrictionLoginMessage)와 같은 KST 날짜·시각 표기.
+///   기한 없는 제한(서버 경계 KST 9999-01-01 00:00 이후 · all_users_screen 의 _isPermanentInstant 와 같은 경계)이면 null —
+///   날짜로 말하지 않는다. 제한 판정(UserModel)은 그대로 절대 시각 비교다 — 이 함수는 표기만.
+String? restrictionEndLabel(DateTime until) =>
+    until.millisecondsSinceEpoch >= DateTime.utc(9998, 12, 31, 15).millisecondsSinceEpoch
+        ? null
+        : FormatHelper.formatKstDateTimeKorean(until);

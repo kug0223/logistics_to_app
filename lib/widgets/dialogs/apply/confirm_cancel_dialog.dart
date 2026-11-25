@@ -284,8 +284,8 @@ class ConfirmCancelDialog extends StatelessWidget {
             icon: Icons.check_circle,
             iconColor: AppColors.successDark, // [DU265] success(2.78)
             bg: AppColors.successBg,
-            title: '근무 1일 전까지',
-            description: '패널티 없음',
+            title: '근무 시작까지 5분 넘게 남았을 때 취소',
+            description: '노쇼 기록 없음',
             isHighlighted: !hasPenalty,
           ),
           
@@ -298,7 +298,7 @@ class ConfirmCancelDialog extends StatelessWidget {
             iconColor: AppColors.errorDark, // [DU265] error
             bg: AppColors.errorBg,
             title: '근무 시작 5분 전부터 취소',
-            description: '노쇼 1회 기록\n→ 3회 누적 시 1일 지원 제한',
+            description: '노쇼 1회 기록\n→ 최근 90일 3회 이상이면 24시간 이용 제한\n이용 제한 중에는 이미 확정된 근무도 출근 체크를 할 수 없어요.',
             isHighlighted: hasPenalty,
           ),
         ],
@@ -371,8 +371,8 @@ class ConfirmCancelDialog extends StatelessWidget {
 
   Widget _buildCurrentStatus(BuildContext context, ThemeData theme) {
     final statusText = hasPenalty
-        ? '현재 시점: 패널티 적용 구간'
-        : '현재 시점: 패널티 없이 취소 가능';
+        ? '지금 취소하면 노쇼로 기록돼요'
+        : '지금 취소하면 노쇼로 기록되지 않아요';
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
@@ -416,8 +416,8 @@ class ConfirmCancelDialog extends StatelessWidget {
             
             // 경고 메시지
             Text(
-              TextLayout.keepWords('이 취소는 패널티가 적용됩니다.'), // [DU265]
-              semanticsLabel: '이 취소는 패널티가 적용됩니다.',
+              TextLayout.keepWords('최근 90일 노쇼 기록에 1회가 더해져요.'), // [DU265]
+              semanticsLabel: '최근 90일 노쇼 기록에 1회가 더해져요.',
               style: ResponsiveHelper.bodyStyle(
                 context,
                 color: AppColors.errorDark,
@@ -438,44 +438,50 @@ class ConfirmCancelDialog extends StatelessWidget {
                   ResponsiveHelper.spacing(context, 8),
                 ),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
+              // [DU574] Row + Flexible(라벨) → Wrap(라벨 · 값 묶음). B(320@2.0)에서 값이 먼저 폭을 차지해 라벨이 '근 / 90 / 일):'로 쪼개졌다.
+              //   좁으면 라벨 줄 · 값 줄로 나뉘고 라벨은 낱말 단위로만 줄을 바꾼다(keepWords · 읽는 이름 = 원문). 글 · 색 · 크기 · 굵기 · 값 Row 그대로.
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  Flexible(
-                    child: Text(
-                      '노쇼 (최근 90일): ',
-                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
-                    ),
-                  ),
                   Text(
-                    '$currentNoShowCount회',
-                    style: ResponsiveHelper.smallStyle(context).copyWith(
-                      fontWeight: FontWeight.bold,
-                      // [DU265] error(3.68) → errorDark, 그 밖 본문색
-                      color: currentNoShowCount >= 2 ? AppColors.errorDark : AppColors.textPrimary,
-                    ),
+                    TextLayout.keepWords('노쇼 (최근 90일): '),
+                    semanticsLabel: '노쇼 (최근 90일): ',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
                   ),
-                  Text(
-                    ' / 3회',
-                    style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary), // [DU265] grey500(2.68)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '$currentNoShowCount회',
+                        style: ResponsiveHelper.smallStyle(context).copyWith(
+                          fontWeight: FontWeight.bold,
+                          // [DU265] error(3.68) → errorDark, 그 밖 본문색
+                          color: currentNoShowCount >= 2 ? AppColors.errorDark : AppColors.textPrimary,
+                        ),
+                      ),
+                      Text(
+                        ' / 3회',
+                        style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary), // [DU265] grey500(2.68)
+                      ),
+                      if (currentNoShowCount >= 2) ...[
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                        Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: ResponsiveHelper.spacing(context, 6),
+                            vertical: ResponsiveHelper.spacing(context, 2),
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.errorDark, // [DU265] 흰 글자 3.68 → 약 6.6
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            '주의',
+                            style: ResponsiveHelper.tinyStyle(context, color: Colors.white),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                  if (currentNoShowCount >= 2) ...[
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: ResponsiveHelper.spacing(context, 6),
-                        vertical: ResponsiveHelper.spacing(context, 2),
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.errorDark, // [DU265] 흰 글자 3.68 → 약 6.6
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        '주의',
-                        style: ResponsiveHelper.tinyStyle(context, color: Colors.white),
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),
@@ -484,8 +490,8 @@ class ConfirmCancelDialog extends StatelessWidget {
             if (currentNoShowCount == 2) ...[
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               Text(
-                TextLayout.keepWords('⚠️ 이 취소 후 90일 기준 3회가 되어 1일간 지원이 제한됩니다!'), // [DU265]
-                semanticsLabel: '⚠️ 이 취소 후 90일 기준 3회가 되어 1일간 지원이 제한됩니다!',
+                TextLayout.keepWords('⚠️ 이번 취소로 3회가 되면 취소한 때부터 24시간 동안 이용이 제한돼요.'), // [DU265]
+                semanticsLabel: '⚠️ 이번 취소로 3회가 되면 취소한 때부터 24시간 동안 이용이 제한돼요.',
                 style: ResponsiveHelper.smallStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
                   color: AppColors.errorDark, // [DU265] error(3.68)

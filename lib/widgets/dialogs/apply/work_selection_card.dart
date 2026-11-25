@@ -85,10 +85,11 @@ class WorkSelectionCard extends StatelessWidget {
     this.applyGuidance,
   });
 
+  // [DU577b] 일급 · 시급 금액 글과 급여 아이콘 = brand(판정170 §5 · BL-04) — 그 밖 유형은 보조색 그대로 · 정산 방식 배지는 이 getter 를 쓰지 않는다.
   Color get _wageColor => workDetail.wageType == 'daily'
-      ? AppColors.warningDark
+      ? AppColors.brand
       : workDetail.wageType == 'hourly'
-          ? AppColors.successDark
+          ? AppColors.brand
           : AppColors.textSecondary;
 
   String get _netWorkTime => FormatHelper.calcNetWorkTime(
@@ -427,13 +428,14 @@ class WorkSelectionCard extends StatelessWidget {
                 vertical: 1,
               ),
               decoration: BoxDecoration(
-                color: _wageColor.withValues(alpha: 0.12),
+                // [DU577b] 정산 방식 배지 = 중립 grey100 면 · textSecondary 글(판정170 §5) — 급여 금액 색과 분리.
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
                 workDetail.payScheduleTypeLabel,
                 style: ResponsiveHelper.smallStyle(context,
-                    color: _wageColor, fontWeight: FontWeight.w600),
+                    color: AppColors.textSecondary, fontWeight: FontWeight.w600),
               ),
             ),
               // 입금일 상세 (주급/월급 등 날짜·시간 있을 때만)

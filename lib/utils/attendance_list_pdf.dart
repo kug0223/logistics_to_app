@@ -853,7 +853,7 @@ class _PreviewBottomSheetWithBytesState
             padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
             child: Row(
               children: [
-                const Icon(Icons.description_outlined, color: AppColors.info),
+                const Icon(Icons.description_outlined, color: AppColors.textSecondary),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -872,7 +872,7 @@ class _PreviewBottomSheetWithBytesState
                       : const Icon(Icons.table_chart_outlined, size: 18),
                   label: const Text('엑셀'),
                   style: TextButton.styleFrom(
-                    foregroundColor: AppColors.success,
+                    foregroundColor: AppColors.brand,
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                   ),
                 ),
@@ -1035,7 +1035,7 @@ class _SortChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final color = selected ? theme.primaryColor : AppColors.grey500;
+    final color = selected ? theme.primaryColor : AppColors.textSecondary;
     return Material(
       color: selected
           ? theme.primaryColor.withValues(alpha: 0.1)

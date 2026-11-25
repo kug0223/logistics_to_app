@@ -344,16 +344,16 @@ class _CareerSummary extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 9, vertical: 4),
                         decoration: BoxDecoration(
-                          color: AppColors.infoBg,
+                          color: AppColors.grey100,
                           borderRadius: BorderRadius.circular(7),
                           border: Border.all(
                               color:
-                                  AppColors.infoDark.withValues(alpha: 0.25)),
+                                  AppColors.borderLight),
                         ),
                         child: Text(t,
                             style: const TextStyle(
                               fontSize: 12,
-                              color: AppColors.infoDark,
+                              color: AppColors.textPrimary,
                               fontWeight: FontWeight.w600,
                             )),
                       ))

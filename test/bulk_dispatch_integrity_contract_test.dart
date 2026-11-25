@@ -369,7 +369,7 @@ void main() {
 
     test('BDI-33 좌석·부족 수는 그대로 "명"이다', () {
       // 자리 수는 사람 수가 맞다 — 단위 통일이라는 이름으로 쓸어내지 않는다.
-      expect(_flat(work), contains(r"'인력 초대 ($shortage명 부족)'"));
+      expect(_flat(work), contains(r"'근무 초대 ($shortage명 부족)'"));
     });
   });
 

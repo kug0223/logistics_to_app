@@ -149,4 +149,32 @@ class AppTextStyles {
         fontWeight: FontWeight.w500,
         color: AppColors.textTertiary,
       );
+
+  // ══════════════════════════════════════════════════════════
+  // [DU555 · PP-TYPOGRAPHY-20261120 T1-a] 글자 역할 — 결정 §5 역할표 확정값 · 감사147 §6(R-1–R-7).
+  //   이 9 역할의 소비처는 관리자 홈(business_admin_home_screen.dart) 하나다. 위 기존 메서드 · 값 · 시그니처 변경 0.
+  //   글꼴 NotoSansKR 명시(§6.1) · 색 기본 = 판단 글 textPrimary · 보조 textSecondary · 조작 brand(R-6) ·
+  //   maxLines/ellipsis 없음(컨테이너 책임) · OS 글자 배율은 호출부가 그대로 받는다(축소 · clamp 없음).
+  // ══════════════════════════════════════════════════════════
+
+  static const String _roleFont = 'NotoSansKR';
+
+  /// Home 대표 문구 26/1.25/700/−0.2
+  static TextStyle roleHomeHero() => const TextStyle(fontFamily: _roleFont, fontSize: 26, height: 1.25, fontWeight: FontWeight.w700, letterSpacing: -0.2, color: AppColors.textPrimary);
+  /// 섹션 · 표준 AppBar · 모달 제목 20/1.3/700/0
+  static TextStyle roleSection() => const TextStyle(fontFamily: _roleFont, fontSize: 20, height: 1.3, fontWeight: FontWeight.w700, letterSpacing: 0, color: AppColors.textPrimary);
+  /// 카드 · 목록 제목 17/1.3/700/0
+  static TextStyle roleCardTitle() => const TextStyle(fontFamily: _roleFont, fontSize: 17, height: 1.3, fontWeight: FontWeight.w700, letterSpacing: 0, color: AppColors.textPrimary);
+  /// 카드 안 강조 시간 20/1.3/700/0
+  static TextStyle roleCardTime() => const TextStyle(fontFamily: _roleFont, fontSize: 20, height: 1.3, fontWeight: FontWeight.w700, letterSpacing: 0, color: AppColors.textPrimary);
+  /// 목록 급여 · 수량 18/1.3/700/0
+  static TextStyle roleListValue() => const TextStyle(fontFamily: _roleFont, fontSize: 18, height: 1.3, fontWeight: FontWeight.w700, letterSpacing: 0, color: AppColors.textPrimary);
+  /// 본문 · 판단 정보 16/1.5/400/0(기본 textPrimary)
+  static TextStyle roleBody({Color color = AppColors.textPrimary}) => TextStyle(fontFamily: _roleFont, fontSize: 16, height: 1.5, fontWeight: FontWeight.w400, letterSpacing: 0, color: color);
+  /// 보조 · 도움말 14/1.45/400/0(기본 textSecondary)
+  static TextStyle roleSupport({Color color = AppColors.textSecondary}) => TextStyle(fontFamily: _roleFont, fontSize: 14, height: 1.45, fontWeight: FontWeight.w400, letterSpacing: 0, color: color);
+  /// 버튼 · 탭 · 조작 라벨 16/1.3/700/0(기본 brand)
+  static TextStyle roleAction({Color color = AppColors.brand}) => TextStyle(fontFamily: _roleFont, fontSize: 16, height: 1.3, fontWeight: FontWeight.w700, letterSpacing: 0, color: color);
+  /// 상태 배지 · 짧은 카운트 14/1.3/700/0
+  static TextStyle roleBadge({required Color color}) => TextStyle(fontFamily: _roleFont, fontSize: 14, height: 1.3, fontWeight: FontWeight.w700, letterSpacing: 0, color: color);
 }

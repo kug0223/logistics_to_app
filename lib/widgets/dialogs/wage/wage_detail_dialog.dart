@@ -222,7 +222,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                     decoration: BoxDecoration(
-                      color: isOver ? AppColors.errorBg : AppColors.infoBg,
+                      color: isOver ? AppColors.errorBg : AppColors.grey100,
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Row(
@@ -230,7 +230,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                         Icon(
                           isOver ? Icons.warning_amber_outlined : Icons.info_outline,
                           size: ResponsiveHelper.iconSize(ctx2, 13),
-                          color: isOver ? AppColors.errorDark : AppColors.infoDark,
+                          color: isOver ? AppColors.errorDark : AppColors.grey600,
                         ),
                         SizedBox(width: ResponsiveHelper.spacing(ctx2, 6)),
                         Expanded(
@@ -239,7 +239,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                                 ? '4시간 미만 근무 — 법정 휴게 없음'
                                 : '체류 ${FormatHelper.formatCompactHours(_wage.actualMinutes)} 기준  법정 최대: $legalMax분',
                             style: ResponsiveHelper.tinyStyle(ctx2,
-                                color: isOver ? AppColors.errorDark : AppColors.infoDark),
+                                color: isOver ? AppColors.errorDark : AppColors.grey700),
                           ),
                         ),
                       ],
@@ -250,7 +250,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                   if (scheduledBreak > 0) ...[
                     Text(
                       '기본 무급휴게  (계약 $scheduledBreak분 기준)',
-                      style: ResponsiveHelper.smallStyle(ctx2, color: AppColors.grey500),
+                      style: ResponsiveHelper.smallStyle(ctx2, color: AppColors.textSecondary),
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(ctx2, 8)),
                     Wrap(
@@ -268,7 +268,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                   ],
                   // ── 추가 무급휴게 (석식·야식 등) ──
                   Text('추가 무급휴게  (석식·야식 등)',
-                      style: ResponsiveHelper.smallStyle(ctx2, color: AppColors.grey500)),
+                      style: ResponsiveHelper.smallStyle(ctx2, color: AppColors.textSecondary)),
                   SizedBox(height: ResponsiveHelper.spacing(ctx2, 8)),
                   Wrap(
                     spacing: ResponsiveHelper.spacing(ctx2, 8),
@@ -316,7 +316,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                         _applyBreakComponents(selApplied, selAdditional);
                       },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.info,
+                        backgroundColor: AppColors.brand,
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),
                         padding: EdgeInsets.symmetric(
@@ -341,9 +341,9 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
-        color: isSelected ? AppColors.info : AppColors.grey100,
+        color: isSelected ? AppColors.brand : AppColors.grey100,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: isSelected ? AppColors.info : AppColors.grey200),
+        border: Border.all(color: isSelected ? AppColors.brand : AppColors.grey200),
       ),
       child: Text(
         isNone ? '없음' : '$minutes분',
@@ -684,7 +684,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
               FocusManager.instance.primaryFocus?.unfocus();
               Navigator.pop(context);
             },
-            icon: Icon(Icons.close, color: AppColors.grey500,
+            icon: Icon(Icons.close, color: AppColors.textSecondary,
                 size: ResponsiveHelper.iconSize(context, 20)),
             padding: EdgeInsets.zero,
             // [DU1 후속41 B2-W] 실측 IconButton 외곽 40×40(compact) — 공통 기준 터치 48×48. 아이콘 크기는 그대로
@@ -719,7 +719,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         Flexible(
           child: Text(
             parts.join(' · '),
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary),
             overflow: TextOverflow.ellipsis,
           ),
         ),
@@ -767,10 +767,10 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
           _buildTimeInfoRow(
             context,
             label: '계약시간',
-            labelColor: AppColors.grey500,
+            labelColor: AppColors.textSecondary,
             child: Text(
               '${widget.effStart ?? widget.app.startTime}  ~  ${widget.effEnd ?? widget.app.endTime}',
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 7)),
@@ -812,7 +812,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             _buildTimeInfoRow(
               context,
               label: '무급휴게',
-              labelColor: AppColors.grey500,
+              labelColor: AppColors.textSecondary,
               child: Row(
                 children: [
                   Expanded(
@@ -836,7 +836,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                               padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 2)),
                               child: Text(
                                 '추가 ${_formatKoreanHours(_wage.effectiveAdditionalBreak)}',
-                                style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+                                style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary),
                               ),
                             ),
                         ] else ...[
@@ -864,7 +864,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                         child: Center(
                           child: Icon(Icons.edit_outlined,
                               size: ResponsiveHelper.iconSize(context, 12),
-                              color: isBreakExceeded ? AppColors.errorDark : AppColors.grey400),
+                              color: isBreakExceeded ? AppColors.errorDark : AppColors.textTertiary),
                         ),
                       ),
                     ),
@@ -938,7 +938,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     Color? labelColor,
   }) {
     final resolvedLabelColor = labelColor ??
-        (isHighlight ? AppColors.grey700 : AppColors.grey400);
+        (isHighlight ? AppColors.grey700 : AppColors.textTertiary);
     final labelText = Text(
       TextLayout.keepWords(label),
       style: ResponsiveHelper.tinyStyle(
@@ -1020,7 +1020,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                 ),
                 child: Text(
                   '통상시급 ${FormatHelper.formatWage(_supplementWage)}',
-                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary),
                 ),
               ),
           ],
@@ -1081,7 +1081,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     child: Row(
                       children: [
                         Text('· 계약시간 초과 · 1배',
-                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
+                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary)),
                         const Spacer(),
                         Text(FormatHelper.formatCompactHours(_wage.extraWork1xMinutes),
                             style: ResponsiveHelper.tinyStyle(context, color: AppColors.warningDark)
@@ -1099,7 +1099,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     child: Row(
                       children: [
                         Text('· 8시간 초과 · 1.5배',
-                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
+                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary)),
                         const Spacer(),
                         Text(FormatHelper.formatCompactHours(_wage.extraWork15xMinutes),
                             style: ResponsiveHelper.tinyStyle(context, color: AppColors.warningDark)
@@ -1174,7 +1174,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     child: LayoutBuilder(builder: (context, constraints) {
                       final icon = Icon(Icons.remove_circle_outline,
                           size: ResponsiveHelper.iconSize(context, 13),
-                          color: AppColors.grey500);
+                          color: AppColors.textSecondary);
                       // [DU1-B2] Text+Spacer 는 320dp·1.3 / 392dp·2.0 에서 넘쳤다(Spacer 는 flex 가 아니다) — 라벨이 줄바꿈, 금액은 고정
                       final label = Expanded(
                         child: Text(
@@ -1195,7 +1195,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                         _isDeductionExpanded
                             ? Icons.keyboard_arrow_up
                             : Icons.keyboard_arrow_down,
-                        color: AppColors.grey400,
+                        color: AppColors.textTertiary,
                         size: ResponsiveHelper.iconSize(context, 16),
                       );
                       final narrow = constraints.maxWidth / MediaQuery.textScalerOf(context).scale(1) < 260;
@@ -1276,7 +1276,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             vertical: ResponsiveHelper.spacing(context, 16),
           ),
           decoration: BoxDecoration(
-            color: AppColors.infoBg,
+            color: AppColors.brandSurface,
             borderRadius: BorderRadius.circular(12),
           ),
           // [DU1-B2] Row+Spacer 는 320dp·1.3 / 392dp·2.0 에서 금액(26sp)이 12~67px 넘쳤다 — 양 끝 Wrap, 금액은 줄이지 않고 다음 줄로
@@ -1321,7 +1321,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     final labelRow = [
       SizedBox(width: ResponsiveHelper.spacing(context, 4)),
       Icon(icon,
-          size: ResponsiveHelper.iconSize(context, 12), color: AppColors.grey400),
+          size: ResponsiveHelper.iconSize(context, 12), color: AppColors.textTertiary),
       SizedBox(width: ResponsiveHelper.spacing(context, 8)),
       Expanded(
         child: Text(
@@ -1488,7 +1488,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
-                        borderSide: BorderSide(color: AppColors.infoDark),
+                        borderSide: BorderSide(color: AppColors.brand),
                       ),
                       contentPadding: ResponsiveHelper.symmetricPadding(
                           context, horizontal: 12, vertical: 12),
@@ -1526,7 +1526,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
-                        borderSide: BorderSide(color: AppColors.errorDark),
+                        borderSide: BorderSide(color: AppColors.brand),
                       ),
                       contentPadding: ResponsiveHelper.symmetricPadding(
                           context, horizontal: 12, vertical: 12),
@@ -1589,7 +1589,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         return _buildTwoButtons(context, theme,
             cancelLabel: '취소',
             confirmLabel: '급여 확정',
-            confirmColor: AppColors.warning,
+            confirmColor: AppColors.brand,
             confirmIcon: Icons.check,
             onConfirm: () => _onAction('confirm'));
       case WageDialogMode.calculated:
@@ -1603,7 +1603,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         return _buildTwoButtons(context, theme,
             cancelLabel: '취소',
             confirmLabel: '저장',
-            confirmColor: AppColors.info,
+            confirmColor: AppColors.brand,
             confirmIcon: Icons.save,
             onConfirm: () => _onAction('update'));
       case WageDialogMode.confirmed:
@@ -1617,8 +1617,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                 icon: const Icon(Icons.receipt_long_outlined),
                 label: const Text('임금명세서 보기'),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.infoDark,
-                  side: const BorderSide(color: AppColors.info),
+                  foregroundColor: AppColors.brand,
+                  side: const BorderSide(color: AppColors.brand),
                   padding: EdgeInsets.symmetric(
                       vertical: ResponsiveHelper.spacing(context, 12)),
                   shape: RoundedRectangleBorder(

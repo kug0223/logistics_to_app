@@ -70,10 +70,26 @@ Future<void> _settle(WidgetTester t, [int n = 8]) async {
   }
 }
 
+/// [date1 · F268-SAT-CLOCK/F269-C1-ROW-CLOCK] 자정 가드 — 로컬 또는 KST 자정까지 [margin] 보다 적게 남았으면 자정을 넘길 때까지 실제로 기다린다.
+///   setUp(실시간 영역)에서 부른다. 그 뒤 잡은 '오늘'은 이 시험이 끝날 때까지(< margin) 화면의 DateTime.now() 와 같은 날이다.
+Future<void> _midnightGuard(Duration margin) async {
+  Duration left(DateTime n) => DateTime(n.year, n.month, n.day + 1).difference(n);
+  final local = DateTime.now();
+  final k = local.toUtc().add(const Duration(hours: 9));
+  final kst = DateTime(k.year, k.month, k.day, k.hour, k.minute, k.second, k.millisecond);
+  final wait = [left(local), left(kst)].where((d) => d < margin).fold<Duration>(Duration.zero, (a, b) => b > a ? b : a);
+  if (wait > Duration.zero) {
+    // ignore: avoid_print
+    print('[date1] 자정 가드 — ${wait.inSeconds + 1}초 기다림(로컬 $local)');
+    await Future<void>.delayed(wait + const Duration(seconds: 1));
+  }
+}
+
 void main() {
   final calls = <String, int>{};
   const base = 'dev.flutter.pigeon.cloud_firestore_platform_interface.FirebaseFirestoreHostApi';
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() => _midnightGuard(const Duration(seconds: 180)));
   setUpAll(() async {
     FirebasePlatform.instance = _FakeCore();
     await Firebase.initializeApp();
@@ -186,10 +202,16 @@ void main() {
 
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
-      final start = today.add(Duration(days: c.off));
+      // [date1 · F269-C1-ROW-CLOCK] 같은 달 안 미래 3일(off=10 은 두 자리) — 이번 달에 안 들어가면 다음 달(달력 '다음 달' 단추)에서 같은 조건으로.
+      //   옛: 이번 달에 안 들어가면 전제 expect 실패(READABILITY 2 건 · 월말 실행 때마다).
+      var start = today.add(Duration(days: c.off));
+      if (start.month != today.month || start.add(const Duration(days: 2)).month != today.month) {
+        start = DateTime(today.year, today.month + 1, c.off == 10 ? 10 : 1);
+      }
+      final nextMonth = start.month != today.month;
       final end = start.add(const Duration(days: 2));
       out('${c.id} 실행 시각=$now tz=${now.timeZoneName}(${now.timeZoneOffset}) 선택=${start.toIso8601String().substring(0, 10)}~${end.toIso8601String().substring(0, 10)}');
-      expect(start.month == today.month && end.month == today.month, isTrue, reason: '같은 달 안 미래 3일(실행일 기준) — 다른 달이면 셀 조건 재설계');
+      expect(start.isAfter(today) && start.month == end.month, isTrue, reason: '같은 달 안 미래 3일(실행일 기준 · 이번 달에 없으면 다음 달 $nextMonth)');
       if (c.off == 10) {
         expect(start.day >= 10 && end.day >= 10, isTrue, reason: '두 자리 날짜 d,d+1,d+2(감사52 §5)');
       }
@@ -276,6 +298,16 @@ void main() {
               of: selector,
               matching: find.ancestor(of: find.text('${d.day}'), matching: find.byWidgetPredicate((w) => w is GestureDetector && w.onTap != null))).first;
       Finder dayText(DateTime d) => listMode() ? listRowText(d).first : find.descendant(of: selector, matching: find.text('${d.day}')).first;
+      if (nextMonth) {
+        // [date1] 다음 달로 — 달력 머리 '다음 달' 단추(chevron_right) 1 개를 실제로 누른다
+        final nextBtn = find.descendant(of: selector, matching: find.byIcon(Icons.chevron_right));
+        expect(nextBtn, findsOneWidget, reason: '다음 달 단추 1');
+        await t.ensureVisible(nextBtn);
+        await _settle(t, 2);
+        await t.tap(nextBtn);
+        await _settle(t, 6);
+        out('${c.id} 다음 달로 이동 → ${start.year}-${start.month}');
+      }
       await t.scrollUntilVisible(dayCell(end), 120, scrollable: body, maxScrolls: 80);
       await t.ensureVisible(dayCell(start)); // 시작일 조작 영역 전체를 본문 안으로(가림 없는 탭)
       await _settle(t, 4);
@@ -287,11 +319,37 @@ void main() {
       final aR = t.getRect(dayCell(start)), bR = t.getRect(dayCell(mid));
       final aT = t.getRect(dayText(start)), bT = t.getRect(dayText(mid));
       final areasOverlap = aR.overlaps(bR) && aR.intersect(bR).width > 0.5 && aR.intersect(bR).height > 0.5;
-      final textGap = listMode() ? (bT.top - aT.bottom) : (bT.left - aT.right);
+      // [date1 · F269-C1-ROW-CLOCK] 7열 달력은 일요일부터 새 줄 — 토→일이면 다음 날 글은 다음 줄. 같은 줄 = 수평 간격 · 다음 줄 = 수직 간격 + 글 겹침 0 을 따로 잰다.
+      //   옛: 무조건 bT.left - aT.right(토→일이면 -268.5 같은 값이 '간격'으로 읽혀 거짓 실패).
+      final sameRow = listMode() || (bT.center.dy - aT.center.dy).abs() < aT.height / 2;
+      if (!listMode()) {
+        expect(sameRow, start.weekday != DateTime.saturday, reason: 'F50-1 줄 판정 = 달력 규칙(토요일 다음 날만 다음 줄) · 시작 요일 ${start.weekday}');
+      }
+      final textsOverlap = aT.overlaps(bT) && aT.intersect(bT).width > 0.5 && aT.intersect(bT).height > 0.5;
+      if (textsOverlap) deferred.add('F50-1 인접 날짜 글 겹침');
+      final textGap = listMode() ? (bT.top - aT.bottom) : (sameRow ? (bT.left - aT.right) : (bT.top - aT.bottom));
       final minSide = [aR.width, aR.height, bR.width, bR.height].reduce((x, y) => x < y ? x : y);
       out('   F50-1 시작 글 $aT · 다음 날 글 $bT · 글 사이 간격=${textGap.toStringAsFixed(1)} · 조작 영역 겹침=$areasOverlap · 최소 변=${minSide.toStringAsFixed(1)}');
       if (areasOverlap) deferred.add('F50-1 인접 날짜 조작 영역 겹침');
       if (textGap < 4) deferred.add('F50-1 인접 날짜 글 간격 ${textGap.toStringAsFixed(1)} < 4(이어 보임)');
+      if (!listMode()) {
+        // [date1] 실행일과 무관한 고정 경계 — 보이는 달의 첫 토→일 쌍 · 말일(날짜 선택과 별개로 매 실행 같은 규칙을 잰다)
+        final last = DateTime(start.year, start.month + 1, 0);
+        var sat = DateTime(start.year, start.month, 1);
+        while (sat.weekday != DateTime.saturday) {
+          sat = sat.add(const Duration(days: 1));
+        }
+        final sun = sat.add(const Duration(days: 1));
+        final sR = t.getRect(dayText(sat)), uR = t.getRect(dayText(sun));
+        out('   경계 토(${sat.day}) $sR → 일(${sun.day}) $uR · 말일 ${last.day} ${t.getRect(dayText(last))}');
+        expect(uR.top >= sR.bottom - 0.5 && uR.left < sR.left, isTrue, reason: '토(${sat.day})→일(${sun.day}) = 다음 줄 맨 왼쪽 쪽');
+        expect(sR.overlaps(uR), isFalse, reason: '토→일 글 겹침 0');
+        expect(uR.top - sR.bottom, greaterThanOrEqualTo(4.0), reason: '토→일 줄 사이 수직 간격 4 이상');
+        final lR = t.getRect(dayText(last));
+        for (var dd = 1; dd < last.day; dd++) {
+          expect(t.getRect(dayText(DateTime(start.year, start.month, dd))).top <= lR.top + 0.5, isTrue, reason: '말일 ${last.day} 이 마지막 줄($dd일 이 그 아래 0)');
+        }
+      }
       // 7열 달력은 320·360 폭에서 칸 너비 48 이 불가능(7×48=336) — 목록 배치가 아닌 7열이면 48 미달을 **남는 제약**으로 기록하고 해소로 쓰지 않는다
       if (minSide < 48) {
         if (listMode()) {

@@ -74,7 +74,26 @@ class _P extends UserProvider {
   bool get permissionsLoaded => true;
 }
 
-final DateTime _today = FormatHelper.toKstDate(DateTime.now());
+// [date1 · F268-SAT-CLOCK] 옛: 파일 로드 때 한 번(`final _today = …now()`) → 자정을 넘기면 화면(my_schedule DateTime.now)과 하루 어긋남.
+//   지금: 시험마다 setUp 에서 자정 가드 뒤 잡는다.
+late DateTime _today;
+/// [date1] 다음 달 1일 — 12월이면 다음 해 1월(옛 '${_today.month + 1}월' 은 12월에 '13월' 로 깨짐).
+DateTime get _nextMonth => DateTime(_today.year, _today.month + 1, 1);
+
+/// [date1 · F268-SAT-CLOCK/F269-C1-ROW-CLOCK] 자정 가드 — 로컬 또는 KST 자정까지 [margin] 보다 적게 남았으면 자정을 넘길 때까지 실제로 기다린다.
+///   setUp(실시간 영역)에서 부른다. 그 뒤 잡은 '오늘'은 이 시험이 끝날 때까지(< margin) 화면의 DateTime.now() 와 같은 날이다.
+Future<void> _midnightGuard(Duration margin) async {
+  Duration left(DateTime n) => DateTime(n.year, n.month, n.day + 1).difference(n);
+  final local = DateTime.now();
+  final k = local.toUtc().add(const Duration(hours: 9));
+  final kst = DateTime(k.year, k.month, k.day, k.hour, k.minute, k.second, k.millisecond);
+  final wait = [left(local), left(kst)].where((d) => d < margin).fold<Duration>(Duration.zero, (a, b) => b > a ? b : a);
+  if (wait > Duration.zero) {
+    // ignore: avoid_print
+    print('[date1] 자정 가드 — ${wait.inSeconds + 1}초 기다림(로컬 $local)');
+    await Future<void>.delayed(wait + const Duration(seconds: 1));
+  }
+}
 DateTime _day(int o) => _today.add(Duration(days: o));
 
 const _biz = 'biz1';
@@ -263,6 +282,10 @@ Future<void> _pumpSchedule(
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() async {
+    await _midnightGuard(const Duration(seconds: 120));
+    _today = FormatHelper.toKstDate(DateTime.now());
+  });
   setUpAll(() async {
     FirebasePlatform.instance = _FakeCore();
     await Firebase.initializeApp();
@@ -598,7 +621,7 @@ void main() {
     }
 
     // 머리줄이 다음 달을 말한다.
-    expect(findVisibleTextContaining('${_today.month + 1}월'), findsWidgets,
+    expect(findVisibleTextContaining('${_nextMonth.month}월'), findsWidgets,
         reason: '명시 선택한 달이 화면에 남아야 한다');
   });
 
@@ -620,7 +643,7 @@ void main() {
     final card = find.byType(ScheduleCard);
     if (card.evaluate().isEmpty) {
       // 그 달 카드가 목록에 서지 않으면 그 사실을 남긴다 — 꾸미지 않는다.
-      expect(findVisibleTextContaining('${_today.month + 1}월'), findsWidgets);
+      expect(findVisibleTextContaining('${_nextMonth.month}월'), findsWidgets);
       return;
     }
     await tester.ensureVisible(card.first);
@@ -639,7 +662,7 @@ void main() {
     }
 
     // 닫은 뒤에도 **명시 선택한 달**이 현재 달로 덮이지 않는다.
-    expect(findVisibleTextContaining('${_today.month + 1}월'), findsWidgets,
+    expect(findVisibleTextContaining('${_nextMonth.month}월'), findsWidgets,
         reason: '닫으면 고른 달이 현재 달로 되돌아가면 안 된다');
   });
 

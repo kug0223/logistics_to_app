@@ -1589,7 +1589,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
           AmountText.total(
             _liveSummary.formattedTotalPayout,
-            style: ResponsiveHelper.titleStyle(context, color: AppColors.successDark),
+            style: ResponsiveHelper.titleStyle(context, color: AppColors.textPrimary),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           const Divider(height: 1, color: AppColors.grey200),

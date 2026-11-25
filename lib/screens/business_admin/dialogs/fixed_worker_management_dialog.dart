@@ -104,6 +104,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   ///   (늦게 온 옛 성공 · 옛 실패 · 옛 로딩 해제가 새 화면을 덮지 않게).
   int _loadGen = 0;
 
+  /// [DU543] 이전 명단을 보여 주는 채 같은 사업장 재조회가 실패했다 — 다시 불러오기 성공까지 상태변경 행동 · 일괄처리 · 상세 진입을 막는다(버튼 null + 기존 비활성 짝 · 시트 행 · 열린 창은 실행 진입과 첫 writer 직전 재확인).
+  bool get _showingStale => _loadFailed && _fixedWorkers.isNotEmpty;
+
+  /// [DU543] 첫 진입 대상(initialApplicationId · initialWorkerUid)의 자동 검색은 한 번만 — 수동 사업장 전환 · 다시 시도 뒤에는 다시 넣지 않는다.
+  bool _initialFocusDone = false;
+
   /// 원본 지원서 id → 그것을 연장해 만들어진 신규 지원서.
   ///
   /// 연장으로 만들어진 계약의 **실제** 기간을 읽기 위한 것이다 —
@@ -258,6 +264,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// [DU539] 로딩 표시 · 로그 · 토스트 · 로딩 해제를 이 창에서 직접 한다(순서는 이전 runWithLoading 과 같다 · 공용 mixin 은 그대로).
   ///   요청한 사업장과 조회 세대가 지금도 최신일 때만 실패 표시 · 토스트 · 로딩 해제를 한다 —
   ///   사업장을 바꾼 뒤 늦게 끝난 옛 조회는 로그만 남기고 화면을 건드리지 않는다.
+  ///   [DU543] 이 읽기의 실패 토스트는 띄우지 않는다 — 본문(첫 조회 실패 안내 · 이전 명단 앞 안내)이 다시 시도와 함께 계속 말한다.
   Future<void> _loadFixedWorkers() async {
     final gen = ++_loadGen;
     final businessId = _selectedBusinessId;
@@ -268,10 +275,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       await _readFixedWorkers(businessId, isCurrent);
     } catch (e) {
       debugPrint('❌ 고정근무자 로드: $e');
-      if (isCurrent()) {
-        _loadFailed = true;
-        ToastHelper.showError('고정근무자 목록을 불러오지 못했어요');
-      }
+      if (isCurrent()) _loadFailed = true;
     } finally {
       if (isCurrent()) setLoading(false);
     }
@@ -433,7 +437,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
       // [5B.3B] applicationId 우선 포커스 → uid fallback
       // applicationId가 있으면 정확한 매칭, 동명이인 문제 없음
-      if (results.isNotEmpty && mounted) {
+      if (results.isNotEmpty && mounted && !_initialFocusDone) {
         _FixedWorkerItem? focusTarget;
         if (widget.initialApplicationId != null) {
           // applicationId 우선 — notification 등에서 직접 전달 시
@@ -456,20 +460,15 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             // TextEditingController.text setter는 addListener 콜백을 트리거하지 않음.
             // _filteredFixedWorkers가 _searchQuery를 기준으로 필터링하므로 setState로 동기화 필수.
             setState(() => _searchQuery = name);
+            _initialFocusDone = true;
           }
         }
       }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return AppModalShell(
-      children: [
-        // 헤더
-        _buildHeader(context, theme),
-
+  /// [DU580b r1 · 판정171 §3 F580b-B-LIST-VIS] 목록 위 내용(날짜 머리 · 통계 · 만료 임박 띠 · 검색) — 이전 build 의 고정 칸 위젯 · 순서 · 조건 그대로.
+  ///   기본 글자 크기 · 로딩 · 조회 실패 · 빈 상태에서는 머리 아래 고정 칸으로, 큰 글자 명단에서는 목록 스크롤의 첫 칸([_scrollWithTop])으로 쓴다.
+  List<Widget> _buildTopArea(BuildContext context) => <Widget>[
         // 날짜 모드 서브헤더
         if (_isDateMode) _buildDateModeSubHeader(context),
 
@@ -499,10 +498,29 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             padding: EdgeInsets.zero,
           ),
         ),
+      ];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // [DU580b r1 · 판정171 §3] 큰 글자(배율 1.3 초과 — 같은 창 조회 실패 배치 DU537 · 지원자 창 DU517 과 같은 기준)에서는 목록 위 내용이 목록 칸을 거의 다
+    //   차지해 카드가 극소 띠로만 보였다(320×640 · 2.0). 명단이 있으면 그 내용을 목록과 한 스크롤로 둔다 — 제목 · 닫기(머리) · 하단 닫기는 고정 그대로.
+    final bigList = MediaQuery.textScalerOf(context).scale(1) > 1.3 && !isLoading && _fixedWorkers.isNotEmpty;
+
+    return AppModalShell(
+      children: [
+        // 헤더
+        _buildHeader(context, theme),
+
+        // 목록 위 내용 — 큰 글자 명단이면 아래 목록 스크롤의 첫 칸으로 간다.
+        if (!bigList) ..._buildTopArea(context),
 
         // 목록
         Expanded(
-          child: isLoading
+          // [DU580b r1] 큰 글자 명단 = 목록 위 내용 + 목록 한 스크롤. 그 밖(기본 글자 · 로딩 · 조회 실패 · 빈 상태)은 이전 그대로.
+          child: bigList
+              ? _scrollWithTop(_buildTopArea(context), _buildWorkerList(context))
+              : isLoading
               ? const LoadingWidget(message: '고정근무자 로딩 중...')
               : _fixedWorkers.isEmpty
                   // [DU537] 읽지 못한 것과 없는 것은 다르다 — 빈 상태 문구는 조회에 성공한 0명에만 쓴다.
@@ -549,7 +567,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             _waitingProposalOldAppIds = const {};
             _pendingRequestsForDate = const [];
             _scheduleReqState = _ScheduleReqState.notPermitted;
+            // [DU543] 검색어도 이 사업장 명단에 대한 것이다 — 비우고, 첫 진입 대상 자동 검색은 다시 넣지 않는다.
+            _initialFocusDone = true;
           });
+          _searchController.clear();
           SharedPreferences.getInstance().then(
             (prefs) => prefs.setString('alfit_last_business_id', value),
           );
@@ -566,7 +587,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 날짜 모드 서브헤더 (날짜 + 통계 통합)
   Widget _buildDateModeSubHeader(BuildContext context) {
     final date = widget.focusDate!;
-    final isWeekend = date.weekday == DateTime.saturday || date.weekday == DateTime.sunday;
+    // [R7-P1-2 DEVICE.1C] 날짜와 요일이 같은 달력에서 나온다.
+    final title = '${FormatHelper.formatDate(date)} 근무 현황';
+    // [DU540] 날짜 머리 띠는 구역 띠다 — 중립 면 · 선 · 글(일반 모드 통계 줄과 같은 짝). 주말 여부로 제목 색을 바꾸지 않는다(요일은 글에 그대로 있다).
 
     // 통계 계산
     int normalCount = 0, leaveCount = 0, extraCount = 0, pendingCount = 0;
@@ -590,26 +613,32 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         vertical: ResponsiveHelper.spacing(context, 10),
       ),
       decoration: BoxDecoration(
-        color: AppColors.tealBg,
-        border: Border(bottom: BorderSide(color: AppColors.teal.withValues(alpha: 0.2))),
+        color: AppColors.grey50,
+        border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 날짜 행
-          Row(
+          // [DU551] 날짜 · 요청 표시를 Wrap 으로 — 넉넉하면 이전처럼 표시가 오른쪽 끝, 좁거나 글자가 크면 날짜 아래 줄로(이전 Row 는 넘쳤다). 날짜 글은 낱말 사이에서만 줄바꿈.
+          SizedBox(width: double.infinity, child: Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: ResponsiveHelper.spacing(context, 8),
+            runSpacing: ResponsiveHelper.spacing(context, 4),
             children: [
-              Icon(Icons.event, size: ResponsiveHelper.iconSize(context, 15), color: AppColors.tealDark),
+              Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.event, size: ResponsiveHelper.iconSize(context, 15), color: AppColors.grey600),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                // [R7-P1-2 DEVICE.1C] 날짜와 요일이 같은 달력에서 나온다.
-                '${FormatHelper.formatDate(date)} 근무 현황',
+              Flexible(child: Text(
+                TextLayout.keepWords(title),
+                semanticsLabel: title,
                 style: ResponsiveHelper.smallStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
-                  color: isWeekend ? AppColors.errorDark : AppColors.tealDark,
+                  color: AppColors.textPrimary,
                 ),
-              ),
-              const Spacer(),
+              )),
+              ]),
               // [CROSS-DOMAIN-R5.1E] 불러오지 못한 것을 `요청 없음`으로 말하지 않는다.
               if (_scheduleReqState == _ScheduleReqState.error)
                 Container(
@@ -635,17 +664,17 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                     vertical: ResponsiveHelper.spacing(context, 3),
                   ),
                   decoration: BoxDecoration(
-                    color: AppColors.warning,
+                    color: AppColors.warningBg,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
                     '대기 ${_pendingRequestsForDate.length}건',
-                    style: ResponsiveHelper.tinyStyle(context, color: Colors.white)
+                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.warningDark)
                         .copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
             ],
-          ),
+          )),
           // 통계 행 (근무자 로드 완료 후만 표시)
           if (!isLoading && hasStats) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -653,10 +682,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               spacing: ResponsiveHelper.spacing(context, 6),
               runSpacing: 4,
               children: [
-                if (normalCount > 0) _buildInlineStatChip(context, '출근예정', normalCount, AppColors.success),
-                if (leaveCount > 0)  _buildInlineStatChip(context, '휴무', leaveCount, AppColors.warning),
-                if (extraCount > 0)  _buildInlineStatChip(context, '추가근무', extraCount, AppColors.teal),
-                if (pendingCount > 0) _buildInlineStatChip(context, '대기', pendingCount, AppColors.grey500),
+                if (normalCount > 0) _buildInlineStatChip(context, '출근예정', normalCount, AppColors.textPrimary),
+                if (leaveCount > 0)  _buildInlineStatChip(context, '휴무', leaveCount, AppColors.textPrimary),
+                if (extraCount > 0)  _buildInlineStatChip(context, '추가근무', extraCount, AppColors.textPrimary),
+                if (pendingCount > 0) _buildInlineStatChip(context, '대기', pendingCount, AppColors.textPrimary),
               ],
             ),
           ],
@@ -675,26 +704,26 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withValues(alpha: 0.4)),
+        border: Border.all(color: AppColors.border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             label,
-            style: ResponsiveHelper.tinyStyle(context, color: color)
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary)
                 .copyWith(fontWeight: FontWeight.w600),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
             decoration: BoxDecoration(
-              color: color,
+              color: AppColors.grey100,
               borderRadius: BorderRadius.circular(10),
             ),
             child: Text(
               '$count',
-              style: ResponsiveHelper.tinyStyle(context, color: Colors.white)
+              style: ResponsiveHelper.tinyStyle(context, color: color)
                   .copyWith(fontWeight: FontWeight.bold),
             ),
           ),
@@ -755,25 +784,26 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     switch (status) {
       case _WorkerDayStatus.normalWork:
-        bg = AppColors.successBg; fg = AppColors.successDark;
+        bg = AppColors.grey100; fg = AppColors.textSecondary;
         icon = Icons.check_circle_outline; label = '근무일';
       case _WorkerDayStatus.leaveApproved:
-        bg = AppColors.warningBg; fg = AppColors.warningDark;
+        bg = AppColors.grey100; fg = AppColors.textSecondary;
         icon = Icons.beach_access_outlined; label = '휴무';
       case _WorkerDayStatus.leavePending:
         bg = AppColors.warningBg; fg = AppColors.warningDark;
         icon = Icons.hourglass_top_outlined; label = '휴무 요청 중';
       case _WorkerDayStatus.extraWorkApproved:
-        bg = AppColors.tealBg; fg = AppColors.tealDark;
+        bg = AppColors.grey100; fg = AppColors.textSecondary;
         icon = Icons.add_circle_outline; label = '추가근무';
       case _WorkerDayStatus.extraWorkPending:
-        bg = AppColors.tealBg; fg = AppColors.tealDark;
+        bg = AppColors.warningBg; fg = AppColors.warningDark;
         icon = Icons.hourglass_top_outlined; label = '추가근무 요청 중';
+      // [DU548] 비근무일 · 계약기간 외도 읽어야 할 날짜 배지다 — 다른 중립 배지와 같은 짝(grey100 면 · textSecondary 글).
       case _WorkerDayStatus.notWorkingDay:
-        bg = AppColors.grey100; fg = AppColors.grey500;
+        bg = AppColors.grey100; fg = AppColors.textSecondary;
         icon = Icons.remove_circle_outline; label = '비근무일';
       case _WorkerDayStatus.notInPeriod:
-        bg = AppColors.grey100; fg = AppColors.grey400;
+        bg = AppColors.grey100; fg = AppColors.textSecondary;
         icon = Icons.event_busy_outlined; label = '계약기간 외';
     }
 
@@ -832,16 +862,16 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           _buildMiniButton(
             context,
             label: '거절',
-            color: AppColors.error,
-            onTap: isLoading || _isProcessing ? null : () => _rejectPendingRequest(pending),
+            color: AppColors.errorDark,
+            onTap: isLoading || _isProcessing || _showingStale ? null : () => _rejectPendingRequest(pending),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           _buildMiniButton(
             context,
             label: '승인',
-            color: AppColors.teal,
+            color: AppColors.brand,
             filled: true,
-            onTap: isLoading || _isProcessing ? null : () => _approvePendingRequest(pending),
+            onTap: isLoading || _isProcessing || _showingStale ? null : () => _approvePendingRequest(pending),
           ),
         ],
       ),
@@ -863,15 +893,15 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           vertical: ResponsiveHelper.spacing(context, 5),
         ),
         decoration: BoxDecoration(
-          color: filled ? color : Colors.transparent,
+          color: filled ? (_showingStale ? AppColors.disabledBackground : color) : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color),
+          border: Border.all(color: filled ? (_showingStale ? AppColors.disabledBackground : color) : Colors.transparent),
         ),
         child: Text(
           label,
           style: ResponsiveHelper.tinyStyle(
             context,
-            color: filled ? Colors.white : color,
+            color: _showingStale ? AppColors.textDisabled : (filled ? Colors.white : color),
           ).copyWith(fontWeight: FontWeight.bold),
         ),
       ),
@@ -886,7 +916,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
       return;
     }
-    if (_isProcessing) return;
+    if (_isProcessing || _showingStale) return;
     setState(() => _isProcessing = true);
     try {
       final ok = await _firestoreService.approveScheduleChangeRequest(
@@ -915,7 +945,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
       return;
     }
-    if (_isProcessing) return;
+    if (_isProcessing || _showingStale) return;
     setState(() => _isProcessing = true);
     try {
       final ok = await _firestoreService.rejectScheduleChangeRequest(
@@ -1067,18 +1097,18 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           Icon(
             Icons.people_outline,
             size: ResponsiveHelper.iconSize(context, 64),
-            color: AppColors.grey400,
+            color: AppColors.grey300,
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           Text(
             '고정근무자가 없습니다',
-            style: ResponsiveHelper.subtitleStyle(context, color: AppColors.grey600),
+            style: ResponsiveHelper.subtitleStyle(context, color: AppColors.textSecondary),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           Text(
             '장기 공고에서 지원자를 확정하면\n이곳에 표시됩니다',
             textAlign: TextAlign.center,
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.textTertiary),
           ),
         ],
       ),
@@ -1111,29 +1141,58 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     );
   }
 
+  /// [DU543] 같은 사업장 재조회 실패 안내 — O003 새로고침 실패 띠의 글 · 면 · 아이콘 · 다시 시도(기존 읽기) + 이 창 만료 띠의 적응 행(좁으면 버튼 아래).
+  Widget _buildStaleNotice(BuildContext context) {
+    const notice = '최신 정보를 불러오지 못했어요. 아래는 이전에 받은 내용입니다.';
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 12), vertical: ResponsiveHelper.spacing(context, 8)),
+      decoration: BoxDecoration(color: AppColors.warningBg, borderRadius: BorderRadius.circular(8)),
+      child: AdaptiveActionRow(
+        minRowWidth: 260,
+        gap: ResponsiveHelper.spacing(context, 8),
+        leading: Row(children: [
+          const Icon(Icons.sync_problem, size: 16, color: AppColors.warningDark),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(TextLayout.keepWords(notice),
+                semanticsLabel: notice, style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)),
+          ),
+        ]),
+        actions: [TextButton(onPressed: isLoading ? null : _loadFixedWorkers, child: const Text('다시 시도'))],
+      ),
+    );
+  }
+
   /// 근무자 목록
+  /// [DU543] 이전 명단(같은 사업장 재조회 실패)이면 안내를 목록과 같은 스크롤의 첫 항목으로 둔다 — 좁은 창에서도 고정 칸을 늘리지 않는다.
   Widget _buildWorkerList(BuildContext context) {
     final workers = _filteredFixedWorkers;
+    final stale = _showingStale ? _buildStaleNotice(context) : null;
 
     if (workers.isEmpty) {
-      return Center(
+      final none = Center(
         child: Padding(
           padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 32)),
           child: Text(
             _searchQuery.isEmpty ? '고정근무자가 없습니다' : '"$_searchQuery" 검색 결과가 없습니다',
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary),
             textAlign: TextAlign.center,
           ),
         ),
+      );
+      if (stale == null) return none;
+      return ListView(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+        children: [stale, none],
       );
     }
 
     if (!_isDateMode) {
       return ListView.separated(
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-        itemCount: workers.length,
+        itemCount: workers.length + (stale == null ? 0 : 1),
         separatorBuilder: (_, __) => SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-        itemBuilder: (context, index) => _buildWorkerCard(workers[index]),
+        itemBuilder: (context, index) => stale == null ? _buildWorkerCard(workers[index]) : (index == 0 ? stale : _buildWorkerCard(workers[index - 1])),
       );
     }
 
@@ -1150,12 +1209,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     return ListView(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       children: [
+        if (stale != null) Padding(padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)), child: stale),
         if (active.isEmpty)
           Padding(
             padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 24)),
             child: Center(
               child: Text('이 날 근무 예정인 계약직이 없습니다',
-                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500)),
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary)),
             ),
           ),
         ...active.map((w) => Padding(
@@ -1169,25 +1229,37 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               const Expanded(child: Divider()),
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 8)),
-                child: Text('오늘 비근무 (${inactive.length}명)',
-                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+                // [DU580b · F143-INACTIVE-SECTION] 보는 날은 달력에서 고른 날이다(오늘이 아닐 수 있다) — '선택일 비근무' · 중립 읽기 글 textSecondary(이전 grey400 · 감사143 :64). 인원 집계식 그대로.
+                child: Text('선택일 비근무 (${inactive.length}명)',
+                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary)),
               ),
               const Expanded(child: Divider()),
             ]),
           ),
           ...inactive.map((w) => Padding(
                 padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
-                // ColorFiltered: 정적 불투명도 — Opacity(0.5)와 달리 compositing layer 미생성
-                // [5B.3B] 0.5→0.7: 비근무자도 읽어야 할 정보이므로 최소 contrast 확보
-                child: ColorFiltered(
-                  colorFilter: ColorFilter.mode(
-                    Colors.white.withValues(alpha: 0.7),
-                    BlendMode.srcATop,
-                  ),
-                  child: _buildWorkerCard(w),
-                ),
+                // [DU548] 카드 전체를 흰 70% 로 덮던 필터를 뺐다 — 이름 · 기간 · 날짜는 읽어야 할 정보다(감사137 §4).
+                //   비근무는 위 구역 이름과 카드의 날짜 배지(비근무일 · 계약기간 외)로 구별한다. 카드 탭(행동 시트)은 그대로.
+                child: _buildWorkerCard(w),
               )),
         ],
+      ],
+    );
+  }
+
+  /// [DU580b r1 · 판정171 §3] 큰 글자 명단 — 목록 위 내용([top] · 창 폭 그대로)을 목록과 같은 스크롤의 첫 칸으로 두고, 그 아래에 [list](= [_buildWorkerList])의
+  ///   여백 · 항목 공급자를 그대로 잇는다(카드 · 구역 · 간격 · 순서 · 지연 생성 같음 — 지원자 창 DU524 CustomScrollView 와 같은 꼴). 검색 결과 없음 글은 한 칸이다.
+  Widget _scrollWithTop(List<Widget> top, Widget list) {
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(child: Column(mainAxisSize: MainAxisSize.min, children: top)),
+        if (list is ListView)
+          SliverPadding(
+            padding: list.padding ?? EdgeInsets.zero,
+            sliver: SliverList(delegate: list.childrenDelegate),
+          )
+        else
+          SliverToBoxAdapter(child: list),
       ],
     );
   }
@@ -1253,14 +1325,14 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 _buildRenewalDecisionBanner(context, app),
 
               // 기본 정보
-              Row(
-                children: [
-                  // 정보
-                  Expanded(
-                    child: Column(
+              _buildCardInfoLine(context, dayStatus,
+                    Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
+                        // [DU551] 이름 · 성별/나이 — 한 줄에 안 들어가면 성별/나이가 다음 줄로(이전 Row 는 넘쳤다).
+                        Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: ResponsiveHelper.spacing(context, 6),
                           children: [
                             Text(
                               name,
@@ -1268,18 +1340,17 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            if (user?.gender != null) ...[
-                              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                            if (user?.gender != null)
                               Text(
                                 '${user?.gender ?? ''}${user?.age != null ? ' · ${user?.age}세' : ''}',
-                                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                                style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
                               ),
-                            ],
                           ],
                         ),
                         SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                         // 업무 정보
                         Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
                             // 업무 아이콘
                             if (item.workTypeIcon != null)
@@ -1294,30 +1365,31 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                               Icon(
                                 Icons.work_outline,
                                 size: ResponsiveHelper.iconSize(context, 14),
-                                color: AppColors.grey500,
+                                color: AppColors.textSecondary,
                               ),
                             SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                            Text(
+                            Flexible(child: Text(
                               app.selectedWorkType,
                               style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                            ),
+                            )),
                           ],
                         ),
                         SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                        // 요일 (별도 Row)
+                        // 요일 (별도 Row) — [DU551] 말줄임 없이 쉼표 뒤에서 줄을 바꾼다(말줄임은 어느 요일인지 숨겼다).
                         Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
                               Icons.calendar_today_outlined,
                               size: ResponsiveHelper.iconSize(context, 12),
-                              color: AppColors.grey400,
+                              color: AppColors.textTertiary,
                             ),
                             SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                             Flexible(
                               child: Text(
                                 _formatWorkDays(app.workDays),
-                                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-                                overflow: TextOverflow.ellipsis,
+                                // [DU580b · F143-CARD-METADATA-CONTRAST] 요일 · 기간은 읽어야 할 정보다 — grey500(흰 2.68) → 중립 읽기 글 textSecondary(감사143 :64 · disabled 면제 아님).
+                                style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
                               ),
                             ),
                           ],
@@ -1360,7 +1432,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                               Text(
                                 '${FormatHelper.formatDateShort(effectiveStartDate)} ~ '
                                 '${effectiveEndDate != null ? FormatHelper.formatDateShort(effectiveEndDate) : '미정'}',
-                                style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+                                // [DU580b] 기간도 위 요일과 같은 중립 읽기 글.
+                                style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary),
                               ),
                               if (daysLeft != null) _buildDDayChip(context, daysLeft),
                             ],
@@ -1368,18 +1441,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                         }),
                       ],
                     ),
-                  ),
-
-                  // 날짜 모드: 상태 배지 / 일반 모드: 더보기 아이콘
-                  if (dayStatus != null)
-                    _buildDayStatusBadge(context, dayStatus)
-                  else
-                    Icon(
-                      Icons.chevron_right,
-                      color: AppColors.grey400,
-                      size: ResponsiveHelper.iconSize(context, 24),
-                    ),
-                ],
               ),
 
               // 날짜 모드: 대기 요청 인라인 승인/거절
@@ -1391,12 +1452,37 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     );
   }
 
+  /// [DU551] 카드 기본 정보 줄 — 일반 모드: 이전 Row 그대로(정보 + 더보기 아이콘). 날짜 모드: 정보와 날짜 배지를 Wrap 으로 —
+  ///   넉넉하면 이전처럼 배지가 오른쪽(세로 가운데), 좁거나 글자가 크면 정보 아래 줄로(이전 Row 는 정보 칸을 좁혀 이름 · 업무 줄이 넘쳤다).
+  Widget _buildCardInfoLine(BuildContext context, _WorkerDayStatus? dayStatus, Widget info) {
+    if (dayStatus == null) {
+      return Row(children: [
+        Expanded(child: info),
+        Icon(Icons.chevron_right, color: AppColors.grey400, size: ResponsiveHelper.iconSize(context, 24)),
+      ]);
+    }
+    return SizedBox(
+      width: double.infinity,
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: ResponsiveHelper.spacing(context, 8),
+        runSpacing: ResponsiveHelper.spacing(context, 8),
+        children: [info, _buildDayStatusBadge(context, dayStatus)],
+      ),
+    );
+  }
+
   /// 상태 배너
+  /// [DU580b · BL-07 · 감사134 §4 :66] 반복 카드의 해지 · 퇴사 안내 — 넓은 주의 띠(옅은 빨강 · 노랑 면)를 중립 면(흰 · 선) · 회색 아이콘으로 낮추고,
+  ///   실제 상태(…요청중)만 작은 짝 칩([_statusChip])으로 둔다. 자동 처리까지 남은 일수 · 예정일 안내는 칩 아래 본문으로 그대로 보인다
+  ///   (낱말 그대로 · 한 줄 괄호를 칩/본문 두 줄로 나눴다) — 같은 창 계약 처리 필요 띠(J8 · DU536)와 같은 꼴. bgColor · textColor 는 칩의 짝 색이다.
   Widget _buildStatusBanner(ApplicationModel app, bool hasResignRequest, bool hasTerminationRequest) {
     Color bgColor;
     Color textColor;
     IconData icon;
     String statusText;
+    String detailText;
 
     if (hasTerminationRequest) {
       bgColor = AppColors.errorBg;
@@ -1409,7 +1495,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         final r = FormatHelper.toKstDate(requestedAt);
         return (3 - t.difference(r).inDays).clamp(0, 3);
       }();
-      statusText = '계약해지 요청중 (${daysLeft > 0 ? '$daysLeft일 후 자동 해지' : '오늘 자동 해지'})';
+      statusText = '계약해지 요청중';
+      detailText = daysLeft > 0 ? '$daysLeft일 후 자동 해지' : '오늘 자동 해지';
     } else {
       bgColor = AppColors.warningBg;
       textColor = AppColors.warningDark;
@@ -1420,7 +1507,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         requestDate: app.resignRequestDate,
         now: DateTime.now(),
       );
-      statusText = '퇴사 요청중 (${plan.adminBannerText})';
+      statusText = '퇴사 요청중';
+      detailText = plan.adminBannerText;
     }
 
     return Container(
@@ -1430,22 +1518,44 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         vertical: ResponsiveHelper.spacing(context, 8),
       ),
       decoration: BoxDecoration(
-        color: bgColor,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.border),
       ),
       child: Row(
         children: [
-          Icon(icon, size: ResponsiveHelper.iconSize(context, 16), color: textColor),
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 16), color: AppColors.grey600),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Expanded(
-            child: Text(
-              statusText,
-              style: ResponsiveHelper.smallStyle(context, color: textColor).copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _statusChip(context, statusText, bgColor, textColor),
+                Text(
+                  detailText,
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.textPrimary),
+                ),
+              ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// [DU580b · BL-07] 카드 띠의 작은 상태 칩 — 계약 처리 필요 칩(J8 · DU536)과 같은 여백 · 모서리 · 글 굵기 · 짝 색(옅은 면 + 진한 글).
+  ///   글은 낱말 사이에서만 줄을 바꾼다(읽는 이름은 원문). 칩 폭은 글 폭이다(부모가 늘리지 않는다 — 해지 · 퇴사 띠 Column(start) · 만료 띠 Flexible).
+  Widget _statusChip(BuildContext context, String label, Color bg, Color fg) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        TextLayout.keepWords(label),
+        semanticsLabel: label,
+        style: ResponsiveHelper.smallStyle(context, color: fg).copyWith(fontWeight: FontWeight.w600),
       ),
     );
   }
@@ -1491,19 +1601,20 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         ]),
         actions: [
           TextButton(
-            onPressed: isLoading ? null : _batchExtendExpiringWorkers,
+            onPressed: isLoading || _showingStale ? null : _batchExtendExpiringWorkers,
             style: TextButton.styleFrom(
               foregroundColor: AppColors.brand,
               padding: EdgeInsets.symmetric(
                 horizontal: ResponsiveHelper.spacing(context, 12),
                 vertical: ResponsiveHelper.spacing(context, 6),
               ),
-              minimumSize: Size.zero,
+              // [DU552] 받는 자리 최소 48×48 — 글자 줄 높이 · 여백에 기대지 않고 최소 크기를 명시한다(모양 · 색 · 자리 · 동작 그대로).
+              minimumSize: const Size(48, 48),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
             child: Text(
               '일괄 연장',
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.brand)
+              style: ResponsiveHelper.smallStyle(context, color: _showingStale ? AppColors.textDisabled : AppColors.brand)
                   .copyWith(fontWeight: FontWeight.w700),
             ),
           ),
@@ -1546,6 +1657,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 만료 임박자 일괄 연장
   Future<void> _batchExtendExpiringWorkers() async {
+    if (_showingStale) return;
     // TO-06: 계약 일괄 연장 권한 확인
     if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
@@ -1581,7 +1693,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       icon: Icons.autorenew,
       iconColor: AppColors.success,
     );
-    if (confirm != true || !mounted) return;
+    if (confirm != true || !mounted || _showingStale) return;
 
     setLoading(true);
     int successCount = 0;
@@ -1617,6 +1729,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   ///
   ///   할 일이 아니라 **상태**다. 정보로만 말한다.
   Widget _buildWaitingProposalBanner(BuildContext context) {
+    // [DU590b · 판정172 §3 :30 · 장부 170] 낱말 사이에서만 줄을 바꾼다(W 마지막 '다' 홀로 줄 · 세 보기 낱말 안 끊김) — 읽는 이름은 원문. 글 · 크기 · 문장 · 말줄임 그대로.
+    const label = '연장 응답 대기 — 근무자가 제안을 확인하고 있습니다';
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
       padding: EdgeInsets.symmetric(
@@ -1636,7 +1750,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               color: AppColors.grey600),
           SizedBox(width: ResponsiveHelper.spacing(context, 5)),
           Flexible(
-            child: Text('연장 응답 대기 — 근무자가 제안을 확인하고 있습니다',
+            child: Text(TextLayout.keepWords(label),
+                semanticsLabel: label,
                 style: ResponsiveHelper.tinyStyle(context,
                     color: AppColors.textPrimary)),
           ),
@@ -1665,25 +1780,22 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         vertical: ResponsiveHelper.spacing(context, 10),
       ),
       decoration: BoxDecoration(
-        color: AppColors.warningBg,
+        // [DU580b · BL-07 · 감사134 §4 :66] 만료 결정 띠 — 넓은 주의 면을 중립 면(흰 · 선) · 회색 아이콘으로 낮추고 만료 상태 줄만 작은 짝 칩으로(글 · 날짜 · 연장/종료 그대로).
+        color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
+        border: Border.all(color: AppColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.event_note, size: ResponsiveHelper.iconSize(context, 14), color: AppColors.warningDark),
+              Icon(Icons.event_note, size: ResponsiveHelper.iconSize(context, 14), color: AppColors.grey600),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               // [DU538] 큰 글자에서 한 줄에 다 안 들어가면 낱말 단위로 줄을 바꾼다(이전에는 오른쪽으로 넘쳤다).
-              Expanded(
-                child: Text(
-                  TextLayout.keepWords(title),
-                  semanticsLabel: title,
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)
-                      .copyWith(fontWeight: FontWeight.w600),
-                ),
+              // [DU580b] 상태 줄 = 작은 짝 칩(글 폭만큼 · Flexible — 넘치면 칩 안에서 낱말 단위로 줄바꿈 · 위 DU538 그대로).
+              Flexible(
+                child: _statusChip(context, title, AppColors.warningBg, AppColors.warningDark),
               ),
             ],
           ),
@@ -1695,9 +1807,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   context,
                   label: '연장',
                   icon: Icons.autorenew,
-                  bgColor: AppColors.brand,
-                  textColor: Colors.white,
-                  onTap: () => _showRenewalDecisionDialog(app, user, extend: true),
+                  bgColor: _showingStale ? AppColors.disabledBackground : AppColors.brand,
+                  textColor: _showingStale ? AppColors.textDisabled : Colors.white,
+                  onTap: _showingStale ? null : () => _showRenewalDecisionDialog(app, user, extend: true),
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -1707,8 +1819,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   label: '종료',
                   icon: Icons.stop_circle_outlined,
                   bgColor: Colors.transparent,
-                  textColor: AppColors.textSecondary,
-                  onTap: () => _showRenewalDecisionDialog(app, user, extend: false),
+                  textColor: _showingStale ? AppColors.textDisabled : AppColors.textSecondary,
+                  onTap: _showingStale ? null : () => _showRenewalDecisionDialog(app, user, extend: false),
                 ),
               ),
             ],
@@ -1864,7 +1976,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     required IconData icon,
     required Color bgColor,
     required Color textColor,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
   }) {
     return Material(
       color: bgColor,
@@ -1872,7 +1984,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
-        child: Padding(
+        // [DU552] 받는 자리 최소 높이 48 — 글자 줄 높이 · 여백에 기대지 않는다. 폭은 부모 칸이 정한다 · 색 · 글 · 동작 그대로(연장 · 종료 두 곳만 이 함수를 쓴다).
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 48),
           padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 8)),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -1893,7 +2007,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     UserModel? user, {
     required bool extend,
   }) async {
-    if (app.workEndDate == null) return;
+    if (app.workEndDate == null || _showingStale) return;
     if (extend) {
       // [PERM-CONTRACT-DEADEND-01] 연장만 계약 권한 액션 — 종료(canManageWorkers)는 그대로 허용.
       // 확인 다이얼로그를 띄우기 전에 차단해 불필요한 진행을 막는다.
@@ -2016,7 +2130,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           '계약 연장 권한이 없습니다.\n계약 관리 권한이 있는 관리자에게 요청해주세요.');
       return;
     }
-    if (!mounted || isLoading) return;
+    if (!mounted || isLoading || _showingStale) return;
     setLoading(true);
     try {
       await _firestoreService.createRenewalProposal(
@@ -2041,7 +2155,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 연장된 신규 Application에 대해 근로계약서 작성 후 발송
   Future<void> _createContractForRenewal(ApplicationModel newApp, UserModel? user) async {
-    if (user == null || !mounted) return;
+    if (user == null || !mounted || _showingStale) return;
     final businessId = newApp.businessId;
     if (businessId.isEmpty) {
       ToastHelper.showSuccess('계약이 연장되었습니다');
@@ -2056,7 +2170,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       if (mounted) ToastHelper.showSuccess('계약이 연장되었습니다 (계약서는 나중에 작성할 수 있습니다)');
       return;
     }
-    if (!mounted) return;
+    if (!mounted || _showingStale) return;
 
     setLoading(true);
     try {
@@ -2108,7 +2222,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   }
 
   Future<void> _processTermination(ApplicationModel app, UserModel? user) async {
-    if (!mounted || isLoading) return;
+    if (!mounted || isLoading || _showingStale) return;
     // async gap 이전에 미리 추출 — BuildContext across async gaps 오류 방지
     // TO-06: 계약 해지 권한 확인
     if (!_canForThisBiz((p) => p.canManageWorkers)) {
@@ -2284,7 +2398,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   icon: Icons.person_outline,
                   title: '상세 정보 보기',
                   subtitle: '근무자의 상세 정보 확인',
-                  color: AppColors.info,
+                  color: AppColors.textSecondary,
                   onTap: () {
                     Navigator.pop(context);
                     WidgetsBinding.instance.addPostFrameCallback((_) => _showWorkerDetail(item));
@@ -2298,7 +2412,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                     bottom: ResponsiveHelper.spacing(context, 4),
                   ),
                   child: Text('근무 일정',
-                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)
+                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary)
                         .copyWith(fontWeight: FontWeight.w600, letterSpacing: 0.5),
                   ),
                 ),
@@ -2310,7 +2424,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   icon: Icons.add_circle_outline,
                   title: '추가근무 요청',
                   subtitle: '휴무일에 추가 근무 요청',
-                  color: AppColors.success,
+                  color: AppColors.textSecondary,
                   onTap: () {
                     Navigator.pop(context);
                     WidgetsBinding.instance.addPostFrameCallback((_) => _showExtraWorkRequestDialog(app));
@@ -2322,7 +2436,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   icon: Icons.remove_circle_outline,
                   title: '휴무 요청',
                   subtitle: '특정 날짜 근무 제외 요청',
-                  color: AppColors.warning,
+                  color: AppColors.textSecondary,
                   onTap: () {
                     Navigator.pop(context);
                     WidgetsBinding.instance.addPostFrameCallback((_) => _showNoWorkRequestDialog(app));
@@ -2339,7 +2453,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                       bottom: ResponsiveHelper.spacing(context, 4),
                     ),
                     child: Text('계약',
-                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)
+                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary)
                           .copyWith(fontWeight: FontWeight.w600, letterSpacing: 0.5),
                     ),
                   ),
@@ -2355,7 +2469,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                     icon: Icons.autorenew,
                     title: '계약 연장 제안',
                     subtitle: '근무자가 수락하면 새 계약 절차가 시작됩니다',
-                    color: AppColors.success,
+                    color: AppColors.textSecondary,
                     onTap: () {
                       Navigator.pop(context);
                       WidgetsBinding.instance.addPostFrameCallback((_) => _showRenewalDecisionDialog(app, user, extend: true));
@@ -2369,7 +2483,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                       icon: Icons.draw_outlined,
                       title: '근로계약서 작성',
                       subtitle: '서명 후 근무자에게 발송됩니다',
-                      color: AppColors.info,
+                      color: AppColors.textSecondary,
                       onTap: () {
                         Navigator.pop(context);
                         WidgetsBinding.instance.addPostFrameCallback(
@@ -2401,7 +2515,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                       bottom: ResponsiveHelper.spacing(context, 4),
                     ),
                     child: Text('기타',
-                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)
+                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary)
                           .copyWith(fontWeight: FontWeight.w600, letterSpacing: 0.5),
                     ),
                   ),
@@ -2415,7 +2529,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                       icon: Icons.cancel_outlined,
                       title: '중도 계약 해지 요청',
                       subtitle: '계약 종료일 전 해지를 요청합니다. 근로자 응답이 없으면 3일 후 자동 처리됩니다.',
-                      color: AppColors.error,
+                      color: AppColors.errorDark,
                       onTap: () {
                         Navigator.pop(context);
                         WidgetsBinding.instance.addPostFrameCallback((_) => _showTerminationRequestDialog(item));
@@ -2463,7 +2577,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: onTap,
+        onTap: _showingStale ? null : () { if (!_showingStale) onTap(); },
         borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: EdgeInsets.symmetric(
@@ -2475,10 +2589,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
                 decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.1),
+                  color: _showingStale ? AppColors.disabledBackground : color.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, color: color, size: ResponsiveHelper.iconSize(context, 22)),
+                child: Icon(icon, color: _showingStale ? AppColors.textDisabled : color, size: ResponsiveHelper.iconSize(context, 22)),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 14)),
               Expanded(
@@ -2488,12 +2602,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                     Text(
                       title,
                       style: ResponsiveHelper.bodyStyle(context).copyWith(
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w600, color: _showingStale ? AppColors.textDisabled : null,
                       ),
                     ),
                     Text(
                       subtitle,
-                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
                     ),
                   ],
                 ),
@@ -2534,6 +2648,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 추가 근무 요청 다이얼로그
   Future<void> _showExtraWorkRequestDialog(ApplicationModel app) async {
+    if (_showingStale) return;
     // [FC-FW-PERM] canManageWorkers guard — Firestore rules 중복 방어, UX 오류 방지
     if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
@@ -2640,7 +2755,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         hintText: '추가 근무 요청 사유를 입력하세요',
       ),
     );
-    if (reason == null || !mounted) return; // null = 취소
+    if (reason == null || !mounted || _showingStale) return; // null = 취소
 
     await _submitExtraWorkRequest(app, selectedDate, reason);
   }
@@ -2694,6 +2809,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 미출근 요청 다이얼로그
   Future<void> _showNoWorkRequestDialog(ApplicationModel app) async {
+    if (_showingStale) return;
     // [FC-FW-PERM] canManageWorkers guard — Firestore rules 중복 방어, UX 오류 방지
     if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
@@ -2788,7 +2904,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         hintText: '미출근 요청 사유를 입력하세요',
       ),
     );
-    if (noWorkReason == null || !mounted) return; // null = 취소
+    if (noWorkReason == null || !mounted || _showingStale) return; // null = 취소
 
     await _submitNoWorkRequest(app, selectedDate, noWorkReason);
   }
@@ -2846,6 +2962,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 계약해지 요청 다이얼로그
   Future<void> _showTerminationRequestDialog(_FixedWorkerItem item) async {
+    if (_showingStale) return;
     // [FC-FW-PERM] canManageWorkers guard — CF 호출 전 UX 오류 방지 (서버도 assertBizAdmin)
     if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
@@ -2862,7 +2979,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       ),
     );
 
-    if (result == null || !mounted) return;
+    if (result == null || !mounted || _showingStale) return;
     await _submitTerminationRequest(item.application, result);
   }
 
@@ -2900,6 +3017,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 해지 요청 취소
   Future<void> _cancelTerminationRequest(ApplicationModel app) async {
+    if (_showingStale) return;
     // [FC-FW-PERM] canManageWorkers guard — CF 호출 전 UX 오류 방지 (CF callableCancelTermination 내부 검증)
     if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
@@ -2913,7 +3031,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       // [DU309 §9.1] 해지 요청을 거두는 것(고용 유지) = 손실 아님 → 버튼·아이콘 brand(기본값). 이전 warning.
     );
 
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true || !mounted || _showingStale) return;
 
     try {
       final success = await _firestoreService.cancelTerminationRequest(app.id);
@@ -3053,8 +3171,13 @@ class _TerminationRequestDialogState
                         ),
                         SizedBox(
                             width: ResponsiveHelper.spacing(context, 12)),
-                        Text(reason,
-                            style: ResponsiveHelper.bodyStyle(context)),
+                        // [DU590c · 판정174 §3 :30 · F174-B-TERM-LAYOUT] 긴 사유('근태 불량 (지각/결근)')가 B(320 · 글자 2.0)에서 칸 오른쪽으로 넘쳤다(62px) —
+                        //   남은 폭 안에서 낱말 사이로만 줄을 바꾼다. 글 · 크기 · 색 그대로 · 읽는 이름 = 원문 · 고르는 값(reason)과 선택 표시 그대로.
+                        Expanded(
+                          child: Text(TextLayout.keepWords(reason),
+                              semanticsLabel: reason,
+                              style: ResponsiveHelper.bodyStyle(context)),
+                        ),
                       ],
                     ),
                   ),
@@ -3083,7 +3206,8 @@ class _TerminationRequestDialogState
           ],
         ],
       ),
-      actions: [
+      // [DU590c · F174-B-TERM-LAYOUT] 두 단추 배치만 _termActions 가 정한다(넓으면 이전 반반 그대로 · 좁거나 글자가 크면 쌓기) — 단추 자체(글 · 색 · 크기 · 행동)는 그대로.
+      actions: _termActions([
         OutlinedButton(
           onPressed: () {
             FocusManager.instance.primaryFocus?.unfocus();
@@ -3095,7 +3219,7 @@ class _TerminationRequestDialogState
             padding: EdgeInsets.symmetric(
                 vertical: ResponsiveHelper.spacing(context, 12)),
           ),
-          child: const Text('취소'),
+          child: Text(TextLayout.keepWords('취소'), semanticsLabel: '취소'),
         ),
         ElevatedButton(
           onPressed: _selectedReason != null
@@ -3109,15 +3233,41 @@ class _TerminationRequestDialogState
                 }
               : null,
           style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.error,
+            // [DU590b · 판정134 J9 · PF8 #077] 마지막 '해지 요청'은 3일 무응답 자동 해지 책임과 이어진다 — 빨강 채움 유지 · 대비만 error(흰 글 3.68) → errorDark(흰 글 6.57). 사유창 머리 · 진입 아이콘 · 다른 요청 그대로.
+            backgroundColor: AppColors.errorDark,
             foregroundColor: Colors.white,
             padding: EdgeInsets.symmetric(
                 vertical: ResponsiveHelper.spacing(context, 12)),
           ),
-          child: const Text('해지 요청'),
+          child: Text(TextLayout.keepWords('해지 요청'), semanticsLabel: '해지 요청'),
         ),
-      ],
+      ]),
     );
+  }
+
+  /// [DU590c · 판정174 §3 :30 · F174-B-TERM-LAYOUT] 최종 두 단추(취소 · 해지 요청) 배치. 한 줄 반반 칸에 '해지 요청'이 한 줄로 들어가지
+  ///   않으면(B 320 · 글자 2.0 에서 '해지 요/청' 음절 끊김) 전체 폭으로 쌓는다 — 채움(주)이 위, 테두리(보조)가 아래(StyledDialog 셸 SD4 ·
+  ///   DialogHelper F48-1 과 같은 순서). 넉넉하면 셸이 그리던 반반(간격 12) 그대로. 기준 200 = 글자 배율 1.0 에서 '해지 요청'(16 굵게 ≈ 68) +
+  ///   안쪽 여유 16 을 두 칸 + 간격(TextLayout.fits 가 사용자 글자 배율을 곱한다). [pair] = [취소, 해지 요청] — 받은 단추를 그대로 놓기만 한다.
+  List<Widget> _termActions(List<Widget> pair) {
+    final cancel = pair[0];
+    final go = pair[1];
+    return [
+      LayoutBuilder(builder: (c, cons) {
+        if (TextLayout.fits(c, cons.maxWidth, 200)) {
+          return Row(children: [
+            Expanded(child: cancel),
+            SizedBox(width: ResponsiveHelper.spacing(c, 12)),
+            Expanded(child: go),
+          ]);
+        }
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [go, SizedBox(height: ResponsiveHelper.spacing(c, 8)), cancel],
+        );
+      }),
+    ];
   }
 }
 

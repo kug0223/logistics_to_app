@@ -462,7 +462,7 @@ void main() {
       expect(gates.single.isCompleted, isFalse, reason: 'gate 보류 중');
       expect(find.byType(AdminCreateTOScreen), findsOneWidget);
       expect(results, isEmpty, reason: '저장중 route 결과 0');
-      final loadingText = find.text('공고 등록 중...');
+      final loadingText = find.text('공\u2060고 등\u2060록 중\u2060.\u2060.\u2060.');
       final ctaSpinner = find.descendant(of: cta, matching: find.byType(CircularProgressIndicator));
       out('⑤ 저장중 · 전역 로딩 글=${loadingText.evaluate().length} · CTA spinner=${ctaSpinner.evaluate().length} · CTA onTap=${t.widget<InkWell>(ctaInk).onTap != null} · delta=${delta(beforeSubmit)}');
       expect(loadingText, findsOneWidget, reason: '전역 로딩 표시');

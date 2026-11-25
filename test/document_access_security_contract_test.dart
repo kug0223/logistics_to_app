@@ -1,3 +1,4 @@
+// [CONSENT-R4d 후보 사본] 원본 A/test/document_access_security_contract_test.dart sha256=108d76754a004303cffc053b0bcc332047cbf0b28b22f8574b47b2b8aab26862 · 바뀐 자리는 R/work/consent-copy-preparation-r4d-20261119/manifests/test_change_map.tsv
 // [DOC-S1A] 민감문서 접근 보안 계약.
 //
 //   이 테스트가 지키는 문장은 둘이다.
@@ -378,11 +379,12 @@ void main() {
       final body = _after(code, 'function srvIdWindowOpen', 1400);
       expect(body.contains('documentAccessConsentVersion'), isTrue,
           reason: '사용자가 본 문구의 범위를 적용해야 한다');
-      expect(body.contains('DOCUMENT_ACCESS_CONSENT_V2'), isTrue);
-      expect(body.contains('DOCUMENT_ACCESS_CONSENT_V3'), isTrue);
-      expect(body.contains('DOCUMENT_ACCESS_CONSENT_V1'), isTrue);
-      expect(body.contains('confirmedAt'), isTrue,
-          reason: 'v1 은 확정일 기준이다');
+      // [CONSENT-R4 후보 사본] 은퇴 판본(v1·v2·v3)은 기준점이 없다 — 새 세대 두 판본만 마지막 근무일 기준.
+      expect(body.contains('DOCUMENT_ACCESS_CONSENT_V4'), isTrue);
+      expect(body.contains('DOCUMENT_ACCESS_CONSENT_INVITE_V2'), isTrue);
+      expect(body.contains('DOCUMENT_ACCESS_CONSENT_V2'), isFalse);
+      expect(body.contains('DOCUMENT_ACCESS_CONSENT_V3'), isFalse);
+      expect(body.contains('DOCUMENT_ACCESS_CONSENT_V1'), isFalse);
       expect(body.contains('srvIdWindowLastWorkDay'), isTrue);
     });
 
@@ -402,11 +404,21 @@ void main() {
 
     test('S1A-30w [DOC-S1A.3] 약속 writer 는 명시적 버전을 요구한다', () {
       final h = _after(code, 'function srvResolveCommitmentConsentVersion', 700);
-      expect(h.contains('if (!given) return null'), isTrue,
-          reason: '동의하지 않으면 기록도 자격도 없다');
-      expect(RegExp(r'raw === undefined[\s\S]{0,200}?throw new HttpsError')
+      // [g4 · 판정 consentc4stop §1-1 · §2 :23 · :25] 새 명시 동의 계약 — given 이 true 가 아니면 판본을 보기 전에 거절한다.
+      expect(RegExp(r'\): string \| null \{\s*if \(given !== true\) \{\s*'
+              r'throw new HttpsError\("invalid-argument",[\s\S]{0,120}?'
+              r'\{code: "CONSENT_NOT_GIVEN"\}\);\s*\}')
           .hasMatch(h), isTrue,
-          reason: '버전 없음은 추론하지 않고 거절한다');
+          reason: '동의하지 않으면(given 이 true 가 아님) 판본보다 먼저 invalid-argument · CONSENT_NOT_GIVEN 으로 거절한다 — 기록도 자격도 없다');
+      // 판본 검사는 공용 resolver 몫 — wrapper 는 새 세대 두 판본(일반 v4 · 초대 invite-v2)의 화면 불일치만 먼저 거절한다.
+      expect(RegExp(r'allowInviteCopy \?\s*NEW_REQUEST_CONSENT_VERSION_INVITE : '
+              r'NEW_REQUEST_CONSENT_VERSION_GENERAL;\s*'
+              r'if \(raw === NEW_REQUEST_CONSENT_VERSION_GENERAL \|\|\s*'
+              r'raw === NEW_REQUEST_CONSENT_VERSION_INVITE\) \{\s*'
+              r'const mis = srvConsentVersionReject\(raw, expected\);\s*'
+              r'if \(mis\) throw new HttpsError\(')
+          .hasMatch(h), isTrue,
+          reason: '일반 v4 · 초대 invite-v2 화면 불일치는 거절하고, 버전 결손 · 미지원 · 은퇴는 추론하지 않고 공용 resolver 의 명시 오류로 거절한다');
       expect(h.contains('resolveDocumentAccessConsentVersion(raw, given)'),
           isTrue, reason: '미지원 버전 거절은 기존 규칙 재사용');
     });
@@ -491,8 +503,9 @@ void main() {
       expect(code.contains('function resolveDocumentAccessConsentVersion'),
           isTrue);
       final r = _after(code, 'function resolveDocumentAccessConsentVersion', 700);
-      expect(r.contains('DOCUMENT_ACCESS_CONSENT_V1'), isTrue,
-          reason: '기록 시 v1 폴백은 유지 — 원본 문에서만 거부한다');
+      // [CONSENT-R4 후보 사본] 단일 전환 — 기록 규칙의 v1 폴백도 없앤다(버전 없음 = 거절).
+      expect(r.contains('DOCUMENT_ACCESS_CONSENT_V1'), isFalse);
+      expect(r.contains('srvConsentVersionReject(raw, null)'), isTrue);
     });
 
     test('S1A-25 기준을 모르면 양쪽 술어 모두 거부한다 (fail closed)', () {

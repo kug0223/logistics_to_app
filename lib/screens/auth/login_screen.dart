@@ -1201,7 +1201,7 @@ class _PasswordResetSheetState extends State<_PasswordResetSheet> {
                             textAlign: TextAlign.center,
                             style: ResponsiveHelper.bodyStyle(context).copyWith(
                               fontWeight: FontWeight.w600,
-                              color: !_isForeign ? Colors.white : AppColors.grey500,
+                              color: !_isForeign ? Colors.white : AppColors.textSecondary,
                             ),
                           ),
                         ),
@@ -1230,7 +1230,7 @@ class _PasswordResetSheetState extends State<_PasswordResetSheet> {
                             textAlign: TextAlign.center,
                             style: ResponsiveHelper.bodyStyle(context).copyWith(
                               fontWeight: FontWeight.w600,
-                              color: _isForeign ? Colors.white : AppColors.grey500,
+                              color: _isForeign ? Colors.white : AppColors.textSecondary,
                             ),
                           ),
                         ),
@@ -1275,7 +1275,7 @@ class _PasswordResetSheetState extends State<_PasswordResetSheet> {
                   Text(
                     '$_maskedPhone 으로 인증번호를 발송했습니다',
                     textAlign: TextAlign.center,
-                    style: ResponsiveHelper.smallStyle(context).copyWith(color: AppColors.grey500),
+                    style: ResponsiveHelper.smallStyle(context).copyWith(color: AppColors.textSecondary),
                   ),
                   const SizedBox(height: 12),
                   _buildTextField(

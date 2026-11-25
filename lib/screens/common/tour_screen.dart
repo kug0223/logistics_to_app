@@ -423,12 +423,14 @@ const _userTourPages = [
     color: AppColors.warningDarkest,
     bgColor: AppColors.warningBg,
     tag: '급여 & 근무 이력',
-    title: '급여 명세서 확인,\n노쇼 없이 더 많은 기회 얻기',
+    // [DU602b · 판정156 Q2] 첫 만남 제목은 낙인 · 위협('노쇼 없이')보다 약속을 앞세운다 — 사건명 '노쇼' 는 아래 설명 · 기능 줄에 그대로.
+    title: '급여 명세서 확인,\n약속 지켜 더 많은 기회 얻기',
     description: '임금명세서를 앱에서 바로 확인하고\n근무 이력과 노쇼 기록이 투명하게 쌓여요.',
     features: [
       TourFeature(Icons.receipt_long_outlined, '임금명세서 앱에서 확인·저장', AppColors.warningDarkest),
       TourFeature(Icons.check_circle_rounded, '출근 기록 → 리뷰·평점 누적', AppColors.success),
-      TourFeature(Icons.warning_amber_rounded, '노쇼 3회(90일) → 지원 제한', AppColors.error),
+      // [DU602b · 판정156 Q4] 기간 제한의 일반 상태명은 '이용 제한'(로그인 · 지원 · 초대 수락 제한을 '지원 제한'으로 좁히지 않는다).
+      TourFeature(Icons.warning_amber_rounded, '노쇼 3회(90일) → 이용 제한', AppColors.error),
     ],
   ),
 ];

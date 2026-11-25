@@ -773,10 +773,15 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
           // 사업자등록증 (신규 등록 필수 / 수정 시 선택)
-          CommonWidgets.sectionHeader(
-            context: context,
-            title: '사업자등록증${_isEditMode ? (widget.business?.isApproved == true ? ' (잠금)' : ' (선택)') : ' (필수)'}',
-            icon: Icons.description_outlined,
+          // [DU587b · 판정114:101] 큰 글자에서 제목이 낱말 안 음절 사이로 끊기지 않게 — 낱말 사이에서만 줄을 바꾼다(표시만 · 읽기 도구는 원문 · 공용 제목 일괄 변경 0).
+          Semantics(
+            label: _licenseSectionTitle,
+            excludeSemantics: true,
+            child: CommonWidgets.sectionHeader(
+              context: context,
+              title: TextLayout.keepWords(_licenseSectionTitle),
+              icon: Icons.description_outlined,
+            ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
           if (!_isEditMode)
@@ -797,6 +802,11 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       ),
     );
   }
+
+  /// [DU587b] 사업자등록증 섹션 제목 원문 — 신규 등록 '(필수)' · 승인된 사업장 수정 '(잠금)' · 그 밖 수정 '(선택)'(분기 그대로).
+  ///   화면 글(낱말 묶음)과 읽기 도구(원문)가 같은 글을 쓴다.
+  String get _licenseSectionTitle =>
+      '사업자등록증${_isEditMode ? (widget.business?.isApproved == true ? ' (잠금)' : ' (선택)') : ' (필수)'}';
 
   /// 대표 이미지 선택
   Widget _buildMainImagePicker(BuildContext context, ThemeData theme) {
@@ -1145,10 +1155,15 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         SizedBox(height: ResponsiveHelper.spacing(context, 24)),
 
         // 추가 사진
-        CommonWidgets.sectionHeader(
-          context: context,
-          title: '사업장 사진 (최대 5장)',
-          icon: Icons.photo_library_outlined,
+        // [DU587b · 판정119:78 N119-4] 보조 제한문구 '(최대 5장)' 은 한 덩어리 — 그 안 · 낱말 안 음절 사이로 끊기지 않게 한다(표시만 · 읽기 도구는 원문 · 공용 제목 일괄 변경 0).
+        Semantics(
+          label: '사업장 사진 (최대 5장)',
+          excludeSemantics: true,
+          child: CommonWidgets.sectionHeader(
+            context: context,
+            title: '${TextLayout.keepWords('사업장 사진')} ${TextLayout.unit('(최대 5장)')}',
+            icon: Icons.photo_library_outlined,
+          ),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
@@ -1951,12 +1966,13 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                       horizontal: ResponsiveHelper.spacing(context, 8)),
                   // [DU445] spaceBetween 세 글은 큰 글자에서 가용폭을 넘겼다 — GPS 눈금처럼 세 칸이 폭을 나눠 갖는다(시작 · 가운데 · 끝).
                   //   칸보다 길면 낱말과 괄호 사이에서만 줄을 바꾼다(keepWords · 화면 읽기는 원문). grey400(1.88) → textTertiary(5.25).
+                  // [DU587b · 판정114:64] 가운데 눈금(−70 dBm)은 위 값 칩과 같은 기준(BeaconHelper.proximityLabel(−70) = '가까움 (1~3m)')으로 적는다 — 인식 판정 · 근태 정책 변경 0.
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       for (final (label, align) in const [
                         ('멀리(~10m)', TextAlign.start),
-                        ('보통(~5m)', TextAlign.center),
+                        ('가까움(1~3m)', TextAlign.center),
                         ('가까이(~1m)', TextAlign.end),
                       ])
                         Expanded(

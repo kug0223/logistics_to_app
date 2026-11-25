@@ -128,7 +128,7 @@ void main() {
               .contains('정원 확인 불가'),
           true);
       expect(s.contains('_buildStaffingActionRow('), true);
-      expect(s.contains('인력 초대 (\$shortage명 부족)'), true);
+      expect(s.contains('근무 초대 (\$shortage명 부족)'), true);
     });
 
     test('P1-3-f UNKNOWN에서 초대 CTA가 서지 않는다 — 대신 이유를 말한다', () {
@@ -292,9 +292,9 @@ void main() {
     });
 
     test('P1-7-a 같은 일에 이름이 하나다', () {
-      expect(_codeOf(_src(_day)).contains("title: '인력 현황'"), true);
-      expect(_codeOf(_src(_work)).contains('인력 현황'), true);
-      expect(_codeOf(_src(_card)).contains("'인력 현황'"), true);
+      expect(_codeOf(_src(_day)).contains("title: '지원·근무 현황'"), true);
+      expect(_codeOf(_src(_work)).contains('지원·근무 현황'), true);
+      expect(_codeOf(_src(_card)).contains("'지원·근무 현황'"), true);
       for (final p in [_day, _work]) {
         final s = _codeOf(_src(p));
         expect(s.contains("'지원명단'"), false, reason: p);

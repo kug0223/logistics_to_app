@@ -38,6 +38,8 @@ class InviteMethodSheet extends StatelessWidget {
 
     return SafeArea(
       top: false,
+      // [F272-OVF-INVITE-METHOD] 큰 글자(B 2.0)에서 시트 최대 높이를 넘는 본문을 스크롤로 — 글·타일·순서 그대로
+      child: SingleChildScrollView(
       child: Padding(
         padding: EdgeInsets.fromLTRB(16 * s, 8 * s, 16 * s, 20 * s),
         child: Column(
@@ -58,7 +60,7 @@ class InviteMethodSheet extends StatelessWidget {
             ),
             // 헤더
             Text(
-              '인력 초대',
+              '근무 초대',
               style: ResponsiveHelper.subtitleStyle(context)
                   .copyWith(fontWeight: FontWeight.bold),
             ),
@@ -76,7 +78,7 @@ class InviteMethodSheet extends StatelessWidget {
               context,
               s,
               icon: Icons.person_search_outlined,
-              color: AppColors.info,
+              color: theme.primaryColor,
               title: '근무 가능 인력',
               subtitle:
                   '가능일을 등록한 인력 중 이 업무에 맞는 사람을 찾아요.',
@@ -96,6 +98,7 @@ class InviteMethodSheet extends StatelessWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }

@@ -4,7 +4,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
+// ignore: depend_on_referenced_packages
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
+// ignore: depend_on_referenced_packages
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -32,7 +34,6 @@ import 'package:ALfit/screens/user/renewal_proposal_screen.dart';
 import 'package:ALfit/screens/user/user_tab_scope.dart';
 import 'package:ALfit/screens/user/dialogs/my_requests_dialog.dart';
 import 'package:ALfit/screens/common/job_posting_screen.dart';
-import 'package:ALfit/screens/user/dialogs/my_requests_reads.dart';
 import 'package:ALfit/services/payroll_correction_service.dart';
 
 /// [R7-P2-1 P21-H/E] **실제 지원자 홈 위젯**을 콘텐츠와 함께 그린다.
@@ -521,6 +522,8 @@ Finder _cardLine(bool Function(String label) match) => find.byWidgetPredicate((w
     visibleText(w.data ?? '') == w.semanticsLabel);
 Finder _checkoutCardTitle() => _cardLine((l) => l == '퇴근 기록이 필요해요');
 Finder _idRequestCardTitle() => _cardLine((l) => l.contains('신분증 열람을 요청했어요'));
+/// [DU595c] 서류 보완 카드도 같은 공용 배치(_taskCardRow) — 낱말 조판 표시 + 원문 semanticsLabel(판정114 §6 :99 'UHR-43/46 원문 대조 동등 갱신' · 판정177 §6).
+Finder _correctionCardTitle() => _cardLine((l) => l == '신분증을 다시 등록해주세요.');
 Finder _dateExplorerGroup() =>
     find.byWidgetPredicate((w) => w is Semantics && w.properties.label == '일할 날짜 선택');
 
@@ -870,7 +873,7 @@ void main() {
   // ══════════════════════════════════════════════════════════
 
   /// (A) 23시 출근 → 익일 미퇴근. 어제 기록이 진행 중이다.
-  List<AttendanceModel> _ongoingYesterday() =>
+  List<AttendanceModel> ongoingYesterday() =>
       [_att(workDate: _day(-1), checkInAt: _day(-1).add(const Duration(hours: 23)))];
 
   testWidgets('UHR-18 (A) 자정 넘긴 근무는 Home 에서 퇴근으로 갈 수 있다',
@@ -881,7 +884,7 @@ void main() {
         applications: [
           _shortTerm(id: 'night1', workDate: _day(-1), start: '23:00', end: '06:00'),
         ],
-        attendances: _ongoingYesterday(),
+        attendances: ongoingYesterday(),
       ),
     );
 
@@ -900,7 +903,7 @@ void main() {
         applications: [
           _shortTerm(id: 'night1', workDate: _day(-1), start: '23:00', end: '06:00'),
         ],
-        attendances: _ongoingYesterday(),
+        attendances: ongoingYesterday(),
       ),
     );
 
@@ -1000,7 +1003,7 @@ void main() {
         applications: [
           _shortTerm(id: 'night1', workDate: _day(-1), status: AppStatus.canceled),
         ],
-        attendances: _ongoingYesterday(),
+        attendances: ongoingYesterday(),
       ),
     );
 
@@ -1015,7 +1018,7 @@ void main() {
           _shortTerm(id: 'night1', workDate: _day(-1), start: '23:00', end: '06:00'),
           _shortTerm(id: 'today1', workDate: _today),
         ],
-        attendances: _ongoingYesterday(),
+        attendances: ongoingYesterday(),
       ),
     );
 
@@ -1047,7 +1050,7 @@ void main() {
       tester,
       reads: _reads(
         applicationsError: Exception('network'),
-        attendances: _ongoingYesterday(),
+        attendances: ongoingYesterday(),
       ),
     );
 
@@ -1077,7 +1080,7 @@ void main() {
       tester,
       reads: _reads(
         applications: [_shortTerm(id: 'night1', workDate: _day(-1), start: '23:00', end: '06:00')],
-        attendances: _ongoingYesterday(),
+        attendances: ongoingYesterday(),
       ),
     );
     expect(_checkoutCardTitle(), findsOneWidget);
@@ -1139,7 +1142,7 @@ void main() {
           size: size,
           textScale: scale,
           reads: _reads(
-            attendances: _ongoingYesterday(),
+            attendances: ongoingYesterday(),
             applications: [
             _shortTerm(
               workDate: _today,
@@ -1496,11 +1499,11 @@ void main() {
     );
 
     // 무엇을 해야 하는지 · 왜 필요한지(사업장 문맥) · 행동
-    expect(find.text('신분증을 다시 등록해주세요.'), findsOneWidget);
-    expect(find.text('강남 물류센터에서 서류 재등록을 요청했어요'), findsOneWidget);
+    expect(_correctionCardTitle(), findsOneWidget);
+    expect(_cardLine((l) => l == '강남 물류센터에서 서류 재등록을 요청했어요'), findsOneWidget);
     expect(find.text('등록하기'), findsOneWidget);
 
-    final card = find.text('신분증을 다시 등록해주세요.');
+    final card = _correctionCardTitle();
     await tester.ensureVisible(card);
     await tester.pump(const Duration(milliseconds: 200));
     await tester.tap(card);
@@ -1526,7 +1529,7 @@ void main() {
             corrections: DocumentCorrectionSurface.empty));
 
     expect(find.text('등록하기'), findsNothing);
-    expect(find.textContaining('다시 등록해주세요'), findsNothing);
+    expect(findVisibleTextContaining('다시 등록해주세요'), findsNothing);
   });
 
   testWidgets('UHR-45 (#6→H6-E) 조회 실패는 실패라고 말한다 — 없음과 다르다',
@@ -1561,7 +1564,7 @@ void main() {
     // 지원 현황은 오류를 말하고,
     expect(find.textContaining('불러오지 못했어요'), findsWidgets);
     // 보완 카드는 그 실패에 종속되지 않는다.
-    expect(find.text('신분증을 다시 등록해주세요.'), findsOneWidget);
+    expect(_correctionCardTitle(), findsOneWidget);
   });
 
 
@@ -1625,7 +1628,7 @@ void main() {
     }
 
     expect(find.text('서류 요청을 확인하지 못했어요'), findsNothing);
-    expect(find.text('신분증을 다시 등록해주세요.'), findsOneWidget);
+    expect(_correctionCardTitle(), findsOneWidget);
 
     // 재시도는 **이 읽기 하나**만 다시 부른다 — 홈 전체 재조회가 아니다.
     expect(calls['corr'], 2);
@@ -1704,7 +1707,7 @@ void main() {
     for (var i = 0; i < 14; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
-    expect(find.text('신분증을 다시 등록해주세요.'), findsOneWidget);
+    expect(_correctionCardTitle(), findsOneWidget);
     expect(calls['corr'], 2);
   });
 
@@ -1763,7 +1766,7 @@ void main() {
     }
 
     // u1 의 응답이 u2 의 화면에 할 일로 서지 않는다.
-    expect(find.text('신분증을 다시 등록해주세요.'), findsNothing);
+    expect(_correctionCardTitle(), findsNothing);
     expect(find.text('등록하기'), findsNothing);
   });
 

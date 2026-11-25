@@ -598,7 +598,7 @@ void main() {
       final body = _codeOf(_bodyOf(src, 'Widget _buildActionBar('));
       expect(body.contains('ElevatedButton'), false);
       expect(body.contains('FilledButton'), false);
-      expect(body.contains("'인력 현황'"), true); // [R7-P1-7 §15]
+      expect(body.contains("'지원·근무 현황'"), true); // [R7-P1-7 §15]
       expect(body.contains('Theme.of(context).primaryColor'), true);
     });
 

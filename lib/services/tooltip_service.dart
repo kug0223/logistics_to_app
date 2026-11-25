@@ -310,7 +310,7 @@ class TooltipContents {
         '같은 지원자는 월 1회만 작성 가능해요.',
       ],
       icon: Icons.rate_review,
-      iconColor: AppColors.amber,
+      iconColor: null,
     );
   }
 

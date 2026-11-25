@@ -489,9 +489,11 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
             padding: EdgeInsets.symmetric(
                 horizontal: ResponsiveHelper.spacing(context, 12),
                 vertical: ResponsiveHelper.spacing(context, 8)),
+            // [DU579] 정정 전 숫자 띠 = 흰 면 + 기존 선(grey200) + warningDark 글(판정141 R1 (b) — 8% 면 4.42 → 흰 면 5.24) · 문구 · 다시 조회 그대로.
             decoration: BoxDecoration(
-              color: AppColors.warningDark.withValues(alpha: 0.08),
+              color: AppColors.surface,
               borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.grey200),
             ),
             child: Row(children: [
               Expanded(
@@ -510,11 +512,12 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
         if (attUnavailable) ...[
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+            // [DU546] 조회 실패 띠 = 흰 면 · grey200 선(같은 화면 예외 카드 짝) + 글 errorDark(월 상세 DU426 같은 뜻) · 아이콘 error 그대로
             decoration: BoxDecoration(
-              color: AppColors.error.withValues(alpha: 0.06),
+              color: AppColors.surface,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                  color: AppColors.error.withValues(alpha: 0.2)),
+                  color: AppColors.grey200),
             ),
             child: Row(
               children: [
@@ -522,9 +525,13 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                     color: AppColors.error,
                     size: ResponsiveHelper.iconSize(context, 18)),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Text('출근 데이터를 불러올 수 없습니다',
-                    style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.error)),
+                // [DU579] B(320·2.0) 오른쪽 127px 넘침(판정141 F141) — 남은 폭에서 낱말 사이로만 줄을 바꾼다(읽는 이름 원문).
+                Expanded(
+                  child: Text(TextLayout.keepWords('출근 데이터를 불러올 수 없습니다'),
+                      semanticsLabel: '출근 데이터를 불러올 수 없습니다',
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.errorDark)),
+                ),
               ],
             ),
           ),
@@ -540,13 +547,18 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
             ),
             child: Row(
               children: [
+                // [DU546] 데이터 없음 띠 — 아이콘 grey600 · 글 textSecondary(grey100 위 4.23 → 5.43 · 월 상세 DU426 같은 뜻의 글과 같다)
                 Icon(Icons.info_outline,
-                    color: AppColors.grey500,
+                    color: AppColors.grey600,
                     size: ResponsiveHelper.iconSize(context, 18)),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Text('$_selectedYear년 근태 데이터가 없습니다',
-                    style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.grey600)),
+                // [DU579] B 오른쪽 104px 넘침(판정141 F141) — 위 조회 실패 띠와 같이 남은 폭 · 낱말 사이 줄바꿈(읽는 이름 원문).
+                Expanded(
+                  child: Text(TextLayout.keepWords('$_selectedYear년 근태 데이터가 없습니다'),
+                      semanticsLabel: '$_selectedYear년 근태 데이터가 없습니다',
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.textSecondary)),
+                ),
               ],
             ),
           ),
@@ -655,8 +667,9 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                       style: ResponsiveHelper.tinyStyle(context,
                           color: AppColors.textTertiary), // [DU329] 집계 범위
                     ),
+                    // [DU579] 금액 증감 = 중립 화살표 · 글(판정141 R4 (b) — 비용 증가를 '좋음' 초록으로 칠하지 않는다 · 부호/문구/단위 그대로).
                     if (attOk && prevAttOk && hasPrevWage && data.wageDeltaPct != 0)
-                      _DeltaBadge(delta: data.wageDeltaPct),
+                      _DeltaBadge(delta: data.wageDeltaPct, neutral: true),
                   ]),
                 ],
               ),
@@ -702,6 +715,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                   delta: (attOk && prevAttOk && hasPrevCount)
                       ? data.workCountDeltaPct
                       : null,
+                  deltaNeutral: true, // [DU579] 건수 증감 = 중립(판정141 R4 (b))
                 )),
                 Expanded(child: _StatCell(
                   key: const ValueKey('annual-unconfirmed-att'),
@@ -716,7 +730,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                               : '${data.attendanceRate.toStringAsFixed(1)}%')
                       : '확인 불가',
                   valueColor: attOk
-                      ? (unconfirmed > 0 ? AppColors.purple : AppColors.success)
+                      ? (unconfirmed > 0 ? AppColors.purple : AppColors.textPrimary) // [DU546] 출근율 = 일반 숫자 중립(DU536 J5 · DU541 B)
                       : AppColors.textTertiary, // [DU329] 출근율 '확인 불가' 값
                   subValue: attOk && unconfirmed > 0 ? '미확인 $unconfirmed건 ›' : null,
                   subValueColor: AppColors.purple,
@@ -739,7 +753,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                       ? (unconfirmed > 0
                           ? AppColors.purple
                           : data.noShowRate > 0
-                              ? AppColors.error
+                              ? AppColors.errorDark // [DU546] 노쇼율 양수 = 위험 숫자 진한 짝(DU541 B)
                               : AppColors.textTertiary) // [DU329] 노쇼율 0 값
                       : AppColors.textTertiary, // [DU329] 노쇼율 '확인 불가' 값
                   subValue: attOk && unconfirmed > 0 ? '미확인 $unconfirmed건 ›' : null,
@@ -759,7 +773,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                     ReviewStatsState.suppressed => '표본 부족',
                     ReviewStatsState.unavailable => '확인 불가',
                   },
-                  valueColor: AppColors.amber,
+                  valueColor: data.reviewStatsState == ReviewStatsState.available ? AppColors.textPrimary : AppColors.textTertiary, // [DU546] 감사138 R2
                   subValue: data.reviewStatsState == ReviewStatsState.available && data.avgRating > 0
                       ? '★ ${data.avgRating.toStringAsFixed(1)}' : null,
                 )),
@@ -832,15 +846,16 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                         style: ResponsiveHelper.smallStyle(context),
                       ),
                     ),
+                    // [DU546] 지각 · 결근 배지 = 월 상세 DU427 과 같은 짝(결근은 관리자 쪽 error 계열 그대로 · DU544 판정 요청 3)
                     if (e.lateCount > 0)
                       _ExBadge(
                           label: '지각 ${e.lateCount}회',
-                          color: AppColors.warning),
+                          color: AppColors.warningDark, bg: AppColors.warningBg),
                     if (e.absentCount > 0) ...[
                       SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                       _ExBadge(
                           label: '결근 ${e.absentCount}회',
-                          color: AppColors.error),
+                          color: AppColors.errorDark, bg: AppColors.errorBg),
                     ],
                     Icon(Icons.chevron_right,
                         size: ResponsiveHelper.iconSize(context, 16),
@@ -1087,8 +1102,9 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis),
                     ),
+                    // [DU579] 금액 글 = textPrimary(판정141 R2 (a) — 계열색 글 2.16–3.68 보완) · 막대 계열/순서 그대로.
                     Text(_fmtWage(e.value),
-                        style: ResponsiveHelper.smallStyle(context, color: color)
+                        style: ResponsiveHelper.smallStyle(context, color: AppColors.textPrimary)
                             .copyWith(fontWeight: FontWeight.w600)),
                   ]),
                   SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -1144,11 +1160,18 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Text('근로자 신뢰점수 분포',
+          // [DU579] B(320·2.0) 오른쪽 160px 넘침(판정141 F141) — 같은 화면 월별 인건비 머리(STATS-TO-ATTENDANCE.27)와 같이 모자라면 평균이 다음 줄로 간다.
+          //   제목은 낱말 사이에서만 줄을 바꾼다(읽는 이름 원문 · _StatCell 라벨과 같은 꼴).
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: ResponsiveHelper.spacing(context, 8),
+            runSpacing: ResponsiveHelper.spacing(context, 4),
+            children: [
+            Text(TextLayout.keepWords('근로자 신뢰점수 분포'),
+                semanticsLabel: '근로자 신뢰점수 분포',
                 style: ResponsiveHelper.bodyStyle(context)
                     .copyWith(fontWeight: FontWeight.bold)),
-            const Spacer(),
             Text('평균 $avgScore점 · $total명',
                 style: ResponsiveHelper.tinyStyle(context,
                     color: AppColors.textSecondary)), // [DU329] 평균 요약
@@ -1172,9 +1195,10 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                         style: ResponsiveHelper.tinyStyle(context,
                             color: AppColors.textTertiary)), // [DU329] 점수 범위
                     const Spacer(),
+                    // [DU579] 인원수 글 = textPrimary(판정141 R3 (a) — 회색 '경고' 2.68 포함) · 등급/문턱/막대 그대로.
                     Text('${g.$2}명 (${(ratio * 100).round()}%)',
                         style: ResponsiveHelper.smallStyle(context,
-                                color: g.$3)
+                                color: AppColors.textPrimary)
                             .copyWith(fontWeight: FontWeight.w600)),
                   ]),
                   SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -1262,6 +1286,7 @@ class _StatCell extends StatelessWidget {
   final String value;
   final Color valueColor;
   final double? delta;
+  final bool deltaNeutral; // [DU579] 전년 대비 칩 중립(금액 · 건수 — 판정141 R4 (b))
   final String? subValue;
   final Color subValueColor;
 
@@ -1272,8 +1297,9 @@ class _StatCell extends StatelessWidget {
     required this.value,
     required this.valueColor,
     this.delta,
+    this.deltaNeutral = false,
     this.subValue,
-    this.subValueColor = AppColors.amber,
+    this.subValueColor = AppColors.grey600, // [DU546] 기본값 사용처 = 재고용률 별점 하나(감사138 R4)
   });
 
   @override
@@ -1317,7 +1343,7 @@ class _StatCell extends StatelessWidget {
           // delta (있을 때만)
           if (delta != null && delta != 0) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 3)),
-            _DeltaBadge(delta: delta!),
+            _DeltaBadge(delta: delta!, neutral: deltaNeutral),
           ],
         ],
       ),
@@ -1337,12 +1363,16 @@ class _VLine extends StatelessWidget {
 
 class _DeltaBadge extends StatelessWidget {
   final double delta;
-  const _DeltaBadge({required this.delta});
+  final bool neutral; // [DU579] 금액 · 건수 증감 — 좋음/나쁨 색을 붙이지 않는다(판정141 R4 (b))
+  const _DeltaBadge({required this.delta, this.neutral = false});
 
   @override
   Widget build(BuildContext context) {
     final isPos = delta > 0;
-    final color = isPos ? AppColors.success : AppColors.error;
+    // [DU546] 전년 대비 칩 = StatusBadge 짝(옅은 면 + 진한 글/화살표) — 오름 success · 내림 error 계열 그대로(뜻 판정은 R4)
+    // [DU579] 중립(금액 · 건수) = StatusBadge.neutral 면 grey200 + textSecondary 화살표 · 글(5.10) — 비율(출근율 · 노쇼율)은 위 짝 그대로(판정141 R4).
+    final color = neutral ? AppColors.textSecondary : isPos ? AppColors.successDark : AppColors.errorDark;
+    final bg = neutral ? AppColors.grey200 : isPos ? AppColors.successBg : AppColors.errorBg;
     final icon = isPos ? Icons.arrow_upward : Icons.arrow_downward;
     return Container(
       padding: EdgeInsets.symmetric(
@@ -1350,7 +1380,7 @@ class _DeltaBadge extends StatelessWidget {
         vertical: 2,
       ),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+        color: bg,
         borderRadius: BorderRadius.circular(6),
       ),
       // [R7-P1-7 후속 P17-S] 부모가 좁아지면 배지 안에서 다시 넘쳤다 —
@@ -1377,7 +1407,8 @@ class _DeltaBadge extends StatelessWidget {
 class _ExBadge extends StatelessWidget {
   final String label;
   final Color color;
-  const _ExBadge({required this.label, required this.color});
+  final Color bg; // [DU546] 옅은 면(StatusBadge 짝) — color 는 진한 글
+  const _ExBadge({required this.label, required this.color, required this.bg});
 
   @override
   Widget build(BuildContext context) {
@@ -1387,7 +1418,7 @@ class _ExBadge extends StatelessWidget {
         vertical: 2,
       ),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
+        color: bg,
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(label,

@@ -226,20 +226,20 @@ class _SubadminLeaveScreenState extends State<SubadminLeaveScreen> {
                           width: 20 * s,
                           height: 20 * s,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2, color: AppColors.error),
+                              strokeWidth: 2, color: AppColors.textSecondary),
                         )
                       else
                         TextButton(
                           onPressed: () => _leave(ctx, bizId),
                           style: TextButton.styleFrom(
-                            foregroundColor: AppColors.error,
+                            foregroundColor: AppColors.textSecondary,
                             padding: EdgeInsets.symmetric(
                                 horizontal: 12 * s, vertical: 8 * s),
                             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           ),
                           child: Text('탈퇴하기',
                               style: ResponsiveHelper.smallStyle(ctx,
-                                  color: AppColors.error,
+                                  color: AppColors.textSecondary,
                                   fontWeight: FontWeight.w600)),
                         ),
                     ],

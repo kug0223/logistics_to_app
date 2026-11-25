@@ -1,3 +1,5 @@
+// ignore_for_file: depend_on_referenced_packages
+// [CONSENT-R5 후보 사본] 원본 = 지금 A/test/invite_preaccept_card_test.dart sha256=f556050171f9a3f636ca1944bb6e0171e91d4438b1b31902b819b66ad0c1fd35 위에 r4d hunk 5 를 다시 얹음 · 자리 대응 R/work/consent-fast-r5-20261121/manifests/rebase_map.tsv · 뜻은 r4d manifests/test_change_map.tsv
 // [INVITE-PREACCEPT] 초대 카드가 **지금 무엇을 해야 하는지** 말한다.
 //
 // ── 무엇이 막혀 있었나 (2026-10-15 DEV 실측) ──────────────────────────
@@ -15,7 +17,6 @@
 //   PC-E  320dp × 글자 2.0 에서 문구·버튼이 넘치지 않는다
 //   PC-F  서버 값 파싱 — 모르는 값은 unknown
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import 'package:flutter/material.dart';
@@ -205,7 +206,7 @@ Future<void> _pump(
 }
 
 List<String> _texts(WidgetTester t) => t
-    .widgetList<Text>(find.byType(Text))
+    .widgetList<Text>(find.byWidgetPredicate((w) => w is Text))
     .map((w) => w.data ?? '')
     .where((s) => s.isNotEmpty)
     .toList();
@@ -343,8 +344,10 @@ void main() {
       for (final part in DocumentAccessConsent.invitePartsFor('QA 사업장')) {
         expect(findVisibleTextContaining(part), findsWidgets, reason: part); // [DU288] 보이는 글자
       }
-      expect(texts.any((s) => s.contains('지원하기를 누르면')), isFalse,
-          reason: '초대 화면에 지원 문구(V3)를 보이지 않는다');
+      // [CONSENT-R4b] 문단 1 이 공통이 되어 '지원하기를 누르면'은 어디에도 없다 — 같은 의도(초대 화면에
+      //   일반 지원 문안을 보이지 않음)를 일반 문안에만 있는 검토 기간 줄로 다시 고정한다.
+      expect(texts.any((s) => s.contains('· 채용 검토: 지원이 끝날 때까지')), isFalse,
+          reason: '초대 화면에 일반 지원 문안(v4)을 보이지 않는다');
       expect(find.text('동의하기'), findsOneWidget);
       // 취소 → 아무것도 보내지 않고 닫힌다.
       await t.tap(find.text('취소'));
@@ -372,6 +375,8 @@ void main() {
     testWidgets('PC-11 320dp × 2.0 — 동의 창 넘침 0, 버튼 보임', (t) async {
       await _pump(t, _invite(InviteAcceptReadiness.consentRequired),
           size: const Size(320, 900), textScale: 2.0);
+      await t.ensureVisible(find.text('서류 열람 동의'));
+      await t.pump();
       await t.tap(find.text('서류 열람 동의'));
       for (var i = 0; i < 10; i++) {
         await t.pump(const Duration(milliseconds: 100));
@@ -390,6 +395,8 @@ void main() {
     testWidgets('PC-17 320dp × 2.0 — 초대 수락 확인창: 초대 문구 끝까지·CTA 접근', (t) async {
       await _pump(t, _invite(InviteAcceptReadiness.ready, consented: true),
           size: const Size(320, 900), textScale: 2.0);
+      await t.ensureVisible(find.text('수락하기'));
+      await t.pump();
       await t.tap(find.text('수락하기'));
       for (var i = 0; i < 10; i++) {
         await t.pump(const Duration(milliseconds: 100));
@@ -400,7 +407,8 @@ void main() {
       await t.ensureVisible(findVisibleTextContaining(last).first); // [DU288] 보이는 글자
       await t.pump();
       expect(findVisibleTextContaining(last).first.hitTestable(), findsOneWidget);
-      expect(_texts(t).any((s) => s.contains('지원하기를 누르면')), isFalse);
+      // [CONSENT-R4b] 같은 교체(F5-2).
+      expect(_texts(t).any((s) => s.contains('· 채용 검토: 지원이 끝날 때까지')), isFalse);
     });
   });
 
@@ -494,13 +502,20 @@ void main() {
       expect(_onTapOf(t, '수락하기'), isNull);
     });
 
-    test('PC-18 V3 문구는 그대로, 초대 문구는 "지원하기"가 없다 — 한 토큰 = 한 문장', () {
-      expect(DocumentAccessConsent.version, '2026-09-18-v3');
-      expect(DocumentAccessConsent.copyFor('X').startsWith('지원하기를 누르면 [X]'), isTrue,
-          reason: 'V3 를 본 사람들의 기록이 거짓이 되지 않게 V3 는 바꾸지 않는다');
+    test('PC-18 [CONSENT-R4b] 새 세대 판본 — 행동 문장은 공통, 초대 문안은 검토 기간이 다르다 — 한 토큰 = 한 문장', () {
+      expect(DocumentAccessConsent.version, '2026-11-18-v4');
+      // 구 V3 문장·토큰은 legacy registry(test/fixtures/consent_r4) 가 보존한다 — 새 토큰은 새 문장이다.
+      // [r4 감사 §4] 문단 1 = 6면 공통 행동 문장('지원·동의·수락' — 실제 버튼 이름이 모두 든다).
+      const action = '아래 지원·동의·수락 버튼을 누르면 ';
+      expect(DocumentAccessConsent.copyFor('X').startsWith(action), isTrue);
+      expect(DocumentAccessConsent.copyFor('X').contains('[X]'), isFalse,
+          reason: '대표 결정 ⑦ — 사업장 이름 미표기');
       expect(DocumentAccessConsent.inviteVersion, isNot(DocumentAccessConsent.version));
       expect(DocumentAccessConsent.inviteCopyFor('X').contains('지원하기'), isFalse);
-      expect(DocumentAccessConsent.inviteCopyFor('X').startsWith('동의하면 [X]'), isTrue);
+      expect(DocumentAccessConsent.inviteCopyFor('X').startsWith(action), isTrue);
+      // 한 토큰 = 한 문장 — 두 판본의 전문이 같지 않다(검토 기간 줄).
+      expect(DocumentAccessConsent.inviteCopyFor('X'), isNot(DocumentAccessConsent.copyFor('X')));
+      expect(DocumentAccessConsent.inviteCopyFor('X').contains('· 채용 검토: 수락 기한까지'), isTrue);
       expect(DocumentAccessConsent.invitePartsFor('X').join('\n'),
           DocumentAccessConsent.inviteCopyFor('X'));
       expect(DocumentAccessConsent.reviewPurposeVersions,

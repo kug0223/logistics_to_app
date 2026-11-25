@@ -1109,7 +1109,7 @@ class _ContractCard extends StatelessWidget {
                             ),
                             child: Text('재처리',
                                 style: ResponsiveHelper.tinyStyle(context,
-                                        color: AppColors.warningDark)
+                                        color: AppColors.brand)
                                     .copyWith(fontWeight: FontWeight.w700)),
                           ),
                       ],

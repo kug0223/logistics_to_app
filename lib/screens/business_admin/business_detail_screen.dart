@@ -573,19 +573,19 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
             vertical: ResponsiveHelper.spacing(context, 10),
           ),
           decoration: BoxDecoration(
-            color: AppColors.infoBg,
+            color: AppColors.grey100,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
+            border: Border.all(color: AppColors.borderLight),
           ),
           child: Row(
             children: [
               Icon(Icons.info_outline,
-                  size: ResponsiveHelper.iconSize(context, 15), color: AppColors.infoDark),
+                  size: ResponsiveHelper.iconSize(context, 15), color: AppColors.textSecondary),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Expanded(
                 child: Text(
                   rules.summary,
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.textPrimary),
                 ),
               ),
             ],
@@ -806,7 +806,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.directions, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.infoDark),
+                    Icon(Icons.directions, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.textSecondary),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
                       child: Text(_currentBusiness.transportDescription!, style: ResponsiveHelper.bodyStyle(context)),
@@ -819,7 +819,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                   SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                   Row(
                     children: [
-                      Icon(Icons.subway, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.infoDark),
+                      Icon(Icons.subway, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.textSecondary),
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       Expanded(
                         child: Text(

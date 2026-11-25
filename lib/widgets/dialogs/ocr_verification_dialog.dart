@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/text_layout.dart';
 import '../../theme/app_colors.dart';
 
 /// 📄 OCR 검증 결과 다이얼로그
@@ -49,6 +50,7 @@ class OcrVerificationDialog {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
+        scrollable: true, // [F275-OVF-OCR] 큰 글자에서 창 높이를 넘는 본문을 스크롤로 — 글·단추 그대로
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
         ),
@@ -84,9 +86,9 @@ class OcrVerificationDialog {
             Container(
               padding: ResponsiveHelper.cardPadding(context),
               decoration: BoxDecoration(
-                color: AppColors.success.withValues(alpha: 0.1),
+                color: AppColors.surface,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
+                border: Border.all(color: AppColors.borderLight),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -136,7 +138,7 @@ class OcrVerificationDialog {
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.successMedium,
+              backgroundColor: AppColors.brand,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -166,6 +168,7 @@ class OcrVerificationDialog {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
+        scrollable: true, // [F275-OVF-OCR] 큰 글자에서 창 높이를 넘는 본문을 스크롤로 — 글·단추 그대로
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
         ),
@@ -220,7 +223,7 @@ class OcrVerificationDialog {
                       context,
                       '입력 정보',
                       expectedInfo,
-                      AppColors.infoDark,
+                      AppColors.textPrimary,
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                     _buildInfoRow(
@@ -274,7 +277,7 @@ class OcrVerificationDialog {
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.warningMedium,
+              backgroundColor: AppColors.brand,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -311,6 +314,7 @@ class OcrVerificationDialog {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
+        scrollable: true, // [F275-OVF-OCR] 큰 글자에서 창 높이를 넘는 본문을 스크롤로 — 글·단추 그대로
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
         ),
@@ -407,7 +411,7 @@ class OcrVerificationDialog {
               child: Text(
                 '그대로 등록',
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  color: AppColors.warningDark,
+                  color: AppColors.brand,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -483,11 +487,15 @@ class OcrVerificationDialog {
             color: AppColors.grey600,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          Text(
-            tip,
-            style: ResponsiveHelper.smallStyle(
-              context,
-              color: AppColors.grey700,
+          // [F275-OVF-OCR] 큰 글자에서 팁 글이 행 폭을 넘음 → 남은 폭 안에서 줄바꿈
+          // [F275-OCR-TIP-WRAP] 줄바꿈은 낱말 단위(음절 중간 '전체적으/로' 금지) — 3b1 과 같은 TextLayout.keepWords
+          Flexible(
+            child: Text(
+              TextLayout.keepWords(tip),
+              style: ResponsiveHelper.smallStyle(
+                context,
+                color: AppColors.grey700,
+              ),
             ),
           ),
         ],

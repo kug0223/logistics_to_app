@@ -30,7 +30,8 @@ class WorkerWageStatus {
       return (label: '노쇼 처리됨', color: AppColors.errorDark);
     }
     if (att.status == AttendanceModel.statusAbsent) {
-      return (label: '결근 처리됨', color: AppColors.warningDark);
+      // [DU596b · 판정139 §3 :44 PP-STATUS-PAIR · 판정177 §6 :60] 명시 결근 결과 = 노쇼와 같은 errorDark(홈 · 일정 카드 · 출퇴근 배너와 같은 짝).
+      return (label: '결근 처리됨', color: AppColors.errorDark);
     }
     switch (att.wageStatus) {
       case AttendanceModel.wageConfirmed:

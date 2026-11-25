@@ -173,7 +173,7 @@ void main() {
     });
 
     test('03-d 지원서 0건이어도 모집 단위가 있으면 목록을 그린다', () {
-      final body = _after(code, 'Widget _buildBody(BuildContext context)', 1800);
+      final body = _after(code, 'Widget _buildBody(BuildContext context, {Widget? statsFirst})', 1800);
       expect(body.contains('final hasApps ='), isTrue);
       expect(body.contains('rows.isEmpty'), isTrue);
       // 지원서 유무만으로 빈 화면을 내보내던 조건이 남아 있으면 안 된다
@@ -184,9 +184,9 @@ void main() {
     });
 
     test('03-e 조회 실패를 `충원할 것 없음`으로 바꾸지 않는다', () {
-      final body = _after(code, 'Widget _buildBody(BuildContext context)', 1800);
+      final body = _after(code, 'Widget _buildBody(BuildContext context, {Widget? statsFirst})', 1800);
       expect(body.contains('rows == null'), isTrue);
-      expect(body.contains("'인력 현황을 불러오지 못했어요'"), isTrue);
+      expect(body.contains("'지원·근무 현황을 불러오지 못했어요'"), isTrue);
       // 실패(null)와 성공-0건(empty)이 같은 화면이면 안 된다
       final nullAt = body.indexOf('rows == null');
       final emptyAt = body.indexOf('rows.isEmpty');
@@ -198,7 +198,7 @@ void main() {
     });
 
     test('03-g 기존 CTA를 재사용한다 — 새 버튼/화면을 만들지 않았다', () {
-      expect(code.contains("'인력 초대 (\$shortage명 부족)'"), isTrue);
+      expect(code.contains("'근무 초대 (\$shortage명 부족)'"), isTrue);
       expect(code.contains('InviteMethodSheet('), isTrue);
       expect(code.contains('AvailableWorkersBottomSheet('), isTrue);
     });

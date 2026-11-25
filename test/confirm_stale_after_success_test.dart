@@ -1,3 +1,4 @@
+// ignore_for_file: depend_on_referenced_packages
 // [SIM-A] 확정 성공 직후 관리자 창·공고 카드가 낡은 상태로 남았다.
 //
 // DEVICE 반례(DEV 확정 셀, 설치 앱 1.0.21+25):
@@ -311,7 +312,7 @@ class _Card {
 }
 
 Future<void> _openRoster(WidgetTester t) async {
-  final cta = findVisibleText('인력 현황');
+  final cta = findVisibleText('지원·근무 현황');
   await t.ensureVisible(cta.first);
   await t.tap(cta.first);
   // 카드는 열기 전에 사업장 문서를 실제 플러그인으로 읽는다(실패해도 연다).

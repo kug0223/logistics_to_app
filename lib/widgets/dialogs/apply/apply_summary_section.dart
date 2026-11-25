@@ -88,9 +88,9 @@ class ApplySummarySection extends StatelessWidget {
           final gap = ResponsiveHelper.spacing(context, 5);
           final more = total > 2
               ? Text(
-                  '전체보기 >',
+                  '최대 2건 표시',
                   style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.infoDark, fontWeight: FontWeight.w600),
+                      color: AppColors.textSecondary, fontWeight: FontWeight.w600),
                 )
               : null;
           final lead = <Widget>[

@@ -219,7 +219,7 @@ class FullMapDialog extends StatelessWidget {
                     Icon(
                       Icons.directions,
                       size: ResponsiveHelper.iconSize(context, 18),
-                      color: AppColors.info,
+                      color: AppColors.textSecondary,
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                     Expanded(
@@ -241,7 +241,7 @@ class FullMapDialog extends StatelessWidget {
                     Icon(
                       Icons.subway,
                       size: ResponsiveHelper.iconSize(context, 18),
-                      color: AppColors.info,
+                      color: AppColors.textSecondary,
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                     Expanded(

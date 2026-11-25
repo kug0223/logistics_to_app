@@ -47,8 +47,10 @@ import 'available_workers_bottom_sheet.dart';
 import 'invite_worker_dialog.dart';
 import 'work_applicants_reads.dart';
 import '../../../theme/app_colors.dart';
+import '../../../theme/app_text_styles.dart';
 import '../../../widgets/common/adaptive_action_row.dart';
 import '../../../widgets/common/app_checkbox.dart';
+import '../../../widgets/common/keep_words_text.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../utils/id_card_helper.dart';
 import 'fixed_worker_management_dialog.dart';
@@ -1037,8 +1039,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
   /// 머리 제목 원문. [R7-P1-7 §15] `지원자 관리` → `인력 현황` — Day와 같은 이름.
   String get _headerTitle => widget.work != null
-      ? '${widget.work!.workType} · 인력 현황'
-      : '${widget.toItem.to.title} · 인력 현황';
+      ? '${widget.work!.workType} · 지원·근무 현황'
+      : '${widget.toItem.to.title} · 지원·근무 현황';
 
   /// 머리 보조 줄(날짜/범위 · 시간 · 임금) — 머리 안과 좁은 창의 본문 첫 항목이 같은 위젯을 쓴다(글 · 읽는 이름 한 곳).
   Widget _headerSub() => Text.rich(
@@ -1382,8 +1384,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         icon: const Icon(Icons.person_add_outlined, size: 16),
         // [DU530] 큰 글자에서 '부/족'으로 끊겼다 — 줄은 공백에서만 바꾼다. 글 원문 · 읽는 이름은 그대로(DU519 와 같은 방식).
         label: Text.rich(TextSpan(
-          text: TextLayout.keepWords('인력 초대 ($shortage명 부족)'),
-          semanticsLabel: '인력 초대 ($shortage명 부족)',
+          text: TextLayout.keepWords('근무 초대 ($shortage명 부족)'),
+          semanticsLabel: '근무 초대 ($shortage명 부족)',
         )),
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.brand,
@@ -1423,7 +1425,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           Expanded(
             child: Text(
               '$shortage명이 더 필요해요. 장기 근무 초대는 근무 기간을 정해야 해서\n'
-              '공고 카드의 ⋮ 메뉴 > 인력 초대에서 보낼 수 있어요.',
+              '공고 카드의 ⋮ 메뉴 > 근무 초대에서 보낼 수 있어요.',
               style:
                   ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
             ),
@@ -1473,7 +1475,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
               //
               //   처리가 성공했다는 사실만 말한다. 숫자는 canonical 이
               //   도착한 뒤에 나온다.
-              '처리를 반영했어요. 인력 현황을 다시 확인하는 중이에요.',
+              '처리를 반영했어요. 모집 정원을 다시 확인하는 중이에요.',
               style:
                   ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
             ),
@@ -1505,8 +1507,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           Expanded(
             child: Text(
               _capacityLoading
-                  ? '인력 현황을 확인하는 중이에요.'
-                  : '인력 현황을 확인하지 못해 충원이 필요한지 알 수 없어요.\n다시 시도해 주세요.',
+                  ? '모집 정원을 확인하는 중이에요.'
+                  : '모집 정원을 확인하지 못해 부족한 자리가 있는지 알 수 없어요.\n다시 시도해 주세요.',
               style:
                   ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
             ),
@@ -1789,7 +1791,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       child: AppEmptyState(
         icon: Icons.error_outline,
         iconColor: AppColors.error,
-        title: '인력 현황을 불러오지 못했어요',
+        title: '지원·근무 현황을 불러오지 못했어요',
         subtitle: '지원자가 있는지 확인하지 못했습니다.',
         action: TextButton(
           onPressed: _isProcessing ? null : _loadApplicants,
@@ -2554,6 +2556,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     // ignore: unused_local_variable — 향후 확장용 (계약서 로직은 별도 메서드에서 _getWorkForApp 사용)
     final effectiveWork = workOverride ?? widget.work ?? _getWorkForApp(app);
     final user = item['user'] as UserModel?;
+    final nameText = user?.name ?? app.applicantName ?? '이름 없음';
     final idCardStatus = _idCardStatusMap[user?.uid ?? ''] ?? 'none';
     // null = 로딩 전 / int = 로딩 완료 (0포함) → Wrap 조건부 포함으로 간격 오염 방지
     final weeklyCount = _weeklyWorkCountMap[user?.uid ?? ''];
@@ -2669,25 +2672,25 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                         : null,
                                   ),
                                 ],
+                                // [DU559] 순번 = 보조 14/1.45/400 textSecondary(13/700 grey400 — 흰 면 대비 미달 · 굵기 400/700 두 축).
                                 Text(
                                   '$index.',
-                                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey400)
-                                      .copyWith(fontWeight: FontWeight.w700),
+                                  style: AppTextStyles.roleSupport(),
                                 ),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 5)),
                                 Flexible(
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
+                                  // [DU559 · PP-TYPOGRAPHY T3] 이름 = 카드 제목 17/1.3/700 textPrimary · 부가 식별(인력번호 · 성별 · 나이) = 보조 14/1.45/400 —
+                                  //   둘 다 전문(말줄임 · 줄 제한 0 · 낱말 사이에서만 줄바꿈). Row → Wrap: 한 줄에 들어가면 이전처럼 이름 옆,
+                                  //   안 들어가면 부가 식별이 이름 아래 줄로 내려간다(간격 4 그대로). 큰 글자에서도 사람 식별을 숨기지 않는다.
+                                  child: Wrap(
+                                    spacing: ResponsiveHelper.spacing(context, 4),
+                                    crossAxisAlignment: WrapCrossAlignment.center,
                                     children: [
-                                      Flexible(
-                                        // [UI-APPLICANTS-AND-INVITATIONS.2] 긴 이름을 한 줄 말줄임으로 숨기지 않는다 —
-                                        //   두 줄까지 보이고 그 뒤에만 줄인다(동명이인 구분은 옆 인력번호가 한다).
-                                        child: Text(
-                                          user?.name ?? app.applicantName ?? '이름 없음',
-                                          style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w700),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
+                                      // [DU559] 이름 조판 = TextLayout.identity(이 앱의 이름 규칙 — 낱말 사이 · 띄어쓰기 없는 6자 이상 낱말은 가운데 한 곳에서만 줄바꿈) ·
+                                      //   읽는 이름 = 원문(span semanticsLabel). Text.rich 라 Text 요소 바로 아래가 문단이다(NCG-N 의 renderObject<RenderParagraph>(find.text(이름)) 그대로).
+                                      Text.rich(
+                                        TextSpan(text: TextLayout.identity(nameText), semanticsLabel: nameText),
+                                        style: AppTextStyles.roleCardTitle(),
                                       ),
                                       // [R7-PRE1A.1] 번호를 성별·나이와 같은 보조 줄에 둔다.
                                       //   이름만 있는 목록에서는 동명이인 두 줄이 똑같아 보인다.
@@ -2699,15 +2702,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                             '${user?.gender ?? ''}'
                                             '${user?.age != null ? ' · ${user?.age}세' : ''}',
                                           ).isNotEmpty) ...[
-                                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                        Text(
+                                        KeepWordsText(
                                           '(${PersonLabel.secondary(
                                             user?.personNo,
                                             '${user?.gender ?? ''}'
                                             '${user?.age != null ? ' · ${user?.age}세' : ''}',
                                           )})',
-                                          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-                                          maxLines: 1,
+                                          style: AppTextStyles.roleSupport(),
                                         ),
                                       ],
                                     ],
@@ -2776,11 +2777,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           // [R7-P1-2 DEVICE.1H.1] 큰 글자에서 넘치던 칸 — Wrap 안이라 줄바꿈된다.
-                          Text(
+                          // [DU559] 지원/초대 시각 = 보조 14/1.45/400 textSecondary(12 grey400 — 흰 면 대비 미달) · 말줄임 0 · 낱말 사이 줄바꿈.
+                          KeepWordsText(
                             _relationTimeLabel(app),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+                            style: AppTextStyles.roleSupport(),
                           ),
                           if (user?.effectivePhone != null && (user?.effectivePhone ?? '').isNotEmpty)
                             Row(
@@ -2790,7 +2790,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                 Text(
                                   FormatHelper.formatPhone(user?.effectivePhone ?? ''),
-                                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                                  style: AppTextStyles.roleSupport(),
                                 ),
                               ],
                             ),
@@ -2806,7 +2806,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                 SizedBox(width: ResponsiveHelper.spacing(context, 2)),
                                 Text(
                                   user.averageRating.toStringAsFixed(1),
-                                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                                  style: AppTextStyles.roleSupport(),
                                 ),
                               ],
                             ),
@@ -2872,7 +2872,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                           ),
                           child: Text(
                             app.applicationMessage!,
-                            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                            style: AppTextStyles.roleSupport(),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -2891,19 +2891,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                             ),
                             SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                             Flexible(
-                              child: Text(
+                              // [DU589b · 판정157 §5 요청8 :81] 장기 희망/근무 기간 = 판단 16/1.5/400 textPrimary(이전 13 · w600 brand/grey600 · 한 줄 말줄임) · 낱말 사이 줄바꿈.
+                              child: KeepWordsText(
                                 app.desiredStartDate != null
                                     // [R7-P1-2 DEVICE.1] 근무 약속 날짜는 KST 달력이다.
                                     ? '희망: ${FormatHelper.formatDateShort(app.desiredStartDate!)}~'
                                         '${app.workEndDate != null ? " (${FormatHelper.formatDateShort(app.workEndDate!)}까지)" : ""}'
                                     : '장기: ${app.workPeriodDisplay}',
-                                style: ResponsiveHelper.smallStyle(
-                                  context,
-                                  color: app.desiredStartDate != null ? Theme.of(context).primaryColor : AppColors.grey600,
-                                ).copyWith(
-                                  fontWeight: app.desiredStartDate != null ? FontWeight.w600 : FontWeight.normal,
-                                ),
-                                overflow: TextOverflow.ellipsis,
+                                style: AppTextStyles.roleBody(),
                               ),
                             ),
                           ],
@@ -2981,10 +2976,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                             child: _pendingReassignmentOf(app) != null
                                 ? _buildActionButton(
                                     context,
-                                    label: '변경 확인 대기',
+                                    label: '변경 제안 철회',
                                     icon: Icons.hourglass_top,
                                     bgColor: Colors.transparent,
-                                    textColor: AppColors.warningDark,
+                                    textColor: AppColors.textSecondary,
                                     onTap: () => _cancelReassignment(app),
                                   )
                                 : _buildActionButton(
@@ -3049,12 +3044,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                         // [4J.1] FULL/TIME_EXPIRED 힌트 — 승인 버튼이 숨겨진 이유 안내
                         if (!widget.toItem.to.canApprovePending) ...[
                           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                          Text(
+                          // [DU559] 확정이 막힌 이유 = 판단 정보 16/1.5/400 textPrimary(13 grey500 — 확정 버튼이 없는 이유가 가장 흐렸다).
+                          // [DU589b · F162-APPROVAL-REASON-COPY 판정162 §5 ② :60] FULL 만 원인을 말한다. 그 밖(만료 · 서버 마감 · 장기 게시/지원 마감)은 이 분기에서
+                          //   원인을 가르지 않으므로 확인하지 않은 원인을 단정하지 않는 표시 fallback — guard · 권한 · 기한 계산 · canApprovePending 그대로.
+                          KeepWordsText(
                             widget.toItem.to.isFull
-                                ? '정원이 충족된 공고입니다. 추가 확정이 제한됩니다.'
-                                : '기간이 만료된 공고입니다. 추가 확정이 제한됩니다.',
-                            style: ResponsiveHelper.smallStyle(context,
-                                color: AppColors.grey500),
+                                ? '정원이 모두 차서 추가로 확정할 수 없어요.'
+                                : '지금은 추가로 확정할 수 없어요.',
+                            style: AppTextStyles.roleBody(),
                           ),
                         ],
                       ],
@@ -3126,9 +3123,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           //   화면 폭 배율을 곱하지 않는다(곱하면 390 미만에서 48 아래로 내려간다). 모양 · 글자 크기는 그대로.
           // [DU527a r2] 이 창의 글자 줄 높이는 19 라 여백만으로는 글자 행동이 47 이었다(r1 TA) — 최소 높이 48 을 명시한다.
           //   alignment 는 주지 않는다(Wrap 안에서 가로로 늘어난다 — O002 :2492 주석). 주요(50)는 그대로.
+          // [DU589b · 판정162 §5 ① :59 · J128] 채움(확정 · 계약서 작성) 좌우 여백 16 → 12(글자 행동과 같은 폭 여백) — 채움 면적만 줄인다(이름보다 시선을 끌던 무게).
+          //   높이(상하 15.5 · 주 버튼 최소 52 — Standards :1503) · brand 채움 · 흰 글 · 오른쪽 자리 · 48/hit 그대로(새 색 · 공용 버튼 0). O002 _actionButton(16×15.5)과는 갈린다(V11 후보).
           constraints: filled ? null : const BoxConstraints(minHeight: 48),
           padding: EdgeInsets.symmetric(
-            horizontal: filled ? 16 : 12,
+            horizontal: 12,
             vertical: filled ? 15.5 : 14,
           ),
           // [UI-APPLICANTS-AND-INVITATIONS.2] 채움이 아닌 버튼(보조·위험)은 테두리 없이 글자로 —
@@ -3139,10 +3138,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
             children: [
               Icon(icon, size: ResponsiveHelper.iconSize(context, 13), color: effectiveText),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text(
-                label,
-                style: ResponsiveHelper.smallStyle(context, color: effectiveText)
-                    .copyWith(fontWeight: FontWeight.w600),
+              // [DU559] 행동 글 = 조작 16/1.3/700(색 = effectiveText 그대로). 좁고 큰 글자에서는 낱말 사이에서 줄을 바꾼다(Row 넘침 0).
+              Flexible(
+                child: KeepWordsText(
+                  label,
+                  style: AppTextStyles.roleAction(color: effectiveText),
+                ),
               ),
             ],
           ),
@@ -3175,10 +3176,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         borderRadius: BorderRadius.circular(4),
         border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
-      child: Text(
+      // [DU559] 상태 배지 = 14/1.3/700(색 그대로 · 낱말 사이 줄바꿈).
+      child: KeepWordsText(
         label,
-        style: ResponsiveHelper.tinyStyle(context, color: color)
-            .copyWith(fontWeight: FontWeight.bold),
+        style: AppTextStyles.roleBadge(color: color),
       ),
     );
   }
@@ -3235,7 +3236,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           bgColor = AppColors.grey100;
         case 'voided':
           label = '무효';
-          color = AppColors.error;
+          // [DU589b · 판정138 R3 :46] 무효 = 작은 errorDark/errorBg 상태 표시(error #F44336 글 → errorDark · 면 · 테두리 식 그대로).
+          color = AppColors.errorDark;
           bgColor = AppColors.errorBg;
         default:
           label = '계약중';
@@ -3253,10 +3255,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         borderRadius: BorderRadius.circular(4),
         border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
-      child: Text(
+      // [DU559] 상태 배지 = 14/1.3/700(색 그대로 · 낱말 사이 줄바꿈).
+      child: KeepWordsText(
         label,
-        style: ResponsiveHelper.tinyStyle(context, color: color)
-            .copyWith(fontWeight: FontWeight.bold),
+        style: AppTextStyles.roleBadge(color: color),
       ),
     );
   }
@@ -3279,10 +3281,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
               size: ResponsiveHelper.iconSize(context, 10),
               color: AppColors.error),
           SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-          Text(
-            '최근 90일 노쇼 $count회',
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.error).copyWith(
-              fontWeight: FontWeight.w600,
+          // [DU559] 노쇼 사실 배지 = 14/1.3/700(error 그대로) · 좁고 큰 글자에서 낱말 사이 줄바꿈(Row 넘침 0).
+          Flexible(
+            child: KeepWordsText(
+              '최근 90일 노쇼 $count회',
+              style: AppTextStyles.roleBadge(color: AppColors.error),
             ),
           ),
         ],
@@ -3333,9 +3336,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           SizedBox(width: ResponsiveHelper.spacing(context, 3)),
           Text(
             '주$count회',
-            style: ResponsiveHelper.tinyStyle(context, color: color).copyWith(
-              fontWeight: FontWeight.w600,
-            ),
+            style: AppTextStyles.roleBadge(color: color),
           ),
         ],
       ),

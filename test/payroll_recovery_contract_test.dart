@@ -236,7 +236,8 @@ void main() {
     test('23 U3 — NOT READY 면 버튼 대신 상태를 보여준다', () {
       final wait = _codeOf(
           _sliceOf(dash, 'String? _payrollWaitLabel(', '\n  }'));
-      expect(wait, contains('근로자 정보 보완 대기'));
+      // [DU599b g1 · 판정179 P4 기대 갱신] 예전 '근로자 정보 보완 대기' — 화면 안내 호칭 '근무자'(판정156 Q3 :39) · 같은 뜻의 양성 기대.
+      expect(wait, contains('근무자 정보 보완 대기'));
       expect(wait, contains('통장사본 확인 필요'));
       expect(dash, contains("waitLabel != null"));
     });

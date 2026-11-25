@@ -165,7 +165,7 @@ void main() {
     test('OX-13 로그인 차단 문구가 그 formatter 를 쓴다', () {
       final c = _code('lib/services/auth_service.dart');
       expect(c.contains('FormatHelper.formatKstDateTimeKorean'), isTrue);
-      expect(c.contains('(한국시간)까지 이용이 제한됩니다.'), isTrue);
+      expect(c.contains('(한국시간)까지 이용이 제한돼요.'), isTrue);
       // 기기 local 성분으로 날짜를 만들던 옛 문구는 없어야 한다.
       expect(
           c.contains(r'${restrictedDate.year}년 ${restrictedDate.month}월'),
@@ -183,7 +183,7 @@ void main() {
     test('OX-15 영구 제한 안내는 그대로 유지된다', () {
       final c = _code('lib/services/auth_service.dart');
       expect(c.contains('restrictedDate.year >= 9999'), isTrue);
-      expect(c.contains('영구 제한되었습니다'), isTrue);
+      expect(c.contains('이용 제한(기한 없음) 상태예요.'), isTrue);
     });
 
     test('OX-16 restrictedUntil 이 없거나 형식이 다르면 안내를 만들지 않는다', () {

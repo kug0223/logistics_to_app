@@ -44,6 +44,29 @@ class RoleTheme {
         brightness: Brightness.light,
       ),
 
+      dialogTheme: const DialogThemeData(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: Colors.white,
+        modalBackgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
+      // [DU640 · T0-b · 판정258 Q-A1] 팝업 메뉴 · 날짜/시간 선택 창도 창 · 시트와 같은 흰 면(M3 fromSeed 연보라 면 대신).
+      //   시간 선택 창은 바탕만 — tint 는 위 dialogTheme(투명)을 따른다(SDK TimePickerThemeData 에 tint 인자 없음).
+      datePickerTheme: const DatePickerThemeData(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
+      timePickerTheme: const TimePickerThemeData(
+        backgroundColor: Colors.white,
+      ),
+      popupMenuTheme: const PopupMenuThemeData(
+        color: Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
+
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.white,
         foregroundColor: fg,

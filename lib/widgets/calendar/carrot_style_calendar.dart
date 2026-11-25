@@ -94,6 +94,9 @@ class CarrotStyleCalendar extends StatefulWidget {
   State<CarrotStyleCalendar> createState() => _CarrotStyleCalendarState();
 }
 
+/// [DU607b · 판정179 §4 F179-CALENDAR-B-GRID] 날짜 칸 배치 — big = 큰 판 · pad = 요일 머리 · 날짜 격자 가로 여백(둘이 같아 7칸이 맞는다) · cellH = 날짜 칸 높이.
+typedef _GridFit = ({bool big, double pad, double cellH});
+
 class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
   late DateTime _focusedMonth;
   DateTime? _rangeStartTemp; // 범위 선택 시 임시 시작점
@@ -128,11 +131,17 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
           // 헤더 (월 네비게이션)
           if (widget.showHeader) _buildHeader(context, theme),
           
-          // 요일 헤더
-          _buildWeekdayHeader(context),
-          
-          // 날짜 그리드
-          _buildDaysGrid(context, theme),
+          // 요일 헤더 · 날짜 그리드 — [DU607b · 판정179 §4] 같은 폭 판정(_gridFit) 하나로 두 줄의 가로 여백을 맞춘다(요일 7칸 ↔ 날짜 7칸).
+          LayoutBuilder(builder: (context, constraints) {
+            final fit = _gridFit(context, constraints.maxWidth);
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildWeekdayHeader(context, fit),
+                _buildDaysGrid(context, theme, fit),
+              ],
+            );
+          }),
           
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         ],
@@ -175,7 +184,8 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
                   vertical: ResponsiveHelper.spacing(context, 8),
                 ),
                 decoration: BoxDecoration(
-                  color: theme.primaryColor.withValues(alpha: 0.1),
+                  // [DU598b · 판정138 §4 요청6 :68] 월 알약 = 현재 달로 가는 조작(onTap 그대로) — 면 grey100 · 글 brand(theme.primaryColor = AppColors.brand) 최소안.
+                  color: AppColors.grey100,
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
@@ -231,35 +241,61 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
     );
   }
 
+  /// [DU607b · 판정179 §4 F179-CALENDAR-B-GRID] 큰 글자(B 320 · 2.0)에서 날짜 글(굵게 두 자리 ≈ 36)이 원 칸(테 안 ≈ 32)보다 넓어 오늘 '22' 가
+  ///   두 줄로 갈려 한 자리만 보이고 테와 겹쳤다 · 글 줄(≈ 43)이 칸 높이(≈ 37)보다 커 숫자 줄이 서로 붙어 보였다.
+  ///   렌더와 같은 글 · 스타일(보통 · 굵게) · 배율로 '1'–'31' 글 상자를 재서 지금 원 칸(테 2 포함)에 들어가면 보통 판 = 예전과 같은 값,
+  ///   안 들어가면 큰 판 = 요일 머리 · 격자 가로 여백 0(둘이 같아 7칸 대응 그대로) · 칸 가로 여백 0 · 칸 높이 = 글 줄 + 테 + 2.
+  ///   글자 크기 · 원문 · 색 · 선택/범위/오늘/불가 분기 · 누르기 · 반환은 그대로다.
+  _GridFit _gridFit(BuildContext context, double width) {
+    final cellSize = widget.compact
+        ? ResponsiveHelper.spacing(context, 36)
+        : ResponsiveHelper.spacing(context, 44);
+    final pad = ResponsiveHelper.spacing(context, 8);
+    final margin = ResponsiveHelper.spacing(context, 2);
+    final base = DefaultTextStyle.of(context).style.merge(ResponsiveHelper.bodyStyle(context));
+    var labelW = 0.0;
+    var labelH = 0.0;
+    for (final weight in const [FontWeight.normal, FontWeight.bold]) {
+      for (var d = 1; d <= 31; d++) {
+        final p = TextPainter(
+          text: TextSpan(text: d.toString(), style: base.copyWith(fontWeight: weight)),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+          maxLines: 1,
+        )..layout();
+        if (p.width > labelW) labelW = p.width;
+        if (p.height > labelH) labelH = p.height;
+        p.dispose();
+      }
+    }
+    const ring = 2.0 * 2; // 오늘 테 · 범위 시작 테 두께(양쪽)
+    final inner = (width - pad * 2) / 7 - margin * 2;
+    final dia = inner < cellSize ? inner : cellSize;
+    if (labelW + ring <= dia && labelH + ring <= cellSize) {
+      return (big: false, pad: pad, cellH: cellSize);
+    }
+    final h = labelH + ring + 2;
+    return (big: true, pad: 0.0, cellH: h > cellSize ? h : cellSize);
+  }
+
   /// 요일 헤더
-  Widget _buildWeekdayHeader(BuildContext context) {
+  Widget _buildWeekdayHeader(BuildContext context, _GridFit fit) {
     const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
     
     return Padding(
       padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),
+        horizontal: fit.pad,
         vertical: ResponsiveHelper.spacing(context, 8),
       ),
       child: Row(
-        children: weekdays.asMap().entries.map((entry) {
-          final index = entry.key;
-          final day = entry.value;
-          
-          Color textColor;
-          if (index == 0) {
-            textColor = AppColors.error; // 일요일
-          } else if (index == 6) {
-            textColor = AppColors.info; // 토요일
-          } else {
-            textColor = AppColors.textSecondary;
-          }
-          
+        // [DU598b · 판정138 §4 요청1 :63] 요일 머리 7칸 같은 중립 grey600 — 주말은 요일 조건일 뿐 오류 · 휴무 상태가 아니다(to_date_selector · app_calendar 요일 머리와 같은 토큰).
+        children: weekdays.map((day) {
           return Expanded(
             child: Center(
               child: Text(
                 day,
                 style: ResponsiveHelper.smallStyle(context).copyWith(
-                  color: textColor,
+                  color: AppColors.grey600,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -271,17 +307,15 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
   }
 
   /// 날짜 그리드
-  Widget _buildDaysGrid(BuildContext context, ThemeData theme) {
+  Widget _buildDaysGrid(BuildContext context, ThemeData theme, _GridFit fit) {
     final days = _generateDaysInMonth();
-    final cellSize = widget.compact
-        ? ResponsiveHelper.spacing(context, 36)
-        : ResponsiveHelper.spacing(context, 44);
+    final cellSize = fit.cellH;
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
 
     return Padding(
       padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),
+        horizontal: fit.pad,
       ),
       child: Column(
         children: List.generate(
@@ -296,7 +330,7 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
 
                 final day = days[index];
                 return Expanded(
-                  child: _buildDayCell(context, theme, day, cellSize, dayIndex, today),
+                  child: _buildDayCell(context, theme, day, cellSize, dayIndex, today, fit.big),
                 );
               }),
             );
@@ -314,6 +348,7 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
     double cellSize,
     int weekdayIndex,
     DateTime today,
+    bool big,
   ) {
     if (day == null) {
       return SizedBox(height: cellSize);
@@ -372,10 +407,12 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
             children: [
               if (isRangeStart && !isSingleDay)
                 Container(
-                  width: cellSize - ResponsiveHelper.spacing(context, 8),
-                  height: cellSize - ResponsiveHelper.spacing(context, 8),
+                  // [DU607b] 큰 판은 칸 전체(칸 폭 × 칸 높이)를 둘러 두 자리 숫자를 감싼다 — 원 지름(칸 높이 − 8)이 글 폭보다 작아 테가 숫자와 겹쳤다.
+                  width: big ? double.infinity : cellSize - ResponsiveHelper.spacing(context, 8),
+                  height: big ? double.infinity : cellSize - ResponsiveHelper.spacing(context, 8),
                   decoration: BoxDecoration(
-                    shape: BoxShape.circle,
+                    shape: big ? BoxShape.rectangle : BoxShape.circle,
+                    borderRadius: big ? BorderRadius.circular(cellSize / 2) : null,
                     border: Border.all(color: Colors.white.withValues(alpha: 0.5), width: 2),
                   ),
                 ),
@@ -407,11 +444,8 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
       borderColor = theme.primaryColor;
     } else if (!isCurrentMonth) {
       textColor = AppColors.grey300;
-    } else if (weekdayIndex == 0) {
-      textColor = AppColors.error;
-    } else if (weekdayIndex == 6) {
-      textColor = AppColors.info;
     } else {
+      // [DU598b · 판정138 §4 요청1 :63] 고를 수 있고 고르지 않은 이 달 날 — 주말도 평일과 같은 textPrimary(불가 · 다른 달 grey300 · 선택 brand/흰 · 오늘 brand 분기가 먼저).
       textColor = AppColors.textPrimary;
     }
 
@@ -423,10 +457,14 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
         children: [
           Container(
             height: cellSize,
-            margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
+            // [DU607b] 큰 판: 칸 가로 여백 0 · 원 → 같은 높이의 둥근 칸(오늘 테 · 고른 날 채움이 두 자리 숫자를 감싼다).
+            margin: big
+                ? EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 2))
+                : EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
             decoration: BoxDecoration(
               color: backgroundColor,
-              shape: BoxShape.circle,
+              shape: big ? BoxShape.rectangle : BoxShape.circle,
+              borderRadius: big ? BorderRadius.circular(cellSize / 2) : null,
               border: borderColor != null
                   ? Border.all(color: borderColor, width: 2)
                   : null,

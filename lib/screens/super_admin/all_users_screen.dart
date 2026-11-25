@@ -13,6 +13,7 @@ import 'all_users_reads.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/app_text_styles.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
@@ -52,7 +53,8 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   static const _roleLabels = {
     'ALL': '전체',
     'USER': '지원자',
-    'BUSINESS_ADMIN': '관리자',
+    // [DU588b · ncb52l D4] 필터 이름을 목록 · 시트 · 확인창 역할명('사업장관리자')과 같게 — 저장 role 분류 · 필터 집합 · 건수는 그대로다.
+    'BUSINESS_ADMIN': '사업장관리자',
     'SUPER_ADMIN': '슈퍼관리자',
   };
 
@@ -143,12 +145,12 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     // [.58] 시간 초과·연결 끊김·내부 오류는 서버가 이미 반영했을 수도 있다 — '처리하지 못했습니다' 라고 단정하지 않는다.
     if (e is FirebaseFunctionsException &&
         const {'deadline-exceeded', 'unavailable', 'internal', 'unknown', 'cancelled'}.contains(e.code)) {
-      return '처리 결과를 확인하지 못했습니다. 목록에서 현재 상태를 확인해 주세요.';
+      return '처리 결과를 확인하지 못했어요. 목록에서 현재 상태를 확인해 주세요.';
     }
     if (e is FirebaseFunctionsException && (e.message?.isNotEmpty ?? false)) {
-      return '처리하지 못했습니다: ${e.message}';
+      return '처리하지 못했어요: ${e.message}';
     }
-    return '처리 결과를 확인하지 못했습니다. 목록에서 현재 상태를 확인해 주세요.';
+    return '처리 결과를 확인하지 못했어요. 목록에서 현재 상태를 확인해 주세요.';
   }
 
   /// [R7-P3-3 P33-X1] 쓰기 직전 **대상을 다시 말한다**.
@@ -178,9 +180,9 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       final stillRestricted = left != null && left.isAfter(DateTime.now());
       final confirmed = await DialogHelper.showDangerConfirm(
         context,
-        title: '블랙리스트 해제',
-        message: TextLayout.keepWords('${_targetLine(user)}\n\n이 계정의 블랙리스트를 해제하시겠습니까?\n'
-            '${stillRestricted ? '이용 제한(${_untilText(left)})은 이 버튼으로 풀리지 않아, 해제 뒤에도 로그인·지원이 제한됩니다.' : '해제 후 로그인이 가능해집니다.'}'),
+        title: '계정 이용 차단 해제',
+        message: TextLayout.keepWords('${_targetLine(user)}\n\n이 계정의 이용 차단을 해제할까요?\n'
+            '${stillRestricted ? '이용 제한(${_untilText(left)})은 이 버튼으로 풀리지 않아 해제 뒤에도 로그인·지원이 제한돼요.' : '해제하면 다시 로그인할 수 있어요.'}'),
         confirmText: '해제',
       );
       if (!confirmed || !mounted) return;
@@ -191,7 +193,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
             .httpsCallable('callableUnblacklistUser')
             .call({'targetUid': user.uid});
         if (!mounted) return;
-        ToastHelper.showSuccess('블랙리스트가 해제되었습니다');
+        ToastHelper.showSuccess('계정 이용 차단을 해제했어요');
         await _loadAllUsers();
       } catch (e) {
         // [SA-AUDIT.49] 예외 원문을 그대로 보이지 않는다. 응답을 못 받았어도 서버는 반영했을 수 있으니
@@ -205,12 +207,14 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       // 등록: 사유 입력
       final reason = await _showReasonDialog(
         subject: _targetLine(user),
-        title: '블랙리스트 등록',
+        title: '계정 이용 차단',
         hint: '예: 반복 노쇼, 이용 약관 위반 등',
-        confirmLabel: '등록',
+        confirmLabel: '차단',
         confirmColor: AppColors.error,
+        // [DU581 · 판정156 Q4] 효과 · 기한 · 남는 확정 근무를 실행 전에 말한다(callableBlacklistUser = 표시 · 토큰 회수뿐 · 지원 취소 0 · PP-SA-BLACKLIST).
+        detail: '차단하면 해제 전까지 로그인·지원이 막혀요. 이미 확정된 근무는 자동으로 취소되지 않아요.',
         // [SA-AUDIT.49] 사유는 당사자의 로그인·지원 거절 안내에 그대로 보인다(LOCAL 확인).
-        visibilityNote: '입력한 사유는 이 사용자에게 그대로 보입니다(로그인·지원이 막힐 때 안내). 신고자 정보 같은 내부 메모는 적지 마세요.',
+        visibilityNote: '입력한 사유는 로그인·지원이 막힐 때 이 사용자에게 그대로 보여요. 신고자 정보 같은 내부 메모는 적지 마세요.',
       );
       if (reason == null || !mounted) return;
       setState(() => _isProcessing = true);
@@ -220,7 +224,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
             .httpsCallable('callableBlacklistUser')
             .call({'targetUid': user.uid, 'blacklistReason': reason});
         if (!mounted) return;
-        ToastHelper.showSuccess('블랙리스트에 등록되었습니다');
+        ToastHelper.showSuccess('계정 이용을 차단했어요');
         await _loadAllUsers();
       } catch (e) {
         // [SA-AUDIT.49] 예외 원문을 그대로 보이지 않는다. 응답을 못 받았어도 서버는 반영했을 수 있으니
@@ -246,7 +250,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
 
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
-      title: '노쇼 제재 해제',
+      title: '노쇼 제한 해제',
       message: TextLayout.keepWords(message),
       confirmText: '해제',
     );
@@ -258,7 +262,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
           .httpsCallable('callableResetPenalty')
           .call({'targetUid': user.uid});
       if (!mounted) return;
-      await _toastFromReloaded(user.uid, '노쇼 제재를 해제했습니다');
+      await _toastFromReloaded(user.uid, '노쇼 제한을 해제했어요');
     } catch (e) {
       if (mounted) ToastHelper.showError(_failureText(e));
       if (mounted) unawaited(_loadAllUsers());
@@ -278,16 +282,16 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     lines.add('노쇼 기록 초기화: ${user.noShowCount}회(최근 90일 ${user.recentNoShowCount}회) → 0회');
     final base = r?.base;
     final remain = <String>[
-      if (base != null && base.isAfter(DateTime.now())) '${r!.baseLabel}(${_untilText(base)})',
-      if (user.isBlacklisted) '블랙리스트',
+      if (base != null && base.isAfter(DateTime.now())) _baseText(r!),
+      if (user.isBlacklisted) '계정 이용 차단',
     ];
     return (lines..addAll(_remainLines(remain))).join('\n');
   }
 
   /// [.58] '남는 것' 과 결론 한 줄 — 해제 행동마다 같은 모양으로 말한다.
   List<String> _remainLines(List<String> remain) => [
-        for (final x in remain) '남는 것: $x — 이 버튼으로는 풀리지 않습니다',
-        remain.isNotEmpty ? '해제 뒤에도 로그인·지원이 제한됩니다.' : '해제 뒤 바로 로그인·지원할 수 있습니다.',
+        for (final x in remain) '남는 것: $x — 이 버튼으로는 풀리지 않아요',
+        remain.isNotEmpty ? '해제 뒤에도 로그인·지원이 제한돼요.' : '해제 뒤 바로 로그인·지원할 수 있어요.',
       ];
 
   /// [.58] 수동·영구 제한 해제(callableReleaseManualRestriction, A 묶음 00001-yex)의 효과.
@@ -295,12 +299,12 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   String _releaseEffectText(UserModel user, _Restriction r) {
     final auto = r.auto;
     return [
-      '해제할 것: ${r.baseLabel}(${_untilText(r.base!)})',
+      '해제할 것: ${_baseText(r)}',
       ..._remainLines([
         if (auto != null && auto.isAfter(DateTime.now())) '노쇼 자동 제한(${_untilText(auto)})',
-        if (user.isBlacklisted) '블랙리스트',
+        if (user.isBlacklisted) '계정 이용 차단',
       ]),
-      '사유는 감사 기록에만 남고 이 사용자에게는 보이지 않습니다.',
+      '사유는 감사 기록에만 남고 이 사용자에게는 보이지 않아요.',
     ].join('\n');
   }
 
@@ -310,14 +314,14 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     await _loadAllUsers();
     if (!mounted) return;
     if (_loadError != null) {
-      ToastHelper.showError(TextLayout.keepWords('$done. 현재 상태를 다시 읽지 못했습니다 — 새로고침해 확인해 주세요'));
+      ToastHelper.showError(TextLayout.keepWords('$done. 현재 상태를 다시 읽지 못했어요 — 새로고침해 확인해 주세요'));
       return;
     }
     final now = _users.where((u) => u.uid == uid).firstOrNull;
     final left = now?.restrictedUntil;
     final blocked = <String>[
-      if (left != null && left.isAfter(DateTime.now())) '이용 제한 ${_untilText(left)}',
-      if (now?.isBlacklisted ?? false) '블랙리스트',
+      if (left != null && left.isAfter(DateTime.now())) '이용 제한(${_untilText(left)})',
+      if (now?.isBlacklisted ?? false) '계정 이용 차단',
     ];
     ToastHelper.showSuccess(TextLayout.keepWords(blocked.isEmpty
         ? done
@@ -335,7 +339,8 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       title: '${r.baseLabel} 해제',
       hint: '예: 이의 신청 확인, 잘못 설정한 제한 등',
       confirmLabel: '해제',
-      confirmColor: AppColors.warning,
+      // [DU588b · 판정114 S052 해제] 수동 · 기간 제한 해제는 복구 행동 — 최종 단추 · 머리 아이콘 warning → brand(차단 등록 errorDark · 차단 해제/노쇼 리셋 빨강은 ncb52d D4 그대로).
+      confirmColor: AppColors.brand,
       minLength: 2,
     );
     if (reason == null || !mounted) return;
@@ -352,7 +357,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
         'requestId': _newRequestId('rel'),
       });
       if (!mounted) return;
-      await _toastFromReloaded(user.uid, '${r.baseLabel}을 해제했습니다');
+      await _toastFromReloaded(user.uid, '${r.baseLabel}을 해제했어요');
     } catch (e) {
       if (mounted) ToastHelper.showError(_failureText(e));
       if (mounted) unawaited(_loadAllUsers());
@@ -367,7 +372,10 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   }
 
   String _untilText(DateTime t) =>
-      _isPermanentInstant(t) ? '영구' : '${FormatHelper.formatKstDateTimeKorean(t)}까지';
+      _isPermanentInstant(t) ? '기한 없음' : '${FormatHelper.formatKstDateTimeKorean(t)}까지';
+
+  /// [DU581 · 판정156 Q4] 기한 있는 제한 = '이름(…까지)' · 기한 없음(permanent base) = 이름만('이용 제한(기한 없음)' 겹침 0).
+  String _baseText(_Restriction r) => _isPermanentInstant(r.base!) ? r.baseLabel : '${r.baseLabel}(${_untilText(r.base!)})';
 
   // [5A.2A] _adjustTrustScore 제거 — callableAdjustTrustScore 폐기
 
@@ -472,7 +480,11 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       child: TextField(
         controller: _searchController,
         decoration: InputDecoration(
-          hintText: '이름 · 아이디 · 연락처 검색',
+          // [DU588b · 판정114 S052 검색] B(320@2.0)에서 '이름 · 아이디 …' 로 잘리던 안내를 두 줄까지 구분점 뒤에서 바꿔 전문을 보인다(문구 그대로 ·
+          //   DU507 공고 한도 안내와 같은 방식 · 값이 든 칸은 숨은 안내 높이를 잡지 않는다).
+          hintText: TextLayout.phrases('이름 · 아이디 · 연락처 검색'),
+          hintMaxLines: 2,
+          maintainHintSize: false,
           prefixIcon: const Icon(Icons.search),
           suffixIcon: _searchQuery.isNotEmpty
               ? IconButton(
@@ -530,11 +542,12 @@ class _AllUsersScreenState extends State<AllUsersScreen>
 
   Widget _buildEmptyState() {
     // [R7-P3-2 P32-X1] 못 읽은 것은 없는 것이 아니다.
+    // [DU588c · 판정174 §3 :32] 남은 합니다체 3문장 → 해요체(뜻 그대로) — 오류/빈 목록 분기 · 다시 시도 · 데이터는 그대로다.
     if (_loadError != null) {
       return AppEmptyState(
         icon: Icons.error_outline,
-        title: '사용자 목록을 불러오지 못했습니다',
-        subtitle: '해당하는 사용자가 없다는 뜻이 아닙니다.',
+        title: '사용자 목록을 불러오지 못했어요',
+        subtitle: '해당하는 사용자가 없다는 뜻은 아니에요.',
         action: TextButton(
           onPressed: _loadAllUsers,
           child: const Text('다시 시도'),
@@ -543,7 +556,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     }
     return const AppEmptyState(
       icon: Icons.people_outline,
-      title: '해당하는 사용자가 없습니다',
+      title: '해당하는 사용자가 없어요',
     );
   }
 
@@ -648,12 +661,15 @@ class _AllUsersScreenState extends State<AllUsersScreen>
                             color: Theme.of(context).textTheme.bodySmall?.color,
                           ),
                         ),
-                        if (user.isBlacklisted) _miniChip('블랙리스트', AppColors.error),
-                        if (user.isRestricted) _miniChip('제재중', AppColors.warning),
+                        // [DU588b · ncb52l D4] USER + 서브관리자 배정 = 역할 칩(저장 role '지원자') 옆 보조 표기 — 역할 칩과 같은 중립 짝(grey200 · grey700) · 필터 · 건수 그대로.
+                        if (user.isSubAdmin) _miniChip('서브관리자', AppColors.grey700, face: AppColors.grey200, ink: AppColors.grey700),
+                        if (user.isBlacklisted) _miniChip('계정 이용 차단', AppColors.error),
+                        if (user.isRestricted) _miniChip('이용 제한', AppColors.warning),
                         // [NCB-52L D1] 승인대기 = 일반 상태 정보 → brand 짝(brandSurface 면 · brand 글자 · 약 5.0). 조건 · 라벨은 그대로다.
                         //   블랙리스트 error · 제재중 warning 은 그대로 둔다(목록 상태 계열 2).
+                        // [DU588b · 판정114 S052 가입대기] 이름 '승인대기' → '가입 미완료'(V3: 운영자 승인 단계 없음 · 조건 isPending · 색 짝 그대로).
                         if (user.isPending)
-                          _miniChip('승인대기', AppColors.brand, face: AppColors.brandSurface, ink: AppColors.brand),
+                          _miniChip('가입 미완료', AppColors.brand, face: AppColors.brandSurface, ink: AppColors.brand),
                       ],
                     ),
                   ],
@@ -708,7 +724,7 @@ class _Restriction {
   final bool unreadable;
 
   String get baseLabel => (base != null && _isPermanentInstant(base!)) || baseSource == 'permanent'
-      ? '영구 제한'
+      ? '이용 제한(기한 없음)'
       : (baseSource == 'manual' ? '관리자 수동 제한' : '기존 제한');
 
   static DateTime? _t(Object? v) => v is Timestamp ? v.toDate() : null;
@@ -806,7 +822,7 @@ class _UserDetailSheet extends StatelessWidget {
   }
 
   static String _restrictionLines(UserModel user, _Restriction? r) {
-    String until(DateTime t) => _isPermanentInstant(t) ? '영구' : '${FormatHelper.formatKstDateTimeKorean(t)}까지';
+    String until(DateTime t) => _isPermanentInstant(t) ? '기한 없음' : '${FormatHelper.formatKstDateTimeKorean(t)}까지';
     final now = DateTime.now();
     final lines = <String>[
       if (r?.auto != null && r!.auto!.isAfter(now)) '노쇼 자동 제한 ${until(r.auto!)}',
@@ -891,7 +907,8 @@ class _UserDetailSheet extends StatelessWidget {
                               .copyWith(fontWeight: FontWeight.bold),
                         ),
                         Text(
-                          TextLayout.phrases('@${user.username} · $roleLabel'),
+                          // [DU588b · ncb52l D4] 서브관리자 배정이면 부제에 보조 표기(역할 칩 = 저장 role 그대로 · 목록 보조 칩과 같은 말).
+                          TextLayout.phrases('@${user.username} · $roleLabel${user.isSubAdmin ? ' · 서브관리자' : ''}'),
                           // [DU491] grey500(흰 면 약 2.7) → 보조 글자색.
                           style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
                         ),
@@ -945,8 +962,9 @@ class _UserDetailSheet extends StatelessWidget {
                     icon: Icons.block,
                     chipBg: AppColors.errorBg,
                     chipInk: AppColors.errorDark,
-                    label: '블랙리스트',
-                    description: user.blacklistReason ?? '사유 없음',
+                    label: '계정 이용 차단',
+                    // [DU581 · 판정156 Q4] 자동 만료 없음 = '해제 전까지' · 당사자에게 보이는 사유(PP-SA-BLACKLIST)를 함께 적는다.
+                    description: TextLayout.keepWords('해제 전까지 로그인·지원이 막혀요.\n사유: ${user.blacklistReason ?? '없음'}'),
                   ),
                 if (user.isRestricted)
                   _statusCard(
@@ -965,7 +983,7 @@ class _UserDetailSheet extends StatelessWidget {
                     chipBg: AppColors.warningBg,
                     chipInk: AppColors.warningDark,
                     label: '제한 상태 확인 불가',
-                    description: TextLayout.keepWords('저장된 제한 값을 읽지 못했습니다. 새로고침 후 다시 확인해 주세요.'),
+                    description: TextLayout.keepWords('저장된 제한 값을 읽지 못했어요. 새로고침 후 다시 확인해 주세요.'),
                   ),
                 if (user.isPending)
                   _statusCard(
@@ -973,8 +991,10 @@ class _UserDetailSheet extends StatelessWidget {
                     icon: Icons.hourglass_top_outlined,
                     chipBg: AppColors.brandSurface,
                     chipInk: AppColors.brand,
-                    label: '가입 승인 대기',
-                    description: '슈퍼관리자 승인 필요 (외국인 계정)',
+                    // [DU588b · 판정114 S052 가입대기] V3 는 조건이 갖춰지면 가입이 자동으로 끝난다(운영자 승인 단계 없음) — 사실대로 '가입 미완료' · 본인 절차 안내.
+                    //   외국인 · 구체 원인은 단정하지 않는다(isPending 조건 · 상태 · 권한 그대로).
+                    label: '가입 미완료',
+                    description: TextLayout.keepWords('본인 가입 절차 확인 필요'),
                   ),
                 if (!user.isBlacklisted && !user.isRestricted && !user.isPending && !_unreadable)
                   _statusCard(
@@ -988,8 +1008,8 @@ class _UserDetailSheet extends StatelessWidget {
 
                 SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
-                // 관리 액션
-                _sectionTitle(context, '관리 액션'),
+                // 계정 관리 — [DU588b · 판정169:69] 구역 제목 외래어 '액션' 정리(위 '계정 상태'와 짝 · 행동 단추 · 순서 그대로).
+                _sectionTitle(context, '계정 관리'),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
                 // SUPER_ADMIN 계정에 블랙리스트 버튼 노출 금지 — 자기 자신 또는 동급 계정 차단 방지
@@ -998,7 +1018,7 @@ class _UserDetailSheet extends StatelessWidget {
                   _actionButton(
                     context,
                     icon: user.isBlacklisted ? Icons.lock_open : Icons.block,
-                    label: user.isBlacklisted ? '블랙리스트 해제' : '블랙리스트 등록',
+                    label: user.isBlacklisted ? '계정 이용 차단 해제' : '계정 이용 차단하기',
                     onTap: onToggleBlacklist,
                   ),
 
@@ -1007,7 +1027,7 @@ class _UserDetailSheet extends StatelessWidget {
                   _actionButton(
                     context,
                     icon: Icons.timer_off_outlined,
-                    label: '제재 해제 (노쇼 카운트 초기화)',
+                    label: '노쇼 제한 해제 (기록 초기화)',
                     onTap: onClearRestriction,
                   ),
                 ],
@@ -1198,8 +1218,9 @@ class _UserDetailSheet extends StatelessWidget {
                 SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                 Text(
                   description,
-                  // [DU491] grey600(경고 옅은 면 약 4.3) → 보조 글자색.
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+                  semanticsLabel: TextLayout.plain(description),
+                  // [DU491] grey600(경고 옅은 면 약 4.3) → 보조 글자색. [DU581] 13 → 보조 역할 14/1.45(PP-TYPOGRAPHY · 색 textSecondary 그대로).
+                  style: AppTextStyles.roleSupport(),
                 ),
               ],
             ),
@@ -1222,7 +1243,8 @@ class _UserDetailSheet extends StatelessWidget {
       child: OutlinedButton.icon(
         onPressed: onTap,
         icon: Icon(icon, size: ResponsiveHelper.iconSize(context, 18)),
-        label: Text(label),
+        // [DU581] 행동 이름이 길어져 큰 글자에서 낱말 안 줄바꿈을 막는다(읽는 이름 = 원문).
+        label: Text(TextLayout.keepWords(label), semanticsLabel: label),
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.textPrimary,
           side: const BorderSide(color: AppColors.border),
@@ -1303,16 +1325,15 @@ class _ReasonDialogState extends State<_ReasonDialog> {
           Text(
             TextLayout.keepWords(widget.subject),
             semanticsLabel: widget.subject,
-            style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.grey700)
-                .copyWith(fontWeight: FontWeight.bold),
+            // [DU581 · PP-TYPOGRAPHY] 대상 = 판단 글 16/1.5/700(13 grey700 → 본문 역할) · 효과 = 16 · 주의 = 보조 14.
+            style: AppTextStyles.roleBody().copyWith(fontWeight: FontWeight.w700),
           ),
           if (widget.detail != null) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             Text(
               TextLayout.keepWords(widget.detail!),
               semanticsLabel: widget.detail,
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+              style: AppTextStyles.roleBody(),
             ),
           ],
           if (widget.visibilityNote != null) ...[
@@ -1320,7 +1341,7 @@ class _ReasonDialogState extends State<_ReasonDialog> {
             Text(
               TextLayout.keepWords(widget.visibilityNote!),
               semanticsLabel: widget.visibilityNote,
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.errorDark),
+              style: AppTextStyles.roleSupport(color: AppColors.errorDark),
             ),
           ],
           SizedBox(height: ResponsiveHelper.spacing(context, 10)),

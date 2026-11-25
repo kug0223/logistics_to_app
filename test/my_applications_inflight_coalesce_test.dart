@@ -10,14 +10,15 @@
 //   진행 중 요청만 공유하고 완료되면(성공·실패) 바로 놓는다. 완료 결과의 보관은
 //   기존 1분 TTL 규칙 그대로다. 무효화(지원·취소·확정 뒤)는 진행 중 요청도 끊고,
 //   그 전에 출발한 응답은 캐시에 남기지 않는다.
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
+// ignore: depend_on_referenced_packages
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
+// ignore: depend_on_referenced_packages
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -29,6 +30,9 @@ import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/user/user_root_screen.dart';
 import 'package:ALfit/services/firestore_service.dart';
+import 'package:ALfit/widgets/common/app_bottom_tab_bar.dart';
+
+import 'support/visible_text.dart';
 
 class _FakeApp extends Fake
     with MockPlatformInterfaceMixin
@@ -264,13 +268,25 @@ void main() {
     // ignore: avoid_print
     print('[MAC-ROOT] callableGetMyApplications ${s.my}회 · 전체 ${s.calls}');
     // 홈 지원 현황: 검토중 1 (공유 응답에서 나온 값)
-    final home = find.text('검토중', skipOffstage: false);
+    final home = find.byWidgetPredicate(
+      (w) => w is Text &&
+          visibleText(w.data ?? w.textSpan?.toPlainText() ?? '') == '검토 중',
+      skipOffstage: false,
+    );
     expect(home, findsWidgets);
     // ignore: avoid_print
     print('[MAC-ROOT] 공고명 노출 ${find.textContaining('합성 공고 a1', skipOffstage: false).evaluate().length}곳 · 검토중 셀 값 ${t.widgetList<Text>(find.byType(Text, skipOffstage: false)).map((w) => w.data ?? '').where((x) => x == '1').length}개');
     final dump = <String>[];
-    for (final tab in ['홈', '일정', '일자리']) {
-      await t.tap(find.text(tab).last);
+    for (final tab in ['홈', '내 일정', '일자리']) {
+      final label = find.descendant(
+        of: find.byType(AppBottomTabBar),
+        matching: find.byWidgetPredicate(
+          (w) => w is Text &&
+              visibleText(w.data ?? w.textSpan?.toPlainText() ?? '') == tab,
+        ),
+      );
+      expect(label, findsOneWidget, reason: '$tab bottom tab label must be unique');
+      await t.tap(label);
       await _pumpFor(t, 1500);
       dump.add('## $tab');
       dump.addAll(t.widgetList<Text>(find.byType(Text)).map((w) => w.data ?? w.textSpan?.toPlainText() ?? '').where((x) => x.isNotEmpty));

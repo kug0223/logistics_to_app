@@ -14,7 +14,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart';
+// ignore: depend_on_referenced_packages
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
+// ignore: depend_on_referenced_packages
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 
@@ -839,7 +841,8 @@ void main() {
       expect(seen.view, 1);
       expect(seen.payable, 1);
       expect(seen.bare, 0);
-      expect(seen.shows('근로자 정보 보완 대기'), isFalse);
+      // [DU599b g1 · 판정179 P4 기대 갱신] 예전 '근로자 정보 보완 대기' — 화면 안내 호칭 '근무자'(판정156 Q3 :39) · 같은 뜻의 음성 기대.
+      expect(seen.shows('근무자 정보 보완 대기'), isFalse);
       expect(seen.shows('통장사본 확인 필요'), isFalse);
     });
 
@@ -1004,7 +1007,8 @@ void main() {
       // ignore: avoid_print
       print('   PAO-C2 dialog="${msg.split('\n').first}"');
       expect(msg.contains('홍길동'), isFalse, reason: '모르는 사람 확인 창에 다른 사람 이름');
-      expect(msg, startsWith('이름 확인 불가 근로자에게'));
+      // [DU599b g1 · 판정179 P4 기대 갱신] 예전 '이름 확인 불가 근로자에게' — 번호 · 미확인 표현 그대로 + 호칭 '근무자'(판정156 Q3 :41).
+      expect(msg, startsWith('이름 확인 불가 근무자에게'));
       expect(msg.contains('님께'), isFalse, reason: '상태 문구에 호칭을 붙였다');
       final mark = await confirmAndSkipNote(t, s);
       expect(mark.params['attendanceIds'], ['c2-u']);
@@ -1035,7 +1039,8 @@ void main() {
       expect(seen.bare, 0);
       expect(seen.unknown, 0, reason: '이름 실패가 지급 준비 판정을 흐렸다');
       await payCardWith(t, FormatHelper.formatWage(20000));
-      expect(dialogMessage(), startsWith('이름 확인 불가 근로자에게'));
+      // [DU599b g1 · 판정179 P4 기대 갱신] 예전 '이름 확인 불가 근로자에게' — 번호 · 미확인 표현 그대로 + 호칭 '근무자'(판정156 Q3 :41).
+      expect(dialogMessage(), startsWith('이름 확인 불가 근무자에게'));
       final mark = await confirmAndSkipNote(t, s);
       expect(mark.params['attendanceIds'], ['c3-b']);
       final n = ((mark.params['notifications'] as List).single as Map);

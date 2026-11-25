@@ -1,3 +1,4 @@
+// ignore_for_file: depend_on_referenced_packages
 // [E1-MYA] `내 지원`이 시간 경과를 실제 근무 완료로 말하지 않는다.
 //
 // ── DEV 원장 (READ ONLY) ──────────────────────────────────────────────
@@ -223,7 +224,7 @@ Future<void> _pump(WidgetTester t, MyApplicationsReads reads) async {
 }
 
 List<String> _texts(WidgetTester t) => t
-    .widgetList<Text>(find.byType(Text))
+    .widgetList<Text>(find.byWidgetPredicate((w) => w is Text))
     .map((w) => w.data ?? '')
     .where((s) => s.isNotEmpty)
     .toList();

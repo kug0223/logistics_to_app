@@ -80,10 +80,11 @@ class DialogHelper {
 
   static TextStyle _titleStyle(BuildContext context) => ResponsiveHelper.subtitleStyle(context).copyWith(
         fontWeight: FontWeight.bold,
-        color: const Color(0xFF111827),
+        // [DU629b · 판정207 §4 · H1] 창 제목 textPrimary · 취소 글 textSecondary · 취소 선 border — 하드코딩 회청(#111827 · #4B5563 · #E5E7EB) → 앱 중립 토큰(StyledDialog 와 같은 값).
+        color: AppColors.textPrimary,
       );
   static TextStyle _cancelStyle(BuildContext context) => ResponsiveHelper.bodyStyle(context).copyWith(
-        color: const Color(0xFF4B5563),
+        color: AppColors.textSecondary,
         fontWeight: FontWeight.w600,
       );
   static TextStyle _confirmStyle(BuildContext context) => ResponsiveHelper.bodyStyle(context).copyWith(
@@ -269,7 +270,8 @@ class DialogHelper {
       title: title,
       message: message,
       icon: Icons.info_outline,
-      iconColor: AppColors.info,
+      // [DU642 · 판정258 Q-B1] 일반 안내 머리 아이콘 = 중립 textSecondary(제목 · 본문 역할 그대로). 실제 주의/오류 머리는 showError · warning 경로가 그대로 맡는다.
+      iconColor: AppColors.textSecondary,
     );
   }
 
@@ -292,6 +294,8 @@ class DialogHelper {
         canPop: false,
         child: Center(
           child: Card(
+            // [DU642 · B03] 처리 중 창 면 = 흰 면 토큰(전역 덮개 면과 같은 AppColors.surface) — 테마 Card 색에 기대지 않는다.
+            color: AppColors.surface,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(dialogContext, 16)),
             ),
@@ -302,9 +306,11 @@ class DialogHelper {
                 children: [
                   const LoadingWidget(),
                   SizedBox(height: ResponsiveHelper.spacing(dialogContext, 16)),
+                  // [DU642 · B03 · BL148] 메시지 — 낱말 단위 줄바꿈 · 가운데 정렬 · 보조 글 토큰(전역 덮개 글과 같은 양식).
                   Text(
-                    message,
-                    style: ResponsiveHelper.bodyStyle(dialogContext),
+                    TextLayout.keepWords(message),
+                    textAlign: TextAlign.center,
+                    style: ResponsiveHelper.bodyStyle(dialogContext, color: AppColors.textSecondary),
                   ),
                 ],
               ),
@@ -478,7 +484,8 @@ class DialogHelper {
       message: '초대를 거절하시겠습니까?',
       confirmText: '초대 거절',
       cancelText: '닫기',
-      confirmColor: AppColors.warning,
+      // [DU629b · 판정207 §4] 초대 거절 = 기회가 사라지는 최종 거절 → 확인 채움 errorDark. 머리 warning 아이콘은 그대로(별도 허용).
+      confirmColor: AppColors.errorDark,
       icon: Icons.cancel_outlined,
       iconColor: AppColors.warning,
     );
@@ -748,7 +755,8 @@ class DialogHelper {
                           style: ResponsiveHelper.bodyStyle(context),
                         ),
                         value: reason,
-                        activeColor: AppColors.error,
+                        // [DU629b · 판정207 §4] 사유 고르기 = 선택/활성 → brand. 손실 실행 색은 아래 단추(StyledDialogButton.danger · errorDark)가 맡는다.
+                        activeColor: AppColors.brand,
                         contentPadding: EdgeInsets.zero,
                         dense: true,
                       )).toList(),
@@ -1123,7 +1131,7 @@ class DialogHelper {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFFE5E7EB)),
+          border: Border.all(color: AppColors.border),
         ),
         child: Material(
           color: Colors.transparent,

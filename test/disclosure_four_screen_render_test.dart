@@ -419,7 +419,7 @@ void main() {
         size: size,
         textScale: textScale,
       );
-      final title = find.text(kAttendanceRuleGuideTitle);
+      final title = findVisibleText(kAttendanceRuleGuideTitle);
       expect(title, findsOneWidget, reason: '공고 상세에 근태 인정 기준이 없다');
       await t.ensureVisible(title);
       await _settle(t);
@@ -624,7 +624,7 @@ void main() {
       await t.tap(cta);
       await _settle(t, rounds: 30);
       // 확인창 고유 문구로 도달을 판정한다.
-      return find.textContaining('수락 후 일정 충돌이 없으면 확정됩니다').evaluate().isNotEmpty ||
+      return find.textContaining('확정된 다른 근무와 시간이 겹치면 수락할 수 없어요. 수락이 완료되면 근무가 확정돼요').evaluate().isNotEmpty ||
           find.text(kAttendancePolicyTitle).evaluate().isNotEmpty;
     }
 
@@ -1000,7 +1000,7 @@ void main() {
         size: const Size(360, 780),
         textScale: 1.0,
       );
-      final title = find.text(kAttendanceRuleGuideTitle);
+      final title = findVisibleText(kAttendanceRuleGuideTitle);
       await t.ensureVisible(title);
       await _settle(t);
       expectRuleGuide(t, _standard(), '공고 본문');
@@ -1032,7 +1032,7 @@ void main() {
       );
       final texts = t
           .widgetList<Text>(find.byType(Text))
-          .map((w) => w.data ?? '')
+          .map((w) => visibleText(w.data ?? ''))
           .toList();
       final policyAt = texts.indexWhere((s) => s == kAttendanceRuleGuideTitle);
       expect(policyAt, greaterThan(-1), reason: '고지 섹션이 없다');

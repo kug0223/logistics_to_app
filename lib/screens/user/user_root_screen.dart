@@ -152,10 +152,11 @@ class _UserRootScreenState extends State<UserRootScreen> {
           body: IndexedStack(
           index: _currentIndex,
           children: [
-            _buildTabNavigator(0, const UserHomeScreen()),
-            _buildTabNavigator(1, const UserJobTab()),
-            _buildTabNavigator(2, const MyScheduleScreen()),
-            _buildTabNavigator(3, const UserMyTab()),
+            // [DU581c] 숨은 탭은 TickerMode 를 끈다 — 숨은 탭에 붙은 출퇴근 서명 안내가 셸 띠를 중립으로 낮추지 않게(판정171 §4 DU581b · 출퇴근 _SignNoticeHold 가 TickerMode 를 본다). 숨은 탭의 애니메이션은 멈췄다가 탭이 보이면 다시 돈다.
+            TickerMode(enabled: _currentIndex == 0, child: _buildTabNavigator(0, const UserHomeScreen())),
+            TickerMode(enabled: _currentIndex == 1, child: _buildTabNavigator(1, const UserJobTab())),
+            TickerMode(enabled: _currentIndex == 2, child: _buildTabNavigator(2, const MyScheduleScreen())),
+            TickerMode(enabled: _currentIndex == 3, child: _buildTabNavigator(3, const UserMyTab())),
           ],
         ),
         bottomNavigationBar: Column(

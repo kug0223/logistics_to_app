@@ -1,3 +1,4 @@
+// [CONSENT-R4d 후보 사본] 원본 A/test/applicant_document_review_contract_test.dart sha256=b0872630bcb12464f33c60bfd7720f870de77278a0c40594d7cfb6a43e5547c0 · 바뀐 자리는 R/work/consent-copy-preparation-r4d-20261119/manifests/test_change_map.tsv
 // [DOCUMENT-VERIFICATION-INTEGRITY-R1.2] 확정 전 지원자 서류 검토
 //
 // 이 파일이 고정하는 것:
@@ -96,6 +97,8 @@ void main() {
     test('v3 상수와 allowlist', () {
       expect(cf, contains('const DOCUMENT_ACCESS_CONSENT_V3 = "2026-09-18-v3"'));
       expect(cf, contains('DOCUMENT_ACCESS_CONSENT_V3,'));
+      // [CONSENT-R4] V3 상수는 은퇴 집합에만 남는다 — 현재 판본은 V4.
+      expect(cf, contains('const DOCUMENT_ACCESS_CONSENT_V4 = "2026-11-18-v4"'));
     });
 
     test('v2 이하는 검토 목적 열람에서 막힌다', () {
@@ -108,15 +111,16 @@ void main() {
 
     test('동의 문구가 채용 검토 목적을 명시한다', () {
       final c = _flat(_codeOf(_src(_consent)));
-      expect(c, contains("static const String version = '2026-09-18-v3'"));
-      expect(c, contains('지원자 확인 및 채용 검토'));
-      expect(c, contains('지원 검토 중'));
-      expect(c, contains('거절·취소·만료되면'));
+      // [CONSENT-R4 후보 사본] 새 판본 v4 — 검토 목적(카드)·검토 종료(상세)를 새 문장으로 고정.
+      expect(c, contains("static const String version = '2026-11-18-v4'"));
+      expect(c, contains('· 채용 검토: 지원이 끝날 때까지'));
+      expect(c, contains('채용 검토를 위한 열람은 해당 지원이 거절·취소·만료되거나'));
     });
 
     test('재동의는 v3만 받고 그 지원서에만 적용된다', () {
+      // [CONSENT-R4] 재동의 판본 판정은 화면별 기대 판본(v4 · invite-v2)과의 정확 비교다.
       expect(giveConsent,
-          contains('documentAccessConsentVersion !== DOCUMENT_ACCESS_CONSENT_V3'));
+          contains('srvConsentVersionReject(documentAccessConsentVersion, expectedVersion)'));
       expect(giveConsent, contains('본인의 지원서만 처리할 수 있습니다'));
       // 새 지원서를 만들지 않는다 — 기존 문서를 갱신한다.
       expect(giveConsent.contains('.add('), isFalse);
@@ -138,7 +142,8 @@ void main() {
 
   group('R1.2-03 — 민감 필드는 DTO에서 뺀다', () {
     test('자격이 없으면 bank 키 자체가 없다', () {
-      expect(getReview, contains('...(canSeeDocs ? { bank: {'));
+      // [CONSENT-R4] 계좌 3필드 = 권한 AND 검토 목적(consentBlock == null) — 게이트 강화.
+      expect(getReview, contains('...(canSeeDocs && consentBlock == null ? { bank: {'));
       expect(getReview, contains('} : {}),'));
     });
 

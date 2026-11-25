@@ -398,7 +398,7 @@ void main() {
       final dayLoading = find.text('근무 인력을 불러오는 중...');
       final rootLoading = find.text('인력 정보를 불러오는 중...');
       const noBizTitle = '아직 근무를 관리할 사업장이 없어요';
-      final emptyToday = find.text('오늘 확정된 인력이 없습니다.');
+      final emptyToday = findVisibleText('오늘 확정된 인력이 없습니다.'); // [DU604b] 빈 상태 글 keepWords — 보이는 글자로 찾는다(DU255 꼴)
       final markerFail = findVisibleText('근무가 있는 날짜를 표시하지 못했어요');
       String rendered() => '요약=${summaryCounts()} · 오류문구=${errText.evaluate().length} 다시시도=${retryText.evaluate().length}'
           ' · 인력로딩=${dayLoading.evaluate().length} 루트로딩=${rootLoading.evaluate().length}'

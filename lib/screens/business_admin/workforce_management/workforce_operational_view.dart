@@ -1614,7 +1614,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
                       Text(
                         '계약 미작성',
                         style: TextStyle(
-                          fontSize: ResponsiveHelper.getFontSize(context, 10),
+                          fontSize: ResponsiveHelper.getFontSize(context, 12),
                           fontWeight: FontWeight.w500,
                           color: AppColors.warningDark,
                         ),
@@ -1667,7 +1667,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
       child: Text(
         pillText,
         style: TextStyle(
-          fontSize: ResponsiveHelper.getFontSize(context, 11),
+          fontSize: ResponsiveHelper.getFontSize(context, 12),
           fontWeight: FontWeight.w600,
           color: pillColor,
         ),
@@ -1734,7 +1734,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
         child: Text(
           label,
           style: TextStyle(
-            fontSize: ResponsiveHelper.getFontSize(context, 11),
+            fontSize: ResponsiveHelper.getFontSize(context, 12),
             fontWeight: FontWeight.w600,
             color: fg,
           ),
@@ -1822,7 +1822,8 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
           message = '미출근 인원이 없습니다.';
           break;
         case _SummaryFilter.noShow:
-          message = '노쇼 인원이 없습니다.';
+          // [DU604b · 판정156 Q2] 사람 수가 아니라 노쇼로 기록된 근무(지원서 한 건 · 위 칩 숫자와 같은 단위)를 말한다.
+          message = '노쇼로 기록된 근무가 없습니다.';
           break;
         default:
           message = '해당 인원이 없습니다.';
@@ -1837,8 +1838,10 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
             Icon(Icons.people_outline,
                 size: 48, color: AppColors.grey300),
             const SizedBox(height: 12),
+            // [DU604b] 큰 글자(320@2.0)에서 음절 사이로 줄이 끊기지 않게 낱말 사이에서만 바꾼다 — 화면 읽기는 원문(아래 오류 상태와 같은 꼴).
             Text(
-              message,
+              TextLayout.keepWords(message),
+              semanticsLabel: message,
               style: TextStyle(
                 fontSize: ResponsiveHelper.getFontSize(context, 14),
                 color: AppColors.textSecondary, // [DU236 J2] grey500 2.68:1 → 읽기색

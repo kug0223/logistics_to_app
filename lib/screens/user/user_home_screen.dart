@@ -847,20 +847,20 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   // ─────────────────────────────────────────────────────────────
   Widget _buildPassRecoveryBanner(BuildContext context) {
     return Material(
-      color: const Color(0xFFFFF3E0), // 주황색 경고 배경 (AppColors.warningBg 유사)
+      color: AppColors.warningBg, // 주황색 경고 배경 (AppColors.warningBg 유사)
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(
           children: [
             const Icon(Icons.verified_user_outlined,
-                color: Color(0xFFE65100), size: 20),
+                color: AppColors.warningDark, size: 20),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
                 '지원을 위해 본인인증이 필요해요',
                 style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFFBF360C),
+                  fontSize: 14,
+                  color: AppColors.warningDark,
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -882,8 +882,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               },
               child: const Text('인증하기',
                   style: TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFFE65100),
+                      fontSize: 14,
+                      color: AppColors.brand,
                       fontWeight: FontWeight.w700)),
             ),
           ],
@@ -1511,6 +1511,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     required TextStyle actionStyle,
     Widget? actionTrailing,
     double actionTrailingWidth = 0,
+    String? note,
+    TextStyle noteStyle = const TextStyle(),
   }) {
     final body = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1519,6 +1521,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         Text(titleDisplay, style: titleStyle, semanticsLabel: title),
         SizedBox(height: 3 * s),
         Text(subtitleDisplay, style: subtitleStyle, semanticsLabel: subtitle),
+        // [DU595c · 판정177 §6] 셋째 줄(서류 보완 카드의 급여 안내) — 있을 때만 · 같은 낱말 조판 · 원문 이름. 다른 호출부는 넘기지 않는다(그대로).
+        if (note != null) ...[
+          SizedBox(height: 3 * s),
+          Text(TextLayout.keepWords(note), style: noteStyle, semanticsLabel: note),
+        ],
       ],
     );
     // [wrap] 은 아래 줄에 놓일 때만 — 그때는 폭이 정해져 있다(바깥 Row 의 비유연 자식일 때는 고정 폭 글자).
@@ -1543,7 +1550,9 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
       final tw = widest(titleDisplay, titleStyle);
       final sw = widest(subtitleDisplay, subtitleStyle);
-      final need = tw > sw ? tw : sw;
+      // [DU595c] 셋째 줄이 있으면 그 낱말 폭도 본다(없으면 0 — 다른 카드의 판정 그대로).
+      final nw = note == null ? 0.0 : widest(TextLayout.keepWords(note), noteStyle);
+      final need = [tw, sw, nw].reduce((a, b) => a > b ? a : b);
       final actionW = _oneLineWidth(context, actionText, actionStyle) + actionTrailingWidth;
       final inlineBody = c.maxWidth - iconWidth - 12 * s - 8 * s - actionW;
       if (inlineBody >= need && inlineBody >= c.maxWidth * 0.5) {
@@ -1701,7 +1710,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     double progressValue = 0.0;
     // 사실을 말하는 라벨(완료·노쇼·결근·조회 실패)은 진행 안내와 색을 달리한다.
     // [DU306 §12.2] 일반 진행(출근 준비·출근까지·퇴근까지)은 brand — 같은 카드의 출근/퇴근 CTA 와 한 색.
-    //   아래 사실 분기(조회 실패 grey600·노쇼 errorDark·결근/기록 없음 warningDark·완료 successDark)는 그대로다.
+    //   아래 사실 분기(조회 실패 grey600·노쇼/결근 errorDark·기록 없음 warningDark·완료 successDark)는 그대로다.
     Color progressColor = AppColors.brand;
     if (attUnknown) {
       // 근태를 못 읽었다 — `근무 완료`도 `출근 기록 없음`도 말할 수 없다.
@@ -1710,7 +1719,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     } else if (isNoShow || isAbsent) {
       // 목적지 화면과 같은 문구 — 노쇼·결근을 근무 완료로 바꿔 말하지 않는다.
       progressLabel = isNoShow ? '노쇼 처리됨' : '결근 처리됨';
-      progressColor = isNoShow ? AppColors.errorDark : AppColors.warningDark;
+      // [DU595b · 판정139 §3 :44 PP-STATUS-PAIR] 명시 결근 결과 = 노쇼와 같은 error 짝(진한 글 errorDark) — 출근 기록 없음 · 퇴근 필요는 warning 그대로.
+      progressColor = AppColors.errorDark;
     } else if (hasCheckedOut) {
       // 퇴근 기록이 있을 때만 완료다. 근태 확정(급여) 여부는 별개이므로
       // 여기서 `근태 확정`이라고 말하지 않는다.
@@ -2095,7 +2105,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                 ),
                 Text('날짜 선택',
                     style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 20,
                       fontWeight: FontWeight.w700,
                       color: AppColors.textPrimary,
                     )),
@@ -2712,11 +2722,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                       Container(
                         width: 36 * s, height: 36 * s,
                         decoration: BoxDecoration(
-                          color: AppColors.infoBg,
+                          color: AppColors.surface,
                           borderRadius: BorderRadius.circular(9),
                         ),
                         child: Icon(Icons.work_outline_rounded,
-                            color: AppColors.infoDark, size: 18 * s),
+                            color: AppColors.textSecondary, size: 18 * s),
                       ),
                       SizedBox(width: 10 * s),
                       Expanded(
@@ -2944,7 +2954,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                       label: '정산 중',
                       labelColor: AppColors.textSecondary,
                       value: '$settlementPending건',
-                      valueColor: AppColors.warning,
+                      // [DU595b · 판정139 §3 :42 PP-STATUS-PAIR] '정산 중' 건수 = C2 중립 집계(일반값 textPrimary · 같은 표 '근무 예정' 값과 같다) — 경고 아님.
+                      valueColor: AppColors.textPrimary,
                       valueBold: false,
                     ),
                   ],
@@ -3329,6 +3340,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     if (task == null) return const SizedBox.shrink();
 
     final more = _correctionSurface.tasks.length - 1;
+    final subtitle = more > 0 ? '${task.subtitleFor()} · 외 $more건' : task.subtitleFor();
     const accent = AppColors.warning;
 
     return Padding(
@@ -3346,62 +3358,42 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: accent.withValues(alpha: 0.30)),
           ),
-          child: Row(
-            children: [
-              Container(
-                width: 38 * s,
-                height: 38 * s,
-                decoration:
-                    const BoxDecoration(color: accent, shape: BoxShape.circle),
-                child: Icon(Icons.assignment_late_outlined,
-                    size: 20 * s, color: Colors.white),
-              ),
-              SizedBox(width: 12 * s),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      task.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    SizedBox(height: 3 * s),
-                    Text(
-                      more > 0
-                          ? '${task.subtitleFor()} · 외 $more건'
-                          : task.subtitleFor(),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
-                    ),
-                    if (task.isPayroll) ...[
-                      SizedBox(height: 3 * s),
-                      // [DU476] grey400(옅은 주황 면 위 약 1.8) → textTertiary(약 4.9 · 홈 보조 안내 DU470/474 와 같다).
-                      Text('확정된 급여 금액은 그대로 유지돼요',
-                          style: TextStyle(
-                              fontSize: 12, color: AppColors.textTertiary)),
-                    ],
-                  ],
-                ),
-              ),
-              SizedBox(width: 8 * s),
-              // [DU476] 행동 글자 · 화살표 warning(옅은 주황 면 위 약 2.0) → warningDark(약 4.9).
-              //   면 · 테두리 · 원 아이콘은 accent(warning) 그대로다.
-              Text('등록하기',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.warningDark,
-                  )),
-              Icon(Icons.chevron_right, color: AppColors.warningDark, size: 20 * s),
-            ],
+          // [DU595c · 판정114 §6 :99 · 판정177 §6] 제목 · 부제 말줄임(2줄) 제거 — 같은 홈의 필수응답 카드와 같은 공용 배치(_taskCardRow): 제목은 낱말,
+          //   부제는 구분점 조각 사이에서만 줄을 바꾸고 본문 폭이 모자라면 `등록하기`를 아래 오른쪽 줄로(카드 전체 탭 · 목적지 · 표시 조건 그대로).
+          //   원 아이콘 = warning 의 진한 짝(warningDark 면 · 흰 글리프 · DU595b J084b 그대로) · 카드 면 · 테두리는 accent(warning) 그대로.
+          child: _taskCardRow(
+            context,
+            s,
+            icon: Container(
+              width: 38 * s,
+              height: 38 * s,
+              decoration: const BoxDecoration(
+                  color: AppColors.warningDark, shape: BoxShape.circle),
+              child: Icon(Icons.assignment_late_outlined,
+                  size: 20 * s, color: Colors.white),
+            ),
+            iconWidth: 38 * s,
+            title: task.title,
+            titleDisplay: TextLayout.keepWords(task.title),
+            titleStyle: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+            subtitle: subtitle,
+            subtitleDisplay: TextLayout.phrases(subtitle),
+            subtitleStyle: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            // [DU476] 급여 안내 textTertiary · 행동 글자 · 화살표 warningDark — 값 그대로.
+            note: task.isPayroll ? '확정된 급여 금액은 그대로 유지돼요' : null,
+            noteStyle: const TextStyle(fontSize: 12, color: AppColors.textTertiary),
+            actionText: '등록하기',
+            actionStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: AppColors.brand,
+            ),
+            actionTrailing: Icon(Icons.chevron_right, color: AppColors.brand, size: 20 * s),
+            actionTrailingWidth: 20 * s,
           ),
         ),
       ),
@@ -4390,7 +4382,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                 height: 16 * s,
                 child: LinearProgressIndicator(
                   borderRadius: BorderRadius.circular(4),
-                  color: AppColors.infoDark.withValues(alpha: 0.25),
+                  color: AppColors.border,
                   backgroundColor: AppColors.borderLight,
                 ))
             : Text(value,
@@ -4832,14 +4824,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               children: sortedStats.take(5).map((e) => Container(
                 padding: EdgeInsets.symmetric(horizontal: 13 * s, vertical: 6 * s),
                 decoration: BoxDecoration(
-                  color: AppColors.infoBg,
+                  color: AppColors.grey100,
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text('${e.key} ${e.value}회',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
-                      color: AppColors.infoDark,
+                      color: AppColors.textPrimary,
                     )),
               )).toList(),
             ),

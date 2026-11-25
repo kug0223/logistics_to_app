@@ -204,7 +204,7 @@ void main() {
 
     test('AHV-33 초대 CTA 문구·정원 계산 무변경', () {
       final s = _source(_day);
-      expect(s.contains(r"'인력 초대 ($shortage명 부족)'"), true);
+      expect(s.contains(r"'근무 초대 ($shortage명 부족)'"), true);
       expect(s.contains('isPendingSufficient'), true);
       // shortage 공식: Σ max(required - confirmed(active), 0)
       //

@@ -772,11 +772,11 @@ class _JobsSetupRequiredView extends StatelessWidget {
               width: 56 * s,
               height: 56 * s,
               decoration: BoxDecoration(
-                color: AppColors.info.withValues(alpha: 0.10),
+                color: AppColors.grey100,
                 shape: BoxShape.circle,
               ),
               child: Icon(Icons.checklist_rounded,
-                  size: 28 * s, color: AppColors.info),
+                  size: 28 * s, color: AppColors.textSecondary),
             ),
             SizedBox(height: 16 * s),
             Text(

@@ -114,7 +114,8 @@ class AuthService {
           if (data['isBlacklisted'] == true) {
             final reason = data['blacklistReason'] as String? ?? '이용 정책 위반';
             await _auth.signOut();
-            throw Exception('이용 제한된 계정입니다.\n사유: $reason\n고객센터에 문의해주세요.');
+            // [DU582b · 판정156 Q4] '계정 이용 차단' · '해제 전까지'(해제 불가 뜻 0) — 사유 · 문의 줄은 그대로(F156 DISPUTE · F580-INQUIRY).
+            throw Exception('계정 이용 차단 상태라 해제 전까지 로그인할 수 없어요.\n사유: $reason\n고객센터에 문의해주세요.');
           }
 
           // 가입 승인 상태 체크
@@ -882,13 +883,15 @@ class AuthService {
     final isNoShow = source == 'auto';
     if (isPermanent) {
       // 자동(노쇼) 제한은 영구가 되지 않는다(원장: 사건+1일). 영구는 사유를 단정하지 않는다.
-      return '서비스 이용이 영구 제한되었습니다.\n해제를 원하시면 고객센터에 문의해 주세요.';
+      // [DU582b · 판정156 Q4] 기한 없는 제한 = '이용 제한(기한 없음)'('영구 제한' 0 · 공고 상세 · 지원 준비 화면 · 운영자 S052 와 같은 말).
+      return '이용 제한(기한 없음) 상태예요.\n해제를 원하시면 고객센터에 문의해 주세요.';
     }
     final kst = FormatHelper.formatKstDateTimeKorean(restrictedDate);
     final reason = isNoShow ? '노쇼로 인해 ' : (source == 'manual' ? '관리자 조치로 ' : '');
-    return '$reason$kst(한국시간)까지 이용이 제한됩니다.\n'
-        '${isNoShow ? '(최근 90일 3회 이상 노쇼 시 1일 제한)\n' : ''}'
-        '고객센터: 문의하기 메뉴 이용';
+    // [DU582b] 해요체(공고 상세 '…까지 이용이 제한돼요'와 같은 말 · 판정156 어투) · 노쇼 기간 '1일' → '24시간'(F156-LIMIT-DURATION).
+    // [DU582c · 판정171 §4] 앱에 없는 '문의하기 메뉴' 안내 줄은 지운다 — 다른 문의 채널 · 절차를 만들지 않는다(이의 경로 = F156/DISPUTE OPEN). 노쇼 갈래 줄은 그대로(앞 줄 끝에 붙던 줄바꿈을 그 줄 앞으로 옮김).
+    return '$reason$kst(한국시간)까지 이용이 제한돼요.'
+        '${isNoShow ? '\n(최근 90일 3회 이상 노쇼 시 24시간 제한)' : ''}';
   }
 
   /// [DOC-DEV-ROLLOUT.9] 외국인 가입 확정의 재가입 제한 안내.

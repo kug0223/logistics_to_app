@@ -501,7 +501,7 @@ void main() {
       final arrowIcon = find.descendant(of: card, matching: find.byIcon(Icons.keyboard_arrow_down));
       expect(arrowIcon, findsOneWidget);
       final arrow = find.ancestor(of: arrowIcon, matching: find.byType(InkWell)).first;
-      final staffText = find.descendant(of: card, matching: find.text('인력 현황'));
+      final staffText = find.descendant(of: card, matching: find.text('지원·근무 현황'));
       expect(staffText, findsOneWidget, reason: '다음 행동 라벨 = 인력 현황');
       final staff = find.ancestor(of: staffText, matching: find.byType(InkWell)).first;
       out('   header InkWell ${rr(header)}');
@@ -741,7 +741,7 @@ void main() {
       final pos = t.state<ScrollableState>(listScrollable()).position;
       out('   수동 끌기 뒤 scroll=${okManual.toStringAsFixed(1)} max=${pos.maxScrollExtent.toStringAsFixed(1)} viewport=${pos.viewportDimension} · 업무 행 ${t.getRect(rowF)} inViewport=${inVp(t.getRect(rowF))}');
       expect(inVp(t.getRect(rowF)), isTrue);
-      final staff2 = find.ancestor(of: find.descendant(of: card, matching: find.text('인력 현황')), matching: find.byType(InkWell)).first;
+      final staff2 = find.ancestor(of: find.descendant(of: card, matching: find.text('지원·근무 현황')), matching: find.byType(InkWell)).first;
       out('   인력 현황(미탭) ${rr(staff2)}');
       await vqCapture(t, key, '${c.id}_7_recovered', conditions: cond('capacity 정상 · wdId 0/0 · 자동 ${okAuto.toStringAsFixed(1)} → 수동 ${okManual.toStringAsFixed(1)} · ${rendered()}'));
       await headCheck('복구', '7a', loading: false, failed: false);

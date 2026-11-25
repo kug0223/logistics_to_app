@@ -1147,6 +1147,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               items: widget.businessIds,
               labelOf: (id) => _businessNameMap[id] ?? id,
               prefixIcon: Icons.business,
+              // [DU623b · 장부143 · 판정206 :53 · :61] 이 칸만 긴 사업장 이름을 낱말 단위로 줄을 넘겨 보인다(O002 DU520 · DU521 선례 opt-in) — 공용 기본값 · 시트 · 콜백 그대로.
+              wrapLabel: true,
               onChanged: (value) {
                 if (value != null && value != _selectedBusinessId) {
                   setState(() => _selectedBusinessId = value);
@@ -1246,7 +1248,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                     Tab(child: AppTabLabel(label: '확인필요', count: needsReview.length, urgent: needsReview.isNotEmpty)),
                     Tab(child: AppTabLabel(label: '정상', count: normal.length)),
                     // [5B.2B] "확인완료": 관리자가 근태 확인한 사람들의 탭
-                    Tab(child: AppTabLabel(label: '확인완료', count: adminConfirmedWorkers.length, badgeColor: AppColors.info)),
+                    Tab(child: AppTabLabel(label: '확인완료', count: adminConfirmedWorkers.length, badgeColor: AppColors.brand)),
                     Tab(child: AppTabLabel(label: '처리완료', count: done.length, badgeColor: AppColors.grey500)),
                   ],
                 );
@@ -1576,7 +1578,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               if (cancelNoShowTargets.isNotEmpty && canManage)
                 _buildActionChip(
                   label: '노쇼취소 (${cancelNoShowTargets.length})',
-                  color: AppColors.info,
+                  color: AppColors.brand,
                   onTap: () => _showBatchCancelNoShowDialog(cancelNoShowTargets),
                 ),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
@@ -2416,7 +2418,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               horizontal: ResponsiveHelper.spacing(context, 12),
               vertical: ResponsiveHelper.spacing(context, 8),
             ),
-            child: Row(
+            // [DU584b r2 · 판정172 §4 (가)] 노쇼 결원 복구 행동 = 카드 줄(체크박스 · 정보 · 확인/취소) 아래 카드 안 다음 줄 · 카드 안쪽 전체 폭(_withRecoveryLine).
+            child: _withRecoveryLine(app, statusInfo['status'] == 'noshow' && !app.isStaffingReleased, Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 // 체크박스 — GestureDetector로 격리하여 카드 탭과 분리
@@ -2649,10 +2652,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                         ],
                       ),
 
-                      // [R5.2] NO_SHOW 대체 인력 충원 버튼
-                      // 조건: status==noshow + !released + !longTerm + canManageTo
-                      if (statusInfo['status'] == 'noshow' && !app.isStaffingReleased)
-                        _buildNoshowRecoveryButton(app),
+                      // [DU584b r2] 결원 복구 행동(같은 조건 · 같은 _buildNoshowRecoveryButton)은 정보 열 밖 카드 다음 줄로 옮겼다 — _withRecoveryLine.
                     ],
                   ),
                 ),
@@ -2660,11 +2660,23 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                 // 확인/취소 버튼
                 _buildConfirmButton(app),
               ],
-            ),
+            )),
           ),
         ),
       ),
     ),
+    );
+  }
+
+  // [R5.2] NO_SHOW 대체 인력 충원 행동 줄 — 조건: status==noshow + !released(그 밖 !longTerm · canManageTo · 당일 · 모집 단위 열림은 _buildNoshowRecoveryButton 안).
+  // [DU584b r2 · 판정172 §4 (가) · F172-B-OATT-ACTION-VIS] 행동은 카드 줄(체크박스 · 정보 · 확인/취소) 아래 카드 안 다음 줄에 카드 안쪽 전체 폭으로 둔다.
+  //   정보 열(Expanded) 안 · 왼쪽 32 들여쓰기에서는 320 · 글자 2.0 에서 글이 단추 밖으로 넘쳤다(g2 TB 넘침 43px). 조건이 아니면 카드 줄을 그대로 돌려준다(배치 불변).
+  Widget _withRecoveryLine(ApplicationModel app, bool showRecovery, Widget row) {
+    if (!showRecovery) return row;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [row, _buildNoshowRecoveryButton(app)],
     );
   }
 
@@ -2697,7 +2709,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     return Padding(
       padding: EdgeInsets.only(
         top: ResponsiveHelper.spacing(context, 8),
-        left: ResponsiveHelper.spacing(context, 32), // checkbox indent 보정
+        // [DU584b r2] 왼쪽 32 들여쓰기(체크박스 보정) 없음 — 이 행동 줄은 이제 카드 안쪽 전체 폭이다(_withRecoveryLine).
       ),
       child: SizedBox(
         width: double.infinity,
@@ -2706,8 +2718,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               ? null
               : () => unawaited(_releaseNoshowSeat(app)),
           style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.warning,
-            side: BorderSide(color: AppColors.warning.withValues(alpha: 0.7)),
+            // [DU584b] 진입 = brand 글 · brand 외곽선(알파 그대로) · brand 아이콘 — 판정170 §5 · O002 같은 행동과 맞춤. 노쇼 배지 · 당일/종료 가드 · 확인창 그대로.
+            foregroundColor: AppColors.brand,
+            side: BorderSide(color: AppColors.brand.withValues(alpha: 0.7)),
             padding: EdgeInsets.symmetric(
               horizontal: ResponsiveHelper.spacing(context, 10),
               vertical: ResponsiveHelper.spacing(context, 6),
@@ -2723,9 +2736,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(Icons.group_add_outlined,
                 size: ResponsiveHelper.iconSize(context, 14),
-                color: AppColors.warning),
+                color: AppColors.brand),
             SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-            const Text('대체 인력 충원'),
+            // [DU584b r2] 글은 줄이지 않는다(말줄임 · 숨김 0) — 자리가 모자라면 단추 밖으로 넘치지 않고 단추 안에서 줄을 바꾼다(안전망).
+            // [DU618b · 장부067 · 판정160 :54 · 169 :47] O002 같은 행동과 같은 글 — 낱말 안 끊김 0(읽는 이름 원문). 조건 · 색 · 아이콘 · 콜백 그대로.
+            Flexible(child: Text(TextLayout.keepWords('빈자리 다시 모집'), semanticsLabel: '빈자리 다시 모집')),
           ]),
         ),
       ),
@@ -2749,9 +2764,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             size: ResponsiveHelper.iconSize(context, 11),
             color: AppColors.grey500),
         SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-        Text('대체 충원 진행 중',
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)
-                .copyWith(fontWeight: FontWeight.w500)),
+        // [DU618b · 장부067 · 판정169 :47 · J144] 처리 결과 이름(O002 배지와 같은 글) — 조건(노쇼 + 좌석 반납 처리 이력) · 회색 칩 · 크기 · 자리 그대로. 지금 모집 중이라고 말하지 않는다.
+        // [DU623b · F206-OATT-BADGE-OVERFLOW · 판정206 :49 · :61] 칩 안 글이 남은 폭보다 길면 칩 밖으로 넘치지 않고 낱말(띄어쓰기)에서만 줄을 바꾼다 — 글 · 색 · 크기 · 조건 그대로 · 읽는 이름 원문.
+        Flexible(
+          child: Text(TextLayout.keepWords('자리 비움 처리됨'),
+              semanticsLabel: '자리 비움 처리됨',
+              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)
+                  .copyWith(fontWeight: FontWeight.w500)),
+        ),
       ]),
     );
   }
@@ -2760,11 +2780,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   Future<void> _releaseNoshowSeat(ApplicationModel app) async {
     if (_isSeatReleasing) return;
 
+    // [DU618b · 장부067 · 판정160 :50–:54] O002 확인창과 같은 제목 · 본문 · 확인 글(이름 = 이 창의 근로자 이름 · 없으면 해당 근무자). 셸 기본 brand · 뒤 실행 · 가드 그대로.
     final confirmed = await DialogHelper.showConfirm(
       context,
-      title: '대체 인력 충원',
-      message: '이 근로자의 자리를 반납하고 대체 인력을 모집합니다.\n계속하시겠습니까?',
-      confirmText: '충원하기',
+      title: '빈자리 다시 모집',
+      message:
+          '${_userMap[app.uid]?.name ?? '해당 근무자'}님의 오늘 근무가 노쇼로 기록됐어요. 이 자리를 비우고 다시 모집해요.\n'
+          '확정 기록은 그대로 남고, 이 근무가 차지하던 1자리를 모집 정원으로 돌려요.',
+      confirmText: '다시 모집',
       cancelText: '취소',
     );
     if (!confirmed || !mounted) return;
@@ -3461,7 +3484,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                 ),
                 label: Text('마감취소 (${selectedFinal.length}명)'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.error,
+                backgroundColor: AppColors.brand,
                 foregroundColor: Colors.white,
                 padding: EdgeInsets.symmetric(
                   vertical: ResponsiveHelper.spacing(context, 12),
@@ -5303,7 +5326,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(
           children: [
-            Icon(Icons.auto_fix_high, color: AppColors.info, size: 20),
+            Icon(Icons.auto_fix_high, color: AppColors.brand, size: 20),
             SizedBox(width: 8),
             Flexible(
               child: Text('근태 기준 적용',
@@ -5322,9 +5345,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             Container(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 10)),
               decoration: BoxDecoration(
-                color: AppColors.infoBg,
+                color: AppColors.brandSurface,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.infoLight),
+                border: Border.all(color: AppColors.brand.withValues(alpha: 0.2)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -5353,14 +5376,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                           Icon(Icons.arrow_right_alt,
                               size: ResponsiveHelper.iconSize(ctx, 16), color: AppColors.grey500),
                           Text(r.applied,
-                              style: ResponsiveHelper.smallStyle(ctx, color: AppColors.infoDark)
+                              style: ResponsiveHelper.smallStyle(ctx, color: AppColors.brandDark)
                                   .copyWith(fontWeight: FontWeight.w700)),
                         ],
                       ),
                     ),
                   if (changed.length > maxRows)
                     Text('외 ${changed.length - maxRows}명도 바뀌어요',
-                        style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.infoDark)),
+                        style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.brandDark)),
                   if (unchanged > 0)
                     Padding(
                       padding: EdgeInsets.only(top: ResponsiveHelper.spacing(ctx, 4)),
@@ -5395,7 +5418,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                 child: ElevatedButton(
                   onPressed: () => Navigator.pop(ctx, true),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.info,
+                    // [DU618b · 장부092 · 판정113 :77 · 114 :39 N1 둘째 창] 주 행동 채움 info → brand(흰 글 대비) — 두 글 갈래 같은 단추. 선택 시각 · 반올림 · 반환값 · 콜백 그대로.
+                    backgroundColor: AppColors.brand,
                     foregroundColor: Colors.white,
                     padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(ctx, 12)),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -5845,7 +5869,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       context,
       title: '마감취소 (${targets.length}명)',
       message: '$names\n\n위 근무자들의 마감을 취소하시겠습니까?\n급여확정 상태로 되돌아가며, 지원자에게 급여가 숨겨집니다.',
-      confirmText: '마감취소',
+      confirmText: '마감취소', confirmColor: AppColors.errorDark,
     );
     if (!confirmed || !mounted) return;
     setState(() => _isLoading = true);

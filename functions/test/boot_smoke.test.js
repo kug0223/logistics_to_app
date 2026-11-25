@@ -134,16 +134,43 @@ t('BOOT-5 두 함수에 secret 의존이 생기지 않았다', () => {
   }
 });
 
-t('BOOT-6 App Check 강제 설정이 유지된다', () => {
+t('BOOT-6 App Check 강제·운영 옵션 선언이 의도값이다', () => {
   // `enforceAppCheck` 는 `__endpoint` 에 실리지 않는다(실측: callableTrigger={}).
   //   그래서 **선언부**로 확인한다 — 배포 설정이 아니라 코드 계약이다.
+  // [M2 · 판정190] 선택배포 기존 12개는 DEV 기존값 `maxInstances: 20` 을 명시한다.
+  //   선언이 없으면 SDK 가 maxInstances 에 RESET 을 실어 DEV 의 20 보존이 보장되지 않는다(판정188 M2).
+  //   선언 줄은 함수마다 정확히 이 한 줄이어야 하고(줄 끝까지), 20 은 __endpoint 에도 실려야 한다.
+  const MAX20 = new Set([
+    'callableGetApplicantDocumentReview',
+    'callableGetApplicantDocumentUrl',
+    'callableReviewApplicantDocument',
+    'callableRequestDocumentCorrection',
+    'callableGiveApplicationDocumentConsent',
+    'callableGetBankbookSignedUrl',
+    'callableGetUsersBatch',
+    'callableGetTaxIdentityIdCardUrl',
+    'callableApplyToTO',
+    'callableGetMyApplications',
+    'callableAcceptTOInvitation',
+    'callableAcceptConfirmedReassignment',
+  ]);
+  // 기존 BOOT 대상 18개와 MAX20 12개의 합집합은 20개다(겹침10·추가2).
+  // 기존18 중 나머지8은 원래 region/AppCheck 옵션 줄을 유지한다.
+  const OPTION_TARGETS = [...new Set([...DEPLOY_TARGETS, ...MAX20])];
   const src = require('fs').readFileSync(
       path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
-  for (const name of DEPLOY_TARGETS) {
-    const decl = `export const ${name} = onCall(\n` +
+  for (const name of OPTION_TARGETS) {
+    const opt = MAX20.has(name) ?
+        '  {region: "asia-northeast3", enforceAppCheck: true, maxInstances: 20},' :
         '  {region: "asia-northeast3", enforceAppCheck: true},';
+    const decl = `export const ${name} = onCall(\n` + opt + '\n';
     assert.ok(src.includes(decl),
-        name + ' 의 region/enforceAppCheck 선언이 바뀌었다');
+        name + ' 의 region/enforceAppCheck/maxInstances 선언이 의도값과 다르다');
+    if (MAX20.has(name)) {
+      const ep = (mod && mod[name] && mod[name].__endpoint) || {};
+      assert.strictEqual(ep.maxInstances, 20,
+          name + ' __endpoint.maxInstances=' + JSON.stringify(ep.maxInstances));
+    }
   }
 });
 

@@ -935,11 +935,11 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                 width: ResponsiveHelper.spacing(context, 34),
                 height: ResponsiveHelper.spacing(context, 34),
                 decoration: BoxDecoration(
-                  color: AppColors.warningDark.withValues(alpha: 0.12),
+                  color: AppColors.brand.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(Icons.lock_outline,
-                    color: AppColors.warningDark,
+                    color: AppColors.brand,
                     size: ResponsiveHelper.iconSize(context, 18)),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1147,7 +1147,7 @@ class _PasswordChangeDialogState extends State<_PasswordChangeDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Icon(Icons.info_outline,
-                  size: 13, color: AppColors.grey400),
+                  size: 13, color: AppColors.textSecondary),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Expanded(
                 child: Text(

@@ -234,7 +234,7 @@ void main() {
       expect(wage, contains('srvResolvePayrollReadiness('));
     });
 
-    test('21 계좌 presence 판정처가 늘어나지 않았다', () {
+    test('21 계좌 presence 판정처는 질문별 owner 집합으로 제한한다', () {
       // [PII-DOC-R1.5.4] onboarding 판정 helper 하나가 추가됐다.
       //   지원·초대 수락은 그 helper 를 부를 뿐 직접 필드를 보지 않는다.
       final owners = <String>[];
@@ -258,6 +258,7 @@ void main() {
             //   별개의 helper이고, 둘 다 자기 질문에만 답한다.
             'srvResolvePayrollReadiness',
             'callableUpdateBankAccount',
+            'callableGetWorkerPayrollAccount', // 관리자 현재 계좌 열람(3필드만·통장사본 불요) — 판정185 ON-05 와 같은 질문 owner
           }),
           reason: '실제 발견: ${owners.toSet()}');
     });

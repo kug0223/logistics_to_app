@@ -603,7 +603,7 @@ class _DeletionRecoveryScreenState extends State<_DeletionRecoveryScreen> {
                       : '이전 탈퇴 처리가 완료되지 않았습니다.\n'
                           '남은 정리를 마치려면 다시 시도해 주세요.',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 14, color: AppColors.grey600),
+                  style: const TextStyle(fontSize: 14, color: AppColors.textSecondary),
                 ),
                 const SizedBox(height: 24),
                 TextField(
@@ -718,6 +718,23 @@ class _HomeRegionRecoveryScreenState extends State<_HomeRegionRecoveryScreen> {
     }
   }
 
+  /// [DU616b] 표시 글 [shown](TextLayout 처리 뒤)의 낱말 하나라도 [available] 폭 한 줄에 들어가지 않는가 — 화면 글과 같은 글꼴 · 글자 배율로 잰다(표시만).
+  static bool _wordTooWide(BuildContext context, String shown, TextStyle style, double available) {
+    for (final word in shown.split(' ')) {
+      final tp = TextPainter(
+        text: TextSpan(text: word, style: DefaultTextStyle.of(context).style.merge(style)),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+        locale: Localizations.maybeLocaleOf(context),
+        maxLines: 1,
+      )..layout();
+      final w = tp.width;
+      tp.dispose();
+      if (w > available) return true;
+    }
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -731,7 +748,8 @@ class _HomeRegionRecoveryScreenState extends State<_HomeRegionRecoveryScreen> {
         // [E1-CORRECTION-1] 로그아웃 줄이 늘어난 만큼, 작은 화면·큰 배율에서
         //   주 CTA 나 로그아웃이 잘리지 않도록 스크롤을 허용한다.
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+          // [DU609b] 좌우 여백은 공용 화면 여백(ResponsiveHelper.screenPadding — 폭 360 미만 16 · 그 밖 24)을 따른다. 좁은 화면 · 큰 글자에서 지역 이름 카드 글 칸이 넓어진다.
+          padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.screenPadding(context).left, vertical: 32),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -784,33 +802,47 @@ class _HomeRegionRecoveryScreenState extends State<_HomeRegionRecoveryScreen> {
                     onTap: _pickRegion,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                      child: Row(
-                        children: [
-                          Icon(Icons.map_outlined,
-                              color: _selected != null
-                                  ? theme.primaryColor
-                                  : AppColors.textSecondary),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            // [DU424] 지역 이름은 낱말 단위로 줄을 바꾸고, 긴 한 낱말은 가운데에서만 끊는다
-                            //   (좁은 폭 · 큰 글자에서 '세종특별자치 / 시' 음절 끊김). 화면 읽기는 원문이다.
-                            child: Text(
-                              TextLayout.identity(_selected != null
-                                  ? '${_selected!.province ?? ''} ${_selected!.city}'.trim()
-                                  : '지역 선택하기'),
-                              semanticsLabel: _selected != null
-                                  ? '${_selected!.province ?? ''} ${_selected!.city}'.trim()
-                                  : '지역 선택하기',
-                              style: ResponsiveHelper.bodyStyle(context,
-                                  color: _selected != null
-                                      ? AppColors.textPrimary
-                                      : AppColors.textSecondary),
+                      // [DU616b] 큰 글자에서 지역 이름의 가장 긴 낱말이 한 줄 글 칸(지도 아이콘 · 간격 · 꺾쇠를 뺀 폭)에 들어가지 않으면
+                      //   지도 아이콘을 글 위로 옮겨 글 칸을 넓힌다 — 낱말 · 전체 이름 · 글 크기 · 누름 동작은 그대로(장부 142 · 판정105 §1-3).
+                      child: LayoutBuilder(builder: (context, box) {
+                        final regionShown = TextLayout.identity(_selected != null
+                            ? '${_selected!.province ?? ''} ${_selected!.city}'.trim()
+                            : '지역 선택하기');
+                        final regionStyle = ResponsiveHelper.bodyStyle(context,
+                            color: _selected != null
+                                ? AppColors.textPrimary
+                                : AppColors.textSecondary);
+                        final mapIcon = Icon(Icons.map_outlined,
+                            color: _selected != null
+                                ? theme.primaryColor
+                                : AppColors.textSecondary);
+                        final iconW = IconTheme.of(context).size ?? 24;
+                        final iconAbove = _wordTooWide(
+                            context, regionShown, regionStyle, box.maxWidth - iconW * 2 - 12);
+                        final row = Row(
+                          children: [
+                            if (!iconAbove) ...[mapIcon, const SizedBox(width: 12)],
+                            Expanded(
+                              // [DU424] 지역 이름은 낱말 단위로 줄을 바꾸고, 긴 한 낱말은 가운데에서만 끊는다
+                              //   (좁은 폭 · 큰 글자에서 '세종특별자치 / 시' 음절 끊김). 화면 읽기는 원문이다.
+                              child: Text(
+                                regionShown,
+                                semanticsLabel: _selected != null
+                                    ? '${_selected!.province ?? ''} ${_selected!.city}'.trim()
+                                    : '지역 선택하기',
+                                style: regionStyle,
+                              ),
                             ),
-                          ),
-                          const Icon(Icons.chevron_right,
-                              color: AppColors.textTertiary),
-                        ],
-                      ),
+                            const Icon(Icons.chevron_right,
+                                color: AppColors.textTertiary),
+                          ],
+                        );
+                        if (!iconAbove) return row;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [mapIcon, const SizedBox(height: 8), row],
+                        );
+                      }),
                     ),
                   ),
                 ),
@@ -890,7 +922,7 @@ class _AppErrorWidget extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.error_outline, size: 64, color: AppColors.error),
+              const Icon(Icons.error_outline, size: 64, color: AppColors.errorDark),
               const SizedBox(height: 16),
               const Text(
                 '오류가 발생했습니다',
@@ -903,7 +935,7 @@ class _AppErrorWidget extends StatelessWidget {
               const Text(
                 '잠시 후 다시 시도해주세요.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: AppColors.grey500),
+                style: TextStyle(color: AppColors.textSecondary),
               ),
               const SizedBox(height: 32),
               SizedBox(
@@ -916,7 +948,7 @@ class _AppErrorWidget extends StatelessWidget {
                     }
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.info,
+                    backgroundColor: AppColors.brand,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(

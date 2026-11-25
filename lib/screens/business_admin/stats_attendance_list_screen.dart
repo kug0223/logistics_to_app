@@ -217,6 +217,7 @@ class _StatsAttendanceListScreenState extends State<StatsAttendanceListScreen> {
               context,
               '최신 내역을 불러오지 못했어요. 아래 목록은 정정 전 기준이에요.',
               AppColors.warningDark,
+              lined: true, // [DU579] 정정 전 목록 띠 = 흰 면 + 기존 선(판정141 R1 (b))
               action: TextButton(
                 onPressed: _loading ? null : () => _reload(afterChange: true),
                 child: const Text('다시 조회'),
@@ -252,14 +253,16 @@ class _StatsAttendanceListScreenState extends State<StatsAttendanceListScreen> {
     );
   }
 
-  Widget _banner(BuildContext context, String text, Color color, {Widget? action}) {
+  Widget _banner(BuildContext context, String text, Color color, {Widget? action, bool lined = false}) {
     return Container(
       padding: EdgeInsets.symmetric(
           horizontal: ResponsiveHelper.spacing(context, 12),
           vertical: ResponsiveHelper.spacing(context, 8)),
+      // [DU579] lined = 정정 전 목록 띠(판정141 R1 (b) — 연간 · 월 상세와 같은 흰 면 + grey200 선 + 진한 글) · 그 밖 띠(정정으로 빠진 근무 안내)는 그대로.
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
+        color: lined ? AppColors.surface : color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(10),
+        border: lined ? Border.all(color: AppColors.grey200) : null,
       ),
       child: Row(children: [
         Expanded(

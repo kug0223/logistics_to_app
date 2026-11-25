@@ -1,3 +1,4 @@
+// ignore_for_file: depend_on_referenced_packages
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -12,7 +13,6 @@ import 'package:ALfit/models/core/application_model.dart';
 import 'package:ALfit/services/contract_service.dart';
 import 'package:ALfit/models/core/attendance_model.dart';
 import 'package:ALfit/models/core/business_model.dart';
-import 'package:ALfit/models/core/to_model.dart';
 import 'package:ALfit/models/core/user_model.dart';
 import 'package:ALfit/models/core/work_detail_data.dart';
 import 'package:ALfit/models/ui/day_staffing_row.dart';
@@ -233,13 +233,6 @@ void main() {
     }
   }
 
-  /// 다이얼로그로 띄운 경우에도 같은 방식으로 정착시킨다.
-  Future<void> settle(WidgetTester tester) async {
-    for (var i = 0; i < 30; i++) {
-      await tester.pump(const Duration(milliseconds: 50));
-    }
-  }
-
   String texts(WidgetTester tester) => tester
       .widgetList<Text>(find.byType(Text))
       .map((t) => visibleText(t.data ?? t.textSpan?.toPlainText() ?? ''))
@@ -256,7 +249,7 @@ void main() {
 
     await openDay(tester, date: d929, reads: r.build());
     final t929 = texts(tester);
-    expect(t929, contains('인력 현황'));
+    expect(t929, contains('지원·근무 현황'));
     expect(t929, contains('9월 29일'), reason: 'scope label 의 날짜');
     expect(t929, contains('1건'), reason: '지원·확정이 각각 1건');
 
@@ -315,7 +308,7 @@ void main() {
     await tester.tap(find.text('명단 보기'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
-    expect(texts(tester), contains('인력 현황'));
+    expect(texts(tester), contains('지원·근무 현황'));
     expect(texts(tester), contains('1건'));
 
     // 닫기 → 진입점으로 복귀
@@ -323,13 +316,13 @@ void main() {
     navigator.pop();
     await tester.pumpAndSettle();
     expect(find.text('명단 보기'), findsOneWidget);
-    expect(texts(tester), isNot(contains('인력 현황')));
+    expect(texts(tester), isNot(contains('지원·근무 현황')));
 
     // 다시 열기 — 같은 값이 다시 나온다
     await tester.tap(find.text('명단 보기'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
-    expect(texts(tester), contains('인력 현황'));
+    expect(texts(tester), contains('지원·근무 현황'));
     expect(texts(tester), contains('1건'));
     // 다시 열 때 다시 읽는다 — stale 캐시를 재사용하지 않는다.
     expect(r.calls.where((c) => c == 'pending:20260929').length, 2);
@@ -344,7 +337,7 @@ void main() {
     final rA = makeReads()..gate = Completer<void>();
     await openDay(tester, date: d929, reads: rA.build());
     // 아직 응답이 오지 않았다 — 수치를 0 으로 단정하지 않아야 한다.
-    expect(texts(tester), contains('인력 현황'));
+    expect(texts(tester), contains('지원·근무 현황'));
 
     final rB = makeReads();
     await openDay(tester, date: d930, reads: rB.build());
@@ -368,7 +361,7 @@ void main() {
     await openDay(tester, date: d929, reads: r.build());
     final t = texts(tester);
     // 지원자 명단은 살아 있다 — 전체를 ERROR 로 만들지 않는다.
-    expect(t, contains('인력 현황'));
+    expect(t, contains('지원·근무 현황'));
     expect(t, contains('1건'));
     // 충원 축은 모른다고 말한다 — scope label 이 업무 수를 단정하지 않는다.
     expect(t, contains('9월 29일'));

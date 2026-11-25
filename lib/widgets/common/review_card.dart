@@ -491,7 +491,7 @@ class ReviewCard extends StatelessWidget {
             label: Text('답변하기',
                 style: ResponsiveHelper.smallStyle(context)),
             style: TextButton.styleFrom(
-              foregroundColor: AppColors.info,
+              foregroundColor: AppColors.brand,
               padding: EdgeInsets.symmetric(
                 horizontal: ResponsiveHelper.spacing(context, 8),
                 vertical: ResponsiveHelper.spacing(context, 4),

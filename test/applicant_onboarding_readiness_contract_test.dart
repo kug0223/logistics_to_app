@@ -81,8 +81,9 @@ void main() {
       expect(msg, contains('통장 정보 등록이 필요합니다'));
     });
 
-    test('05 계좌 presence 를 판정하는 곳은 한 군데다', () {
-      // 같은 질문을 두 곳에서 다르게 답하지 않는다.
+    test('05 계좌 presence 판정은 질문별 owner 집합으로 제한한다', () {
+      // 지원 등록·지급 준비·등록 입력·현재 계좌 열람은 서로 다른 질문이다.
+      // 각 질문의 owner를 고정하여 새 중복 판정은 검출한다.
       final owners = <String>[];
       final lines = _codeOf(rawCf).split('\n');
       var cur = '<top>';
@@ -102,6 +103,7 @@ void main() {
             'srvMissingApplicantPayoutRegistration', // onboarding 판정
             'srvResolvePayrollReadiness', // [R1.6] 지급 시점 판정
             'callableUpdateBankAccount', // 계좌 등록 자체의 입력 검증
+            'callableGetWorkerPayrollAccount', // 관리자 현재 계좌 열람(3필드만·통장사본 불요)
           }),
           reason: '실제 발견: ${owners.toSet()}');
     });
@@ -325,9 +327,9 @@ void main() {
     });
 
     test('27 §10 — 하나만 하면 끝나는 것처럼 말하지 않는다', () {
-      expect(card, contains('지원 전에 신분증과 급여정보를 등록해주세요'));
-      expect(card, contains('계좌와 통장사본을 등록하면 지원 준비가 완료돼요'));
-      expect(card, contains('신분증을 등록하면 지원 준비가 완료돼요'));
+      expect(card, contains('지원 전에 신분증과 급여정보를 등록해 주세요'));
+      expect(card, contains('계좌와 통장사본을 등록해 주세요'));
+      expect(card, contains('신분증을 등록해 주세요'));
     });
 
     test('28 등록 여부만 본다 — 검수 상태는 읽지 않는다', () {

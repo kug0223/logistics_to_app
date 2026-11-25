@@ -166,8 +166,8 @@ class _BusinessApprovalSettingsScreenState
           ),
         ),
         value: _autoApprove,
-        activeThumbColor: AppColors.success,
-        activeTrackColor: AppColors.success.withValues(alpha: 0.4),
+        activeThumbColor: AppColors.brand,
+        activeTrackColor: AppColors.brand.withValues(alpha: 0.4),
         onChanged: (value) => setState(() => _autoApprove = value),
       ),
     );

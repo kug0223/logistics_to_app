@@ -541,7 +541,7 @@ void main() {
 
     test('DLG-W11 장기 부족에 다음 경로를 말한다 (§6)', () {
       expect(dlg, contains('_buildLongTermShortageRoute('));
-      expect(dlg, contains('인력 초대'), reason: '기존 canonical 경로를 가리킨다');
+      expect(dlg, contains('⋮ 메뉴 > 근무 초대'), reason: '기존 canonical 경로를 가리킨다');
       // 새 초대 CTA 를 이 화면에 만들지 않았다.
       final route = dlg.substring(
           dlg.indexOf('Widget _buildLongTermShortageRoute('),

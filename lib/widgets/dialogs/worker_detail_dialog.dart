@@ -37,6 +37,7 @@ import '../../services/monthly_review_service.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../services/applicant_document_review_service.dart';
 import '../../services/tax_identity_review_service.dart';
+import '../../services/worker_payroll_account_service.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 
 /// [UI-3] 상세 머리줄의 성별·나이 조각. 저장 계약('남성'·'여성')이 아닌 성별 값은
@@ -140,6 +141,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   bool _taxReviewLoading = false;
   // [V3 BANKBOOK-SECURE-ACCESS] 통장사본 Signed URL 상태 (1시간 만료, 매 열람 시 재발급)
   bool _bankbookLoading = false;
+  // [CONSENT-R4b · C-R4-4] '급여 정보' 현재 계좌 — 목적별 reader 결과(null = 아직 안 읽음).
+  //   목적 미지정 batch 의 widget.user 계좌 필드는 더 이상 쓰지 않는다(H11 뒤 비어 있다).
+  WorkerPayrollAccountResult? _payrollAccount;
+  bool _payrollAccountLoading = false;
   // [R1.2] 지원자 서류 검토 상태 — 서버가 계산한 값을 그대로 담는다.
   ApplicantDocumentReview? _docReview;
   bool _docReviewLoading = false;
@@ -187,6 +192,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     if (!widget.isConfirmed) {
       unawaited(_loadApplicantDocumentReview());
     }
+    // [r4c · PP-R4B-ACCOUNT-READ] 상세를 여는 것과 현재 계좌를 요청하는 것을 나눈다 —
+    //   계좌는 '급여계좌 보기'를 눌렀을 때만 목적별 reader 로 요청한다(자동 조회 0).
 
     try {
       final userProvider = context.read<UserProvider>();
@@ -446,6 +453,32 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   // [PII-B4-R1] _loadIdCardSignedUrl 제거 — 다이얼로그가 원본을 들고
   //   있지 않는다. 확인 시트가 열릴 때만 발급받는다.
 
+  /// [CONSENT-R4b · C-R4-4 · r4c] '급여계좌 보기'(또는 다시 불러오기)를 눌렀을 때만 확정 관계의
+  ///   현재 급여계좌를 목적별 reader 로 읽는다. 급여 권한이 없으면 부르지 않는다(섹션 자체가 숨는다).
+  ///   지원서가 없는 호출처는 관계를 특정할 수 없으므로 서버를 부르지 않고 그 사실을 보인다.
+  ///   이미 받은 계좌를 화면에서 회수하거나 자동으로 닫지는 않는다(약속 0).
+  Future<void> _loadPayrollAccount() async {
+    if (_payrollAccountLoading) return;
+    if (context.read<UserProvider>().checkCurrentBusiness((p) => p.canManageWage) !=
+        PermissionCheck.allowed) {
+      return;
+    }
+    final app = widget.application;
+    final bizId = app?.businessId;
+    if (app == null || app.id.isEmpty || bizId == null || bizId.isEmpty) {
+      setState(() => _payrollAccount = WorkerPayrollAccountResult.noRelation);
+      return;
+    }
+    setState(() => _payrollAccountLoading = true);
+    final r = await WorkerPayrollAccountService()
+        .fetch(businessId: bizId, applicationId: app.id);
+    if (!mounted) return;
+    setState(() {
+      _payrollAccount = r;
+      _payrollAccountLoading = false;
+    });
+  }
+
   /// [V3 BANKBOOK-SECURE-ACCESS] 통장사본 열람
   /// - 매 호출 시 CF callableGetBankbookSignedUrl로 1시간 Signed URL 발급
   /// - 캐싱 없음 (보안 목적) — 신분증과 달리 URL을 상태 변수에 저장하지 않는다
@@ -482,7 +515,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       );
     } on FirebaseFunctionsException catch (e) {
       if (!mounted) return;
-      final msg = switch (e.code) {
+      // [CONSENT-R4b] 열람 기간으로 닫힌 경우는 권한 없음과 다른 문장(계좌 칸과 같은 문장).
+      final details = e.details;
+      final windowClosed = details is Map && details['code'] == 'BANK_WINDOW_CLOSED';
+      final closedKind = windowClosed ? details['closedKind'] as String? : null;
+      final msg = windowClosed ? '통장사본: ${bankWindowClosedText(closedKind)}' : switch (e.code) {
         'permission-denied' => '열람 권한이 없습니다.',
         'not-found' => '통장사본 파일을 찾을 수 없습니다.',
         'failed-precondition' => e.message ?? '열람 조건을 충족하지 않습니다.',
@@ -739,12 +776,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                               vertical: ResponsiveHelper.spacing(context, 2),
                             ),
                             decoration: BoxDecoration(
-                              color: _getStatusColor(widget.application!.status),
+                              color: _getStatusColor(widget.application!.status).bg,
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
                               _getStatusLabel(widget.application!.status),
-                              style: ResponsiveHelper.tinyStyle(context, color: Colors.white).copyWith(
+                              style: ResponsiveHelper.tinyStyle(context, color: _getStatusColor(widget.application!.status).fg).copyWith(
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
@@ -789,6 +826,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             )
           else
           Container(
+            // [DU550 F138-WORKERDETAIL-B-LAYOUT] 칸 폭은 이전 Row 가 채우던 폭 그대로. 번호 묶음과 전화 칩이 한 줄에 안 들어가면
+            //   (좁은 폭 · 큰 글자) 칩이 번호 아래 줄 가운데로 내려간다 — 번호 전문 · 글자 크기 · 칩 동작 그대로.
+            width: double.infinity,
             padding: EdgeInsets.symmetric(
               horizontal: ResponsiveHelper.spacing(context, 12),
               vertical: ResponsiveHelper.spacing(context, 8),
@@ -798,17 +838,26 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: AppColors.grey200),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: ResponsiveHelper.spacing(context, 12),
+              runSpacing: ResponsiveHelper.spacing(context, 4),
               children: [
-                Icon(Icons.phone, size: ResponsiveHelper.iconSize(context, 16), color: AppColors.grey600),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Text(
-                  widget.user.effectivePhone ?? '-',
-                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.phone, size: ResponsiveHelper.iconSize(context, 16), color: AppColors.grey600),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    Flexible(
+                      child: Text(
+                        widget.user.effectivePhone ?? '-',
+                        style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary),
+                      ),
+                    ),
+                  ],
                 ),
-                if (widget.user.effectivePhone != null && widget.user.effectivePhone!.isNotEmpty) ...[
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                if (widget.user.effectivePhone != null && widget.user.effectivePhone!.isNotEmpty)
                   Material(
                     color: theme.primaryColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(20),
@@ -838,7 +887,6 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                       ),
                     ),
                   ),
-                ],
               ],
             ),
           ),
@@ -849,16 +897,20 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
   List<String> _profileFacts(UserModel user) => workerProfileFacts(user);
 
-  Color _getStatusColor(String status) {
+  // [DU541] 상태 이름 칩 — 옅은 짝 면 + 진한 짝 글(StatusBadge 짝 · 원색 채움 위 흰 글은 대비 미달).
+  ({Color bg, Color fg}) _getStatusColor(String status) {
     switch (status) {
       case AppStatus.pending:
-        return AppColors.warning;
+        return (bg: AppColors.warningBg, fg: AppColors.warningDark);
       case AppStatus.confirmed:
-        return AppColors.success;
+        return (bg: AppColors.successBg, fg: AppColors.successDark);
       case AppStatus.rejected:
-        return AppColors.error;
+        return (bg: AppColors.errorBg, fg: AppColors.errorDark);
+      // [DU541b R8] 계약 대기 = 중앙 정의(getStatusBackground/Text)와 같은 확정 짝 — 그 밖 갈래는 중립 그대로.
+      case AppStatus.contractPending:
+        return (bg: AppColors.confirmedBg, fg: AppColors.confirmedDark);
       default:
-        return AppColors.grey500;
+        return (bg: AppColors.grey200, fg: AppColors.grey700);
     }
   }
 
@@ -985,7 +1037,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   label: '총 근무',
                   value: '${user.totalWorkDays}일',
                   // neutral — 근무일수는 semantic 강조 대상이 아님
-                  color: AppColors.grey500,
+                  color: AppColors.textPrimary,
                   bgColor: AppColors.grey100,
                 ),
               ),
@@ -998,9 +1050,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   value: user.averageRating > 0
                       ? user.averageRating.toStringAsFixed(1)
                       : '-',
-                  // 평점 데이터 있을 때만 amber, 없으면 neutral
-                  color: user.averageRating > 0 ? AppColors.amberMedium : AppColors.grey500,
-                  bgColor: user.averageRating > 0 ? AppColors.amberMedium.withValues(alpha: 0.1) : AppColors.grey100,
+                  // [DU541] 평점도 집계 칸 — 면 · 숫자 중립(DU426 평점 amber → textPrimary 와 같다)
+                  color: AppColors.textPrimary,
+                  bgColor: AppColors.grey100,
                 ),
               ),
             ],
@@ -1014,8 +1066,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   icon: Icons.cancel_outlined,
                   label: '노쇼(90일)',
                   value: '${user.recentNoShowCount}회',
-                  color: user.recentNoShowCount > 0 ? AppColors.error : AppColors.grey400,
-                  bgColor: user.recentNoShowCount > 0 ? AppColors.errorBg : AppColors.grey100,
+                  color: user.recentNoShowCount > 0 ? AppColors.errorDark : AppColors.textPrimary,
+                  bgColor: AppColors.grey100,
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -1025,8 +1077,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   icon: Icons.schedule_outlined,
                   label: '지각(90일)',
                   value: '${user.recentLateCount}회',
-                  color: user.recentLateCount > 0 ? AppColors.warning : AppColors.grey400,
-                  bgColor: user.recentLateCount > 0 ? AppColors.warningBg : AppColors.grey100,
+                  color: user.recentLateCount > 0 ? AppColors.warningDark : AppColors.textPrimary,
+                  bgColor: AppColors.grey100,
                 ),
               ),
             ],
@@ -1042,21 +1094,17 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
   Widget _buildRehireRateBadge(BuildContext context, double rate, int reviewCount) {
     final pct = (rate * 100).round();
-    final Color color;
     final IconData icon;
     if (rate >= 0.7) {
-      color = AppColors.successDark;
       icon = Icons.thumb_up_rounded;
     } else if (rate >= 0.4) {
-      color = AppColors.warningDark;
       icon = Icons.thumbs_up_down_rounded;
     } else {
-      color = AppColors.errorDark;
       icon = Icons.thumb_down_rounded;
     }
 
     // [PH-WORKER-DETAIL] 재고용 추천률 — metric이므로 full colored bg 대신
-    // neutral surface + subtle border. semantic color는 icon/text에만 적용.
+    // neutral surface + subtle border. [DU541b R2] 집계값 · 아이콘 · 선도 중립(구간은 엄지 모양이 말한다).
     return Container(
       width: double.infinity,
       padding: EdgeInsets.symmetric(
@@ -1066,28 +1114,30 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       decoration: BoxDecoration(
         color: AppColors.grey50,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withValues(alpha: 0.25)),
+        border: Border.all(color: AppColors.border),
       ),
       child: Row(
         children: [
-          Icon(icon, size: ResponsiveHelper.iconSize(context, 14), color: color),
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 14), color: AppColors.grey600),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Text(
-            '재고용 추천률',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+          // [DU550 F138-WORKERDETAIL-B-LAYOUT] 라벨이 남은 폭(이전 빈 칸 자리)을 채운다 — 좁으면 라벨이 낱말 사이에서 줄을 바꾸고 % · 건수는 오른쪽 끝 그대로.
+          Expanded(
+            child: Text(
+              TextLayout.keepWords('재고용 추천률'),
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+            ),
           ),
-          const Spacer(),
           Text(
             '$pct%',
             style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: color,
+              color: AppColors.textPrimary,
               fontWeight: FontWeight.bold,
             ),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
             '($reviewCount건)',
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary),
           ),
         ],
       ),
@@ -1111,7 +1161,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       ),
       child: Column(
         children: [
-          Icon(icon, size: ResponsiveHelper.iconSize(context, 20), color: color),
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.grey600),
           SizedBox(height: ResponsiveHelper.spacing(context, 6)),
           Text(
             value,
@@ -1123,7 +1173,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           SizedBox(height: ResponsiveHelper.spacing(context, 2)),
           Text(
             label,
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary),
             textAlign: TextAlign.center,
           ),
         ],
@@ -1281,12 +1331,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         children: [
           Row(
             children: [
-              // 별점
+              // 별점 — [DU541b R4] 채움/윤곽으로 구분 · 색은 중립 grey600(새 amber 예외 0)
               Row(
                 children: List.generate(5, (index) => Icon(
                   index < review.rating ? Icons.star : Icons.star_border,
                   size: ResponsiveHelper.iconSize(context, 14),
-                  color: AppColors.amber,
+                  color: AppColors.grey600,
                 )),
               ),
               const Spacer(),
@@ -1357,7 +1407,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                       onPressed: _loadApplicantDocumentReview,
                       child: Text('다시 불러오기',
                           style: ResponsiveHelper.smallStyle(context,
-                              color: AppColors.info)),
+                              color: AppColors.brand)),
                     ),
                   ],
                 )
@@ -1373,12 +1423,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: AppColors.warningBg,
+                          color: AppColors.grey100,
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(r.consentBlockLabel!,
                             style: ResponsiveHelper.smallStyle(context,
-                                color: AppColors.warningDark)),
+                                color: AppColors.textPrimary)),
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 10)),
                     // [ADMIN-APPROVAL-PERMISSION] 확정이 막힌 경우엔 위 배너가 이미
@@ -1450,7 +1500,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       width: double.infinity,
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
       decoration: BoxDecoration(
-        color: ready ? AppColors.successBg : AppColors.warningBg,
+        // [DU541] 확정 가능(정상)은 중립 띠 · 확정 불가(실제 주의)는 이 창의 대표 안내(E-NOTICE)로 둔다.
+        color: ready ? AppColors.grey100 : AppColors.warningBg,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
@@ -1458,12 +1509,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         children: [
           Icon(ready ? Icons.check_circle_outline : Icons.info_outline,
               size: ResponsiveHelper.iconSize(context, 16),
-              color: ready ? AppColors.successDark : AppColors.warningDark),
+              color: ready ? AppColors.grey600 : AppColors.warningDark),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Expanded(
             child: Text(text,
                 style: ResponsiveHelper.smallStyle(context,
-                    color: ready ? AppColors.successDark : AppColors.warningDark)),
+                    color: ready ? AppColors.textPrimary : AppColors.warningDark)),
           ),
         ],
       ),
@@ -1615,9 +1666,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildInfoRow(context, '은행', widget.user.bankName ?? '-'),
-          _buildInfoRow(context, '계좌번호', widget.user.accountNumber ?? '-'),
-          _buildInfoRow(context, '예금주', widget.user.accountHolder ?? widget.user.name),
+          // [CONSENT-R4b · C-R4-4] 목적별 reader 결과만 그린다. 예금주를 이름으로 대신 채우지 않는다
+          //   (accountHolder 는 서버 저장값 — 정책 레지스트리 §4).
+          ..._buildPayrollAccountRows(context),
           // [V3] 통장사본 보기 — bankbookImageUrl 직접 노출 금지, Signed URL 전용
           if (canViewBankbook) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -1643,6 +1694,64 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         ],
       ),
     );
+  }
+
+  /// [CONSENT-R4b] '급여 정보' 계좌 줄 — 상태마다 다른 한 줄(같은 '-' 로 숨기지 않는다).
+  List<Widget> _buildPayrollAccountRows(BuildContext context) {
+    final r = _payrollAccount;
+    if (r == null && !_payrollAccountLoading) {
+      // [r4c] 명시 요청 버튼(48×48 이상) — 누르기 전에는 서버 호출 0.
+      return [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            key: const ValueKey('payrollAccountRequest'),
+            onPressed: _loadPayrollAccount,
+            style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+            icon: Icon(Icons.account_balance_outlined, size: ResponsiveHelper.iconSize(context, 16)),
+            label: Text('급여계좌 보기', style: ResponsiveHelper.bodyStyle(context)),
+          ),
+        ),
+      ];
+    }
+    if (_payrollAccountLoading || r == null) {
+      return [
+        Padding(
+          key: const ValueKey('payrollAccountLoading'),
+          padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+          child: Text('급여계좌를 불러오는 중…',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary)),
+        ),
+      ];
+    }
+    if (r.kind == WorkerPayrollAccountKind.ok) {
+      return [
+        _buildInfoRow(context, '은행', r.bankName ?? '-'),
+        _buildInfoRow(context, '계좌번호', r.accountNumber ?? '-'),
+        _buildInfoRow(context, '예금주', r.accountHolder ?? '-'),
+      ];
+    }
+    return [
+      Padding(
+        key: ValueKey('payrollAccountStatus_${r.kind.name}_${r.reason ?? r.errorCode ?? ''}'),
+        padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+        child: Text(TextLayout.keepWords(r.statusText ?? '지금은 계좌를 볼 수 없어요.'),
+            semanticsLabel: r.statusText,
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary)),
+      ),
+      if (r.kind == WorkerPayrollAccountKind.error)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            key: const ValueKey('payrollAccountRetry'),
+            onPressed: _loadPayrollAccount,
+            style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+            child: Text('다시 불러오기',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.brand, fontWeight: FontWeight.w600)),
+          ),
+        ),
+    ];
   }
 
   /// 근로계약서 섹션 (확정자만)
@@ -1737,28 +1846,29 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       return Container(
         padding: ResponsiveHelper.cardPadding(context),
         decoration: BoxDecoration(
-          color: AppColors.warningBg,
+          color: Colors.white,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
+          border: Border.all(color: AppColors.border),
         ),
         child: Row(
           children: [
-            Icon(Icons.hourglass_top, color: AppColors.warning, size: ResponsiveHelper.iconSize(context, 20)),
+            Icon(Icons.hourglass_top, color: AppColors.grey600, size: ResponsiveHelper.iconSize(context, 20)),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // [DU541b R7] 근로자 응답 대기 — 관리자 할 일이 아니라 제목도 중립.
                   Text(
                     '근무자 서명 대기 중',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
                       fontWeight: FontWeight.bold,
-                      color: AppColors.warningDark,
+                      color: AppColors.textPrimary,
                     ),
                   ),
                   Text(
                     '근무자에게 서명 요청 알림이 발송되었습니다',
-                    style: ResponsiveHelper.smallStyle(context, color: AppColors.warning),
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
                   ),
                 ],
               ),
@@ -1772,19 +1882,19 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       return Container(
         padding: ResponsiveHelper.cardPadding(context),
         decoration: BoxDecoration(
-          color: AppColors.successBg,
+          color: Colors.white,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
+          border: Border.all(color: AppColors.border),
         ),
         child: Row(
           children: [
-            Icon(Icons.verified, color: AppColors.success, size: ResponsiveHelper.iconSize(context, 20)),
+            Icon(Icons.verified, color: AppColors.grey600, size: ResponsiveHelper.iconSize(context, 20)),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             Text(
               '계약서 서명 완료',
               style: ResponsiveHelper.bodyStyle(context).copyWith(
                 fontWeight: FontWeight.bold,
-                color: AppColors.successDark,
+                color: AppColors.textPrimary,
               ),
             ),
           ],
@@ -1792,21 +1902,24 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       );
     }
 
-    // voided
+    // voided — [DU541b R3] 바깥 면 중립 + 작은 무효 표시(errorBg 원 · errorDark 아이콘) · 글 textPrimary(넓은 빨강 띠 0).
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        color: AppColors.grey100,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.grey300),
+        border: Border.all(color: AppColors.border),
       ),
       child: Row(
         children: [
-          Icon(Icons.cancel_outlined, color: AppColors.grey500, size: ResponsiveHelper.iconSize(context, 20)),
+          Container(
+            decoration: const BoxDecoration(color: AppColors.errorBg, shape: BoxShape.circle),
+            child: Icon(Icons.cancel_outlined, color: AppColors.errorDark, size: ResponsiveHelper.iconSize(context, 20)),
+          ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Text(
             '계약 무효 처리됨',
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary),
           ),
         ],
       ),
@@ -1875,7 +1988,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     }
 
     final ok = r.state == TaxReviewState.reviewedOk;
-    final color = ok ? AppColors.successDark : AppColors.warning;
+    final color = ok ? AppColors.successDark : AppColors.warningDark;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1903,8 +2016,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           child: _buildDialogButton(
             label: ok ? '다시 보기' : '신분증 확인',
             icon: Icons.badge_outlined,
-            bgColor: AppColors.infoBg,
-            textColor: AppColors.infoDark,
+            bgColor: Theme.of(context).primaryColor.withValues(alpha: 0.08),
+            textColor: Theme.of(context).primaryColor,
             onTap: _openTaxIdentityReview,
           ),
         ),
@@ -1983,22 +2096,13 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
   /// 공통 섹션 빌더
   Widget _buildSection(BuildContext context, {required String title, required IconData icon, required Widget child}) {
-    final primary = Theme.of(context).primaryColor;
+    // [DU550 PP-WORKERDETAIL-SECTION] 구역 머리 막대(상태 · 행동을 말하지 않는 반복 장식) 제거 — 기능 아이콘 grey600(DU541b R5) · 제목 · 크기 · 읽기 순서 그대로.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Container(
-              width: ResponsiveHelper.spacing(context, 3),
-              height: ResponsiveHelper.spacing(context, 16),
-              decoration: BoxDecoration(
-                color: primary,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Icon(icon, size: ResponsiveHelper.iconSize(context, 15), color: primary.withValues(alpha: 0.8)),
+            Icon(icon, size: ResponsiveHelper.iconSize(context, 15), color: AppColors.grey600),
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             // [ADMIN-DOC-REVIEW-UX] 큰 글자(2.0x)·좁은 폭에서 제목이 줄을
             //   바꾼다 — Flexible 이 없어 320dp 에서 70px 넘쳤다.
@@ -2206,11 +2310,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.block, color: AppColors.error, size: 14),
+                        const Icon(Icons.block, color: AppColors.errorDark, size: 14),
                         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                         Text('이용 제한 근무자',
                             style: ResponsiveHelper.smallStyle(context,
-                                color: AppColors.error, fontWeight: FontWeight.bold)),
+                                color: AppColors.errorDark, fontWeight: FontWeight.bold)),
                       ],
                     ),
                   ),
@@ -2260,14 +2364,14 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   ),
                 ),
               ),
-            // 장기 + 출퇴근 있음: 고정근무 관리
+            // 장기 + 출퇴근 있음: 고정근무 관리 — [DU541b R1] 관리 창 진입 = 중립(O003 같은 진입과 같다).
             ] else if (isLongTerm && _hasAttendance == true) ...[
               Expanded(
                 child: _buildDialogButton(
                   label: '고정근무 관리',
                   icon: Icons.settings_outlined,
-                  bgColor: AppColors.longTermDark,
-                  textColor: Colors.white,
+                  bgColor: Colors.transparent,
+                  textColor: AppColors.textSecondary,
                   onTap: _openFixedWorkerManagement,
                 ),
               ),
@@ -2283,11 +2387,13 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                     final canCancel = _hasAttendance == false &&
                                       (widget.attendanceStatus == null ||
                                        widget.attendanceStatus == 'pending');
+                    // [DU614b F199-WD-CANCEL-ENTRY] 사유창을 여는 진입 = 중립 행동 글/아이콘(textSecondary · 같은 줄 '고정근무 관리' 진입과 같은 꼴 · 판정199 :69).
+                    //   빨강은 실제 손실 실행 순간(사유창 '확정 취소' errorDark 채움)에만. 활성 조건(canCancel) · 비활성 grey · 누를 때 동작 그대로.
                     return _buildDialogButton(
                       label: '확정취소',
                       icon: Icons.cancel_outlined,
                       bgColor: canCancel ? Colors.transparent : AppColors.grey100,
-                      textColor: canCancel ? AppColors.errorDark : AppColors.grey400,
+                      textColor: canCancel ? AppColors.textSecondary : AppColors.grey400,
                       onTap: () {
                         if (canCancel) {
                           _cancelConfirmation();
@@ -2693,18 +2799,16 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   // 헤더
                   Container(
                     padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                    // [DU611b R9] 머리 = 중립(판정138 :52) — 빨강 채움 → 창 바탕 그대로 + 아래 선(같은 창 하단 버튼 칸 윗선과 같은 border).
+                    //   아이콘 · 닫기 = textSecondary · 제목 = textPrimary · 부제 = textSecondary(DU264 흰 머리 꼴) · 글 · 배치 · 닫기 동작 그대로.
                     decoration: BoxDecoration(
-                      color: AppColors.error,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(16),
-                        topRight: Radius.circular(16),
-                      ),
+                      border: Border(bottom: BorderSide(color: AppColors.border)),
                     ),
                     child: Row(
                       children: [
                         Icon(
                           Icons.cancel_outlined,
-                          color: Colors.white,
+                          color: AppColors.textSecondary,
                           size: ResponsiveHelper.iconSize(context, 24),
                         ),
                         SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -2715,13 +2819,13 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                               Text(
                                 '확정 취소',
                                 style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                                  color: Colors.white,
+                                  color: AppColors.textPrimary,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
                               Text(
                                 '${widget.user.name}님',
-                                style: ResponsiveHelper.smallStyle(context, color: Colors.white.withValues(alpha: 0.7)),
+                                style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
                               ),
                             ],
                           ),
@@ -2729,7 +2833,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                         IconButton(
                           icon: Icon(
                             Icons.close,
-                            color: Colors.white,
+                            color: AppColors.textSecondary,
                             size: ResponsiveHelper.iconSize(context, 24),
                           ),
                           onPressed: () {
@@ -2766,14 +2870,16 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                                 horizontal: ResponsiveHelper.spacing(context, 12),
                                 vertical: ResponsiveHelper.spacing(context, 12),
                               ),
+                              // [DU611b R9] 고른 사유 = brand 짝(brandSurface 면 · brand 선 · 라디오) — 고르기는 손실 실행이 아니다(판정138 :52 · C2).
+                              //   안 고른 줄(grey100 · grey300 · grey400) · 누를 때 동작 · 기타 입력 그대로.
                               decoration: BoxDecoration(
                                 color: selectedReason == reason
-                                    ? AppColors.errorBg
+                                    ? AppColors.brandSurface
                                     : AppColors.grey100,
                                 borderRadius: BorderRadius.circular(8),
                                 border: Border.all(
                                   color: selectedReason == reason
-                                      ? AppColors.error
+                                      ? AppColors.brand
                                       : AppColors.grey300,
                                 ),
                               ),
@@ -2784,7 +2890,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                                         ? Icons.radio_button_checked
                                         : Icons.radio_button_off,
                                     color: selectedReason == reason
-                                        ? AppColors.error
+                                        ? AppColors.brand
                                         : AppColors.grey400,
                                     size: ResponsiveHelper.iconSize(context, 20),
                                   ),
@@ -2859,14 +2965,21 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                                     Navigator.pop(context, reason);
                                   }
                                 : null,
+                            // [DU611b R9 · PF8 #076] 마지막 '확정 취소' = 사유 반환 뒤 곧바로 취소 호출(다음 확인창 0) — 빨강 채움 유지 ·
+                            //   대비만 error(흰 글 3.68) → errorDark(흰 글 6.57 · fixed_worker_management 해지 요청과 같은 교정). 비활성 조건 · 반환값 그대로.
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.error,
+                              backgroundColor: AppColors.errorDark,
                               foregroundColor: Colors.white,
                               padding: EdgeInsets.symmetric(
                                 vertical: ResponsiveHelper.spacing(context, 12),
                               ),
                             ),
-                            child: const Text('확정 취소'),
+                            // [DU614b F199-WD-CANCEL-WORDS] B(320·2.0)에서 '확정 취 / 소' 음절 분리 → 낱말 경계(공백)에서만 줄바꿈(TextLayout.keepWords · 판정199 :68).
+                            //   글 크기 · 말줄임 · 한 줄 강제 · 단추 폭/배치 변경 0. 화면 읽기 이름 = 원문(semanticsLabel). 비활성 조건 · 반환값 · 채움 그대로.
+                            child: Text(
+                              TextLayout.keepWords('확정 취소'),
+                              semanticsLabel: '확정 취소',
+                            ),
                           ),
                         ),
                       ],
@@ -3167,8 +3280,8 @@ class _TaxIdentityReviewSheet extends StatelessWidget {
                     onPressed: () =>
                         Navigator.pop(context, 'REUPLOAD_REQUIRED'),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.errorFaded,
-                      side: const BorderSide(color: AppColors.errorFaded),
+                      foregroundColor: AppColors.textSecondary,
+                      side: const BorderSide(color: AppColors.border),
                       padding: EdgeInsets.symmetric(
                           vertical: ResponsiveHelper.spacing(context, 13)),
                       shape: RoundedRectangleBorder(
@@ -3183,7 +3296,7 @@ class _TaxIdentityReviewSheet extends StatelessWidget {
                   child: ElevatedButton(
                     onPressed: () => Navigator.pop(context, 'REVIEWED_OK'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.infoDark,
+                      backgroundColor: AppColors.brand,
                       foregroundColor: Colors.white,
                       padding: EdgeInsets.symmetric(
                           vertical: ResponsiveHelper.spacing(context, 13)),
@@ -3299,7 +3412,7 @@ class _TaxIdentifierRevealState extends State<_TaxIdentifierReveal> {
       label: Text(_loading ? '여는 중…' : '$_label 확인'),
       style: OutlinedButton.styleFrom(
         minimumSize: const Size(double.infinity, 40),
-        foregroundColor: AppColors.infoDark,
+        foregroundColor: AppColors.brand,
       ),
     );
   }

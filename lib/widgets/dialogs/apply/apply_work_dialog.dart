@@ -3040,7 +3040,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     await _showAlertDialog(
       icon: Icons.schedule,
-      iconColor: AppColors.infoDark,
+      iconColor: AppColors.textSecondary,
       title: '$dateStr 안내',
       message: '이 날짜의 공고는 아직 오픈되지 않았습니다.',
       detail: '$publishStr에 오픈 예정입니다.',

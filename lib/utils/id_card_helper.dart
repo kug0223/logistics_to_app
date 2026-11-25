@@ -208,7 +208,7 @@ class IdCardHelper {
             title: '신분증 열람 요청',
             subtitle: subtitle,
             icon: Icons.badge,
-            headerColor: AppColors.info,
+            headerColor: AppColors.brand,
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -238,10 +238,10 @@ class IdCardHelper {
                             vertical: ResponsiveHelper.spacing(context, 12),
                           ),
                           decoration: BoxDecoration(
-                            color: isSelected ? AppColors.infoBg : Colors.white,
+                            color: isSelected ? AppColors.brandSurface : Colors.white,
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: isSelected ? AppColors.info : AppColors.grey300,
+                              color: isSelected ? AppColors.brand : AppColors.grey300,
                               width: isSelected ? 2 : 1,
                             ),
                           ),
@@ -249,17 +249,18 @@ class IdCardHelper {
                             children: [
                               Icon(
                                 isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
-                                color: isSelected ? AppColors.info : AppColors.grey400,
+                                color: isSelected ? AppColors.brand : AppColors.grey400,
                                 size: ResponsiveHelper.iconSize(context, 20),
                               ),
                               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                              Text(
+                              // [F275-OVF-IDCARD] 큰 글자에서 사유 글이 0.78px 넘침 → 남은 폭 안에서 줄바꿈
+                              Flexible(child: Text(
                                 label,
                                 style: ResponsiveHelper.bodyStyle(context).copyWith(
                                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                                  color: isSelected ? AppColors.info : AppColors.grey700,
+                                  color: isSelected ? AppColors.brand : AppColors.grey700,
                                 ),
-                              ),
+                              )),
                             ],
                           ),
                         ),
@@ -288,7 +289,7 @@ class IdCardHelper {
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppColors.info, width: 2),
+                        borderSide: BorderSide(color: AppColors.brand, width: 2),
                       ),
                       contentPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
                     ),
@@ -302,18 +303,18 @@ class IdCardHelper {
                 Container(
                   padding: ResponsiveHelper.cardPadding(context),
                   decoration: BoxDecoration(
-                    color: AppColors.infoBg,
+                    color: AppColors.grey100,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
+                    border: Border.all(color: AppColors.borderLight),
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.info_outline, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.info),
+                      Icon(Icons.info_outline, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.textSecondary),
                       SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                       Expanded(
                         child: Text(
                           '승인 시 7일간 신분증을 열람할 수 있습니다.',
-                          style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                          style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
                         ),
                       ),
                     ],
@@ -325,7 +326,7 @@ class IdCardHelper {
               StyledDialogButton.cancel(onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(dialogContext, false); }),
               StyledDialogButton.primary(
                 text: '요청 보내기',
-                backgroundColor: AppColors.info,
+                backgroundColor: AppColors.brand,
                 onPressed: selectedReason != null
                     ? () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(dialogContext, true); }
                     : () {},

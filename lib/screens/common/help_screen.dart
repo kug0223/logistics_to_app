@@ -246,7 +246,7 @@ class _HelpScreenState extends State<HelpScreen> {
     if (t.contains('급여') || t.contains('임금') || t.contains('💳')) {
       return Icons.payments_outlined;
     }
-    if (t.contains('노쇼 & 제재')) return Icons.warning_amber_outlined;
+    if (t.contains('노쇼 & 이용 제한')) return Icons.warning_amber_outlined;
     if (t.contains('인력') || t.contains('멤버')) return Icons.group_outlined;
     if (t.contains('사업장') || t.contains('설정')) return Icons.settings_outlined;
     if (t.contains('계정') || t.contains('서류')) return Icons.badge_outlined;
@@ -267,16 +267,16 @@ class _HelpScreenState extends State<HelpScreen> {
     ),
     _FaqItem(
       question: '지원 취소는 어떻게 하나요?',
-      answer: '"일정" 탭에서 해당 날짜를 선택한 후 일정 카드의 "지원 취소" 버튼을 누르세요.\n'
-          '• 대기 중(미확정): 즉시 취소됩니다.\n'
-          '• 확정 후: 취소 요청을 보내야 하며, 관리자 승인 후 취소됩니다.\n'
-          '근무 시작 5분 전 이후에 취소하거나 출근하지 않으면 노쇼 기록이 남을 수 있습니다. 90일 이내 3회 이상이면 지원이 제한됩니다.',
+      answer: '대기 중인 지원은 "일자리" 탭 → "내 지원"에서 "취소"를 누르고 확인하면 바로 취소돼요.\n'
+          '확정된 근무를 시작 5분 전부터 취소하면 노쇼 1회로 기록돼요.\n'
+          '출근하지 않은 근무도 노쇼로 기록될 수 있어요.\n'
+          '최근 90일 동안 노쇼 기록이 3회 이상이 되면 24시간 동안 이용이 제한돼 지원할 수 없고, 새로 로그인할 수도 없어요.',
     ),
     _FaqItem(
       question: '근무 확정·취소 알림이 오지 않아요.',
-      answer: '① MY → "설정" → 알림에서 푸시 알림이 켜져 있는지 확인하세요.\n'
+      answer: '① "내 정보" 탭 → "설정" → 알림에서 푸시 알림이 켜져 있는지 확인하세요.\n'
           '② 기기 설정에서 ALfit 알림 권한이 "허용"인지 확인하세요.\n'
-          '③ MY → "설정" → 알림 세부 설정에서 "지원 현황 알림"이 활성화되어 있는지 확인하세요.',
+          '③ "내 정보" 탭 → "설정" → 알림 세부 설정에서 "지원 현황 알림"이 활성화되어 있는지 확인하세요.',
     ),
     _FaqItem.header('⏰ 출퇴근 체크'),
     _FaqItem(
@@ -289,9 +289,8 @@ class _HelpScreenState extends State<HelpScreen> {
     ),
     _FaqItem(
       question: '실수로 출근 체크 시간이 잘못됐어요.',
-      answer: '"일정" 탭에서 해당 날짜를 선택한 후 일정 카드의 "수정 요청" 버튼을 눌러 '
-          '관리자에게 수정 요청을 보내세요. 관리자 승인 후 시간이 변경됩니다. '
-          '원본 기록(최초 체크 시간)은 별도 보관됩니다.',
+      answer: '체크한 시간이 잘못됐다면 사업장 관리자에게 알려 주세요.\n'
+          '관리자가 시간을 고칠 수 있고, 처음 체크한 시간은 따로 남아요.',
     ),
     _FaqItem(
       question: '퇴근 체크는 언제부터 가능한가요?',
@@ -302,14 +301,14 @@ class _HelpScreenState extends State<HelpScreen> {
     _FaqItem(
       question: '계약서 서명 요청이 왔어요. 어떻게 하나요?',
       answer: '화면 하단에 나타나는 "미서명 계약서 N건" 배너를 탭하거나, '
-          'MY → 근무 관리 → "계약서"에서 해당 계약서를 열어 내용을 확인한 뒤 서명하세요.\n'
+          '"내 정보" 탭 → 근무 관리 → "계약서"에서 해당 계약서를 열어 내용을 확인한 뒤 서명하세요.\n'
           '계약서 화면에서 바로 서명을 그릴 수 있습니다. '
-          'MY → 근무 관리 → "내 서명"에 미리 등록해두면 다음 계약서부터 편리하게 사용할 수 있습니다.\n'
+          '"내 정보" 탭 → 근무 관리 → "내 서명"에 미리 등록해두면 다음 계약서부터 편리하게 사용할 수 있습니다.\n'
           '서명 후 관리자와 본인 모두 서명된 계약서를 PDF로 확인할 수 있습니다.',
     ),
     _FaqItem(
       question: '내 서명은 어디서 등록하나요?',
-      answer: 'MY → 근무 관리 → "내 서명"에서 서명 패드에 직접 서명을 그릴 수 있습니다. '
+      answer: '"내 정보" 탭 → 근무 관리 → "내 서명"에서 서명 패드에 직접 서명을 그릴 수 있습니다. '
           '미리 등록해두면 계약서 서명 시 저장된 서명을 바로 사용할 수 있어 편리합니다. '
           '등록하지 않아도 계약서 화면에서 직접 서명할 수 있습니다. '
           '"변경"으로 언제든지 업데이트할 수 있습니다.',
@@ -317,9 +316,9 @@ class _HelpScreenState extends State<HelpScreen> {
     _FaqItem.header('💰 급여 & 임금명세서'),
     _FaqItem(
       question: '임금명세서는 어디서 확인하나요?',
-      answer: '"일정" 탭 → 확정된 근무 카드 → "임금명세서" 버튼을 누르면 '
-          'PDF 형태로 확인하고 저장·공유할 수 있습니다. '
-          '관리자가 급여를 확정한 이후부터 열람 가능합니다.',
+      answer: '"내 일정" 탭에서 근무 카드의 명세서 아이콘을 누른 뒤 "임금명세서 보기"를 누르면 '
+          'PDF로 확인하고 인쇄·공유할 수 있어요.\n'
+          '명세서 아이콘은 관리자가 급여를 확정한 뒤에 보여요.',
     ),
     _FaqItem(
       question: '급여가 예상과 다르게 계산됐어요.',
@@ -327,7 +326,7 @@ class _HelpScreenState extends State<HelpScreen> {
           '야간 식대나 특정 공제가 적용됐을 수 있습니다. '
           '이상이 있으면 관리자에게 직접 문의하세요.',
     ),
-    _FaqItem.header('📊 노쇼 & 제재'),
+    _FaqItem.header('📊 노쇼 & 이용 제한'),
     _FaqItem(
       question: '노쇼 기록은 어디서 확인하나요?',
       answer: '설정(MY → 설정) 화면 상단 통계 카드에서 '
@@ -335,9 +334,8 @@ class _HelpScreenState extends State<HelpScreen> {
     ),
     _FaqItem(
       question: '지원이 제한됐어요. 원인이 뭔가요?',
-      answer: '최근 90일 이내 노쇼 기록이 3회 이상이면 24시간 지원 제한이 적용됩니다. '
-          '제한 기간이 지나면 자동으로 해제됩니다. '
-          '이의가 있으면 앱 내 "문의하기"로 고객센터에 문의하세요.',
+      answer: '최근 90일 동안 노쇼 기록이 3회 이상이 되면 24시간 동안 이용이 제한돼 지원할 수 없고, 새로 로그인할 수도 없어요.\n'
+          '24시간이 지나면 제한이 자동으로 풀려요.',
     ),
     _FaqItem.header('👤 계정 & 서류'),
     _FaqItem(
@@ -347,7 +345,7 @@ class _HelpScreenState extends State<HelpScreen> {
     ),
     _FaqItem(
       question: '서류(신분증, 통장사본 등)는 어디서 등록하나요?',
-      answer: 'MY → 근무 관리 → "내 서류 관리"에서 신분증, 계좌정보, 통장사본을 등록할 수 있습니다. '
+      answer: '"내 정보" 탭 → 근무 관리 → "내 서류 관리"에서 신분증, 계좌정보, 통장사본을 등록할 수 있습니다. '
           '서류 미등록 시 일부 사업장에서 지원이 제한될 수 있습니다.',
     ),
   ];
@@ -384,7 +382,7 @@ class _HelpScreenState extends State<HelpScreen> {
     ),
     _FaqItem(
       question: '계약서 템플릿은 어디서 관리하나요?',
-      answer: '설정 → "근로계약서 관리"에서 템플릿을 추가·수정·삭제할 수 있습니다. '
+      answer: '"관리" 탭 → 계약 → "계약서 템플릿"에서 템플릿을 추가·수정·삭제할 수 있습니다. '
           '업무 유형별로 다른 템플릿을 설정하면 공고 등록 시 자동으로 적용됩니다.',
     ),
     _FaqItem(
@@ -408,7 +406,8 @@ class _HelpScreenState extends State<HelpScreen> {
     _FaqItem(
       question: '노쇼 처리는 어떻게 하나요?',
       answer: '당일명단 → 해당 근무자 → "노쇼 처리" 버튼을 누르세요. '
-          '노쇼 처리 시 해당 근무자의 노쇼 기록이 남고 90일 이내 3회 누적 시 지원 제한이 적용됩니다.',
+          '노쇼로 처리하면 그 근무자에게 노쇼 기록이 1회 남아요.\n'
+          '최근 90일 동안 노쇼 기록이 3회 이상이 되면 그 근무자는 24시간 동안 이용이 제한돼 지원할 수 없고, 새로 로그인할 수도 없어요.',
     ),
     _FaqItem.header('💳 급여 관리'),
     _FaqItem(
@@ -429,28 +428,29 @@ class _HelpScreenState extends State<HelpScreen> {
           '은행 일괄이체용 엑셀 파일이 생성됩니다. '
           '이름·은행명·계좌번호·이체금액이 포함됩니다.',
     ),
-    _FaqItem.header('👥 인력 & 멤버 관리'),
+    _FaqItem.header('👥 근무자 & 멤버 관리'),
     _FaqItem(
       question: '고정 근무자를 등록하려면?',
-      answer: '홈 → "인력 관리" → "고정 근무자 추가"에서 등록할 수 있습니다. '
-          '고정 근무자는 공고 없이도 스케줄을 배정할 수 있습니다.',
+      answer: '장기 공고에서 지원자를 확정하면 고정 근무자 명단에 들어가요.\n'
+          '명단은 "근무" 탭 위쪽, 날짜 옆에 있는 톱니 모양 "고정 근로자" 버튼을 누르면 볼 수 있어요.\n'
+          '근무자 관리 권한이 있어야 "근무" 탭과 이 버튼이 보여요.',
     ),
     _FaqItem(
       question: '서브관리자(하위 관리자)를 추가하려면?',
-      answer: '설정 → 사업장 설정 → "멤버 관리"에서 초대 코드나 이메일로 '
-          '서브관리자를 초대하고 권한(공고 관리/근무자 관리/급여 관리/계약서 관리)을 '
+      answer: '"관리" 탭 → 사업장 관리 → "팀원 관리"에서 전화번호로 찾아 '
+          '서브관리자로 초대하고 권한(공고 관리/근무자 관리/급여 관리/계약서 관리)을 '
           '개별 설정할 수 있습니다.',
     ),
     _FaqItem.header('⚙️ 사업장 설정'),
     _FaqItem(
       question: '업무 유형은 어디서 추가·관리하나요?',
-      answer: '설정 → "업무 유형 관리"에서 업종별 업무 유형을 추가하고 '
+      answer: '"관리" 탭 → 사업장 관리 → "업무 관리"에서 업종별 업무 유형을 추가하고 '
           '시급·일급 기준을 설정할 수 있습니다. '
           '공고 등록 시 이 업무 유형을 선택하면 임금이 자동으로 적용됩니다.',
     ),
     _FaqItem(
       question: '날인(인감/서명)은 어디서 등록하나요?',
-      answer: '설정 → 사업장 설정 → "날인 관리"에서 도장 이미지 업로드 또는 '
+      answer: '"관리" 탭 → 사업장 관리 → "인감/서명" 카드에서 도장 이미지 업로드 또는 '
           '직접 서명으로 날인을 등록할 수 있습니다. '
           '계약서 발송 시 자동으로 적용됩니다.',
     ),
@@ -515,7 +515,7 @@ class _FaqAccordionRowState extends State<_FaqAccordionRow> {
                       ? Icons.keyboard_arrow_up_rounded
                       : Icons.keyboard_arrow_down_rounded,
                   size: ResponsiveHelper.iconSize(context, 20),
-                  color: AppColors.grey400,
+                  color: AppColors.textSecondary, // [DU583b · 판정114 S040] 화살표 grey400(흰 바탕 1.88) → 보조색(5.92 · 3:1 이상)
                 ),
               ],
             ),

@@ -1,3 +1,5 @@
+// ignore_for_file: depend_on_referenced_packages
+// [CONSENT-R4d 후보 사본] 원본 A/test/multi_apply_confirm_sheet_layout_test.dart sha256=1d1197176d66c4f49460876eec2dd3002f7ad6fa3f30fefd295bceef6155d616 · 바뀐 자리는 R/work/consent-copy-preparation-r4d-20261119/manifests/test_change_map.tsv
 // [R7-P4.4E.6C] 지원 확인 시트(여러 건)의 세로 넘침과 동의 안내 구조.
 //
 // DEVICE 반례: `3개 업무에 지원합니다` 화면에서 **BOTTOM OVERFLOWED BY 165
@@ -30,7 +32,6 @@
 //   6. 레이아웃 수정이 제출 의미를 바꾸지 않았다(§19).
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
@@ -242,14 +243,14 @@ void main() {
       ]) {
         for (final s in [1.0, 1.3, 2.0]) {
           testWidgets(
-              'MAC-10 ${n}건 ${cell[0].toInt()}x${cell[1].toInt()} 배율 $s',
+              'MAC-10 $n건 ${cell[0].toInt()}x${cell[1].toInt()} 배율 $s',
               (tester) async {
             final sink = await _open(tester,
                 w: cell[0], h: cell[1], scale: s, count: n);
             expect(find.byType(MultiApplyConfirmSheet), findsOneWidget,
                 reason: '시트가 열리지 않았다 — 측정 대상에 도달 못 함');
             expect(_overflows(sink), isEmpty,
-                reason: '${n}건 ${cell[0].toInt()}dp 배율 $s 에서 넘쳤다: '
+                reason: '$n건 ${cell[0].toInt()}dp 배율 $s 에서 넘쳤다: '
                     '${_overflows(sink)}');
             await tester.pump(const Duration(seconds: 5));
           });
@@ -336,8 +337,8 @@ void main() {
     });
 
     test('MAC-51 consent version 은 그대로다', () {
-      // 서버 allowlist(`DOCUMENT_ACCESS_CONSENT_V3`)와 같은 값이어야 한다.
-      expect(DocumentAccessConsent.version, '2026-09-18-v3');
+      // [CONSENT-R4] 서버 새 요청 허용(`DOCUMENT_ACCESS_CONSENT_V4`)과 같은 값이어야 한다.
+      expect(DocumentAccessConsent.version, '2026-11-18-v4');
     });
 
     test('MAC-52 문단이 실제로 나뉘어 있다 (한 덩어리가 아니다)', () {

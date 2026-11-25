@@ -24,7 +24,7 @@ void main() {
   });
 
   test('SA49-2 블랙리스트 사유가 당사자에게 보인다는 사실을 입력 전에 말한다', () {
-    expect(users.contains("visibilityNote: '입력한 사유는 이 사용자에게 그대로 보입니다"), isTrue);
+    expect(users.contains("visibilityNote: '입력한 사유는 로그인·지원이 막힐 때 이 사용자에게 그대로 보여요"), isTrue);
     expect(users.contains('사기 피해 신고'), isFalse, reason: '신고자 관련 내용을 쓰도록 유도하는 예시');
     expect(users.contains('if (widget.visibilityNote != null) ...['), isTrue);
   });
@@ -36,7 +36,7 @@ void main() {
     expect('unawaited(_loadAllUsers());'.allMatches(users).length, 4);
     // [.53] 승인 실패(서버 거절)도 목록을 다시 읽는다 — 3곳(비활성·승인 예외·재활성) + 승인 서버 거절 1곳.
     expect('unawaited(_loadAllBusinesses());'.allMatches(biz).length, 4);
-    expect(users.contains("return '처리 결과를 확인하지 못했습니다. 목록에서 현재 상태를 확인해 주세요.';"), isTrue);
+    expect(users.contains("return '처리 결과를 확인하지 못했어요. 목록에서 현재 상태를 확인해 주세요.';"), isTrue);
   });
 
   test('SA49-4 홈 통계가 읽기 실패를 0명·0개로 말하지 않는다', () {

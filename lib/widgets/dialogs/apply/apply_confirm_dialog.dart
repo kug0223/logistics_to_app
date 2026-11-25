@@ -102,11 +102,11 @@ class ApplyConfirmDialog extends StatelessWidget {
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 // 안내 메시지
                 if (isLongTerm)
-                  StyledDialogInfoCard.info(
+                  StyledDialogInfoCard.notice(
                     '희망 시작일부터 계약 종료일까지 일괄 지원됩니다.\n첫 근무 전까지는 확정취소 가능, 근무 시작 후에는 퇴사 요청을 통해 퇴사 가능합니다.',
                   )
                 else
-                  StyledDialogInfoCard.info(
+                  StyledDialogInfoCard.notice(
                     '지원 후 관리자 승인을 기다려주세요.\n확정 전까지는 자유롭게 취소 가능합니다.',
                   ),
                 // [DOCUMENT-CONSENT] 서류 접근 사전동의 안내 (V3: 신분증+급여계좌+통장사본)

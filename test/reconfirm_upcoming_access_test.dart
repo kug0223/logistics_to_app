@@ -1,3 +1,4 @@
+// ignore_for_file: depend_on_referenced_packages
 // [SIM-RECONFIRM-ACCESS] 전날 밤 리컨펌 요청에 **응답할 수 있어야** 한다.
 //
 // 근거(CODE·LOCAL, 2026-10-18):
@@ -247,7 +248,7 @@ void main() {
         await t.pumpAndSettle();
         expect(findVisibleText('확정 취소 안내'), findsOneWidget, reason: '기존 확정취소 확인창');
         expect(findVisibleTextContaining('근무 시작 5분 전부터 취소'), findsOneWidget);
-        expect(findVisibleText('현재 시점: 패널티 없이 취소 가능'), findsOneWidget);
+        expect(findVisibleText('지금 취소하면 노쇼로 기록되지 않아요'), findsOneWidget);
         expect(findVisibleText('출근하기'), findsNothing, reason: '내일 카드에는 출근 요청 경로가 없다');
         await t.tap(findVisibleText('취소 진행'));
         for (var i = 0; i < 20; i++) {
@@ -264,8 +265,8 @@ void main() {
             reconfirmResponder: (id, r) async { calls.add('$id:$r'); return true; }));
         await t.tap(findVisibleText('아니요, 취소할게요'));
         await t.pumpAndSettle();
-        expect(findVisibleText('현재 시점: 패널티 적용 구간'), findsOneWidget);
-        expect(findVisibleText('이 취소는 패널티가 적용됩니다.'), findsOneWidget);
+        expect(findVisibleText('지금 취소하면 노쇼로 기록돼요'), findsOneWidget);
+        expect(findVisibleText('최근 90일 노쇼 기록에 1회가 더해져요.'), findsOneWidget);
         await t.tap(findVisibleText('돌아가기'));
         await t.pumpAndSettle();
         expect(calls, isEmpty);

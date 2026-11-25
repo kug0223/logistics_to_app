@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:excel/excel.dart';
+import 'package:excel/excel.dart' hide Border;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
@@ -512,9 +512,11 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
             padding: EdgeInsets.symmetric(
                 horizontal: ResponsiveHelper.spacing(context, 12),
                 vertical: ResponsiveHelper.spacing(context, 8)),
+            // [DU579] 정정 전 숫자 띠 = 흰 면 + 기존 선(grey200) + warningDark 글(판정141 R1 (b) · 연간 통계 · 근태 내역 띠와 같은 짝) · 문구 · 다시 조회 그대로.
             decoration: BoxDecoration(
-              color: AppColors.warningDark.withValues(alpha: 0.08),
+              color: AppColors.surface,
               borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.grey200),
             ),
             child: Row(children: [
               Expanded(

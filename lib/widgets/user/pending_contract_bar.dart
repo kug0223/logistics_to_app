@@ -31,6 +31,10 @@ class PendingContractBar extends StatelessWidget {
 
   const PendingContractBar({super.key, this.useSafeArea = false});
 
+  /// [DU581c] 본문이 같은 서명 안내를 대표 주의(warning)로 보여 주는 동안 0 보다 크다 — 지금은 출퇴근 근로자 서명 필요 안내(판정171 §4 DU581b).
+  ///   그동안 띠는 중립면 · 작은 warning 표지(아이콘) · brand 화살표로 선다. 표시 조건 · 문구 · 진입 · 복귀 새로 읽기는 그대로(숨기지 않는다).
+  static final ValueNotifier<int> bodyNoticeCount = ValueNotifier<int>(0);
+
   @override
   Widget build(BuildContext context) {
     // [CONTRACT-DISPATCH-B5] 화면 단위 배너(useSafeArea)는 근로자 셸 **안**에서는 그리지 않는다.
@@ -50,11 +54,15 @@ class PendingContractBar extends StatelessWidget {
     return ValueListenableBuilder<int>(
       valueListenable: ContractSignScreen.openCount,
       builder: (_, open, child) => open > 0 ? const SizedBox.shrink() : child!,
-      child: _bar(context),
+      // [DU581c] 본문 대표 안내가 있으면(bodyNoticeCount > 0) 같은 띠를 중립면으로 그린다 — 띠를 그릴지 · 문구 · 이동은 _bar 그대로.
+      child: ValueListenableBuilder<int>(
+        valueListenable: bodyNoticeCount,
+        builder: (ctx, notices, _) => _bar(ctx, quiet: notices > 0),
+      ),
     );
   }
 
-  Widget _bar(BuildContext context) {
+  Widget _bar(BuildContext context, {required bool quiet}) {
     return Selector<UserProvider,
         ({bool show, int count, EmploymentContractModel? nearest})>(
       selector: (_, p) => (
@@ -90,14 +98,16 @@ class PendingContractBar extends StatelessWidget {
           },
           child: Container(
             width: double.infinity,
-            color: AppColors.yellowWarnBg,
+            // [DU581b] 근로자 서명 필요 띠 = warningBg 면 · warningDark 아이콘/제목 · 설명 textSecondary(판정139 §4 545-R6 · 서명 대기 계약이 있을 때만 그린다).
+            // [DU581c] quiet = 출퇴근 서명 필요 안내가 함께 보일 때 — 중립면 surface · 제목 textPrimary(warning 은 아이콘 표지만 · 설명 textSecondary · 화살표 brand 그대로 · 판정171 §4 DU581b).
+            color: quiet ? AppColors.surface : AppColors.warningBg,
             padding: EdgeInsets.symmetric(
               horizontal: ResponsiveHelper.spacing(ctx, 16),
               vertical: ResponsiveHelper.spacing(ctx, 12),
             ),
             child: Row(children: [
               const Icon(Icons.draw_outlined,
-                  color: AppColors.yellowWarnDark, size: 18),
+                  color: AppColors.warningDark, size: 18),
               SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
               Expanded(
                 child: Column(
@@ -107,7 +117,7 @@ class PendingContractBar extends StatelessWidget {
                     Text(
                       title,
                       style: ResponsiveHelper.smallStyle(ctx).copyWith(
-                        color: AppColors.yellowWarnText,
+                        color: quiet ? AppColors.textPrimary : AppColors.warningDark,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -116,7 +126,7 @@ class PendingContractBar extends StatelessWidget {
                       Text(
                         subtitle,
                         style: ResponsiveHelper.smallStyle(ctx)
-                            .copyWith(color: AppColors.yellowWarnText),
+                            .copyWith(color: AppColors.textSecondary),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ],
@@ -124,7 +134,8 @@ class PendingContractBar extends StatelessWidget {
                 ),
               ),
               const Icon(Icons.chevron_right,
-                  color: AppColors.yellowWarnDark, size: 18),
+                  // [DU581b] 조작 표지(화살표 · 띠 전체가 누르는 자리) = brand(판정139 §4 545-R6).
+                  color: AppColors.brand, size: 18),
             ]),
           ),
         );

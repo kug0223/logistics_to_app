@@ -226,24 +226,53 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
 
   // ── UI ──
 
+  // [DU597b · 판정119 N119-2] 두 탭 이름 — 한 줄 탭 · 줄바꿈 탭 · 높이 측정이 같은 글을 쓴다.
+  static const _tabLabels = ['전역 기본값', '관리자별 한도'];
+
+  /// [DU597b · 판정119 N119-2] 줄바꿈 탭 높이 — 이름 칸 폭 [labelWidth] 에서 낱말 단위로 줄을 바꾼 두 이름 중 높은 쪽 + 위아래 13씩
+  ///   (기본 한 줄 탭 46 의 글 줄 20 위아래 여백과 같다). 렌더와 같은 글(keepWords) · 스타일 · 배율로 잰다(AppPageScaffold 제목 줄과 같은 방식).
+  double _wrappedTabHeight(BuildContext context, TextStyle? style, double labelWidth) {
+    var h = 0.0;
+    for (final label in _tabLabels) {
+      final painter = TextPainter(
+        text: TextSpan(text: TextLayout.keepWords(label), style: style),
+        textAlign: TextAlign.center,
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+      )..layout(maxWidth: labelWidth);
+      if (painter.height > h) h = painter.height;
+      painter.dispose();
+    }
+    return h + 26;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     // [DU495] 큰 글자 · 좁은 폭(B 320@2.0)에서 고정 두 탭의 이름이 잘렸다. 한 줄에 안 들어가면 가로 스크롤로
     //   (탭 이름은 줄이지 않는다 · DU430 · 근태 · 급여 대시보드와 같은 판정). perTab 120 = '관리자별 한도' 글자 + 좌우 여백.
-    final tabsFit = TextLayout.tabsFit(context, MediaQuery.sizeOf(context).width, 2, perTab: 120);
+    final width = MediaQuery.sizeOf(context).width;
+    final tabsFit = TextLayout.tabsFit(context, width, 2, perTab: 120);
+    // [DU597b · 판정119 N119-2] 가로 스크롤 탭은 고른 탭 쪽으로 밀려 B 에서 '전역 기본값' 이 '역 기본값' 처럼 반만 보였다(DU507 B 관측).
+    //   한 줄에 안 들어가면 스크롤 대신 고정 두 탭 · 이름은 낱말 단위 줄바꿈 — 두 이름이 늘 전문으로 보이고 누르는 자리는 탭 반쪽 전체다.
+    //   이름 축약 · 글자 축소 0. 한 줄에 들어가면(W · N) 예전과 같다(Tab(text:) · 기본 여백 · 기본 스타일).
+    final tabPad = EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 12));
+    final tabStyle = theme.tabBarTheme.labelStyle ?? theme.textTheme.titleSmall;
+    final tabH = tabsFit ? null : _wrappedTabHeight(context, tabStyle, width / 2 - tabPad.horizontal);
     return AppPageScaffold(
       title: '공고 등록 개수 제한',
       bottom: TabBar(
         controller: _tabController,
-        isScrollable: !tabsFit,
-        tabAlignment: tabsFit ? null : TabAlignment.start,
+        labelPadding: tabsFit ? null : tabPad,
+        labelStyle: tabsFit ? null : tabStyle,
         labelColor: theme.primaryColor,
         unselectedLabelColor: AppColors.textSecondary, // [DU495] grey500(2.68) → 보조 글자색(DU242 · DU429 와 같다)
         indicatorColor: theme.primaryColor,
-        tabs: const [
-          Tab(text: '전역 기본값'),
-          Tab(text: '관리자별 한도'),
+        tabs: [
+          for (final label in _tabLabels)
+            tabsFit
+                ? Tab(text: label)
+                : Tab(height: tabH, child: Text(TextLayout.keepWords(label), semanticsLabel: label, textAlign: TextAlign.center)),
         ],
       ),
       body: TabBarView(
@@ -268,7 +297,7 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
           Container(
             padding: ResponsiveHelper.cardPadding(context),
             decoration: BoxDecoration(
-              color: AppColors.infoBg,
+              color: AppColors.grey100,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
@@ -276,7 +305,7 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
               children: [
                 Icon(Icons.info_outline,
                     size: ResponsiveHelper.iconSize(context, 24),
-                    color: AppColors.infoDark),
+                    color: AppColors.textSecondary),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Expanded(
                   child: Text(
@@ -294,7 +323,7 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                         '관리자별 개별 한도가 설정되지 않은 경우 이 값이 적용됩니다.\n'
                         'draft 상태로는 제한 없이 저장 가능합니다.'),
                     style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.infoDeep),
+                        color: AppColors.textPrimary),
                   ),
                 ),
               ],
@@ -436,7 +465,7 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
           return Container(
             padding: ResponsiveHelper.cardPadding(context),
             decoration: BoxDecoration(
-              color: AppColors.infoBg,
+              color: AppColors.grey100,
               borderRadius: BorderRadius.circular(12),
             ),
             // [DU496] 낱말 조판 · 글자 infoDark/infoBg 4.03 → infoDeep(전역 탭 안내 띠와 같다).
@@ -445,7 +474,7 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                   '그 관리자 계정의 모든 사업장을 합쳐서 셉니다.\n'
                   '새 공고를 등록할 때만 적용되고, 이미 등록된 공고는 닫히지 않습니다.'),
               style: ResponsiveHelper.smallStyle(context,
-                  color: AppColors.infoDeep),
+                  color: AppColors.textPrimary),
             ),
           );
         }
@@ -462,7 +491,7 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
         color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: hasCustom ? AppColors.info.withValues(alpha: 0.4) : AppColors.divider,
+          color: hasCustom ? AppColors.brand.withValues(alpha: 0.4) : AppColors.divider,
         ),
       ),
       child: Column(
@@ -496,7 +525,7 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                 ),
                 decoration: BoxDecoration(
                   color: hasCustom
-                      ? AppColors.info.withValues(alpha: 0.1)
+                      ? AppColors.brand.withValues(alpha: 0.1)
                       : AppColors.divider.withValues(alpha: 0.5),
                   borderRadius: BorderRadius.circular(20),
                 ),
@@ -505,7 +534,7 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                   style: ResponsiveHelper.smallStyle(context,
                       // [DU496] info/info 10% 2.80 → infoDeep 7.74(면은 그대로).
                       color: hasCustom
-                          ? AppColors.infoDeep
+                          ? AppColors.brand
                           : AppColors.textSecondary),
                 ),
               ),
@@ -541,8 +570,9 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              // [DU597b · 판정119 N119-1] 관리자별 '저장' 고정 높이 42 → 48 — 누르는 자리 ≥ 48(앱 버튼 테마 최소 48 과 같다). 글 · 동작 · 색 그대로.
               SizedBox(
-                height: 42,
+                height: 48,
                 child: ElevatedButton(
                   onPressed: admin.isSaving
                       ? null

@@ -1,3 +1,4 @@
+// ignore_for_file: depend_on_referenced_packages
 // [ADMIN-APPLICANTS-POSTCONFIRM] 지원자 다이얼로그 확정 뒤 대기 경로 측정 — CS 하네스(confirm_stale_after_success_test) 재사용.
 import 'dart:async';
 
@@ -291,7 +292,7 @@ class _Card {
 }
 
 Future<void> _openRoster(WidgetTester t) async {
-  final cta = find.text('인력 현황');
+  final cta = find.text('지원·근무 현황');
   await t.ensureVisible(cta.first);
   await t.tap(cta.first);
   // 카드는 열기 전에 사업장 문서를 실제 플러그인으로 읽는다(실패해도 연다).
@@ -333,29 +334,12 @@ void _stubAuthChannels(WidgetTester t) {
       const MethodChannel('test/auth-events'), (_) async => null);
 }
 
-/// 명단의 `확정` → 확인창의 `확정`.
-Future<void> _tapConfirm(WidgetTester t, {bool settle = true}) async {
-  final btn = _confirmButton();
-  await t.ensureVisible(btn.first);
-  await t.tap(btn.first);
-  await _settle(t, 6);
-  // 확인창 — 명단 밖의 마지막 `확정`
-  await t.tap(find.text('확정').last);
-  if (settle) await _settle(t, 40);
-}
-
-Future<void> _closeRoster(WidgetTester t) async {
-  await t.tap(find.text('닫기').last);
-  await _settle(t, 30);
-  expect(find.byType(DayApplicantsDialog), findsNothing);
-}
-
 
 /// 시간·호출 계측 서버 — CS 서버에 지연(확정 500ms · 읽기 100ms)과 읽기별 호출 수를 더한다.
 class _Timed extends _Server {
-  _Timed({this.confirmMs = 500, this.readMs = 100});
-  final int confirmMs;
-  final int readMs;
+  _Timed();
+  final int confirmMs = 500;
+  final int readMs = 100;
   int now = 0;
   int? respondedAt;
   final reads0 = <String, int>{};
@@ -428,7 +412,7 @@ Future<Map<String, Object?>> _measure(WidgetTester t, _Timed s) async {
     await t.pump(const Duration(milliseconds: 50));
     s.now += 50;
     final txt = _texts(t);
-    final spin = txt.contains('인력 현황 불러오는 중...');
+    final spin = txt.contains('지원·근무 현황 불러오는 중...');
     final busy = txt.contains('처리 중...') || !_confirmEnabled(t);
     feedback ??= busy ? s.now : null;
     if (spin) {

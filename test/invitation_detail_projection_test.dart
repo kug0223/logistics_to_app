@@ -335,7 +335,7 @@ void main() {
 
     test('제안이면 기존 지원을 맥락으로만 보여준다', () {
       expect(c.contains("'기존 지원',"), true);
-      expect(c.contains("수락하면 기존 지원은 '다른 업무로 확정됨'으로 정리되며,"), true);
+      expect(c.contains("수락하면 기존 지원은 '다른 업무로 확정됨'으로 정리돼요."), true);
       // A는 두 번째 수락 대상이 아니다 — 버튼이 붙지 않는다.
       expect(c.contains('sourceApplication!.id'), false);
     });
@@ -427,13 +427,13 @@ void main() {
 
     test('무엇으로 정리되는지와 무엇이 면제되는지를 말한다', () {
       final c = _load(_card);
-      expect(c.contains("'다른 업무로 확정됨'으로 정리되며"), true);
-      expect(c.contains('취소·노쇼 불이익은 적용되지 않습니다.'), true);
+      expect(c.contains("'다른 업무로 확정됨'으로 정리돼요"), true);
+      expect(c.contains('이 정리는 노쇼로 기록되지 않아요.'), true);
     });
 
     test('두 수락 다이얼로그도 같은 문구를 쓴다', () {
-      expect(_load(_screen).contains('취소·노쇼 불이익은 적용되지 않습니다.'), true);
-      expect(_load(_myApps).contains('취소·노쇼 불이익은 적용되지 않습니다.'), true);
+      expect(_load(_screen).contains('이 정리는 노쇼로 기록되지 않아요.'), true);
+      expect(_load(_myApps).contains('이 정리는 노쇼로 기록되지 않아요.'), true);
     });
   });
 

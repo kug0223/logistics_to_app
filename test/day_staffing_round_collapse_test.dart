@@ -1,3 +1,4 @@
+// ignore_for_file: depend_on_referenced_packages
 // [R8-PERFORMANCE.1] 혼자 라운드를 차지하던 읽기를 앞 phase 로 옮겼다
 //
 // 측정 근거: DEV warm 에서 `callableGetDayStaffingDetail` 이 920ms 로 이번
@@ -338,7 +339,7 @@ void main() {
       final t = _texts(tester);
       expect(t.contains('근로자 u1') || t.contains('근로자 u2'), isTrue,
           reason: '명단이 그려져야 한다');
-      expect(t.contains('인력 현황을 확인하지 못해'), isFalse);
+      expect(t.contains('모집 정원을 확인하지 못해'), isFalse);
       expect(t.contains('초대 현황을 확인하지 못했어요'), isFalse);
     });
 
@@ -348,7 +349,7 @@ void main() {
       final t = _texts(tester);
       expect(t.contains('근로자 u1') || t.contains('근로자 u2'), isTrue,
           reason: '충원만 모르는 것이지 명단이 사라질 이유가 없다');
-      expect(t.contains('인력 현황을 확인하지 못해'), isTrue,
+      expect(t.contains('모집 정원을 확인하지 못해'), isTrue,
           reason: '모름을 0으로 바꾸지 않는다');
     });
 
@@ -376,7 +377,7 @@ void main() {
       await _openDay(tester, r);
       final t = _texts(tester);
       expect(t.contains('근로자 u1') || t.contains('근로자 u2'), isTrue);
-      expect(t.contains('인력 현황을 확인하지 못해'), isTrue);
+      expect(t.contains('모집 정원을 확인하지 못해'), isTrue);
       expect(t.contains('초대 현황을 확인하지 못했어요'), isTrue);
     });
 

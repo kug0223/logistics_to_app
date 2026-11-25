@@ -1310,17 +1310,17 @@ class _InviteDialogState extends State<_InviteDialog> {
                           padding: EdgeInsets.all(
                               ResponsiveHelper.spacing(context, 14)),
                           decoration: BoxDecoration(
-                            color: AppColors.successBg,
+                            color: AppColors.surface,
                             borderRadius: BorderRadius.circular(14),
                             border: Border.all(
                                 color:
-                                    AppColors.success.withValues(alpha: 0.3)),
+                                    AppColors.borderLight),
                           ),
                           child: Row(children: [
                             CircleAvatar(
                               radius: 20,
                               backgroundColor:
-                                  AppColors.success.withValues(alpha: 0.2),
+                                  AppColors.grey100,
                               child: Text(
                                 ((_found!['name'] as String?) ?? '')
                                         .isNotEmpty
@@ -1328,7 +1328,7 @@ class _InviteDialogState extends State<_InviteDialog> {
                                     : '?',
                                 style: ResponsiveHelper.bodyStyle(context)
                                     .copyWith(
-                                        color: AppColors.successDark,
+                                        color: AppColors.textSecondary,
                                         fontWeight: FontWeight.bold),
                               ),
                             ),
@@ -1346,19 +1346,19 @@ class _InviteDialogState extends State<_InviteDialog> {
                                                     fontWeight:
                                                         FontWeight.w700,
                                                     color:
-                                                        AppColors.successDark)),
+                                                        AppColors.textPrimary)),
                                     const SizedBox(height: 2),
                                     Text(
                                         FormatHelper.formatPhone(
                                             _found!['phone'] ?? ''),
                                         style: ResponsiveHelper.tinyStyle(
                                                 context,
-                                                color: AppColors.successDark
-                                                    .withValues(alpha: 0.6))),
+                                                color: AppColors.textSecondary
+                                                    )),
                                   ]),
                             ),
                             Icon(Icons.verified_rounded,
-                                color: AppColors.success,
+                                color: AppColors.successDark,
                                 size: ResponsiveHelper.iconSize(context, 22)),
                           ]),
                         ),

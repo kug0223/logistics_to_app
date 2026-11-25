@@ -94,3 +94,7 @@ functions/seed_tos.js
 
 # [R7-PRE0] DEV fixture manifest — 로컬 DEV 상태 기록이라 공유하지 않는다.
 scripts/r7-fixture-manifest-dev.json
+
+# 이 PC 전용 도구 설정 — 공유하지 않는다(2026-11-20 정리).
+.claude/settings.local.json
+.codex/

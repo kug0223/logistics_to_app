@@ -73,6 +73,21 @@ import {
   allowsNewCommitment as lrAllowsNewCommitment,
   type LegalReadiness as LrLegalReadiness,
 } from "./legal_readiness";
+// [CONSENT-R4b] 서류 열람 동의 새 세대 — 순수 판정 모듈(열람 기간·현재 근무 근거·승계·계보).
+import {
+  cr4BankWindow,
+  cr4BankbookUrlExpiryMs,
+  cr4ClosedKind,
+  cr4ConsentInheritance,
+  cr4DocVersionsOf,
+  cr4LineageBlock,
+  cr4NeedsCurrentWorkEvidence,
+  cr4SignableExpiryMs,
+  CR4_ATTENDANCE_QUERY_LIMIT,
+  CR4_BANK_WINDOW_POLICY_DRAFT,
+  CR4_CONTRACT_QUERY_LIMIT,
+  CR4_CORRECTION_QUERY_LIMIT,
+} from "./consent_r4";
 
 /**
  * [R7-PAYROLL-POLICY.5A] 저장된 시각 하나를 epoch ms 로.
@@ -1621,24 +1636,27 @@ const CORRECTION_LIVE = [CORRECTION_OPEN, CORRECTION_RESUBMITTED];
 const DOC_TYPE_ID = "ID";
 const DOC_TYPE_BANKBOOK = "BANKBOOK";
 
-/** 지원 검토 목적 열람까지 포함하는 동의 버전. */
-const DOCUMENT_ACCESS_CONSENT_V3 = "2026-09-18-v3";
 /**
- * [INVITE-PREACCEPT] 초대 전용 동의 문구의 버전.
- *
- *   V3 는 "지원하기를 누르면…"으로 시작한다 — 초대 화면의 버튼과 맞지 않는다.
- *   V3 문장을 고치면 V3 를 본 사람들의 기록이 거짓이 되므로 별도 버전을 둔다.
- *   한 토큰 = 한 문장(클라이언트 `DocumentAccessConsent.inviteCopyFor`).
- *
- *   범위: 채용 검토 목적 열람(이 초대의 수락 기한까지) + 근무 확정 후 열람.
- *   확정 후 기간·종료·승계 조건은 V3 와 같다 → 신분증 접근창도 V3 와 같은
- *   기준점(마지막 근무일 + 7일)을 쓴다.
+ * [CONSENT-R4] 은퇴 판본 — 새 요청·저장 이력 읽기 어느 쪽 근거도 아니다(아래 판본 집합 참조).
+ *   상수는 지우지 않는다: 은퇴 판본 요청을 '모르는 값'과 구분해 명시 거절하기 위해서다.
  */
+const DOCUMENT_ACCESS_CONSENT_V3 = "2026-09-18-v3";
+/** [CONSENT-R4] 은퇴 — 초대 v1(구 초대 문구). */
 const DOCUMENT_ACCESS_CONSENT_INVITE_V1 = "2026-10-15-invite-v1";
-/** 채용 검토 목적 열람을 담은 버전 — 이 집합만 지원자 서류 검토를 연다. */
+/**
+ * [CONSENT-R4] 새 세대 일반 판본(DRAFT · 발급 금지). 2문단 카드 + 동의 전 '자세히' 상세가 한 판본.
+ *   클라이언트 `DocumentAccessConsent.version` 과 같은 문자열이어야 한다.
+ */
+const DOCUMENT_ACCESS_CONSENT_V4 = "2026-11-18-v4";
+/**
+ * [CONSENT-R4] 새 세대 초대·제안 판본(DRAFT · 발급 금지). 초대 화면 세 곳 공용.
+ *   확정 후 범위·기간은 v4 와 같다 → 신분증 접근창 기준점도 같다(마지막 근무일 + 7일).
+ */
+const DOCUMENT_ACCESS_CONSENT_INVITE_V2 = "2026-11-18-invite-v2";
+/** 채용 검토 목적 열람을 담은 판본 — 이 집합만 지원자 서류 검토를 연다. */
 const REVIEW_PURPOSE_CONSENT_VERSIONS = [
-  DOCUMENT_ACCESS_CONSENT_V3,
-  DOCUMENT_ACCESS_CONSENT_INVITE_V1,
+  DOCUMENT_ACCESS_CONSENT_V4,
+  DOCUMENT_ACCESS_CONSENT_INVITE_V2,
 ];
 /**
  * [INVITE-PREACCEPT] 이 지원서의 동의가 채용 검토 목적 열람을 담는가.
@@ -3815,16 +3833,12 @@ function srvIdWindowOpen(
   const v = app["documentAccessConsentVersion"] as string | undefined;
 
   let base: admin.firestore.Timestamp | null;
-  // [INVITE-PREACCEPT] 초대 v1 의 확정 후 문구는 V3 와 같다(마지막 근무일 + 7일).
-  if (v === DOCUMENT_ACCESS_CONSENT_V2 || v === DOCUMENT_ACCESS_CONSENT_V3 ||
-      v === DOCUMENT_ACCESS_CONSENT_INVITE_V1) {
+  // [CONSENT-R4] 저장 이력 읽기 집합(v4 · invite-v2)만 기준점을 갖는다 — 둘 다
+  //   "마지막 근무일부터 7일"이다. 은퇴 판본(v1·v2·v3·invite-v1)은 기준점을 고르지 않는다.
+  if (v === DOCUMENT_ACCESS_CONSENT_V4 || v === DOCUMENT_ACCESS_CONSENT_INVITE_V2) {
     base = srvIdWindowLastWorkDay(app);
-  } else if (v === DOCUMENT_ACCESS_CONSENT_V1) {
-    // v1 은 확정일이 기준이다. 확정 전이면 창 자체가 없다.
-    base =
-      (app["confirmedAt"] as admin.firestore.Timestamp | undefined) ?? null;
   } else {
-    // [DOC-S1A.2] 버전 없음·미지원 버전 → 어떤 문구를 보았는지 모른다.
+    // [DOC-S1A.2] 버전 없음·미지원·은퇴 버전 → 어떤 문구를 보았는지 근거가 없다.
     //   기본 기준점을 고르지 않는다. 호출부가 이미 걸러내지만 여기서도 닫는다.
     return false;
   }
@@ -15594,7 +15608,7 @@ export const callableReviewUserDocument = onCall(
 // Input:  { applicationId, businessId }
 // Output: { review, versions, readiness, openCorrections, bank? }
 export const callableGetApplicantDocumentReview = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, maxInstances: 20},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -15688,7 +15702,9 @@ export const callableGetApplicantDocumentReview = onCall(
       matchingReadiness: srvResolveMatchingReadiness(
         srvWithLegacyIdCardObject(u, reviewLegacy), reviewSnap.data()),
       // [AUDIT-X7] 계좌 원문은 자격이 있을 때만. 없으면 **키 자체를 넣지 않는다.**
-      ...(canSeeDocs ? {
+      // [CONSENT-R4] 자격(canSeeDocs)만으로는 부족하다 — 통장사본 원본 문과 같은 검토
+      //   목적 판정(consentBlock == null: 검토 상태·동의 판본·초대 기한)을 함께 본다.
+      ...(canSeeDocs && consentBlock == null ? {
         bank: {
           bankName: u["bankName"] ?? null,
           accountNumber: u["accountNumber"] ?? null,
@@ -15705,7 +15721,7 @@ export const callableGetApplicantDocumentReview = onCall(
 //   경로를 클라이언트에서 받지 않는다. applicationId로 문맥을 확정하고
 //   서버가 저장된 canonical 경로를 읽는다.
 export const callableGetApplicantDocumentUrl = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, maxInstances: 20},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -15815,7 +15831,7 @@ export const callableGetApplicantDocumentUrl = onCall(
 //   expectedVersion을 받아 fresh compare한다. 관리자가 화면을 열어둔 사이
 //   근로자가 다시 올렸으면, 관리자가 본 것은 지금 문서가 아니다.
 export const callableReviewApplicantDocument = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, maxInstances: 20},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -15930,7 +15946,7 @@ export const callableReviewApplicantDocument = onCall(
 //   없다. 알림은 이 요청의 부수효과일 뿐이고, 근로자 할 일은 이 문서가
 //   OPEN인지로 정해진다 — 알림을 읽었다고 할 일이 끝나지 않는다.
 export const callableRequestDocumentCorrection = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, maxInstances: 20},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -16111,23 +16127,31 @@ export const callableGetMyDocumentCorrections = onCall(
 //   동의해야 하고, 그 동의는 **그 지원서 하나**에만 적용된다.
 //   지원서를 새로 내게 만들지는 않는다 — 좌석과 이력이 그대로 유지된다.
 export const callableGiveApplicationDocumentConsent = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, maxInstances: 20},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
-    const {applicationId, documentAccessConsentVersion} = request.data as {
-      applicationId?: string; documentAccessConsentVersion?: string;
-    };
+    const {applicationId, documentAccessConsentVersion, documentAccessConsentGiven} =
+      request.data as {
+        applicationId?: string; documentAccessConsentVersion?: string;
+        documentAccessConsentGiven?: unknown;
+      };
     if (!applicationId) {
       throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
     }
+    // [CONSENT-R4b · C-R4-1] 이 endpoint 호출 자체를 동의로 보지 않는다 — 실제 given 이
+    //   true 일 때만 받는다. false·결손·문자열은 읽기 전에 거절한다(쓰기 0 · 알림 0).
+    //   클라이언트 동의 전용 창도 '동의하기' 뒤 given:true 를 보낸다(후보 my_applications_screen).
+    if (documentAccessConsentGiven !== true) {
+      throw new HttpsError("invalid-argument",
+        "서류 열람에 동의해야 진행할 수 있습니다.", {code: "CONSENT_NOT_GIVEN"});
+    }
     // [INVITE-PREACCEPT] 허용 버전은 상태에 따라 하나다(아래 tx 안에서 다시 본다).
-    //   여기서는 둘 중 하나인지만 — 모르는 버전은 읽기 전에 거절한다.
-    if (documentAccessConsentVersion !== DOCUMENT_ACCESS_CONSENT_V3 &&
-        documentAccessConsentVersion !== DOCUMENT_ACCESS_CONSENT_INVITE_V1) {
-      throw new HttpsError(
-        "invalid-argument",
-        "지원하지 않는 서류 접근 동의 버전입니다. 앱을 최신 버전으로 업데이트해주세요.");
+    // [CONSENT-R4] 여기서는 새 세대 두 판본 중 하나인지만 — 은퇴·모르는·없는 판본은
+    //   읽기 전에 정확한 code 로 거절한다(쓰기 0).
+    {
+      const pre = srvConsentVersionReject(documentAccessConsentVersion, null);
+      if (pre) throw new HttpsError(pre.httpCode, pre.message, {code: pre.code});
     }
     const ref = db.collection("applications").doc(applicationId);
     let alreadyConsented = false;
@@ -16149,14 +16173,14 @@ export const callableGiveApplicationDocumentConsent = onCall(
       //   받으면, 관리자가 끝난 초대로 서류를 열람하는 창이 생긴다.
       //   slot 을 트랜잭션 안에서 읽어 수락 guard 와 같은 식으로 본다.
       // [INVITE-PREACCEPT] 한 화면 = 한 문장 = 한 버전. 초대 화면은 초대 문구만
-      //   보여주므로 초대 v1 만, 그 밖(직접 지원·확정 후 재동의)은 V3 만 받는다.
+      //   보여주므로 초대 판본만, 그 밖(직접 지원·확정 후 재동의)은 일반 판본만 받는다.
       //   다른 버전이 오면 사용자가 본 문장과 기록이 어긋난다.
+      // [CONSENT-R4] 새 세대: 초대 = invite-v2, 그 밖 = v4.
       const expectedVersion = st === "INVITED" ?
-        DOCUMENT_ACCESS_CONSENT_INVITE_V1 : DOCUMENT_ACCESS_CONSENT_V3;
-      if (documentAccessConsentVersion !== expectedVersion) {
-        throw new HttpsError(
-          "invalid-argument",
-          "이 화면의 동의 문구 버전과 맞지 않습니다. 앱을 최신 버전으로 업데이트해주세요.");
+        DOCUMENT_ACCESS_CONSENT_INVITE_V2 : DOCUMENT_ACCESS_CONSENT_V4;
+      {
+        const mis = srvConsentVersionReject(documentAccessConsentVersion, expectedVersion);
+        if (mis) throw new HttpsError(mis.httpCode, mis.message, {code: mis.code});
       }
       if (st === "INVITED") {
         const block = await srvInviteConsentWindowBlockTx(
@@ -16165,21 +16189,31 @@ export const callableGiveApplicationDocumentConsent = onCall(
       }
       // [INVITE-PREACCEPT] 중복 요청은 쓰지 않는다 — 처음 동의 시각을 보존한다.
       //   상태·집계·계약은 이 writer 가 원래 건드리지 않는다.
-      if (srvConsentCoversApplicantReview(fresh.data()!)) {
+      // [CONSENT-R4b · C-R4-2] '이미 동의'= 같은 세대 판본 + Given true + At 이 유효하고 미래가 아님.
+      //   (초대 수락 보존과 같은 함수.) At 결손·형식오류·미래면 이번 판본으로 새로 기록한다.
+      //   덮어쓰는 기존 값(출처·parent 포함, 형식 맞는 값만)은 이력 한 줄에 남기고,
+      //   새 명시 동의이므로 낡은 승계 표시(inheritedFrom)는 canonical 에서 지운다.
+      const freshData = fresh.data() ?? {};
+      const nowTs = admin.firestore.Timestamp.now();
+      if (srvConsentValidSameGeneration(freshData, nowTs.toMillis()).valid) {
         alreadyConsented = true;
         return;
       }
-      const now = admin.firestore.Timestamp.now();
+      const now = nowTs;
       tx.update(ref, {
         documentAccessConsentGiven: true,
         documentAccessConsentAt: now,
         documentAccessConsentVersion: expectedVersion,
+        documentAccessConsentSource: "CONSENT_ONLY",
+        ...(freshData["documentAccessConsentInheritedFrom"] !== undefined ?
+          {documentAccessConsentInheritedFrom: admin.firestore.FieldValue.delete()} : {}),
         idCardConsentGiven: true,
         idCardConsentAt: now,
         statusHistory: admin.firestore.FieldValue.arrayUnion({
           status: st, at: now, by: callerUid,
           action: "DOCUMENT_ACCESS_CONSENT_UPDATED",
           reason: expectedVersion,
+          ...srvPrevConsentEvidence(freshData),
         }),
       });
     });
@@ -23561,92 +23595,228 @@ export const onTODeleted = onDocumentDeleted(
 const ID_CARD_ACCESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const DOCUMENT_ACCESS_CONSENT_V1 = "2026-08-21-v1";
 const DOCUMENT_ACCESS_CONSENT_V2 = "2026-09-12-v2";
-const SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS = [
+/**
+ * [CONSENT-R4] 판본 집합을 **둘로 나눈다**(r4 범위 판정 §5.3·§6).
+ *
+ *   (1) 새 요청 허용 — 새 명시 동의로 받을 수 있는 판본. 화면마다 하나다:
+ *         일반(지원·재지원·확정 후 재동의·재배치 명시 동의) = v4
+ *         초대·제안(사전 동의·초대 수락)                     = invite-v2
+ *   (2) 저장 이력 읽기 — 이미 저장된 동의를 접근·승계·보존 근거로 인정하는 판본.
+ *
+ *   출시 전·실사용자 0 전제(사용자 제공 사실)의 단일 전환이므로 구판본은 두 집합 모두에서
+ *   뺀다. 구판본 기록은 지우지도 새 판본으로 승격하지도 않는다 — 근거로 쓰지 않을 뿐이다.
+ *   은퇴 판본 요청은 '모르는 값'과 구분해 명시 거절한다. 최신 토큰 치환·버전 추론은 0이다.
+ */
+const RETIRED_DOCUMENT_ACCESS_CONSENT_VERSIONS = [
   DOCUMENT_ACCESS_CONSENT_V1,
   DOCUMENT_ACCESS_CONSENT_V2,
-  // [R1.2] 지원 검토 목적 열람까지 포함한 문구. v2 이하를 조용히
-  //   이 버전으로 올리지 않는다 — 사용자가 본 문구가 곧 기록이다.
   DOCUMENT_ACCESS_CONSENT_V3,
-  // [INVITE-PREACCEPT] 초대 화면 전용 문구("동의하면…"). 초대 수락이 기록한다.
   DOCUMENT_ACCESS_CONSENT_INVITE_V1,
 ];
+/** (1) 새 요청 — 일반 화면. */
+const NEW_REQUEST_CONSENT_VERSION_GENERAL = DOCUMENT_ACCESS_CONSENT_V4;
+/** (1) 새 요청 — 초대·제안 화면. */
+const NEW_REQUEST_CONSENT_VERSION_INVITE = DOCUMENT_ACCESS_CONSENT_INVITE_V2;
+/**
+ * (2) 저장 이력 읽기. 원본 신분증 목적 · 확정자 통장사본 · 재배치 승계 · 초대 수락 보존이
+ *   이 집합 하나를 본다. 이름은 기존 소비자를 위해 그대로 둔다 — 새 요청 허용 (1)과 다른 집합이다.
+ */
+const SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS = [
+  DOCUMENT_ACCESS_CONSENT_V4,
+  DOCUMENT_ACCESS_CONSENT_INVITE_V2,
+];
+
+type SrvConsentRejection = {
+  httpCode: "invalid-argument" | "failed-precondition";
+  code: string;
+  message: string;
+};
+
+/**
+ * [CONSENT-R4] 새 요청의 판본 판정 — 거절이면 정확한 code 를, 받으면 null.
+ *
+ *   CONSENT_VERSION_MISSING        판본 없음(구 앱·변조) — 추론하지 않는다
+ *   CONSENT_VERSION_UNSUPPORTED    문자열 아님·모르는 값
+ *   CONSENT_VERSION_RETIRED        v1·v2·v3·invite-v1
+ *   CONSENT_VERSION_SCREEN_MISMATCH 새 세대 판본이지만 이 화면의 판본이 아니다
+ *
+ * @param {unknown} raw 클라이언트가 보낸 판본
+ * @param {string|null} expected 이 화면의 판본. null 이면 새 세대 둘 중 하나인지만 본다.
+ * @return {SrvConsentRejection|null} 거절 사유
+ */
+function srvConsentVersionReject(
+  raw: unknown, expected: string | null
+): SrvConsentRejection | null {
+  const update = "앱을 최신 버전으로 업데이트해주세요.";
+  if (raw === undefined || raw === null) {
+    return {httpCode: "failed-precondition", code: "CONSENT_VERSION_MISSING",
+      message: "서류 접근 동의 문구의 버전이 확인되지 않았습니다. " + update};
+  }
+  if (typeof raw !== "string") {
+    return {httpCode: "invalid-argument", code: "CONSENT_VERSION_UNSUPPORTED",
+      message: "지원하지 않는 서류 접근 동의 버전입니다. " + update};
+  }
+  if (RETIRED_DOCUMENT_ACCESS_CONSENT_VERSIONS.includes(raw)) {
+    return {httpCode: "invalid-argument", code: "CONSENT_VERSION_RETIRED",
+      message: "지원하지 않는 서류 접근 동의 버전입니다. " + update};
+  }
+  if (raw !== NEW_REQUEST_CONSENT_VERSION_GENERAL &&
+      raw !== NEW_REQUEST_CONSENT_VERSION_INVITE) {
+    return {httpCode: "invalid-argument", code: "CONSENT_VERSION_UNSUPPORTED",
+      message: "지원하지 않는 서류 접근 동의 버전입니다. " + update};
+  }
+  if (expected !== null && raw !== expected) {
+    return {httpCode: "invalid-argument", code: "CONSENT_VERSION_SCREEN_MISMATCH",
+      message: "이 화면의 동의 문구 버전과 맞지 않습니다. " + update};
+  }
+  return null;
+}
+
+/**
+ * [CONSENT-R4b] 저장 동의 시각의 유효 ms — `toMillis()` 가 유한 숫자를 줄 때만.
+ *
+ * @param {unknown} at documentAccessConsentAt
+ * @return {number | null} ms
+ */
+function srvConsentAtValidMs(at: unknown): number | null {
+  if (at === undefined || at === null || typeof at !== "object") return null;
+  const f = (at as {toMillis?: unknown}).toMillis;
+  if (typeof f !== "function") return null;
+  let ms: unknown = null;
+  try {
+    ms = (f as () => unknown).call(at);
+  } catch {
+    ms = null;
+  }
+  return typeof ms === "number" && Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * [CONSENT-R4b · C-R4-2] 저장된 동의가 **같은 세대의 유효한 동의**인가 — 동의 전용 writer 의
+ *   중복 판정과 초대 수락 보존 판정이 같은 함수를 쓴다(두 writer 의 '유효' 의미를 하나로).
+ *   Given === true ∧ 판본 ∈ 저장 이력 읽기 집합 ∧ At 유효 ∧ At ≤ now.
+ *
+ * @param {FirebaseFirestore.DocumentData} a 지원서
+ * @param {number} nowMs 판정 시각
+ * @return {{valid: boolean, reason: string}} 판정
+ */
+function srvConsentValidSameGeneration(
+  a: FirebaseFirestore.DocumentData, nowMs: number
+): {valid: boolean; reason: string} {
+  const g = a["documentAccessConsentGiven"];
+  const v = a["documentAccessConsentVersion"];
+  const at = a["documentAccessConsentAt"];
+  if (g !== true) return {valid: false, reason: g === undefined ? "NONE" : "GIVEN_NOT_TRUE"};
+  if (typeof v !== "string") return {valid: false, reason: "VERSION_MISSING"};
+  if (!SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS.includes(v)) {
+    return {valid: false, reason: "VERSION_OTHER_GENERATION"};
+  }
+  if (at === undefined || at === null) return {valid: false, reason: "AT_MISSING"};
+  const ms = srvConsentAtValidMs(at);
+  if (ms === null) return {valid: false, reason: "AT_MALFORMED"};
+  if (ms > nowMs) return {valid: false, reason: "AT_FUTURE"};
+  return {valid: true, reason: "SAME_GENERATION_VALID"};
+}
+
+/**
+ * [CONSENT-R4b] 초대 수락 시 기존 동의 보존 여부(O3 새 세대) — 위 판정 그대로.
+ *
+ * @param {FirebaseFirestore.DocumentData} fresh 트랜잭션이 읽은 초대 지원서
+ * @param {number} nowMs 수락 시각
+ * @return {{preserve: boolean, reason: string}} 보존 여부
+ */
+function srvInviteAcceptConsentPlan(
+  fresh: FirebaseFirestore.DocumentData, nowMs: number
+): {preserve: boolean; reason: string} {
+  const r = srvConsentValidSameGeneration(fresh, nowMs);
+  return {preserve: r.valid, reason: r.reason};
+}
+
+/**
+ * [CONSENT-R4b] 덮어쓰기 전 기존 동의 값 — 이력 한 줄에 남길 증거(**형식이 맞는 값만**).
+ *   Given · 판본(64자) · At ms(형식오류면 표시만) · 출처(64자) · 승계 parent(128자).
+ *   모든 원시값의 보존이 아니다. 별도 사건 저장소는 만들지 않는다(r4 감사 C-R4-2).
+ *
+ * @param {FirebaseFirestore.DocumentData} fresh 트랜잭션이 읽은 지원서
+ * @return {Record<string, unknown>} prev* 필드. 기존 값이 없으면 빈 객체.
+ */
+function srvPrevConsentEvidence(
+  fresh: FirebaseFirestore.DocumentData
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const g = fresh["documentAccessConsentGiven"];
+  const v = fresh["documentAccessConsentVersion"];
+  const at = fresh["documentAccessConsentAt"];
+  const src = fresh["documentAccessConsentSource"];
+  const from = fresh["documentAccessConsentInheritedFrom"];
+  if (typeof g === "boolean") out["prevConsentGiven"] = g;
+  if (typeof v === "string") out["prevConsentVersion"] = v.slice(0, 64);
+  if (at !== undefined && at !== null) {
+    const ms = srvConsentAtValidMs(at);
+    if (ms !== null) out["prevConsentAtMs"] = ms;
+    else out["prevConsentAtMalformed"] = true;
+  }
+  if (typeof src === "string") out["prevConsentSource"] = src.slice(0, 64);
+  if (typeof from === "string") out["prevConsentInheritedFrom"] = from.slice(0, 128);
+  return out;
+}
 
 /**
  * 지원서에 기록할 서류 접근 동의 버전을 결정한다.
  *
  * [DS-08B.5] 기록 값은 "사용자가 실제로 본 고지 문구의 버전"이어야 한다.
- * 서버 배포 시점의 최신 버전을 무조건 쓰면, Functions가 앱보다 먼저
- * 배포된 구간에서 v1 문구를 본 사용자에게 v2 범위가 적용된다.
- *
- * cohort 판별 근거(코드로 확인 가능):
- *   · 버전을 보냄            → 그 버전 (allowlist 검증)
- *   · 버전 없음 + given=true → 75075a5(2026-08-21) 이후 앱.
- *                              이 cohort만 v1 문구를 표시한다.
- *   · 버전 없음 + given 없음 → 75075a5 이전 앱. 서류 접근 고지를
- *                              표시하지 않았으므로 버전을 기록하지 않는다.
- *                              (버전 없음 = 확정일+7일 — 가장 좁은 창)
+ * [CONSENT-R4] 새 세대 단일 전환 — **추론 0**. 버전이 없으면 v1 으로 읽지 않고 거절한다.
+ *   예전의 '버전 없음 + given=true → v1' 기록 규칙은 실사용자 0 전제에서 남길 cohort 가 없다.
+ *   두 번째 인자는 호출 모양을 바꾸지 않으려고 남긴다(판정에 쓰지 않는다).
  *
  * @param {string | undefined} raw 클라이언트가 보낸 버전 문자열
- * @param {boolean} clientSentDocConsent documentAccessConsentGiven 전송 여부
- * @return {string | null} 기록할 버전. null이면 필드를 기록하지 않는다.
+ * @param {boolean} clientSentDocConsent 동의 전송 여부(판정에 쓰지 않음)
+ * @return {string | null} 기록할 버전
  */
 function resolveDocumentAccessConsentVersion(
   raw: string | undefined,
   clientSentDocConsent: boolean
 ): string | null {
-  if (raw === undefined || raw === null) {
-    return clientSentDocConsent ? DOCUMENT_ACCESS_CONSENT_V1 : null;
+  const rej = srvConsentVersionReject(raw, null);
+  if (rej) {
+    throw new HttpsError(rej.httpCode, rej.message,
+      {code: rej.code, given: clientSentDocConsent === true});
   }
-  if (!SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS.includes(raw)) {
-    // 미지원·변조 버전을 조용히 최신 버전으로 치환하지 않는다.
-    throw new HttpsError(
-      "invalid-argument",
-      "지원하지 않는 서류 접근 동의 버전입니다. 앱을 최신 버전으로 업데이트해주세요."
-    );
-  }
-  return raw;
+  return raw as string;
 }
 
 /**
- * [DOC-S1A.3] **약속을 만드는 writer** 전용 — 명시적 버전을 요구한다.
+ * [DOC-S1A.3] **약속을 만드는 writer** 전용 — 새 명시 동의만 받는다.
  *
- *   resolveDocumentAccessConsentVersion 은 "버전 없음 + given=true"를 v1 으로
- *   기록한다. 그것은 기록 규칙이지 증거가 아니다. 서버는 그 요청이 정말 v1
- *   문구를 보고 왔는지 알 방법이 없고, 저장되고 나면 명시적 v1 과 구분되지
- *   않는다. read 쪽은 DOC-S1A.2 에서 막았지만 write 쪽이 남아 있었다.
- *
- *   그래서 지원·초대수락·재배치수락처럼 **좌석·계약·동의 자격을 만드는**
- *   경로에서는 버전을 추론하지 않는다. 없으면 거절한다.
- *
- *   구 클라이언트를 조용히 최신 버전으로 올려주지 않는다 — 사용자가 보지
- *   않은 문구에 동의한 것으로 만드는 일이기 때문이다. 업데이트를 요구한다.
- *
- *   resolveDocumentAccessConsentVersion 자체는 그대로 둔다(§5).
+ *   [CONSENT-R4]
+ *   · given 이 true 가 아니면 판본을 보기 전에 거절한다(CONSENT_NOT_GIVEN). 동의 없는 요청이
+ *     새 관계·동의를 만들지 않는다. 지원 경로도 이제 payload 의 given 을 그대로 넘긴다.
+ *   · allowInviteCopy=true 는 '초대 화면'(초대 수락)이라는 뜻이다 — invite-v2 만 받는다.
+ *     false(지원·재배치 명시 동의)는 v4 만 받는다. 은퇴·모르는·없는 판본은 정확한 code 로 거절.
+ *   · 이 함수는 원동의 **승계**를 판정하지 않는다(재배치 INHERIT 는 별도 경로).
  *
  * @param {string|undefined} raw 클라이언트가 보낸 버전
  * @param {boolean} given 동의 여부
- * @return {string | null} 기록할 버전. 동의하지 않았으면 null.
+ * @param {boolean} allowInviteCopy 초대 화면이면 true
+ * @return {string | null} 기록할 버전(거절이면 throw)
  */
 function srvResolveCommitmentConsentVersion(
   raw: string | undefined, given: boolean, allowInviteCopy = false
 ): string | null {
-  if (!given) return null;
-  // [INVITE-PREACCEPT] 초대 v1 은 **초대 화면의 문장**이다("이 초대에 대한…").
-  //   지원·재배치 수락이 이 토큰을 보내면 사용자가 본 문장과 기록이 어긋난다
-  //   — 한 화면 = 한 문장 = 한 버전. 초대 수락만 허용한다.
-  if (raw === DOCUMENT_ACCESS_CONSENT_INVITE_V1 && !allowInviteCopy) {
-    throw new HttpsError(
-      "invalid-argument",
-      "이 화면의 동의 문구 버전과 맞지 않습니다. 앱을 최신 버전으로 업데이트해주세요.");
+  if (given !== true) {
+    throw new HttpsError("invalid-argument",
+      "서류 열람에 동의해야 진행할 수 있습니다.", {code: "CONSENT_NOT_GIVEN"});
   }
-  if (raw === undefined || raw === null) {
-    throw new HttpsError(
-      "failed-precondition",
-      "서류 접근 동의 문구의 버전이 확인되지 않았습니다. " +
-      "앱을 최신 버전으로 업데이트해주세요."
-    );
+  const expected = allowInviteCopy ?
+    NEW_REQUEST_CONSENT_VERSION_INVITE : NEW_REQUEST_CONSENT_VERSION_GENERAL;
+  // 새 세대 판본인데 이 화면의 판본이 아니면 여기서 거절한다. 은퇴·모름·없음은
+  //   아래 공용 resolver 가 정확한 code 로 거절한다(판정 순서: 동의 → 화면 → 판본).
+  if (raw === NEW_REQUEST_CONSENT_VERSION_GENERAL ||
+      raw === NEW_REQUEST_CONSENT_VERSION_INVITE) {
+    const mis = srvConsentVersionReject(raw, expected);
+    if (mis) throw new HttpsError(mis.httpCode, mis.message, {code: mis.code});
   }
-  // 미지원·변조 버전 거절은 기존 규칙을 그대로 쓴다.
+  // 미지원·변조·은퇴·없는 버전 거절은 공용 규칙을 그대로 쓴다.
   return resolveDocumentAccessConsentVersion(raw, given);
 }
 
@@ -23990,7 +24160,7 @@ export const callableGetIdCardSignedUrl = onCall(
 // Input:  { applicationId: string }
 // Output: { signedUrl: string } (1시간 만료)
 export const callableGetBankbookSignedUrl = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, maxInstances: 20},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -24110,11 +24280,80 @@ export const callableGetBankbookSignedUrl = onCall(
     if (!docConsentGiven) {
       throw new HttpsError("permission-denied", "근로자가 서류 접근에 동의하지 않았습니다.");
     }
-
-    // 7. 근로자 통장사본 경로 조회
-    const workerDoc = await db.collection("users").doc(appUid).get();
+    // [CONSENT-R4] 6.1 판본 — 저장 이력 읽기 집합(v4 · invite-v2)만 근거다.
+    //   은퇴 판본(v1·v2·v3·invite-v1)으로는 열지 않는다. given 만 보던 예전 판정의 빈틈이다.
+    {
+      const bbVersion = appData.documentAccessConsentVersion;
+      if (typeof bbVersion !== "string" ||
+          !SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS.includes(bbVersion)) {
+        throw new HttpsError("permission-denied",
+          "근로자의 서류 열람 동의(최신 버전)가 필요합니다.",
+          {code: "CONSENT_VERSION_NOT_READABLE"});
+      }
+    }
+    // [CONSENT-R4b] 6.2 열람 기간 — 위 gate(권한·소속·확정·동의·판본)와 AND.
+    //   질문1 확정(two_answers 판정 §2): 종료·지급 없음 / 미결+지급 기록 불명·불명만 / 지급 뒤
+    //   계좌서류 보완만 = 마지막 근무 기준 30일(L30 · 줄 급여가 있어도). 그 밖 = 마지막 급여 지급 후
+    //   30일(T30 · 일반 미결 중에는 아직 기산하지 않음). 종료일 결손 장기는 같은 관계의 현재 근무
+    //   근거(서명 완료 계약 기간)를 따로 읽는다(A1 결손 예외). L30 = KST(L) 0시 + 30×24h 배타
+    //   (PP-DELEGATION-20261118 채택).
+    //   이 판정은 **새** URL 발급만 막는다 — 이미 발급한 URL·받은 사본을 회수하지 않는다.
+    const bbNeedsContracts = cr4NeedsCurrentWorkEvidence(appData);
+    const bbContractCol = db.collection("employment_contracts");
+    // [r4c · F-R4B-2] 통장사본 경로(아래 7)와 보완 판본 결속이 **같은 사용자 snapshot** 을 쓴다 — 한 번만 읽는다.
+    const [bbAttSnap, bbCorrSnap, bbConById, bbConByIds, workerDoc] = await Promise.all([
+      db.collection("attendance")
+        .where("applicationId", "==", applicationId)
+        .limit(CR4_ATTENDANCE_QUERY_LIMIT).get(),
+      db.collection(DOC_CORRECTION_COL)
+        .where("businessId", "==", appBusinessId)
+        .where("workerUid", "==", appUid)
+        .where("status", "in", CORRECTION_LIVE)
+        .limit(CR4_CORRECTION_QUERY_LIMIT).get(),
+      // 계약 연결은 출근 gate(srvContractConsentState)와 같은 두 갈래 — 사업장·근로자는 코드에서 대조한다
+      //   (조회 조건에 넣으면 다른 관계 행이 섞인 무결성 결손을 볼 수 없다).
+      bbNeedsContracts ?
+        bbContractCol.where("applicationId", "==", applicationId)
+          .limit(CR4_CONTRACT_QUERY_LIMIT).get() :
+        Promise.resolve(null),
+      bbNeedsContracts ?
+        bbContractCol.where("applicationIds", "array-contains", applicationId)
+          .limit(CR4_CONTRACT_QUERY_LIMIT).get() :
+        Promise.resolve(null),
+      db.collection("users").doc(appUid).get(),
+    ]);
+    // 7. 근로자 통장사본 경로 조회(기존 7 — 같은 snapshot)
     if (!workerDoc.exists) throw new HttpsError("not-found", "근로자 정보를 찾을 수 없습니다.");
     const workerData = workerDoc.data()!;
+    // [C-R4-3] 각 조회가 상한에 닿으면 '잘림'을 판정 입력으로 넘긴다
+    //   (조회된 것만으로 '없음'을 만들지 않는다).
+    // [r4d · F-R4C-2 대칭] 조회 await 뒤 시각으로 첫 판정(서명 직전 재판정은 H10 그대로).
+    const bbNowMs = Date.now();
+    const bbInput = {
+      app: appData,
+      applicationId,
+      attendances: bbAttSnap.docs.map((d) => ({...d.data(), id: d.id})),
+      attendanceSetComplete: bbAttSnap.size < CR4_ATTENDANCE_QUERY_LIMIT,
+      corrections: bbCorrSnap.docs.map((d) => d.data()),
+      correctionSetComplete: bbCorrSnap.size < CR4_CORRECTION_QUERY_LIMIT,
+      docVersions: cr4DocVersionsOf(workerData),
+      contracts: bbConById && bbConByIds ?
+        [...bbConById.docs, ...bbConByIds.docs].map((d) => ({...d.data(), id: d.id})) :
+        null,
+      contractSetComplete: !!bbConById && !!bbConByIds &&
+        bbConById.size < CR4_CONTRACT_QUERY_LIMIT && bbConByIds.size < CR4_CONTRACT_QUERY_LIMIT,
+      business: bizData,
+      nowMs: bbNowMs,
+      policy: CR4_BANK_WINDOW_POLICY_DRAFT,
+    };
+    const bbWindow = cr4BankWindow(bbInput);
+    const bbExpiresMs = cr4BankbookUrlExpiryMs(bbWindow, bbNowMs);
+    if (bbExpiresMs === null) {
+      throw new HttpsError("permission-denied",
+        "열람 기간이 지나 통장사본을 볼 수 없습니다.",
+        {code: "BANK_WINDOW_CLOSED", state: bbWindow.state, rule: bbWindow.rule,
+          closedKind: cr4ClosedKind(bbWindow)});
+    }
 
     // bankbookImagePath 우선; 없으면 bankbookImageUrl (legacy 호환)
     const bbPointer = (workerData.bankbookImagePath as string | undefined) ??
@@ -24150,11 +24389,21 @@ export const callableGetBankbookSignedUrl = onCall(
       throw new HttpsError("not-found", "통장사본 파일이 Storage에 존재하지 않습니다.");
     }
 
+    // [CONSENT-R4b · C-R4-3] 서명 **직전** 재판정 — 위 판정 뒤 조회·Storage 확인 I/O 동안
+    //   날짜 경계(S1)나 닫히는 정각(L30·T30)을 넘었으면 발급 0. 같은 입력을 지금 시각으로 다시 본다.
+    const bbSign = cr4SignableExpiryMs(bbInput, Date.now());
+    if (bbSign.expiresMs === null) {
+      throw new HttpsError("permission-denied",
+        "열람 기간이 지나 통장사본을 볼 수 없습니다.",
+        {code: "BANK_WINDOW_CLOSED", state: bbSign.window.state, rule: bbSign.window.rule,
+          closedKind: cr4ClosedKind(bbSign.window)});
+    }
     let signedUrl: string;
     try {
       const [url] = await file.getSignedUrl({
         action: "read",
-        expires: Date.now() + 60 * 60 * 1000, // 1시간
+        // [CONSENT-R4] min(now+1h, 닫히는 시각, 재판정 시각) — 남은 열람 기간보다 긴 URL 을 만들지 않는다.
+        expires: bbSign.expiresMs,
       });
       signedUrl = url;
     } catch (e: unknown) {
@@ -24181,6 +24430,142 @@ export const callableGetBankbookSignedUrl = onCall(
   }
 );
 
+// ── callableGetWorkerPayrollAccount ───────────────────────
+// [CONSENT-R4b · C-R4-4] 확정 관계의 **현재 등록** 급여계좌 — 관리자 근로자 상세 '급여 정보'.
+//
+//   목적 미지정 batch 에서 계좌 3필드를 뺀 뒤(H11) 기존 표시를 이어 붙이는 목적별 reader 다.
+//   batch 에 필드를 되돌리거나 workerDirectory 이름만 붙여 우회하지 않는다.
+//   gate 는 확정자 통장사본 reader(H09·H10)와 같은 축이다(AND):
+//     급여 관리 권한(BUSINESS_ADMIN owner/admin · canManageWage 부관리자 — SUPER_ADMIN 제외)
+//     → 관계(지원서가 이 사업장 · 이 근로자) → 확정(CONFIRMED) → 동의 Given → 저장 이력 읽기 판본
+//     → 열람 기간(cr4BankWindow · 같은 DRAFT 정책 · 같은 입력 · 응답 직전 재판정).
+//   결과는 상태 코드로 돌려준다 — 불허·기간 종료·확인 필요·미등록을 같은 '-' 로 숨기지 않는다.
+//   과거 지급 스냅샷(이체 기록의 계좌) · 지급용 통장사본(callableGetPayrollBankbookUrl) ·
+//   이체 엑셀은 이 reader 의 몫이 아니다(r4b_period_readers.md §5 영향표).
+//   감사 기록이 열람의 조건이다 — 기록에 실패하면 계좌를 돌려주지 않는다.
+//
+// Input : {businessId: string, applicationId: string}
+// Output: {status: "OK", account, window} | {status: "NOT_REGISTERED", window}
+//         | {status: "DENIED", reason, state?, rule?, closedKind?}
+export const callableGetWorkerPayrollAccount = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {applicationId, businessId} =
+      request.data as {applicationId?: unknown; businessId?: unknown};
+    if (typeof applicationId !== "string" || applicationId === "" ||
+        typeof businessId !== "string" || businessId === "") {
+      throw new HttpsError("invalid-argument", "applicationId와 businessId가 필요합니다.");
+    }
+    // 인가를 지원서 읽기보다 먼저 — 권한 없는 호출자는 어떤 id 에도 같은 답을 받는다.
+    await srvAssertPayrollDocumentAccess(callerUid, businessId);
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    if ((callerSnap.data()?.role as string | undefined) === "SUPER_ADMIN") {
+      // 확정자 통장사본 reader 와 같은 권한 축(SUPER_ADMIN 아님 — 정책 레지스트리 §4).
+      throw new HttpsError("permission-denied", "사업장 관리자만 급여계좌를 볼 수 있습니다.");
+    }
+    const appSnap = await db.collection("applications").doc(applicationId).get();
+    const appData = appSnap.data();
+    if (!appSnap.exists || !appData || appData.businessId !== businessId ||
+        typeof appData.uid !== "string" || appData.uid === "") {
+      throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    }
+    const workerUid = appData.uid as string;
+    const deny = (reason: string, extra: Record<string, unknown> = {}) =>
+      ({status: "DENIED", reason, ...extra});
+    if (appData.status !== "CONFIRMED") return deny("NOT_CONFIRMED");
+    if (appData.documentAccessConsentGiven !== true) return deny("CONSENT_MISSING");
+    const pv = appData.documentAccessConsentVersion;
+    if (typeof pv !== "string" || !SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS.includes(pv)) {
+      return deny("CONSENT_VERSION_NOT_READABLE");
+    }
+    const paNeedsContracts = cr4NeedsCurrentWorkEvidence(appData);
+    const paContractCol = db.collection("employment_contracts");
+    const [paAttSnap, paCorrSnap, paUserSnap, paBizSnap, paConById, paConByIds] =
+      await Promise.all([
+        db.collection("attendance")
+          .where("applicationId", "==", applicationId)
+          .limit(CR4_ATTENDANCE_QUERY_LIMIT).get(),
+        db.collection(DOC_CORRECTION_COL)
+          .where("businessId", "==", businessId)
+          .where("workerUid", "==", workerUid)
+          .where("status", "in", CORRECTION_LIVE)
+          .limit(CR4_CORRECTION_QUERY_LIMIT).get(),
+        db.collection("users").doc(workerUid).get(),
+        db.collection("businesses").doc(businessId).get(),
+        paNeedsContracts ?
+          paContractCol.where("applicationId", "==", applicationId)
+            .limit(CR4_CONTRACT_QUERY_LIMIT).get() :
+          Promise.resolve(null),
+        paNeedsContracts ?
+          paContractCol.where("applicationIds", "array-contains", applicationId)
+            .limit(CR4_CONTRACT_QUERY_LIMIT).get() :
+          Promise.resolve(null),
+      ]);
+    // [r4d · F-R4C-2] 조회 await **뒤** 실제 서버 시각으로 판정한다 — 무계좌 응답도 이 window 를 쓴다.
+    //   (r4c 는 조회 전 시각을 써서, 조회 대기 중 정각을 넘으면 기한 밖에 NOT_REGISTERED/옛 window 를 돌려줬다.)
+    const paNowMs = Date.now();
+    const u = paUserSnap.data() ?? {};
+    const paInput = {
+      app: appData,
+      applicationId,
+      attendances: paAttSnap.docs.map((d) => ({...d.data(), id: d.id})),
+      attendanceSetComplete: paAttSnap.size < CR4_ATTENDANCE_QUERY_LIMIT,
+      corrections: paCorrSnap.docs.map((d) => d.data()),
+      correctionSetComplete: paCorrSnap.size < CR4_CORRECTION_QUERY_LIMIT,
+      // [r4c · F-R4B-2] 돌려줄 계좌와 같은 사용자 snapshot 의 판본으로 보완 결속을 본다.
+      docVersions: cr4DocVersionsOf(u),
+      contracts: paConById && paConByIds ?
+        [...paConById.docs, ...paConByIds.docs].map((d) => ({...d.data(), id: d.id})) :
+        null,
+      contractSetComplete: !!paConById && !!paConByIds &&
+        paConById.size < CR4_CONTRACT_QUERY_LIMIT && paConByIds.size < CR4_CONTRACT_QUERY_LIMIT,
+      business: paBizSnap.exists ? (paBizSnap.data() ?? null) : null,
+      nowMs: paNowMs,
+      policy: CR4_BANK_WINDOW_POLICY_DRAFT,
+    };
+    const closed = (w: ReturnType<typeof cr4BankWindow>) =>
+      deny("BANK_WINDOW_CLOSED", {state: w.state, rule: w.rule, closedKind: cr4ClosedKind(w)});
+    const paWindow = cr4BankWindow(paInput);
+    if (!paWindow.open) return closed(paWindow);
+    if (!u["bankName"] || !u["accountNumber"] || !u["accountHolder"]) {
+      return {status: "NOT_REGISTERED",
+        window: {state: paWindow.state, basis: paWindow.basis, closesAtMs: paWindow.closesAtMs}};
+    }
+    // [r4c · PP-R4B-ACCOUNT-READ] 이 기록은 '명시 계좌 요청의 접근 판정 · 응답 준비' 사건이다 — 계좌 값 없이
+    //   actor · 대상 · 관계 · 목적 · 서버 시각 · 판정 근거만 남긴다. 실제 전달·읽음·동의의 증거가 아니다
+    //   (아래 최종 재판정에서 닫히면 계좌는 전달되지 않는다). 기록 실패면 계좌를 돌려주지 않는다.
+    try {
+      await db.collection("payroll_account_access_logs").add({
+        event: "ACCOUNT_ACCESS_DECISION_PREPARED",
+        viewerId: callerUid, targetUserId: workerUid, businessId, applicationId,
+        purpose: "CONFIRMED_RELATION_PAYROLL_ACCOUNT",
+        windowState: paWindow.state, windowRule: paWindow.rule, windowBasis: paWindow.basis,
+        decidedAtMs: paNowMs,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      console.error("[callableGetWorkerPayrollAccount] 감사 로그 실패:", e);
+      throw new HttpsError("internal", "열람 기록을 남기지 못해 계좌를 표시하지 않습니다.");
+    }
+    // [r4c · F-R4B-4] **마지막 await 뒤** 서버 현재 시각으로 같은 입력을 동기 재판정 — 로그 대기 중
+    //   L30·T30·A1 재판정 경계를 넘었으면 계좌를 돌려주지 않는다. 반환 window 도 이 최종 판정으로 만든다.
+    const paFinal = cr4SignableExpiryMs(paInput, Date.now());
+    if (paFinal.expiresMs === null) return closed(paFinal.window);
+    return {
+      status: "OK",
+      // accountNumber 는 저장된 암호문 그대로 — 클라이언트가 기존 UserModel 과 같은 복호화 경로를 쓴다.
+      account: {
+        bankName: u["bankName"],
+        accountNumber: u["accountNumber"],
+        accountHolder: u["accountHolder"],
+      },
+      window: {state: paFinal.window.state, basis: paFinal.window.basis,
+        closesAtMs: paFinal.window.closesAtMs},
+    };
+  }
+);
 // ── callableBackfillBankbookImagePath ─────────────────────
 // [V3 BACKFILL] bankbookImageUrl 있고 bankbookImagePath 없는 사용자에게
 //   URL에서 Storage 경로를 추출하여 bankbookImagePath 필드를 소급 저장.
@@ -24510,7 +24895,7 @@ export const callableMigrateIdCardPaths = onCall(
  * 출력: { users: Record<uid, SafeUserData> }
  */
 export const callableGetUsersBatch = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, maxInstances: 20},
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
@@ -24694,6 +25079,9 @@ export const callableGetUsersBatch = onCall(
         if (SENSITIVE_FIELDS.has(key)) continue;
         // [SEC-BANK-FILTER] canManageWage=false SubAdmin은 계좌정보 제외 (data minimization)
         if (!callerCanManageWage && BANK_ONLY_FIELDS.has(key)) continue;
+        // [CONSENT-R4] 목적 미지정(generic) 조회는 역할과 무관하게 계좌 3필드를 싣지 않는다.
+        //   계좌·통장사본 열람은 목적·관계·판본·30일 상한을 보는 전용 경로만 한다.
+        if (purpose === undefined && BANK_ONLY_FIELDS.has(key)) continue;
         // [R1.2.1] purpose limitation — 역할과 무관하게 적용된다.
         if (isApplicantReview && !APPLICANT_REVIEW_ALLOWED.has(key)) continue;
         // [PII-DOC-R0.1 / INV-1] 목록·운영 조회 — 계좌는 어떤 역할에도 안 나간다.
@@ -27153,6 +27541,8 @@ export const callableConfirmWage = onCall(
 // ═══════════════════════════════════════════════════════════
 
 const SRV_MINIMUM_WAGE_BY_YEAR: Record<number, number> = {
+  // [.73] 2027: 고용노동부 고시 제2026-60호(2026-08-05, 시행 2027-01-01) 시간급 10,700원.
+  2027: 10700,
   2026: 10320, 2025: 10030, 2024: 9860, 2023: 9620,
   2022: 9160, 2021: 8720, 2020: 8590,
 };
@@ -27242,20 +27632,20 @@ function srvGetMinimumWage(year: number, fs: Record<number, number>): number {
  * 급여 확정 경로가 쓰는 것과 **같은 출처·같은 우선순위**다. 제안 시점에
  * 다른 기준으로 검증하면 "제안은 통과했는데 급여는 거부"가 다시 생긴다.
  *
+ * [MW-52] 기준 선택이 바뀌었다(아래 연도별 기준 선택 helper). 그 연도 문서 값(고시값보다
+ *   낮으면 고시값) → 그 연도 내장 고시값 → 둘 다 없거나 문서 값이 손상이면 확인 불가로 거절한다.
+ *   급여 확정 경로는 아직 옛 선택(가장 최근 내장 연도 대체)이라 위 '같은 우선순위' 문장은
+ *   그 정합 전까지 사실이 아니다(.52 미포함 경로 · 별도 결정).
+ *
  * @param {number} year 근무 연도(KST)
  * @return {Promise<number>} 시간당 최저임금
  */
 async function srvLoadMinimumWage(year: number): Promise<number> {
+  // [MW-52] 그 연도 값만 쓴다 — 없거나 손상되면 '확인 불가'로 거절한다(이전: 가장 최근 내장 연도로 조용히 통과).
   const cfgSnap = await db.collection("settings").doc("wage_config").get();
-  const cfg = cfgSnap.data() ?? {};
-  const fsMinWages: Record<number, number> = {};
-  if (cfg.minimumWages && typeof cfg.minimumWages === "object") {
-    for (const [k, v] of Object.entries(cfg.minimumWages as Record<string, unknown>)) {
-      const yr = parseInt(k, 10);
-      if (!isNaN(yr) && typeof v === "number") fsMinWages[yr] = v;
-    }
-  }
-  return srvGetMinimumWage(year, fsMinWages);
+  const r = srvMinWageFromCfg52(year, cfgSnap.data() ?? {});
+  if (r.wage === null) throw srvMinWageUnavailableError52(year, r.reason);
+  return r.wage;
 }
 
 /**
@@ -27266,6 +27656,8 @@ async function srvLoadMinimumWage(year: number): Promise<number> {
  * 근로자가 이미 그 조건으로 일한 뒤다.
  *
  * 판정식은 급여 확정의 WAG-02 / WAG-03과 **같다**.
+ *   [MW-52] 정수 임금이면 일급 결과도 같다(일급×60 < 시급×소정분 ⇔ 일급 < 올림(시급×소정분/60)).
+ *   다른 점 둘: 임금이 숫자가 아니거나 일급의 소정근로시간을 못 구하면 통과가 아니라 판정 불가로 거절한다.
  *
  * @param {object} p 검증 입력
  * @return {string|null} 위반 사유(사용자 문구) 또는 통과 시 null
@@ -27275,6 +27667,9 @@ function srvValidateMinimumWagePromise(p: {
   startTime: string; endTime: string; breakMinutes: number;
 }): string | null {
   if (p.minimumWage <= 0) return null;
+  // [MW-52] 임금이 숫자가 아니면 통과가 아니다(NaN 비교는 언제나 false 였다).
+  //   선언 타입은 number 지만 Firestore 에서 온 값은 실행 중 숫자가 아닐 수 있다.
+  if (typeof p.wage !== "number" || !Number.isFinite(p.wage)) return "임금을 확인할 수 없어 최저임금을 판정할 수 없습니다.";
   if (p.wageType === "hourly") {
     return p.wage < p.minimumWage ?
       `시급 ${p.wage.toLocaleString()}원은 최저임금 ` +
@@ -27282,15 +27677,82 @@ function srvValidateMinimumWagePromise(p: {
   }
   if (p.wageType === "daily") {
     const total = srvMinutesBetween(p.startTime, p.endTime);
-    const work = Math.max(0, total - p.breakMinutes);
-    if (work <= 0) return null;
+    const work = Math.max(0, total - (Number(p.breakMinutes) || 0));
+    // [MW-52] 소정근로시간을 못 구하면 판정 불가 — 이전에는 통과였다.
+    if (work <= 0) return "일급 근무시간(시작·종료·휴게)으로 소정근로시간을 확인할 수 없어 최저임금을 판정할 수 없습니다.";
+    // [MW-52] 일급 ÷ 소정시간 ≥ 시간급 ⇔ 일급 × 60 ≥ 시간급 × 소정분 — 정수로 비교한다(중간 반올림 없음).
     const minDaily = Math.ceil(p.minimumWage * work / 60);
-    return p.wage < minDaily ?
+    return p.wage * 60 < p.minimumWage * work ?
       `일급 ${p.wage.toLocaleString()}원은 소정근로시간 ` +
         `${(work / 60).toFixed(1)}시간 기준 최저일급 ` +
         `${minDaily.toLocaleString()}원 미만입니다.` : null;
   }
   return null;
+}
+
+// ── [MW-52] 연도별 기준 선택 ─────────────────────────────────────────────
+//   문서 값(양의 정수)이 있으면 그 값, 단 그 연도의 내장 고시값보다 낮으면 내장 고시값(법정 하한은 설정으로 내려가지 않는다).
+//   문서 값이 손상(문자열·소수·0 이하)이면 확인 불가. 문서 값이 없으면 그 연도의 내장 고시값, 그것도 없으면 확인 불가.
+//   다른 연도 값으로 대신하지 않는다.
+//   [SRV75] .75 DEV 배포판(APPLY-COMB c921d382 · ACCEPT 91ad83ca)의 helper 를 이름·식 그대로 옮기고 타입만 붙였다.
+//   배포판에 함께 실린 공고 쪽 helper 셋(위반 묶음 오류 · 슬롯 판정 입력 · 바뀐 업무 판정)은 이 파일의 어느
+//   함수도 부르지 않아 옮기지 않는다(noUnusedLocals) — 공고 쪽 정합은 별도 셀.
+type SrvMinWagePick52 =
+  | {wage: number; source: "DOC" | "BUILTIN" | "BUILTIN_FLOOR"}
+  | {wage: null; reason: "CORRUPT" | "ABSENT"};
+function srvMinWageFromCfg52(year: number, cfg: FirebaseFirestore.DocumentData): SrvMinWagePick52 {
+  const map = cfg && cfg.minimumWages && typeof cfg.minimumWages === "object" ? cfg.minimumWages : {};
+  const raw = map[String(year)];
+  const builtin = SRV_MINIMUM_WAGE_BY_YEAR[year];
+  if (raw !== undefined && raw !== null) {
+    if (typeof raw !== "number" || !Number.isInteger(raw) || raw <= 0) return {wage: null, reason: "CORRUPT"};
+    if (builtin && raw < builtin) return {wage: builtin, source: "BUILTIN_FLOOR"};
+    return {wage: raw, source: "DOC"};
+  }
+  if (builtin) return {wage: builtin, source: "BUILTIN"};
+  return {wage: null, reason: "ABSENT"};
+}
+function srvMinWageUnavailableError52(year: number, reason: string): HttpsError {
+  return new HttpsError("failed-precondition", `${year}년 최저임금 기준을 확인할 수 없어 처리하지 않았습니다. 관리자에게 문의해 주세요.`, {code: "MIN_WAGE_UNAVAILABLE", year, reason});
+}
+function srvKstDateKey52(ms: number): string {
+  return new Date(ms + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+// entries: [{dateMs, wd}] — 날짜(KST 연도)마다 기준을 골라 업무별로 판정하고 위반을 모두 모은다.
+function srvMinWageSlotViolations52(
+  cfg: FirebaseFirestore.DocumentData,
+  entries: Array<{dateMs: number; wd: FirebaseFirestore.DocumentData | null | undefined}>
+): Array<{date: string; workType: unknown; reason: string}> {
+  const out: Array<{date: string; workType: unknown; reason: string}> = [];
+  for (const e of entries) {
+    const year = new Date(e.dateMs + 9 * 60 * 60 * 1000).getUTCFullYear();
+    const r = srvMinWageFromCfg52(year, cfg);
+    if (r.wage === null) throw srvMinWageUnavailableError52(year, r.reason);
+    const w: FirebaseFirestore.DocumentData = e.wd ?? {};
+    const v = srvValidateMinimumWagePromise({wageType: String(w.wageType ?? "hourly"), wage: w.wage, minimumWage: r.wage,
+      startTime: String(w.startTime ?? ""), endTime: String(w.endTime ?? ""), breakMinutes: Number(w.breakMinutes ?? 0)});
+    if (v) out.push({date: srvKstDateKey52(e.dateMs), workType: w.workType ?? null, reason: v});
+  }
+  return out;
+}
+// 새 확정 약속(초대 수락·지원 승인·지원 확정) — 지원서에 저장된 약속 금액을 근무일 연도 기준으로 다시 본다.
+//   [SRV75] 이 후보에서 부르는 곳은 초대 수락 하나다(승인·확정 호출 자리는 별도 셀).
+async function srvAssertAppPromiseMinWageInTx52(
+  tx: FirebaseFirestore.Transaction, app: FirebaseFirestore.DocumentData, kind: string
+): Promise<void> {
+  const wd = app && app.workDate;
+  if (!wd || typeof wd.toMillis !== "function") return;
+  const snap = app.compensationSnapshot ?? {};
+  const w = {wageType: app.wageType ?? snap.wageType, wage: app.wage ?? snap.wage, workType: app.selectedWorkType ?? null,
+    startTime: app.startTime ?? snap.startTime, endTime: app.endTime ?? snap.endTime, breakMinutes: snap.breakMinutes ?? app.breakMinutes ?? 0};
+  if (w.wage === undefined || w.wage === null || !w.wageType) return; // 금액 없는 옛 기록 — 기존 동작(이 경로에서 새로 막지 않는다)
+  const cfg = (await tx.get(db.collection("settings").doc("wage_config"))).data() ?? {};
+  const v = srvMinWageSlotViolations52(cfg, [{dateMs: wd.toMillis(), wd: w}]);
+  if (!v.length) return;
+  const tail = kind === "INVITE_ACCEPT" ?
+    " 근무일 기준 최저임금에 못 미치는 초대라 수락할 수 없습니다. 사업장에 조건 수정이나 새 초대를 요청해 주세요." :
+    " 근무일 기준 최저임금에 못 미쳐 확정하지 않았습니다. 업무 임금을 고친 뒤 새로 지원·초대를 받아 주세요.";
+  throw new HttpsError("failed-precondition", v[0].reason + tail, {code: "MIN_WAGE_BELOW", items: v, kind});
 }
 
 function srvGetRates(year: number, fs: Record<number, Partial<SrvInsuranceRates>>): SrvInsuranceRates {
@@ -38163,7 +38625,7 @@ export const callableGetTaxIdentityNumber = onCall(
 // [§22·§36] 관리자가 **명시적으로 확인을 누를 때만** 원본을 연다.
 //   그리고 지금 화면이 보고 있는 그 문서일 때만 연다.
 export const callableGetTaxIdentityIdCardUrl = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, maxInstances: 20},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -43624,7 +44086,7 @@ export const callableCancelScheduleChangeRequest = onCall(
 // 반환값: { success: true, applicationId: string, isReactivation: boolean }
 // ─────────────────────────────────────────────────────────
 export const callableApplyToTO = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, maxInstances: 20},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const uid = request.auth.uid;
@@ -43683,11 +44145,12 @@ export const callableApplyToTO = onCall(
     const idCardConsentGiven = data.idCardConsentGiven === true; // [ID-CONSENT]
     // [DS-08B.5] 기록할 동의 버전 = 사용자가 실제로 본 문구의 버전.
     // [DOC-S1A.3] 이 경로는 좌석·동의 자격을 만든다 — 버전을 추론하지 않는다.
-    //   저장부가 documentAccessConsentGiven: true 를 무조건 쓰므로,
-    //   여기서 막지 않으면 버전 없는 "동의함" 행이 생긴다.
+    // [CONSENT-R4] 동의 값도 payload 그대로 본다 — 고정 true 로 넘기지 않는다.
+    //   false·결손이면 resolver 가 어떤 읽기·쓰기보다 먼저 거절한다(CONSENT_NOT_GIVEN).
+    //   판본은 일반 v4 만(은퇴·초대 판본·없음은 각각의 code 로 거절).
     const resolvedConsentVersion = srvResolveCommitmentConsentVersion(
       data.documentAccessConsentVersion,
-      true
+      data.documentAccessConsentGiven === true
     );
 
     if (!toId || typeof toId !== "string" || toId.trim() === "") {
@@ -43841,10 +44304,17 @@ export const callableApplyToTO = onCall(
       const remainDays = Math.ceil(
         (restrictedUntilTs.toDate().getTime() - Date.now()) / (1000 * 60 * 60 * 24)
       );
-      throw new HttpsError(
-        "permission-denied",
-        `무단 결근 페널티로 ${remainDays}일 동안 지원이 제한됩니다.`
-      );
+      // [.58] 문구만 제한 출처별로 — 판정·기간 계산은 그대로. 출처를 모르면 노쇼라고 단정하지 않는다.
+      const restrictionSource = userData["restrictionSource"];
+      const isPermanentRestriction = restrictionSource === "permanent" ||
+        restrictedUntilTs.toDate().getTime() >= Date.UTC(9999, 0, 1) - 9 * 60 * 60 * 1000;
+      throw new HttpsError("permission-denied", isPermanentRestriction ?
+        "지원이 영구 제한된 계정입니다. 고객센터에 문의해 주세요." :
+        (restrictionSource === "auto" ?
+          `무단 결근 페널티로 ${remainDays}일 동안 지원이 제한됩니다.` :
+          (restrictionSource === "manual" ?
+            `관리자 조치로 ${remainDays}일 동안 지원이 제한됩니다.` :
+            `${remainDays}일 동안 지원이 제한됩니다.`)));
     }
 
     // [CONFLICT-OF-INTEREST] 서브어드민이 자신이 관리하는 사업장 공고에 지원 차단
@@ -44434,6 +44904,13 @@ export const callableApplyToTO = onCall(
       let effectiveContractWorkDate: admin.firestore.Timestamp = workDate;
       let effectiveContractWorkEndDate: admin.firestore.Timestamp | null = workEndDate;
 
+      // [POSTING-RACE-46] 공고 삭제와 같은 문서로 직렬화한다. 사전 검사(트랜잭션 밖) 뒤 삭제가 커밋되면
+      //   flex 지원은 공고 문서를 읽지 않아 삭제된 공고에 PENDING 이 남았다. 공고 문서를 읽어 삭제를 본다.
+      const txToSnap = await tx.get(toRef);
+      if (!txToSnap.exists || txToSnap.data()!["isDeleted"] === true) {
+        throw new HttpsError("not-found", "삭제된 공고입니다.");
+      }
+
       // TOCTOU 방지: 트랜잭션 내 최종 마감·정원 재검증
       if (slotRef) {
         const latestSlot = await tx.get(slotRef);
@@ -44575,6 +45052,11 @@ export const callableApplyToTO = onCall(
           reactivateData["documentAccessConsentVersion"] =
             resolvedConsentVersion;
         }
+        // [CONSENT-R4] 출처 — 이번 지원 요청. 같은 문서가 예전에 재배치 승계로 생긴 관계였어도
+        //   그 계보 표시는 남기지 않는다(이번 동의는 새 명시 동의다).
+        reactivateData["documentAccessConsentSource"] = "APPLY";
+        reactivateData["documentAccessConsentInheritedFrom"] =
+          admin.firestore.FieldValue.delete();
         // [R7-5] 대기 카운터 멱등 플래그를 비운다.
         //
         //   `callableIncrementSlotPending` 은 지원서 문서의
@@ -44638,6 +45120,8 @@ export const callableApplyToTO = onCall(
           ...(resolvedConsentVersion !== null && {
             documentAccessConsentVersion: resolvedConsentVersion,
           }),
+          // [CONSENT-R4] 출처 — 이번 지원 요청.
+          documentAccessConsentSource: "APPLY",
         };
         if (slotId) setData["slotId"] = slotId;
         if (workDetailId && workDetailId.length > 0) setData["workDetailId"] = workDetailId;
@@ -45297,7 +45781,7 @@ export const callableGetAllBusinesses = onCall(
 // ─── callableGetMyApplications ───────────────────────────────────────────────
 // USER 본인 지원서 목록 조회 — uid 서버 검증 강제 (request.query.filters 우회 대책)
 export const callableGetMyApplications = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, maxInstances: 20},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const uid = request.auth.uid;
@@ -47220,7 +47704,7 @@ export const callableOfferAlternativeWork = onCall(
 // Input : { applicationId }
 // Output: { success, alreadyConfirmed? }
 export const callableAcceptTOInvitation = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, maxInstances: 20},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -47421,6 +47905,9 @@ export const callableAcceptTOInvitation = onCall(
       if (freshExp && freshExp.toMillis() <= Date.now()) {
         throw new HttpsError("failed-precondition", "초대 수락 가능 시간이 지났습니다.");
       }
+
+      // [MW-52] 수락은 새 확정 약속이다 — 초대 발송 때 통과했어도 근무일 연도 기준으로 다시 본다. 이미 CONFIRMED 인 재전달은 위에서 그대로 돌아갔다.
+      await srvAssertAppPromiseMinWageInTx52(tx, freshData, "INVITE_ACCEPT");
 
       // [INVITE-START-GUARD] 근무가 시작된 뒤에는 수락할 수 없다.
       //
@@ -47879,19 +48366,27 @@ export const callableAcceptTOInvitation = onCall(
 
       // [CROSS-DOMAIN-R5.2] 동의는 commitment와 **같은 트랜잭션**에 쓴다.
       //   좌석은 잡혔는데 동의 기록만 없는 상태가 생기지 않게 한다.
+      // [CONSENT-R4 · O3 새 세대] 같은 세대(v4 · invite-v2)의 유효한 동의가 이미 있으면
+      //   (초대 사전 동의 t0 등) Given/Version/At 을 **바꾸지 않는다** — 최초 동의 시각 보존.
+      //   수락 사건은 confirmedAt·statusHistory 에만 두고, 이번 수락 화면에서 본 판본은
+      //   이력의 consentShownVersion 으로 남긴다. 동의가 없거나 은퇴 판본·결손·미래 시각이면
+      //   이번에 본 판본으로 새로 기록하고, 덮어쓰는 기존 값은 같은 이력 줄에 원시 증거로 남긴다.
+      // [CONSENT-R4b] 동의 전용 writer 와 같은 '같은 세대 유효' 판정(At 유효·비미래 포함).
+      //   판정 시각 = max(confirmedAt, 트랜잭션 안 지금) — confirmedAt 은 트랜잭션 **앞**에서 정해져
+      //   그 사이 동의 전용 writer 가 쓴 정상 At 을 '미래'로 보고 덮지 않게 한다(r4b 하위 시험 관찰).
+      const acceptConsentPlan = srvInviteAcceptConsentPlan(
+        freshData, Math.max(confirmedAt.toMillis(), Date.now()));
       const acceptUpdate: Record<string, unknown> = {
         status:      "CONFIRMED",
         confirmedAt,
         statusHistory: admin.firestore.FieldValue.arrayUnion({
           status: "CONFIRMED", at: confirmedAt, by: callerUid, action: "INVITE_ACCEPTED",
+          consentPreserved: acceptConsentPlan.preserve,
+          consentPlanReason: acceptConsentPlan.reason,
+          ...(acceptConsentVersion !== null ?
+            {consentShownVersion: acceptConsentVersion} : {}),
+          ...(acceptConsentPlan.preserve ? {} : srvPrevConsentEvidence(freshData)),
         }),
-        documentAccessConsentGiven: true,
-        documentAccessConsentAt: confirmedAt,
-        // legacy 필드도 함께 세운다 — 기존 소비자(grant 조건)가 둘 다 본다.
-        //   canonical은 documentAccessConsentGiven이고, 그 문구가 신분증
-        //   접근을 포함하므로 여기서 파생시킨다.
-        idCardConsentGiven: true,
-        idCardConsentAt: confirmedAt,
         // [INVITE-PARITY] 관리자 확정과 같은 근거를 남긴다(AUDIT-X11). 판정은
         //   위에서 **이 트랜잭션이 읽은** 근로자·검토 문서로 냈다 — 그 둘로
         //   만든 근거라서 commit 시점의 사실과 어긋나지 않는다.
@@ -47899,9 +48394,26 @@ export const callableAcceptTOInvitation = onCall(
           (freshData.businessId as string | undefined) ?? "",
           freshUserData, acceptReviewSnap.data(), acceptReadiness),
       };
-      //사용자가 실제로 본 문구의 버전만 기록한다(없으면 쓰지 않는다).
-      if (acceptConsentVersion !== null) {
-        acceptUpdate["documentAccessConsentVersion"] = acceptConsentVersion;
+      const acceptNewConsent: Record<string, unknown> = {
+        documentAccessConsentGiven: true,
+        documentAccessConsentAt: confirmedAt,
+        // legacy 필드도 함께 세운다 — 기존 소비자(grant 조건)가 둘 다 본다.
+        //   canonical은 documentAccessConsentGiven이고, 그 문구가 신분증
+        //   접근을 포함하므로 여기서 파생시킨다.
+        idCardConsentGiven: true,
+        idCardConsentAt: confirmedAt,
+        documentAccessConsentSource: "INVITE_ACCEPT",
+        // [CONSENT-R4b · C-R4-2] 새 명시 동의 — 낡은 승계 parent 는 canonical 에서 지운다
+        //   (이전 값은 위 이력 줄의 prevConsentInheritedFrom 으로 남는다).
+        ...(freshData["documentAccessConsentInheritedFrom"] !== undefined ?
+          {documentAccessConsentInheritedFrom: admin.firestore.FieldValue.delete()} : {}),
+      };
+      if (!acceptConsentPlan.preserve) {
+        Object.assign(acceptUpdate, acceptNewConsent);
+        //사용자가 실제로 본 문구의 버전만 기록한다(없으면 쓰지 않는다).
+        if (acceptConsentVersion !== null) {
+          acceptUpdate["documentAccessConsentVersion"] = acceptConsentVersion;
+        }
       }
       // [R7-PAYROLL-POLICY.4] 초대 시점에 이미 찍혀 있으면 **그대로 둔다.**
       //   근로자가 보고 수락한 조건이 그것이기 때문이다. 없는 경우(이 배포
@@ -48862,7 +49374,7 @@ function srvCloseCrProposal(
 //           documentAccessConsentVersion }
 // Output: { success, targetApplicationId }
 export const callableAcceptConfirmedReassignment = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, maxInstances: 20},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -48879,9 +49391,39 @@ export const callableAcceptConfirmedReassignment = onCall(
       throw new HttpsError("invalid-argument", "proposalId가 필요합니다.");
     }
     const crDocConsent = crDocConsentRaw === true;
-    // [DOC-S1A.3] 재배치 수락도 확정 관계를 만든다 — 같은 규칙.
-    const crConsentVersion =
-      srvResolveCommitmentConsentVersion(crDocVersionRaw, crDocConsent);
+    // [CONSENT-R4] 두 방식을 나눈다 — 같은 payload 로 승계와 새 명시 동의를 섞지 않는다.
+    //   INHERIT : 첫 호출. 원 근무(A)의 저장 동의를 승계할 수 있으면 승계, 아니면
+    //             CONSENT_REQUIRED(트랜잭션 쓰기 0 · 알림 0 · 제안/lock 그대로).
+    //   EXPLICIT: CONSENT_REQUIRED 를 받은 시트가 v4 카드를 보여준 뒤의 재호출 — 새 명시 동의.
+    //   방식이 없으면(구 앱·변조) 판본과 무관하게 거절한다. consentShown 은 UI 경로 표시일 뿐
+    //   고지 증거가 아니다 — 서버는 프로토콜 정합으로만 본다.
+    const crExtra = request.data as {consentMode?: unknown; consentShown?: unknown};
+    const crConsentMode = crExtra.consentMode;
+    if (crConsentMode !== "INHERIT" && crConsentMode !== "EXPLICIT") {
+      throw new HttpsError("invalid-argument",
+        "서류 열람 동의 방식이 확인되지 않았습니다. 앱을 최신 버전으로 업데이트해주세요.",
+        {code: "CONSENT_MODE_MISSING"});
+    }
+    // [r4c · PP-R4B-INHERIT] INHERIT 에는 명시 동의 전용 키가 **존재하는 것 자체**를 혼합 요청으로 본다
+    //   (값이 true/false/null/undefined 이든) — 읽기 전 거절 · 쓰기 0 · 알림 0. 정상 UI/service 는 키를 생략한다.
+    const crHasKey = (k: string) =>
+      request.data !== null && typeof request.data === "object" &&
+      Object.prototype.hasOwnProperty.call(request.data, k);
+    if (crConsentMode === "INHERIT" &&
+        (crHasKey("documentAccessConsentGiven") || crHasKey("documentAccessConsentVersion") ||
+         crHasKey("consentShown"))) {
+      throw new HttpsError("invalid-argument",
+        "변경 수락 요청 형식이 올바르지 않습니다.",
+        {code: "CONSENT_MODE_PAYLOAD_MISMATCH"});
+    }
+    if (crConsentMode === "EXPLICIT" && crExtra.consentShown !== true) {
+      throw new HttpsError("invalid-argument",
+        "변경 수락 요청 형식이 올바르지 않습니다.",
+        {code: "CONSENT_NOT_SHOWN"});
+    }
+    // [DOC-S1A.3] 재배치 명시 동의도 확정 관계를 만든다 — 같은 규칙(일반 판본 v4 만).
+    const crConsentVersion = crConsentMode === "EXPLICIT" ?
+      srvResolveCommitmentConsentVersion(crDocVersionRaw, crDocConsent) : null;
 
     const acProposalRef = db.collection(CR_PROPOSAL_COL).doc(proposalId);
     const acProposalSnap = await acProposalRef.get();
@@ -48949,7 +49491,7 @@ export const callableAcceptConfirmedReassignment = onCall(
      */
     type AcOutcome =
       | {ok: true}
-      | {ok: false; code: string; message: string};
+      | {ok: false; code: string; message: string; consentReason?: string};
 
     const acResult: AcOutcome = await db.runTransaction(async (tx) => {
       // ── READS ─────────────────────────────────────────────────────────
@@ -49059,8 +49601,19 @@ export const callableAcceptConfirmedReassignment = onCall(
       //   없이 확정된 근로자가 관리자의 변경 제안에 응할 수 없었다.
       //   되돌릴 수 없는 것은 A 좌석을 내놓는 일이지 지급 준비가 아니다.
       //   지급 준비는 R1.6이 지급 직전에 본다.
-      // B는 **새 Application**이다 — A의 동의를 가져다 쓰지 않는다.
-      if (!crDocConsent) {
+      // [CONSENT-R4] 계보 — 서버가 저장한 제안 값과 지금 원 근무(A)가 같은 관계인가
+      //   (sourceApplicationId·uid·businessId·toId·slotId·sourceWdId·workDate).
+      //   불일치는 동의 문제가 아니다. 쓰기 0 오류로 끝낸다(제안·lock 그대로, 알림 없음).
+      {
+        const crLineage = cr4LineageBlock(p, srcData, callerUid, acSourceId);
+        if (crLineage) {
+          throw new HttpsError("failed-precondition",
+            "변경 제안과 기존 근무 정보가 맞지 않습니다.",
+            {code: "REASSIGN_LINEAGE_MISMATCH", reason: crLineage});
+        }
+      }
+      // EXPLICIT 의 미동의는 위 resolver 가 이미 거절했다 — 이중 방어로 남긴다.
+      if (crConsentMode === "EXPLICIT" && !crDocConsent) {
         throw new HttpsError(
           "invalid-argument",
           "소득신고·급여처리 목적 서류 접근에 동의해야 변경을 수락할 수 있습니다."
@@ -49130,6 +49683,37 @@ export const callableAcceptConfirmedReassignment = onCall(
         fd: targetFd,
         excludeCommittedId: acSourceId,
       });
+
+      // ── [CONSENT-R4] 동의 — 모든 대상·정원·관계·겹침 판정 **뒤**, 첫 쓰기 **앞** ──
+      //   대상 불가를 동의 결손으로 잘못 분류하지 않는다(그 경우는 위에서 terminal 로 끝났다).
+      //   CONSENT_REQUIRED 는 쓰기 0 으로 돌아간다 — proposal·lock(activeProposalId)·A·B·
+      //   좌석·카운터·동의가 모두 그대로이고, 트랜잭션 밖에서 알림도 보내지 않는다.
+      let crConsentFields: Record<string, unknown>;
+      if (crConsentMode === "INHERIT") {
+        const inh = cr4ConsentInheritance(srcData, acNow.toMillis(),
+          SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS, CR_TYPE);
+        if (!inh.ok) {
+          return {ok: false as const, code: "CONSENT_REQUIRED",
+            message: "변경을 수락하려면 서류 열람 동의가 필요합니다.",
+            consentReason: inh.detail ? `${inh.reason}:${inh.detail}` : inh.reason};
+        }
+        // 원 동의 Given/Version/At 을 그대로 — 재배치 수락 시각은 confirmedAt·history 에만.
+        crConsentFields = {
+          ...inh.fields,
+          documentAccessConsentInheritedFrom: acSourceId,
+          documentAccessConsentSource: "REASSIGN_INHERITED",
+        };
+      } else {
+        crConsentFields = {
+          documentAccessConsentGiven: true,
+          documentAccessConsentAt: acNow,
+          idCardConsentGiven: true,
+          idCardConsentAt: acNow,
+          ...(crConsentVersion !== null ?
+            {documentAccessConsentVersion: crConsentVersion} : {}),
+          documentAccessConsentSource: "REASSIGN_EXPLICIT",
+        };
+      }
 
       // ── WRITES ────────────────────────────────────────────────────────
       srvApplySeatCommitOverlap(tx, overlapPlan,
@@ -49222,12 +49806,8 @@ export const callableAcceptConfirmedReassignment = onCall(
         compensationSource: p.compensationSource,
         baseCompensationSnapshotAtOffer: p.baseCompensationSnapshotAtProposal,
         offeredCompensationSnapshot: acTargetPromise,
-        documentAccessConsentGiven: true,
-        documentAccessConsentAt: acNow,
-        idCardConsentGiven: true,
-        idCardConsentAt: acNow,
-        ...(crConsentVersion !== null ?
-          {documentAccessConsentVersion: crConsentVersion} : {}),
+        // [CONSENT-R4] 승계(A 원값 + 계보) 또는 새 명시 동의(v4 · 이번 시각) — 위에서 정했다.
+        ...crConsentFields,
         statusHistory: [{
           status: "CONFIRMED", at: acNow, by: callerUid,
           action: "CONFIRMED_REASSIGNMENT_ACCEPTED",
@@ -49263,6 +49843,13 @@ export const callableAcceptConfirmedReassignment = onCall(
     });
 
     if (!acResult.ok) {
+      // [CONSENT-R4] 동의 결손은 terminal 이 아니다 — 트랜잭션은 아무것도 쓰지 않았다.
+      //   제안은 열린 채로 남고(lock 그대로) 제안자 알림도 없다. 근로자 시트는
+      //   details.code 로 이 경우를 알아보고 v4 카드를 보인 뒤 EXPLICIT 로 다시 부른다.
+      if (acResult.code === "CONSENT_REQUIRED") {
+        throw new HttpsError("failed-precondition", acResult.message,
+          {code: "CONSENT_REQUIRED", reason: acResult.consentReason ?? null});
+      }
       // 제안 정리는 위에서 이미 커밋됐다 — 여기서는 결과만 알린다.
       await srvWriteCrNotification(
         (acP.createdBy as string | undefined) ?? "",

@@ -444,7 +444,9 @@ class _SelectorSheetState extends State<_SelectorSheet> {
 
   Widget _buildEmpty(BuildContext context, {String? error}) {
     final theme = Theme.of(context);
-    return Padding(
+    // [F267-OVF-TEMPLATE] 큰 글자(B 2.0 · N 1.0 320×640)에서 시트 최대 높이를 넘는 빈/오류 안내를 스크롤로 — 내용·버튼·순서 그대로
+    return SingleChildScrollView(
+      child: Padding(
       padding: EdgeInsets.fromLTRB(
         ResponsiveHelper.spacing(context, 20),
         ResponsiveHelper.spacing(context, 24),
@@ -459,7 +461,7 @@ class _SelectorSheetState extends State<_SelectorSheet> {
           Text(
             error != null ? '템플릿 불러오기 실패' : '등록된 템플릿이 없습니다',
             style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: error != null ? AppColors.error : AppColors.grey500),
+                color: error != null ? AppColors.errorDark : AppColors.textSecondary),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
           Text(
@@ -468,7 +470,7 @@ class _SelectorSheetState extends State<_SelectorSheet> {
                 : '계약서 조항 템플릿을 추가해두면\n빠르게 계약서를 작성할 수 있습니다.',
             textAlign: TextAlign.center,
             style:
-                ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
+                ResponsiveHelper.smallStyle(context, color: AppColors.textTertiary),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
@@ -555,6 +557,7 @@ class _SelectorSheetState extends State<_SelectorSheet> {
             ),
           ],
         ],
+      ),
       ),
     );
   }
