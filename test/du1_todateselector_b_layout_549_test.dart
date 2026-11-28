@@ -402,7 +402,7 @@ _DaysObs _daysLine(WidgetTester t, String tok, Finder calF, DateTime today, bool
       todayFg = _hex(fg);
       if (list) {
         final row = find.ancestor(of: f, matching: find.byType(Row)).first;
-        final lab = find.descendant(of: row, matching: find.text('오늘'), skipOffstage: true);
+        final lab = find.descendant(of: row, matching: findVisibleText('오늘'), skipOffstage: true);
         if (lab.evaluate().length == 1) mark = _hex(_fgOf(t, lab));
       } else {
         final stack = find.ancestor(of: f, matching: find.byType(Stack)).first;

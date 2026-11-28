@@ -37,6 +37,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/users_create_rule.dart';
+
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('소스를 찾지 못했다: $p');
@@ -152,21 +154,27 @@ void main() {
       expect(authService, contains(
           "await _firestore.collection('users').doc(uid).delete();"));
       expect(authService, contains('Firestore 롤백 실패 (orphan 문서 가능)'));
-      expect(rulesFlat, contains('allow delete: if isSuperAdmin() &&'));
+      // [판정281 갱신] 서버 fence: 쓰기 규칙 바깥에 `callerNotDeleting() && (` 감싸기만 붙었다 — 안쪽 조건 단언은 그대로.
+      expect(rulesFlat, contains('allow delete: if callerNotDeleting() && (isSuperAdmin() &&'));
     });
   });
 
   group('TAIL-RULES — 클라이언트 우회 차단 (§19·§20)', () {
     test('TAIL-RULES-01 tombstone 있는 user 문서는 삭제할 수 없다', () {
-      expect(rulesFlat, contains(
-          'allow delete: if isSuperAdmin() && request.auth.uid != userId && '
-          '!accountDeletionBarrierExists(userId);'));
+      expect(rulesCodeFlat(rules), contains(
+          // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정278 §2] barrier 조건은 그대로 두고 새 흐름 계정 삭제 금지 조건이 뒤에 붙었다(더 강함).
+          // [판정281 갱신] 서버 fence: 쓰기 규칙 바깥에 `callerNotDeleting() && (` 감싸기만 붙었다 — 안쪽 조건 단언은 그대로.
+          'allow delete: if callerNotDeleting() && (isSuperAdmin() && request.auth.uid != userId && '
+          '!accountDeletionBarrierExists(userId) && '
+          "resource.data.get('signupSource', null) == null);"));
     });
 
     test('TAIL-RULES-02 tombstone 있는 uid 로 user 문서를 만들 수 없다', () {
-      expect(rulesFlat, contains(
-          'allow create: if isLoggedIn() && '
-          '!accountDeletionBarrierExists(userId) && ('));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정278 C278-3] users create 가 전면 거부 — tombstone uid 재생성도 막힌다(더 강함).
+      //   다시 열리면 옛 barrier conjunct 를 요구한다.
+      expect(usersCreateClosed(rulesFlat) ||
+          rulesFlat.contains('allow create: if isLoggedIn() && '
+              '!accountDeletionBarrierExists(userId) && ('), isTrue);
     });
 
     test('TAIL-RULES-03 barrier 판정은 기존 helper 하나다', () {
@@ -291,7 +299,8 @@ void main() {
       expect(_flat(finalFn), contains(
           r'if (errCode === "auth/user-not-found") {'));
       expect(_flat(finalFn), contains('throw authErr;'));
-      expect(_flat(finalFn), contains('return {success: true};'));
+      // [판정280 갱신] Final 성공 반환이 카카오 연결 해제 범위(providerUnlink · server_api_1 §5A)를 함께 싣게 됐다 — 같은 명시적 성공 반환.
+      expect(_flat(finalFn), contains('return providerUnlink === null ? {success: true} : {success: true, providerUnlink};'));
     });
   });
 

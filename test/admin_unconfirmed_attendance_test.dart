@@ -45,6 +45,7 @@ import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/business_admin/admin_month_detail_screen.dart';
 import 'package:ALfit/screens/business_admin/admin_stats_screen.dart';
 import 'package:ALfit/services/admin_stats_service.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake with MockPlatformInterfaceMixin implements FirebaseAppPlatform {
   @override
@@ -277,7 +278,7 @@ void main() {
   testWidgets('UA-5 연간 화면: 출근율·노쇼율은 숫자 대신 "확인 필요" + 건수 · 전년 대비 없음', (t) async {
     final a = (await t.runAsync(() => AdminStatsService().getAnnualStats(businessIds: [_biz], year: 2026)))!;
     await _pump(t, AdminStatsScreen(businessIds: [_biz], service: _Fixed(annual: a)));
-    expect(find.text('확인 필요'), findsNWidgets(2));
+    expect(findVisibleText('확인 필요'), findsNWidgets(2));
     expect(find.text('미확인 1건 ›'), findsNWidgets(2), reason: "'근태 N건' 은 막대의 '전체 근태 (건)' 와 같은 단위로 읽혔다 — 값 '확인 필요' 아래 '미확인 N건'");
     expect(find.textContaining('50.0%'), findsNothing, reason: '확인 못 한 1건을 뺀 비율도, 넣은 비율도 숫자로 말하지 않는다');
     expect(find.textContaining('25.0%'), findsNothing);

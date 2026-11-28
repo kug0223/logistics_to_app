@@ -8,6 +8,7 @@ import '../theme/app_colors.dart';
 import 'responsive_helper.dart';
 import '../utils/toast_helper.dart';
 import '../widgets/dialogs/styled_dialog.dart';
+import 'server_reject_codes.dart';
 
 /// 신분증 관련 공통 헬퍼
 class IdCardHelper {
@@ -42,12 +43,27 @@ class IdCardHelper {
     }
   }
 
-  static String _toStatusString(dynamic access) {
+  static String _toStatusString(dynamic access) => statusStringOf(access as IdCardAccessRequestModel?);
+
+  /// 배지·요청 가능 판정용 상태 문자열.
+  ///   [impl_58 · server_296 §2] 서버가 approved 를 지금 쓸 수 없어 'revoked' 로 내린 두 이유는 따로 말한다 —
+  ///   예전에는 'none'(신분증미요청)으로 보여 요청한 적 없는 사람처럼 읽혔다. 둘 다 다시 요청하면 풀린다(요청 가능).
+  ///   [impl_59] 나머지 두 이유(소속 사업장 아님 · 지원서 비확정)도 따로 말한다 — 'revokedNotMember' · 'revokedInactive'.
+  ///   요청 가능 여부는 예전('none' = 요청 가능)과 같다: 지금 사업장의 확정 지원서로 새로 요청하면 풀릴 수 있다.
+  ///   사유가 없는 revoked 는 예전 그대로 'none'.
+  @visibleForTesting
+  static String statusStringOf(IdCardAccessRequestModel? access) {
     if (access == null) return 'none';
     if (access.status == IdCardAccessStatus.pending) return 'pending';
     if (access.isValidAccess) return 'approved';
     if (access.status == IdCardAccessStatus.expired) return 'expired';
     if (access.status == IdCardAccessStatus.rejected) return 'rejected';
+    if (access.status == IdCardAccessStatus.revoked) {
+      if (access.unusableReason == idCardUnusableLegacyAutoGrant) return 'revokedLegacy';
+      if (access.unusableReason == idCardUnusableManualGrantExpired) return 'revokedExpired';
+      if (access.unusableReason == idCardUnusableNotCurrentMember) return 'revokedNotMember';
+      if (access.unusableReason == idCardUnusableApplicationInactive) return 'revokedInactive';
+    }
     return 'none';
   }
 
@@ -86,6 +102,32 @@ class IdCardHelper {
           label: '신분증 재요청 필요',
           color: AppColors.warningDark,
         );
+      // [impl_58 · server_296 §2] 열람 권한이 왜 끝났는지 — 둘 다 다시 요청하면 된다(요청 가능 · 행의 [재요청]).
+      case 'revokedLegacy':
+        return IdCardStatusInfo(
+          icon: Icons.replay,
+          label: '자동 열람 종료',
+          color: AppColors.warningDark,
+        );
+      case 'revokedExpired':
+        return IdCardStatusInfo(
+          icon: Icons.timer_off_outlined,
+          label: '열람 7일 지남',
+          color: AppColors.warningDark,
+        );
+      // [impl_59 · server_296 §2] 이 열람권으로는 볼 수 없는 이유 — 사실 안내(회색). 할 일이 정해진 두 사유(위)와 색을 나눈다.
+      case 'revokedNotMember':
+        return IdCardStatusInfo(
+          icon: Icons.lock_outline,
+          label: '열람 대상이 아니에요',
+          color: AppColors.grey500,
+        );
+      case 'revokedInactive':
+        return IdCardStatusInfo(
+          icon: Icons.event_busy_outlined,
+          label: '확정된 근무가 아니라 열람할 수 없어요',
+          color: AppColors.grey500,
+        );
       case 'none':
       default:
         return IdCardStatusInfo(
@@ -101,7 +143,9 @@ class IdCardHelper {
 
   /// 신분증 열람 요청 가능한 상태인지 확인 (미요청·만료·거절)
   static bool isRequestable(String status) =>
-      status == 'none' || status == 'expired' || status == 'rejected';
+      status == 'none' || status == 'expired' || status == 'rejected' ||
+      status == 'revokedLegacy' || status == 'revokedExpired' || // [impl_58] 예전엔 'none' 으로 접혀 요청 가능했다 — 그대로
+      status == 'revokedNotMember' || status == 'revokedInactive'; // [impl_59] 같은 이유로 그대로
 
   /// 신분증 요청 가능한 사용자 필터링
   ///
@@ -398,10 +442,14 @@ class IdCardHelper {
             color: info.color,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-          Text(
-            info.label,
-            style: ResponsiveHelper.tinyStyle(context, color: info.color).copyWith(
-              fontWeight: FontWeight.bold,
+          // [impl_59] 긴 사유('확정된 근무가 아니라 열람할 수 없어요')가 좁은 폭·큰 글자에서 넘치지 않게 — 남은 폭 안에서 줄을 넘긴다.
+          //   배지는 Wrap(지원자 행) 안에 놓이므로 폭이 정해져 있다. 짧은 글은 예전과 같게 한 줄이다.
+          Flexible(
+            child: Text(
+              info.label,
+              style: ResponsiveHelper.tinyStyle(context, color: info.color).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
         ],

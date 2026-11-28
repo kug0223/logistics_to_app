@@ -167,7 +167,7 @@ void main() {
     await _pump(t, userDoc: _caseAE(), recorder: _Recorder());
 
     expect(findVisibleText('마케팅 정보 수신 동의 (선택)'), findsOneWidget);
-    expect(find.text('선택'), findsOneWidget);
+    expect(findVisibleText('선택'), findsOneWidget);
 
     // 기본 체크 금지 — 아직 받지 못한 동의는 필수든 선택이든 false 다.
     final boxes = t.widgetList<Checkbox>(find.byType(Checkbox)).toList();

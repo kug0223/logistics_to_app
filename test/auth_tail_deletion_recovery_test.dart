@@ -323,8 +323,9 @@ void main() {
           r'if (errCode === "auth/user-not-found") {'));
       // not-found 는 성공 동치, 그 외는 그대로 전달한다 — generic success 금지.
       expect(_flat(finalFn), contains('throw authErr;'));
+      // [판정280 갱신] Final 성공 반환이 카카오 연결 해제 범위(providerUnlink · server_api_1 §5A)를 함께 싣게 됐다 — 같은 명시적 성공 반환.
       expect(_at(finalFn, 'admin.auth().deleteUser(uid)'),
-          lessThan(_at(finalFn, 'return {success: true};')));
+          lessThan(_at(finalFn, 'return providerUnlink === null ? {success: true} : {success: true, providerUnlink};')));
     });
   });
 

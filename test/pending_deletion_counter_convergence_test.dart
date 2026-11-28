@@ -164,7 +164,8 @@ void main() {
 
     test('PCC-OWN-04 선언 1 + 호출 5(만료 스케줄러 · 삭제 2 · 거절·수락의 기한 경과 만료)', () {
       expect(_count(code, 'function srvTerminateWaitingApplicationInTx('), 1);
-      expect(_count(code, 'srvTerminateWaitingApplicationInTx'), 6);
+      // [판정296 정책 P1 · server_296] + 호출 1: 블랙리스트 제재 정리도 같은 주인(헬퍼)을 쓴다.
+      expect(_count(code, 'srvTerminateWaitingApplicationInTx'), 7);
       // [E1-EXPIRED-ACCEPT-RACE] 수락의 기한 경과 만료도 같은 주인(헬퍼)을 트랜잭션 안에서 쓴다.
       //   헬퍼는 fresh read 가 INVITED 가 아니면 skip 하고 카운터 guard 를 둔다 — 스케줄러가 먼저
       //   만료했으면 대기를 다시 내리지 않는다. 트랜잭션 밖 batch −1 은 남지 않는다.
@@ -208,7 +209,9 @@ void main() {
       expect(_flat(cleanup), contains(
           'const delReport = await srvLifecycleCancelBulk( '
           '[...contractSnap.docs, ...confirmedSnap.docs], '
-          '{status: "CANCELED", canceledAt: now, cancelReason: "USER_DELETED"});'));
+          '{status: "CANCELED", canceledAt: now, cancelReason: "USER_DELETED"}, '
+          // [판정296 K-1c · server_296] 끊는 미서명 계약 무효 확장 인자만 더했다(카운터 경로 ±0 그대로).
+          'CONFIRMED_STATUSES, {voidContracts: {reason: "WORKER_ACCOUNT_DELETED"}});'));
       expect(_flat(cleanup), contains(
           'data: {status: "absent", absentReason: "USER_DELETED", updatedAt: now}'));
       // 확정 좌석/정원 로직(B 구간)은 그대로 있다.

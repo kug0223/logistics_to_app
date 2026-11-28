@@ -36,6 +36,7 @@ import 'package:ALfit/screens/common/job_posting_screen.dart';
 import 'package:ALfit/services/work_type_guide_resolver.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake with MockPlatformInterfaceMixin implements FirebaseAppPlatform {
   @override
@@ -372,8 +373,8 @@ void main() {
           await frames(25);
           // 여는 행동 하나: ready* 는 하단 '지원 준비하기', detail 은 업무 카드 '업무 자세히 보기'
           final opener = sc == 'detail'
-              ? find.text('업무 자세히 보기')
-              : find.ancestor(of: find.text('지원 준비하기'), matching: find.byType(ElevatedButton));
+              ? findVisibleText('업무 자세히 보기')
+              : find.ancestor(of: findVisibleText('지원 준비하기'), matching: find.byType(ElevatedButton));
           need(opener.evaluate().isNotEmpty, '여는 버튼 없음');
           await t.ensureVisible(opener.first);
           await frames(4);

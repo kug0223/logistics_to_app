@@ -192,9 +192,9 @@ void main() {
 
   group('INV-4 — 새 평문 식별번호 저장 없음', () {
     test('15 foreignIdRaw / 13자리 신규 저장 없음', () {
-      final finalize = _codeOf(_sliceOf(rawCf,
-          'export const callableFinalizeForeignIdentity = onCall(',
-          'FINALIZE_STAGE_COMPLETE'));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 번호를 받는 writer 는 옛 finalize(닫힘) 대신 가입 후 등록 writer 다 — 같은 금지를 고정한다.
+      final finalize = _codeOf(_sliceOf(rawCf, 'export const callableRegisterForeignIdDocument = onCall(',
+          'console.info(`[foreignIdDocument]'));
       for (final banned in [
         'foreignIdRaw:', 'rawForeignId:', 'foreignIdNumberPlain',
         'normalized,',
@@ -203,7 +203,7 @@ void main() {
             reason: '$banned — 전체 번호를 저장하면 안 된다');
       }
       // 저장되는 것은 HMAC 하나다.
-      expect(finalize, contains('foreignIdentityFingerprint: fingerprint'));
+      expect(finalize, contains('foreignIdDocumentFingerprint: docFp'));
     });
 
     test('16 전체 번호를 로그에 남기지 않는다', () {
@@ -214,20 +214,20 @@ void main() {
     });
 
     test('17 파생값은 기존 필드에만 쓴다 (birthDate / gender)', () {
-      final finalize = _flat(_codeOf(_sliceOf(rawCf,
-          'export const callableFinalizeForeignIdentity = onCall(',
-          'FINALIZE_STAGE_COMPLETE')));
-      expect(finalize, contains('const serverGender ='));
-      expect(finalize, contains('serverGender ? {gender: serverGender} : {}'));
-      expect(finalize, contains('birthDate: admin.firestore.Timestamp.fromDate(serverBirthDate)'));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 새 writer 는 파생값을 기존 필드(birthDate · gender)에만, KG 값이 없을 때만 쓴다.
+      final finalize = _flat(_codeOf(_sliceOf(rawCf, 'export const callableRegisterForeignIdDocument = onCall(',
+          'console.info(`[foreignIdDocument]')));
+      expect(finalize, contains('const derived = normalized ? skDeriveFromForeignId(normalized) : null;'));
+      expect(finalize, contains('if (kgBirth === null) { const bts = srvPassBirthDateToTimestamp(derived.birthDate); if (bts) patch["birthDate"] = bts; }'));
+      expect(finalize, contains('if (!kgGender) {'));
+      expect(finalize, contains('patch["gender"] = derived.gender;'));
     });
 
     test('18 표에 없는 성별코드는 추측하지 않는다', () {
-      final finalize = _flat(_codeOf(_sliceOf(rawCf,
-          'const serverGender =', 'const fpDocId')));
-      expect(finalize, contains('genderDigit === 5 || genderDigit === 7'));
-      expect(finalize, contains('genderDigit === 6 || genderDigit === 8'));
-      expect(finalize, contains(': null'),
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 파생 표는 서버 helper(signup_core deriveFromForeignId)로 옮겨졌다 — 범위 밖은 null.
+      final finalize = _flat(_src('functions/src/signup_core.ts'));
+      expect(finalize, contains('gender: (code === 5 || code === 7) ? "남성" : "여성"'));
+      expect(finalize, contains('if (code < 5 || code > 8) return null;'),
           reason: '구 규칙 코드(9 등)는 기대값을 만들지 않는다 — 거짓 불일치 방지');
     });
   });
@@ -273,7 +273,9 @@ void main() {
       // 실제 export 이름은 `verifyPassAuth`다 — CLAUDE.md의
       // `callableVerifyPassAuth` 표기는 문서 쪽 드리프트다.
       expect(cf, contains('export const verifyPassAuth = onCall('));
-      expect(cf, contains('passVerifiedAt: admin.firestore.FieldValue.serverTimestamp()'));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 옛 PASS 쓰기 경로(finalizeRegistration · finalizePassReauth)는 닫혔다. 새 가입은 서버가 확인한
+      //   KG 결과 시각을 passVerifiedAt 으로 쓴다(callableCompleteSignup — 클라 값 0).
+      expect(File('functions/src/auth_kakao.ts').readAsStringSync(), contains('passVerifiedAt: s.pass["verifiedAt"]'));
       // R1.1 predicate 유지
       expect(cf, contains('srvIsForeignIdentity('));
     });

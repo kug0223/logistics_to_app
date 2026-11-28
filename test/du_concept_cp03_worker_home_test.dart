@@ -56,6 +56,7 @@ import 'package:ALfit/utils/text_layout.dart';
 
 import 'support/checkin_contract_fixture.dart';
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake with MockPlatformInterfaceMixin implements FirebaseAppPlatform {
   @override
@@ -452,7 +453,8 @@ void main() {
   double vOffset(WidgetTester t) => t.state<ScrollableState>(vScroll().first).position.pixels;
   Rect viewRect(WidgetTester t) => t.getRect(vScroll().first);
   Object hOffset(WidgetTester t) {
-    final h = find.descendant(of: semLabel('일할 날짜 선택'), matching: find.byType(Scrollable));
+    // [판정285 갱신 2026-11-26] 날짜 그룹 의미 이름 '일할 날짜 선택' → '날짜별 일정과 일자리'.
+    final h = find.descendant(of: semLabel('날짜별 일정과 일자리'), matching: find.byType(Scrollable));
     return h.evaluate().isEmpty ? 'none(띠 균등 배치)' : t.state<ScrollableState>(h.first).position.pixels;
   }
 
@@ -880,7 +882,7 @@ void main() {
     expect(plain('언제 일하고 싶으세요?'), findsNothing, reason: '${v.id} 질문 시각 삭제');
     expect(plain('일할 날짜를 선택해보세요.'), findsNothing, reason: '${v.id} 부제 시각 삭제');
     // 날짜띠: 그룹 의미, 7날짜 각 receiver ≥48×48, 주말 중립색, `날짜 선택` receiver ≥48
-    expect(semLabel('일할 날짜 선택'), findsOneWidget, reason: '${v.id} 날짜 그룹 의미');
+    expect(semLabel('날짜별 일정과 일자리'), findsOneWidget, reason: '${v.id} 날짜 그룹 의미'); // [판정285 갱신 2026-11-26]
     for (var i = 0; i < 7; i++) {
       final dd = _day(i);
       final cell = semPrefix(_kDate(dd));
@@ -895,8 +897,11 @@ void main() {
     expect(pick, findsOneWidget, reason: '${v.id} 날짜 선택');
     expect(t.getSize(pick).height, greaterThanOrEqualTo(48));
     expect(t.getSize(pick).width, greaterThanOrEqualTo(48));
-    // 날짜 →16→ 띠
-    expect(t.getRect(semLabel('일할 날짜 선택')).top - rd.bottom, closeTo(16, 0.01), reason: '${v.id} 날짜 →16→ 띠');
+    // [판정285 갱신 2026-11-26] CP03 Q2 대체 — 띠는 머리 날짜 아래가 아니라 시작 준비 뒤 `날짜별 일정 · 일자리` 섹션이다.
+    //   머리 날짜보다 아래 · 섹션 제목 →12→ 띠(섹션 리듬).
+    final stripTop = t.getRect(semLabel('날짜별 일정과 일자리')).top;
+    expect(stripTop > rd.bottom, isTrue, reason: '${v.id} 띠는 머리 날짜 아래');
+    expect(stripTop - t.getRect(plain('날짜별 일정 · 일자리')).bottom, closeTo(12, 0.01), reason: '${v.id} 섹션 제목 →12→ 띠');
   }
 
   /// 보이는 블록 사이 간격: 같은 수준 카드끼리 12, 그 밖 24.
@@ -954,21 +959,23 @@ void main() {
             expectHeader(t, v, c.name);
             expectRhythm(t, v, sl);
             final y = <String, double>{
-              for (final s in ['오늘의 약속', '새로 확정된 근무', '내 지원 현황', '둘러볼 일자리', '이번 주 일정', '수입 현황', '내 근무 기록',
+              for (final s in ['오늘의 약속', '새로 확정된 근무', '날짜별 일정 · 일자리', '추천 일자리', '내 지원 현황', '수입 현황', '내 근무 기록',
                 '퇴근 기록이 필요해요', '$_bizName에서 신분증 열람을 요청했어요'])
                 if (plain(s).evaluate().isNotEmpty) s: t.getRect(plain(s).first).top,
             };
-            // 섹션 순서(Q2): 미퇴근 → ID → 약속 → 내 지원 현황 → 발견 → 이번 주 일정 → 수입 → 내 근무 기록
-            final order = ['퇴근 기록이 필요해요', '$_bizName에서 신분증 열람을 요청했어요', '오늘의 약속', '새로 확정된 근무', '내 지원 현황',
-              '둘러볼 일자리', '이번 주 일정', '수입 현황', '내 근무 기록'].where(y.containsKey).toList();
+            // [판정285 갱신 2026-11-26] 섹션 순서(판정285 §2): 미퇴근 → ID → 약속 → (시작 준비) → 날짜 영역 → 내 지원 현황 → 발견 → 수입 → 내 근무 기록
+            //   `이번 주 일정` 섹션은 지웠다.
+            final order = ['퇴근 기록이 필요해요', '$_bizName에서 신분증 열람을 요청했어요', '오늘의 약속', '새로 확정된 근무', '날짜별 일정 · 일자리',
+              '추천 일자리', '내 지원 현황', '수입 현황', '내 근무 기록'].where(y.containsKey).toList(); // [판정286 갱신 2026-11-26] 일자리 섹션(추천 일자리)은 날짜 영역 바로 아래
             for (var i = 1; i < order.length; i++) {
               expect(y[order[i]]! > y[order[i - 1]]!, isTrue, reason: '${v.id} 순서 ${order[i - 1]} < ${order[i]}');
             }
-            for (final s in ['내 지원 현황', '이번 주 일정', '수입 현황', '내 근무 기록']) {
+            for (final s in ['날짜별 일정 · 일자리', '내 지원 현황', '수입 현황', '내 근무 기록']) { // [판정285 갱신 2026-11-26] 이번 주 일정 → 날짜 영역
               expect(plain(s), findsOneWidget, reason: '${v.id} 섹션 $s');
               expect(para(t, plain(s)).text.style?.fontSize, 20, reason: '${v.id} 섹션 제목 20');
             }
-            for (final a in ['전체 보기', '일정 보기', '${_today.year}년 ${_today.month}월']) {
+            // [판정285 갱신 2026-11-26] `일정 보기`(이번 주 일정 머리 행동)는 섹션과 함께 지웠다.
+            for (final a in ['전체 보기', '${_today.year}년 ${_today.month}월']) {
               final f = semLabel(a);
               expect(f, findsOneWidget, reason: '${v.id} 행동 $a');
               expect(t.getSize(f).height, greaterThanOrEqualTo(48));
@@ -981,19 +988,21 @@ void main() {
             // ── [C1] 의미 트리(이 사례의 시작 위치 — 본문 SingleChildScrollView 는 화면 밖 node 도 트리에 둔다) ──
             final id = '${c.state}-${v.id}';
             final semRec = <String, Object?>{};
-            for (final a in ['전체 보기', '일정 보기', '${_today.year}년 ${_today.month}월']) {
+            for (final a in ['전체 보기', '${_today.year}년 ${_today.month}월']) {
               semRec[a] = expectNode(t, semLabel(a), '$id 섹션 행동 $a', label: a, tap: true);
               expectSameCallback(t, semLabel(a), '$id 섹션 행동 $a', present: true);
             }
-            // 날짜: 공고 0(publishedTOs 비어 있음) — 확정 근무가 있는 날만 탭 가능(기존 술어). 그 밖은 enabled=false·tap 없음.
+            // [판정285 갱신 2026-11-26] C285-01 — 공고·일정과 무관하게 모든 날짜가 선택 가능(enabled·tap). 의미 이름에 확정/지원 중 존재를 함께 읽는다.
             final confirmed = switch (c.state) { 'today' || 'overnight' || 'contract' => {0}, 'newConfirm' => {2}, _ => <int>{} };
+            final pendingDays = c.state == 'empty' ? {3} : <int>{};
             for (var i = 0; i < 7; i++) {
               final dd = _day(i);
               final on = confirmed.contains(i);
               final cell = semPrefix(_kDate(dd));
               semRec[_kDate(dd)] = expectNode(t, cell, '$id ${_kDate(dd)}',
-                  label: [_kDate(dd), if (on) '확정 근무 있음'].join(', '), tap: on, enabled: on, selected: false);
-              expectSameCallback(t, cell, '$id ${_kDate(dd)}', present: on);
+                  label: [_kDate(dd), if (i == 0) '오늘', if (on) '확정 근무 있음', if (pendingDays.contains(i)) '지원 중 있음'].join(', '),
+                  tap: true, enabled: true, selected: false);
+              expectSameCallback(t, cell, '$id ${_kDate(dd)}', present: true);
             }
             semRec['날짜 선택'] = expectNode(t, semLabel('날짜 선택'), '$id 날짜 선택', label: '날짜 선택', tap: true);
             expectSameCallback(t, semLabel('날짜 선택'), '$id 날짜 선택', present: true);
@@ -1006,13 +1015,16 @@ void main() {
             if (id == 'today-B') {
               // 오늘(확정) 날짜 선택 → 선택 CTA 등장 → 다시 → 해제
               final cell = semPrefix(_kDate(_today));
-              final pickCta = ctaButton('${_today.month}월 ${_today.day}일 일자리 0개 보기');
+              // [판정285 갱신 2026-11-26] CTA 글자 = 「M월 D일 일자리 보기」 · 같은 날 재탭 = 선택 유지 · `날짜 해제` 로만 해제.
+              final pickCta = ctaButton('${_today.month}월 ${_today.day}일 일자리 보기');
               expect(pickCta, findsNothing);
               await dispatchTap(t, cell);
               expect(node(t, cell).getSemanticsData().flagsCollection.isSelected, isTrue, reason: '$id 의미 tap → 선택');
               expect(pickCta, findsOneWidget, reason: '$id 선택 CTA 등장');
               await dispatchTap(t, cell);
-              expect(node(t, cell).getSemanticsData().flagsCollection.isSelected, isFalse, reason: '$id 의미 tap → 해제');
+              expect(node(t, cell).getSemanticsData().flagsCollection.isSelected, isTrue, reason: '$id 의미 재tap → 선택 유지');
+              await dispatchTap(t, semLabel('날짜 해제'));
+              expect(node(t, cell).getSemanticsData().flagsCollection.isSelected, isFalse, reason: '$id 날짜 해제 → 해제');
               expect(pickCta, findsNothing, reason: '$id 해제 → CTA 없음');
               // 마지막 날짜까지 가로 도달 · receiver ≥48 · 중심 hit (가로 띠 = B 만)
               final last = semPrefix(_kDate(_day(6)));
@@ -1035,7 +1047,7 @@ void main() {
               expect(find.byType(BottomSheet), findsNothing);
               await dispatchTap(t, semLabel('날짜 선택'));
               expect(find.byType(BottomSheet), findsOneWidget, reason: '$id 의미 tap → 날짜 시트');
-              expect(find.text('공고 있음'), findsOneWidget, reason: '$id 시트 범례');
+              expect(find.text('공고 있음'), findsNothing, reason: '$id 시트 공고 범례 0([판정286 갱신 2026-11-26] 날짜를 고르는 시트)');
               await t.tapAt(Offset(v.size.width / 2, 8));
               _taps++;
               await settle(t, 6);
@@ -1045,8 +1057,10 @@ void main() {
                   reason: '$id 선택 없음 그대로');
             }
             if (id == 'fail-W') {
-              // 대표 섹션 행동 — `일정 보기` 의미 tap → 기존 탭 목적지(일정 탭). 무거운 목적지(전체 보기·수입)는 콜백 동일성만.
-              await dispatchTap(t, semLabel('일정 보기'));
+              // [판정285 갱신 2026-11-26] `일정 보기` 는 섹션과 함께 지웠다 — 선택일 「내 일정에서 보기」(지원 조회 실패 안내와 함께) 의미 tap → 일정 탭.
+              //   이 하네스의 탭 대역은 날짜 전달 함수를 주지 않으므로 홈은 일반 일정 탭 전환으로 물러난다.
+              await dispatchTap(t, semPrefix(_kDate(_today)));
+              await dispatchTap(t, semLabel('내 일정에서 보기'));
               expect(tabLog.contains('switchToTab:2'), isTrue, reason: '$id 의미 tap → 일정 탭');
             }
 
@@ -1151,14 +1165,12 @@ void main() {
               }
             }
             if (c.state == 'empty') {
-              expect(plain('오늘 확정된 근무가 없어요'), findsOneWidget, reason: '${v.id} 정상0 안내');
-              final btn = ctaButton('일자리 찾기');
-              expect(btn, findsOneWidget, reason: '${v.id} 정상0 보조 탐색');
-              expect(t.getSize(btn).height, greaterThanOrEqualTo(48));
-              expect(t.getSize(btn).width, greaterThanOrEqualTo(48));
-              await reach(t, btn);
-              await tapCenter(t, btn);
-              expect(tabLog.contains('switchToTab:1'), isTrue, reason: '${v.id} 일자리 찾기 → 일자리 탭');
+              // [판정285 갱신 2026-11-26] CP03 Q7 대체 — 정상0 큰 약속 카드·`일자리 찾기` 를 날짜 영역의 짧은 안내로 합쳤다(같은 조건).
+              final notice = find.byWidgetPredicate((w) => w is Text && TextLayout.plain(w.data ?? '') == '오늘 확정된 근무가 없어요');
+              expect(notice, findsOneWidget, reason: '${v.id} 정상0 안내');
+              expect(t.getRect(notice).top > t.getRect(plain('날짜별 일정 · 일자리')).top, isTrue, reason: '${v.id} 안내는 날짜 영역 안');
+              expect(plain('오늘의 약속'), findsNothing, reason: '${v.id} 정상0 큰 카드 0');
+              expect(ctaButton('일자리 찾기'), findsNothing, reason: '${v.id} 정상0 보조 탐색 버튼 0');
               // 긴 이름 — 전문·자연 높이·화면 안(헤더 측정은 expectHeader)
               // [C1 r2] 표시 문자열은 keepWords(낱말 안 U+2060) — 제어문자를 뺀 원문과 정확 비교한다(전문·의미 원문·낱말 줄은 그대로).
               expect(TextLayout.plain(para(t, plain('$_longName님')).text.toPlainText(includeSemanticsLabels: false)), '$_longName님');
@@ -1179,7 +1191,7 @@ void main() {
               final err = plain('지원 현황을 불러오지 못했어요');
               expect(err, findsOneWidget, reason: '${v.id} 지원 조회 실패 표면');
               final retry = find.ancestor(
-                  of: find.descendant(of: find.ancestor(of: err, matching: find.byType(Column)).first, matching: find.text('다시 시도')),
+                  of: find.descendant(of: find.ancestor(of: err, matching: find.byType(Column)).first, matching: findVisibleText('다시 시도')),
                   matching: find.byType(GestureDetector)).first;
               expect(t.getSize(retry).height, greaterThanOrEqualTo(48), reason: '${v.id} 다시 시도 ≥48');
               expect(t.getSize(retry).width, greaterThanOrEqualTo(48));
@@ -1188,17 +1200,21 @@ void main() {
             if (c.state == 'today' && v.id == 'W') {
               // 탐색 날짜 선택 → 선택 CTA(≥52) → 일자리 탭에 날짜 전달
               await tapCenter(t, semPrefix(_kDate(_today)));
-              final pickCta = ctaButton('11월 ${_today.day}일 일자리 0개 보기');
+              final pickCta = ctaButton('11월 ${_today.day}일 일자리 보기'); // [판정285 갱신 2026-11-26] 버튼 글자 「M월 D일 일자리 보기」
               expect(pickCta, findsOneWidget, reason: 'W 선택 CTA');
               expect(t.getSize(pickCta).height, greaterThanOrEqualTo(52));
               await tapCenter(t, pickCta);
               expect(tabLog.contains('switchToTabWithDate:1/${_today.year}-${_today.month}-${_today.day}'), isTrue);
             }
             if (c.state == 'newConfirm') {
-              final f = semLabel('일정 보기');
+              // [판정285 갱신 2026-11-26] `일정 보기` → 확정 날(모레) 선택 뒤 「내 일정에서 보기」(이 대역은 날짜 함수 없음 → 일반 일정 탭).
+              final day = semPrefix(_kDate(_day(2)));
+              await reach(t, day);
+              await tapCenter(t, day);
+              final f = semLabel('내 일정에서 보기');
               await reach(t, f);
               await tapCenter(t, f);
-              expect(tabLog.contains('switchToTab:2'), isTrue, reason: '${v.id} 일정 보기 → 일정 탭');
+              expect(tabLog.contains('switchToTab:2'), isTrue, reason: '${v.id} 내 일정에서 보기 → 일정 탭');
             }
             if (v.id == 'B') {
               final last = plain('내 근무 기록');

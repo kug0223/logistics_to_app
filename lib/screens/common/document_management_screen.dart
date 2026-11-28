@@ -13,6 +13,7 @@ import '../../widgets/common/common_widgets.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/privacy_inline_notice.dart';
 import '../../utils/document_upload_helper.dart';
+import '../../utils/action_guard.dart';
 import '../../utils/identity_identifier.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
@@ -28,6 +29,8 @@ import '../../utils/ocr_verification_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/app_select_field.dart';
+import '../../widgets/common/id_document_kind_sheet.dart';
+import 'foreign_id_document_screen.dart';
 import '../../utils/encryption_helper.dart';
 
 /// 📄 내 서류 관리 화면 (역할별 분기)
@@ -61,6 +64,23 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   void _stage(String message) {
     if (mounted) setState(() => _loadingMessage = message);
   }
+
+  /// [PERF-L42 · 판정291 §4] 전송 진행률 — 같은 백분율이면 다시 그리지 않는다.
+  int _lastUploadPct = -1;
+  void _uploadProgress(double fraction) {
+    final pct = (fraction * 100).clamp(0, 100).round();
+    if (pct == _lastUploadPct) return;
+    _lastUploadPct = pct;
+    _stage('사진을 올리고 있어요 · $pct%');
+  }
+  /// [I9 · impl_16 배정 → impl_17] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 —
+  ///   창이 뜨기 전(다음 프레임) 연타의 두 번째 진입이 창·mutation 을 한 번 더 내지 않게. 본문 함수 이름·내용은 그대로다
+  ///   (서류 계약 시험이 본문을 이름으로 잘라 본다). `_isLoading` 은 진행 표시로 그대로 쓴다.
+  String get _docActionKey => ActionGuard.ownerKey('documentManagement._isLoading', this);
+  Future<void> _deleteBusinessLicenseTap() => ActionGuard.runVoid(_docActionKey, () => _deleteBusinessLicense());
+  Future<void> _uploadIdCardTap() => ActionGuard.runVoid(_docActionKey, () => _uploadIdCard());
+  Future<void> _deleteIdCardTap() => ActionGuard.runVoid(_docActionKey, () => _deleteIdCard());
+  Future<void> _deleteBankInfoTap() => ActionGuard.runVoid(_docActionKey, () => _deleteBankInfo());
   bool _hasChanges = false;
 
   /// [PII-B4-R1.4] 세무정보 등록 상태 — 번호는 담기지 않는다.
@@ -445,7 +465,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: _isLoading ? null : _deleteBusinessLicense,
+                      onPressed: _isLoading ? null : _deleteBusinessLicenseTap,
                       icon: const Icon(Icons.delete, size: 14),
                       label: Text('삭제',
                           style: ResponsiveHelper.smallStyle(context)),
@@ -876,10 +896,36 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   Future<void> _uploadIdCard() async {
     if (_isLoading) return;
     final userProvider = context.read<UserProvider>();
-    final user = userProvider.currentUser;
+    var user = userProvider.currentUser;
     if (user == null) return;
 
+    // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정278 §4 R2-1] 국적 미확정(새 계정 · 서류 전)은 서류 종류를 먼저 고른다.
+    //   'unknown' 을 내국인(isForeign=false)으로 흘리지 않는다. 고른 뒤의 번호 규칙 · OCR · 대조는 기존 그대로다.
+    String? documentKind;
+    if (user.isNationalityUnconfirmed) {
+      final kind = await showIdDocumentKindSheet(context);
+      if (!mounted || kind == null) return;
+      if (kind == IdDocumentKindSheet.foreignRegistration) {
+        // 외국인등록증은 번호 · 이름을 먼저 서버에 등록한다(callableRegisterForeignIdDocument) —
+        //   서버가 nationalityStatus='foreign' 을 쓴 뒤에 사진을 올린다(5~8 규칙).
+        final ok = await Navigator.of(context).push<bool>(MaterialPageRoute(
+          builder: (_) => const ForeignIdDocumentScreen(),
+        ));
+        if (!mounted || ok != true) return;
+        user = userProvider.currentUser;
+        if (user == null) return;
+        if (user.isNationalityUnconfirmed) {
+          ToastHelper.showError('등록 정보를 다시 불러온 뒤 시도해 주세요');
+          return;
+        }
+      } else {
+        documentKind = IdDocumentKindSheet.resident;
+      }
+    }
+
     setState(() => _isLoading = true); // 피커 전에 설정 — 피커 도중 이중 탭 방지
+    // [PERF-L42] 사진을 고른 뒤 압축하는 동안(글자 확인 창이 뜨기 전) 빈 스피너만 있었다 — 단계를 말한다.
+    _stage('사진을 준비하고 있어요');
 
     String? newIdCardPath; // [M-19] CF 실패 시 Storage orphan 방지 (path 기반)
     try {
@@ -936,7 +982,10 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       bool uploadOk = false;
       try {
         // [BUG-ID-01] uploadImageNoUrl — getDownloadURL() 미호출로 permanent URL 생성 방지
-        uploadOk = await _storageService.uploadImageNoUrl(imagePath, storagePath);
+        //   [PERF-L42] 보낸 비율을 단계 문구로 보인다.
+        _lastUploadPct = -1;
+        uploadOk = await _storageService.uploadImageNoUrl(imagePath, storagePath,
+            onProgress: _uploadProgress);
       } finally {
         // TMP-01: pickAndVerifyIdCard가 반환한 임시 압축 파일.
         try { await File(imagePath).delete(); } catch (_) {}
@@ -960,6 +1009,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         'storagePath': storagePath,
         'selfCheck': picked.selfCheck,
         'attemptSeq': attemptSeq,
+        // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · §5] 국적 미확정 사용자가 고른 서류 종류 — 서버가 후보 종류(1~4/5~8)와
+        //   nationalityStatus(domestic · id_document_declared) 판정에 쓴다. 옛 계정은 보내지 않는다(기존 판정 그대로).
+        if (documentKind != null) 'documentKind': documentKind,
       });
       newIdCardPath = null; // CF 성공 — Storage 정리 불필요
 
@@ -987,7 +1039,16 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
           debugPrint('⚠️ 업로드 정리 요청 실패 (무시): $e');
         }
       }
-      if (mounted) ToastHelper.showError('신분증 등록에 실패했습니다');
+      if (mounted) {
+        // [서버296 · impl_60] 0바이트(빈) 신분증 파일은 서버가 `ID_CARD_EMPTY` 로 거절한다 — 다시 올리면 되는 일이니
+        //   일반 실패가 아니라 무엇을 하면 되는지 말한다.
+        final emptyFile = e is FirebaseFunctionsException &&
+            e.details is Map &&
+            (e.details as Map)['code'] == 'ID_CARD_EMPTY';
+        ToastHelper.showError(emptyFile
+            ? '신분증 사진 파일이 비어 있어요. 다시 찍거나 골라 주세요.'
+            : '신분증 등록에 실패했습니다');
+      }
     } finally {
       if (mounted) setState(() { _isLoading = false; _loadingMessage = null; });
     }
@@ -1338,7 +1399,17 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
           // [§28] 외국인은 수정 CTA 없음 — 변경은 신원 재확인이 함께 가야 한다.
           //   [R1.4.1 §12] 단 하나의 예외: 수집이 꺼져 있던 때 가입해
           //   세무 레코드가 없는 계정은 여기서 한 번 등록할 수 있다.
-          if (isForeign && _needsForeignTaxRecovery)
+          // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · §5] 국적 미확정이면 국내 번호 등록으로 보내지 않는다 — 서버도 거절한다.
+          if (user.isNationalityUnconfirmed)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                TextLayout.keepWords('신분증 또는 외국인등록증을 먼저 등록하면 세무정보를 등록할 수 있어요.'),
+                semanticsLabel: '신분증 또는 외국인등록증을 먼저 등록하면 세무정보를 등록할 수 있어요.',
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+              ),
+            )
+          else if (isForeign && _needsForeignTaxRecovery)
             _flatPrimaryButton(
               text: '세무정보 등록하기',
               onPressed: _isLoading ? null : () => _openTaxIdentitySheet(user),
@@ -1524,7 +1595,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
             Row(
               children: [
                 TextButton(
-                  onPressed: _isLoading ? null : _uploadIdCard,
+                  onPressed: _isLoading ? null : _uploadIdCardTap,
                   style: TextButton.styleFrom(
                     padding: EdgeInsets.zero,
                     // [DU1 구현129 C128-1] 글자 링크도 터치 최소 48×48(구현128 관측: 높이 N 19 / B 37). 글자·색·배치는 그대로.
@@ -1539,7 +1610,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 ),
                 const Spacer(),
                 TextButton(
-                  onPressed: _isLoading ? null : _deleteIdCard,
+                  onPressed: _isLoading ? null : _deleteIdCardTap,
                   style: TextButton.styleFrom(
                     padding: EdgeInsets.zero,
                     // [DU1 구현129 C128-1] 글자 링크도 터치 최소 48×48(구현128 관측: 높이 N 19 / B 37). 글자·색·배치는 그대로.
@@ -1560,11 +1631,18 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 ),
               ],
             )
+          else if (user.isNationalityUnconfirmed)
+            // [ALFIT-AUTH-KAKAO-ONBOARDING.1] 국적 미확정(새 계정) — 두 서류를 같은 틀로 받는다는 것을 말한다.
+            _flatPrimaryButton(
+              text: '신분증 · 외국인등록증 등록하기',
+              onPressed: _isLoading ? null : _uploadIdCardTap,
+              icon: Icons.camera_alt,
+            )
           else
             // 미등록: 신분증 등록하기 flat primary
             _flatPrimaryButton(
               text: '신분증 등록하기',
-              onPressed: _isLoading ? null : _uploadIdCard,
+              onPressed: _isLoading ? null : _uploadIdCardTap,
               icon: Icons.camera_alt,
             ),
         ],
@@ -1718,7 +1796,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 ),
                 const Spacer(),
                 TextButton(
-                  onPressed: _isLoading ? null : _deleteBankInfo,
+                  onPressed: _isLoading ? null : _deleteBankInfoTap,
                   style: TextButton.styleFrom(
                     padding: EdgeInsets.zero,
                     // [DU1 구현129 C128-1] 글자 링크도 터치 최소 48×48(구현128 관측: 높이 N 19 / B 37). 글자·색·배치는 그대로.
@@ -1765,6 +1843,12 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
     // [V3 FOREIGN HOLDER] isForeign + 기존 accountHolder 전달
     final user = context.read<UserProvider>().currentUser;
+    // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · server_api_1 §6] 국적 미확정이면 예금주 기준(이름 출처)을 정할 수 없다 —
+    //   서버도 NATIONALITY_UNCONFIRMED 로 거절한다. 입력을 받기 전에 서류 먼저라고 말한다.
+    if (user != null && user.isNationalityUnconfirmed) {
+      ToastHelper.showInfo('신분증 또는 외국인등록증을 먼저 등록해 주세요');
+      return;
+    }
     final isForeign = user?.isForeign ?? false;
     final initialAccountHolder = user?.accountHolder;
 
@@ -1796,6 +1880,22 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   }
 
   /// 통장사본 업로드
+  /// [AUD-5 ②-3] callable 실패가 '서버가 기록하지 않았음' 이 확정인 오류인가(입력·권한·상태 거절 등).
+  ///   시간 초과 · 연결 끊김 · 내부 오류 · 알 수 없음 · 취소는 결과를 모른다 — false.
+  static bool _bankbookMarkDefinitelyFailed(Object e) =>
+      e is FirebaseFunctionsException &&
+      const {
+        'invalid-argument',
+        'failed-precondition',
+        'permission-denied',
+        'not-found',
+        'unauthenticated',
+        'already-exists',
+        'resource-exhausted',
+        'out-of-range',
+        'unimplemented',
+      }.contains(e.code);
+
   Future<void> _uploadBankbookImage() async {
     if (_isLoading) return;
     final userProvider = context.read<UserProvider>();
@@ -1803,6 +1903,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     if (user == null) return;
 
     setState(() => _isLoading = true); // 피커 전에 설정 — 피커 도중 이중 탭 방지
+    _stage('사진을 준비하고 있어요'); // [PERF-L42] 압축 구간 단계 문구
 
     // [R8-P5] orphan 추적을 URL 이 아니라 Storage 경로로 한다 —
     //   업로드가 더 이상 download URL 을 만들지 않으므로 지울 대상도 경로다.
@@ -1838,7 +1939,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       final storagePath = 'users/${user.uid}/bankbook_${DateTime.now().millisecondsSinceEpoch}.jpg';
       bool uploadOk = false;
       try {
-        uploadOk = await _storageService.uploadImageNoUrl(imagePath, storagePath);
+        _lastUploadPct = -1; // [PERF-L42] 보낸 비율을 단계 문구로
+        uploadOk = await _storageService.uploadImageNoUrl(imagePath, storagePath,
+            onProgress: _uploadProgress);
       } finally {
         // TMP-01: pickAndVerifyBankbook이 반환한 임시 압축 파일.
         try { await File(imagePath).delete(); } catch (_) {}
@@ -1875,7 +1978,13 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       final prev = (markResult.data is Map)
           ? (markResult.data as Map)['previousBankbookPath'] as String?
           : null;
-      if (prev != null && prev.isNotEmpty) {
+      // [PERF-L42] 서버(callableMarkBankbookVerified)가 같은 거래에서 옛 경로를 정리 목록에 올리고
+      //   응답 전에 지운다(functions/src/index.ts — arrayUnion(safePrevPath) · await srvDrainBankbookCleanup).
+      //   그래서 평소에는 클라이언트가 같은 파일을 한 번 더 지우지 않는다. 서버가 아직 못 지웠다고 알릴 때만
+      //   (`cleanupPending == true`) 예전처럼 한 번 지운다 — 지워도 지우지 않아도 안전하다(서버가 다시 시도한다).
+      final cleanupPending = (markResult.data is Map) &&
+          (markResult.data as Map)['cleanupPending'] == true;
+      if (cleanupPending && prev != null && prev.isNotEmpty) {
         try {
           await _storageService.deleteImage(prev);
         } catch (e) {
@@ -1890,10 +1999,26 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       ToastHelper.showSuccess('통장사본이 등록되었습니다');
     } catch (e) {
       // [R8-P5] CF 실패 시 업로드된 통장사본 Storage orphan 방지 (경로 기반 — 신분증과 동일)
+      // [AUD-5 ②-3] 단, **서버가 기록하지 않았다고 확정된 실패**일 때만 지운다. 시간 초과 · 연결 끊김처럼 결과를 모르는
+      //   실패에서 지우면, 서버가 이미 현재 통장사본으로 등록한 파일을 앱이 지워 users 는 '등록' 인데 파일이 없게 됐다.
+      //   결과를 모르면 지우지 않고 users 문서를 다시 읽어 실제로 등록됐는지 확인한다(등록됐으면 성공으로 맞춘다).
+      var committed = false;
       if (newBankbookPath != null) {
-        try { await _storageService.deleteImage(newBankbookPath); } catch (_) {}
+        if (_bankbookMarkDefinitelyFailed(e)) {
+          try { await _storageService.deleteImage(newBankbookPath); } catch (_) {}
+        } else {
+          try {
+            await userProvider.refreshCurrentUser();
+            committed = userProvider.currentUser?.bankbookImagePath == newBankbookPath;
+          } catch (_) {}
+        }
       }
-      if (mounted) ToastHelper.showError('통장사본 등록에 실패했습니다');
+      if (committed) {
+        _hasChanges = true;
+        if (mounted) ToastHelper.showSuccess('통장사본이 등록되었습니다');
+      } else if (mounted) {
+        ToastHelper.showError('통장사본 등록에 실패했습니다');
+      }
     } finally {
       if (mounted) setState(() { _isLoading = false; _loadingMessage = null; });
     }

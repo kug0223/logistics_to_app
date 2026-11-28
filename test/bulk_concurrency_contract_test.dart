@@ -93,8 +93,14 @@ void main() {
       final i = flat.indexOf('type: "applicationConfirmed"');
       expect(i > 0, true);
       final block = flat.substring(i - 300, i + 400);
-      expect(block.contains('srvPersistNotificationWithId(uid,'), true,
-          reason: '수신자가 그 지원서의 근로자여야 한다');
+      // [L56 r4] 확정 알림은 batch2 의 direct 작업으로도 나간다(수신자 = recipientUid).
+      // [판정292] 정확히 하나: 직접 호출(수신자 uid) 또는 batch2 작업(recipientUid: uid) — 둘 다 없음·둘 다 있음 각각 실패.
+      // 직접 호출은 확정 함수 본문 전체에서 본다(블록 창 밖에 끼어든 이중 발송도 잡게).
+      final bcDirect = flat.contains('srvPersistNotificationWithId(uid,');
+      final bcJob = flat.contains('batch2.create(cfJobRef, srvNotificationJobDoc("direct", {') &&
+          block.contains('recipientUid: uid,');
+      expect(bcDirect || bcJob, true, reason: '수신자가 그 지원서의 근로자여야 한다');
+      expect(bcDirect && bcJob, false, reason: '직접 호출과 작업이 함께 있다 — 이중 발송 가능');
       expect(block.contains('applicationId'), true,
           reason: 'deep link가 어느 지원서인지 가리켜야 한다');
     });

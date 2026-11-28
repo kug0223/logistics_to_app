@@ -11,6 +11,7 @@ import '../../../utils/resign_auto_approval.dart';
 import '../../../widgets/common/loading_button.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
+import '../../../widgets/common/app_empty_state.dart';
 
 /// 퇴사 요청 관리 다이얼로그 (관리자용)
 class ResignRequestManagementDialog extends StatefulWidget {
@@ -34,6 +35,33 @@ class _ResignRequestManagementDialogState
   final FirestoreService _firestoreService = FirestoreService();
   List<_ResignRequestWithUser> _requests = [];
 
+  /// [impl_27a · L48 같은 꼴] 읽기 차례 — 마지막에 시작한 읽기만 목록에 앉는다(늦게 끝난 옛 읽기가 처리 뒤 새 목록을 덮지 않게).
+  int _loadGen = 0;
+
+  /// [impl_27a] 한 번이라도 목록을 앉혔는가 — 그 뒤의 다시 읽기(처리 뒤·당겨서 새로고침)는 목록을 지우지 않고
+  ///   얇은 진행 표시 + 누르기 잠금으로 보인다. 첫 읽기는 예전처럼 로딩 화면이다.
+  bool _hasLoadedOnce = false;
+
+  /// [impl_27a] 진행 중인 읽기 수 — 겹친 읽기에서 먼저 끝난 옛 읽기가 로딩(잠금)을 내리지 않게.
+  int _loadsInFlight = 0;
+
+  @override
+  void setLoading(bool val) {
+    if (val) {
+      _loadsInFlight++;
+    } else {
+      if (_loadsInFlight > 0) _loadsInFlight--;
+      if (_loadsInFlight > 0) return;
+    }
+    super.setLoading(val);
+  }
+
+  bool get _reloadingKeepRows => isLoading && _hasLoadedOnce;
+
+  /// [impl_54 · AUD-4 H5] 첫 읽기가 실패했다 — 빈 목록('퇴사 요청이 없습니다')이 아니라 실패 화면 + 다시 시도.
+  ///   이미 보이던 목록이 있으면 그대로 두고 토스트만(기존 errorMessage).
+  bool _loadFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -41,10 +69,18 @@ class _ResignRequestManagementDialogState
   }
 
   /// 퇴사 요청 목록 로드
-  Future<void> _loadResignRequests() => runWithLoading(() async {
-    final applications = await _firestoreService.getResignRequests(
-      widget.businessId,
-    );
+  Future<void> _loadResignRequests() {
+    final gen = ++_loadGen;
+    return runWithLoading(() async {
+    final List<ApplicationModel> applications;
+    try {
+      applications = await _firestoreService.getResignRequests(
+        widget.businessId,
+      );
+    } catch (_) {
+      if (mounted && gen == _loadGen) setState(() => _loadFailed = true);
+      rethrow;
+    }
 
     final uniqueUids = applications.map((app) => app.uid).toSet().toList();
     // [PII-DOC-R0.1 / INV-1] 퇴사 요청 목록 — 이름·연락처만 쓴다.
@@ -70,9 +106,15 @@ class _ResignRequestManagementDialogState
       return bDate.compareTo(aDate);
     });
 
-    if (mounted) setState(() => _requests = results);
+    if (!mounted || gen != _loadGen) return; // 더 늦게 시작한 읽기가 있다
+    setState(() {
+      _requests = results;
+      _hasLoadedOnce = true;
+      _loadFailed = false;
+    });
     debugPrint('✅ 퇴사 요청 ${results.length}건 로드 완료');
   }, errorTag: '퇴사 요청 로드', errorMessage: '요청 목록을 불러올 수 없습니다');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -82,9 +124,22 @@ class _ResignRequestManagementDialogState
           title: '퇴사 요청 관리',
           onClose: () => Navigator.pop(context),
         ),
+        // [impl_27a] 처리 뒤 다시 읽는 중 — 목록은 그대로, 얇은 진행 표시 + 누르기 잠금.
+        if (_reloadingKeepRows)
+          const LinearProgressIndicator(key: ValueKey('resign-refresh-after-mutation'), minHeight: 2),
         Expanded(
-          child: isLoading
+          child: AbsorbPointer(
+            absorbing: _reloadingKeepRows,
+            child: isLoading && !_hasLoadedOnce
               ? const LoadingWidget()
+              : (_loadFailed && !_hasLoadedOnce)
+                  ? AppEmptyState(
+                      key: const ValueKey('resign-load-failed'),
+                      icon: Icons.error_outline,
+                      title: '퇴사 요청을 불러오지 못했어요',
+                      subtitle: '잠시 뒤 다시 시도해 주세요.',
+                      action: TextButton(onPressed: _loadResignRequests, child: const Text('다시 시도')),
+                    )
               : _requests.isEmpty
                   ? _buildEmptyState()
                   : Builder(builder: (context) {
@@ -96,6 +151,7 @@ class _ResignRequestManagementDialogState
                             RepaintBoundary(child: _buildRequestCard(_requests[index], now)),
                       );
                     }),
+          ),
         ),
       ],
     );

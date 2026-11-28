@@ -294,6 +294,12 @@ class AppColors {
   ///   시안 로고 잉크 관측(중앙색 #1A42E8)을 참고한 설계값이다(원토큰 복원 아님). 글자·행동·버튼·선택 색은 brand 그대로다.
   static const Color brandInk = Color(0xFF1A42E8);
 
+  // --- [ALFIT-AUTH-KAKAO-ONBOARDING.1] 카카오 로그인 버튼 전용 ---
+  //   카카오 로그인 디자인 가이드의 버튼 색(바탕 #FEE500 · 글자 검정 85%)이다. 이 버튼에만 쓴다.
+  //   kakaoLabel 은 kakaoContainer 위 약 13:1(불투명 환산 #262626).
+  static const Color kakaoContainer = Color(0xFFFEE500);
+  static const Color kakaoLabel = Color(0xD9000000);
+
   // --- [CP01] Concept 01 대표 화면 토큰 ---
   // 정본: records/reports/DU_concept_precise_spec_audit_2026-11-11.md §4–§7. 대표 화면·지정 부품만 opt-in 으로 쓴다.
   // 시안 관측색을 그대로 옮긴 것이 아니라 대비를 맞춘 설계값이다(대비는 불투명 sRGB 계산값).

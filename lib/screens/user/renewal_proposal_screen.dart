@@ -21,6 +21,7 @@ import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../utils/action_guard.dart';
 
 class RenewalProposalScreen extends StatefulWidget {
   /// 알림 deep link 로 들어온 경우의 제안 id. 없으면 목록 전체를 본다.
@@ -55,7 +56,11 @@ class _RenewalProposalScreenState extends State<RenewalProposalScreen> {
     _load();
   }
 
+  /// [impl_27b · L48 같은 꼴] 읽기 차례 — 늦게 끝난 옛 읽기가 수락·거절 뒤 새 목록을 덮지 않게.
+  int _loadGen = 0;
+
   Future<void> _load() async {
+    final gen = ++_loadGen;
     setState(() {
       _loading = true;
       _hasError = false;
@@ -77,7 +82,7 @@ class _RenewalProposalScreenState extends State<RenewalProposalScreen> {
       final focusExpired = focusId != null &&
           !actionable.any((p) => p.id == focusId);
 
-      if (!mounted) return;
+      if (!mounted || gen != _loadGen) return;
       setState(() {
         _proposals = actionable;
         _focusExpired = focusExpired;
@@ -85,7 +90,7 @@ class _RenewalProposalScreenState extends State<RenewalProposalScreen> {
       });
     } catch (e) {
       debugPrint('❌ [연장제안] 조회 실패: $e');
-      if (!mounted) return;
+      if (!mounted || gen != _loadGen) return;
       // 못 불러온 것을 "제안 없음"으로 말하지 않는다.
       setState(() {
         _loading = false;
@@ -94,7 +99,12 @@ class _RenewalProposalScreenState extends State<RenewalProposalScreen> {
     }
   }
 
-  Future<void> _accept(RenewalProposalModel p) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_acceptLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _accept(RenewalProposalModel p) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('renewalProposal._busy', this), () => _acceptLocked(p));
+
+  Future<void> _acceptLocked(RenewalProposalModel p) async {
     if (_busy) return;
     final ok = await DialogHelper.showConfirm(
       context,
@@ -125,7 +135,12 @@ class _RenewalProposalScreenState extends State<RenewalProposalScreen> {
     }
   }
 
-  Future<void> _decline(RenewalProposalModel p) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_declineLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _decline(RenewalProposalModel p) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('renewalProposal._busy', this), () => _declineLocked(p));
+
+  Future<void> _declineLocked(RenewalProposalModel p) async {
     if (_busy) return;
     final ok = await DialogHelper.showConfirm(
       context,

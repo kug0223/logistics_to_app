@@ -161,7 +161,7 @@ Future<void> _pump(WidgetTester tester, Widget screen) async {
 
 Iterable<LoadingButton> _checkInButtons(WidgetTester tester) => tester
     .widgetList<LoadingButton>(find.ancestor(
-        of: find.text('출근하기'), matching: find.byType(LoadingButton)));
+        of: findVisibleText('출근하기'), matching: find.byType(LoadingButton)));
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -183,7 +183,7 @@ void main() {
                 reconfirmResponder: (_, __) async => true));
         expect(findVisibleText('골든패스 사업장'), findsWidgets, // [DU253] 보이는 글자 기준
             reason: '근무 카드는 남는다(기록을 숨기지 않는다)');
-        expect(find.text('출근하기'), findsNothing);
+        expect(findVisibleText('출근하기'), findsNothing);
         expect(find.text('네, 출근합니다'), findsNothing);
         expect(find.text('아니요, 취소할게요'), findsNothing);
         expect(find.text(_kEnded), findsOneWidget);
@@ -216,7 +216,7 @@ void main() {
         now = now.add(const Duration(seconds: 20));
         await t.pump(const Duration(seconds: 20));
         await t.pump();
-        expect(find.text('출근하기'), findsNothing);
+        expect(findVisibleText('출근하기'), findsNothing);
         expect(find.text('네, 출근합니다'), findsNothing);
         expect(find.text(_kEnded), findsOneWidget);
       });
@@ -229,7 +229,7 @@ void main() {
                     att: {'zdn7': _checkedIn(d, 'zdn7', 20)}),
                 clock: () => _dev(_kst(2026, 10, 20, 14, 58), d),
                 reconfirmResponder: (_, __) async => true));
-        expect(find.text('퇴근하기'), findsOneWidget);
+        expect(findVisibleText('퇴근하기'), findsOneWidget);
         expect(find.text(_kEnded), findsNothing);
       });
 

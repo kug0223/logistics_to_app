@@ -134,19 +134,19 @@ void main() {
         find.descendant(of: tiles.at(i), matching: find.byType(ListTile)).first
     ];
     // r1: CommonWidgets.primaryButton 은 ButtonStyleButton 이 아니라 Container > InkWell 이다 — InkWell 을 receiver 로 본다
-    final next = find.ancestor(of: find.text('다음'), matching: find.byType(InkWell)).first;
+    final next = find.ancestor(of: findVisibleText('다음'), matching: find.byType(InkWell)).first;
     final nextW = t.widget<InkWell>(next);
     // [DU322] 단계 라벨이 낱말 묶음 표시라 보이는 글자로 센다(DU255)
     final steps = ['업종 선택', '기본 정보', '상세 정보'].map((s) => '$s=${findVisibleText(s).evaluate().length}').join(',');
     final cats = ['회사', '매장', '기타'].map((s) => '$s=${find.text(s).evaluate().length}').join(',');
     final report = 'mq padding=${mq.padding} viewPadding=${mq.viewPadding} viewInsets=${mq.viewInsets} · scrollables: $scrollInfo · '
-        '제목 사업장 등록=${find.text('사업장 등록').evaluate().length} 수정=${find.text('사업장 수정').evaluate().length} · 단계 $steps · 안내=${find.text('사업장의 업종을 선택해주세요').evaluate().length} · 업종 $cats · '
+        '제목 사업장 등록=${findVisibleText('사업장 등록').evaluate().length} 수정=${findVisibleText('사업장 수정').evaluate().length} · 단계 $steps · 안내=${findVisibleText('사업장의 업종을 선택해주세요').evaluate().length} · 업종 $cats · '
         'ExpansionTile=${tiles.evaluate().length} · ${rr('뒤로 IconButton', back)} · ${rr('뒤로 잉크(InkWell)', backInk)} · 뒤로 가장자리 hit=${() { final r = t.getRect(back.first); return [Offset(r.left + 2, r.center.dy), Offset(r.right - 2, r.center.dy), Offset(r.center.dx, r.top + 2), Offset(r.center.dx, r.bottom - 2)].map((p) => hits(back.first, p)).toList(); }()} · ${rr('홈', home)} · ${rr('알림', noti)} · '
         '${[for (var i = 0; i < tileHeaders.length; i++) rr('업종행$i', tileHeaders[i])].join(' · ')} · '
         '${rr('다음', next)} onTap=${nextW.onTap == null ? 'null' : '활성'} bottomIn=${t.getRect(next).bottom <= 851 - 24} · overflows=${overflows.length}';
     // ignore: avoid_print
     print('S013-N $report');
-    expect(find.text('사업장 등록'), findsOneWidget, reason: '신규(수정 모드 아님)');
+    expect(findVisibleText('사업장 등록'), findsOneWidget, reason: '신규(수정 모드 아님)');
     expect(find.text('사업장의 업종을 선택해주세요'), findsOneWidget, reason: 'step0');
     expect(tiles, findsNWidgets(3));
     for (final h in tileHeaders) {

@@ -8,6 +8,7 @@ import 'dart:async';
 // - 통합 이체현황 탭: 미이체(🔴) + 이체완료(🟢) 한 목록
 // - 변경요청 / 중간정산 탭
 
+import 'package:flutter/foundation.dart' show setEquals, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:intl/intl.dart';
@@ -22,6 +23,7 @@ import '../../../services/firestore_service.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/person_label.dart';
 import '../../../utils/format_helper.dart';
+import '../../../utils/request_relation_error.dart';
 import '../../../utils/payroll_due_scope.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/text_layout.dart';
@@ -49,6 +51,7 @@ import '../../../services/member_service.dart';             // [BIZCTX-01A]
 import '../../../models/core/business_member_model.dart';  // [BIZCTX-01A] MemberPermissions
 import '../../../services/payroll_readiness_service.dart'; // [PII-DOC-R1.6.1]
 import 'package:cloud_functions/cloud_functions.dart';      // [PII-DOC-R1.6.1A]
+import '../../../utils/server_reject_codes.dart';
 
 /// [SIM-XFER-COUNT] 근로자 카드의 이체 완료 처리 뒤 화면이 말할 건수.
 ///
@@ -95,6 +98,14 @@ class PayrollPaymentDashboardScreen extends StatefulWidget {
   ///   다른 탭·다른 진입(홈·배너·알림)은 그대로다.
   final bool pendingWholeMonth;
 
+  /// [PERF-L22] 배너가 이미 읽은 전 기간 미이체 목록(배너를 센 바로 그 목록). [showAllOutstanding] 일 때
+  ///   첫 화면은 이것으로 그린다(이름·지급 준비는 평소처럼 읽는다). 새로고침·처리 뒤 갱신은 서버에서 다시 읽는다.
+  final List<AttendanceModel>? initialOutstanding;
+
+  /// [PERF-L22] 이 화면에서 급여를 바꿨다(처리·취소·정산·변경요청 등 — 처리 뒤 갱신 경로 전부).
+  ///   여는 쪽이 돌아와서 다시 읽을지를 이것으로 정한다.
+  final VoidCallback? onMutated;
+
   const PayrollPaymentDashboardScreen({
     super.key,
     required this.businessId,
@@ -106,6 +117,8 @@ class PayrollPaymentDashboardScreen extends StatefulWidget {
     this.showPendingSettlementOnly = false, // [PHASE-2C.2]
     this.outstandingDueByToday = false,
     this.pendingWholeMonth = false,
+    this.initialOutstanding,
+    this.onMutated,
   });
 
   @override
@@ -211,6 +224,28 @@ class _PayrollPaymentDashboardScreenState
   final Set<String> _selectedIds = {};
   bool _batchMode = false;
   bool _isTransferring = false;
+
+  /// [F291-C11] 월 목록(`_allRecords`)이 서버 결과로 교체될 때마다 올라간다 — 일괄 처리가 확인 창을 보는 사이
+  ///   목록이 바뀌었으면(선택도 초기화된다) 옛 선택으로 쓰지 않는다.
+  int _recordsGen = 0;
+
+  /// [PERF-L49 · 판정291 B8] 처리(이체·정산·스냅샷 등) **뒤** 갱신 중 — 목록을 지우지 않고(스피너 화면 0) 그대로 둔 채
+  ///   화면 조작만 잠근다. 보이는 목록은 처리 **전** 조회라서, 방금 처리한 행이 아직 '이체처리' 를 달고 있다 —
+  ///   그 목록으로 다시 쓰지 않게 갱신이 끝날 때까지 누르기를 막는다(얇은 진행 표시). 금액·건수·완료를 미리
+  ///   바꾸지 않는다(서버 결과를 받은 새 목록만 앉힌다). 실패는 예전처럼 실패 화면(목록 없음)이다.
+  ///   월 목록(_load)과 전체 미이체 목록(_loadAllOutstanding)을 따로 들고, 그 목록의 **마지막 조회가 앉을 때** 내린다.
+  bool _baseRefreshAfterMutation = false;
+  bool _outstandingRefreshAfterMutation = false;
+  // [impl_24 · L49 남음] 변경요청·중간정산 목록의 처리 뒤 갱신도 같은 잠금을 쓴다.
+  bool _changeRequestsRefreshAfterMutation = false;
+  bool _settlementsRefreshAfterMutation = false;
+  bool _changeRequestsAgainAfterMutation = false;
+  bool _settlementsAgainAfterMutation = false;
+  bool get _refreshingAfterMutation =>
+      _baseRefreshAfterMutation ||
+      _outstandingRefreshAfterMutation ||
+      _changeRequestsRefreshAfterMutation ||
+      _settlementsRefreshAfterMutation;
 
   // ── 검색
   final _searchCtrl = TextEditingController();
@@ -391,6 +426,13 @@ class _PayrollPaymentDashboardScreenState
   ///   말하지 않기 위해 구분한다.
   Future<void> _load({bool withRequestTabs = true, bool afterMutation = false}) async {
     if (!mounted) return;
+    // [PERF-L22] 처리 뒤 갱신(요청 탭 제외 재조회 · afterMutation)은 모두 "이 화면에서 바꿨다" 는 뜻이다.
+    if (!withRequestTabs || afterMutation) _markMutated();
+    // [PERF-L49] 처리 뒤 갱신이고 지금 정상 목록을 보이는 중이면 목록을 유지한 채 잠근다(밀린 재조회여도 먼저 잠근다 —
+    //   진행 중이던 조회는 `_pendingReload` 때문에 앉지 않고, 처리 뒤 조회가 앉을 때 풀린다).
+    if (afterMutation && !_isLoading && _loadError == null && !_baseRefreshAfterMutation) {
+      setState(() => _baseRefreshAfterMutation = true);
+    }
     if (_fetchInProgress) {
       _pendingReload = true;
       _pendingWithRequests = _pendingWithRequests || withRequestTabs;
@@ -403,7 +445,7 @@ class _PayrollPaymentDashboardScreenState
     // 재시도 시작 — 이전 실패 표시를 지운다.
     if (_loadError != null) setState(() => _loadError = null);
     _fetchInProgress = true;
-    if (!_isLoading) setState(() => _isLoading = true);
+    if (!_isLoading && !_baseRefreshAfterMutation) setState(() => _isLoading = true);
     try {
       // [R8-P1B] 첫 화면을 가로막는 것은 급여 자체뿐이다.
       //   변경요청·중간정산 두 CF가 각각 500ms 넘게 걸리는데, 급여 조회는
@@ -436,10 +478,12 @@ class _PayrollPaymentDashboardScreenState
       if (_pendingReload) return;
       setState(() {
         _allRecords         = allRecs;
+        _recordsGen++; // [F291-C11] 목록이 바뀌었다 — 진행 중 일괄 처리가 옛 선택으로 쓰지 않게
         _selectedIds.clear();
         _batchMode = false;
         _recomputeDerived(); // H1: 파생 캐시 갱신
         _isLoading = false;  // M3: finally setState와 병합
+        _baseRefreshAfterMutation = false; // [PERF-L49] 처리 뒤 목록이 앉았다 — 잠금 해제
       });
     } catch (e) {
       debugPrint('❌ 급여 대시보드 로드 실패: $e');
@@ -452,6 +496,7 @@ class _PayrollPaymentDashboardScreenState
         // [§22] 실패를 화면 상태로 남긴다 — 0건·0원으로 위장하지 않는다.
         setState(() {
           _isLoading = false;
+          _baseRefreshAfterMutation = false; // [PERF-L49] 실패 화면이 목록을 대신한다(예전과 같다)
           _loadError = '급여 현황을 불러오지 못했습니다.';
         });
       }
@@ -486,15 +531,31 @@ class _PayrollPaymentDashboardScreenState
   ///   무엇을 다시 읽을지는 **서버가 무엇을 썼는지**로 정한다. UI 버튼 이름이
   ///   아니라 writer 의 write-set 이 기준이다.
   ///   갱신이 실패해도 mutation 은 이미 끝났다 — 각 경로가 그렇게 말한다.
+  bool _mutatedNotified = false;
+
+  /// [PERF-L22] 여는 쪽에 "바뀌었다" 를 한 번 알린다.
+  void _markMutated() {
+    if (_mutatedNotified) return;
+    _mutatedNotified = true;
+    widget.onMutated?.call();
+  }
+
   void _refreshAfterMutation({
     bool base = false,
     bool changeRequests = false,
     bool settlements = false,
   }) {
+    _markMutated();
     if (base) unawaited(_load(withRequestTabs: false, afterMutation: true));
     // [PAYROLL-V3-CONNECTED] 전체 미이체 목록도 같은 attendance 를 보여 준다 — 예전에는 월 목록만 다시 읽어
     //   방금 이체 처리한 근로자가 이 목록에 남았다(10-19 OPEN). 실패하면 이전 조회로 표시돼 쓰기가 막힌다.
-    if (base && widget.showAllOutstanding) unawaited(_loadAllOutstanding());
+    if (base && widget.showAllOutstanding) {
+      // [PERF-L49] 보이는 전체 미이체 목록은 처리 전 조회다 — 새 조회가 앉을 때까지 누르기를 막는다.
+      if (_outstandingAll.isNotEmpty && !_outstandingRefreshAfterMutation) {
+        setState(() => _outstandingRefreshAfterMutation = true);
+      }
+      unawaited(_loadAllOutstanding());
+    }
     if (changeRequests) unawaited(_reloadChangeRequests(afterMutation: true));
     if (settlements) unawaited(_reloadSettlements(afterMutation: true));
   }
@@ -514,6 +575,13 @@ class _PayrollPaymentDashboardScreenState
   ///   않는다 — R6.4 가 정한 대로 효력은 서버 resolver 가 다음 계산 때 적용한다.
   ///   그러니 이 목록만 새로 읽으면 된다.
   Future<void> _reloadChangeRequests({bool afterMutation = false}) async {
+    // [impl_24 · L49 남음] 처리 뒤 갱신이면 보이는 목록(처리 전 조회)을 유지한 채 화면 누르기를 잠근다(§2-3 과 같은 방식).
+    //   이미 다른 조회가 진행 중이면 그 조회는 처리 **전에** 출발했다 — 버리지 않고 끝난 뒤 한 번 더 읽는다
+    //   (예전: 진행 중이면 처리 뒤 갱신을 그냥 버려, 처리 전 목록이 앉고 방금 처리한 요청에 승인 버튼이 남았다).
+    if (mounted && afterMutation) {
+      if (_changeRequestsLoaded && !_changeRequestsRefreshAfterMutation) setState(() => _changeRequestsRefreshAfterMutation = true);
+      if (_changeRequestsInFlight) _changeRequestsAgainAfterMutation = true;
+    }
     if (!mounted || _changeRequestsInFlight) return;
     setState(() {
       _changeRequestsInFlight = true;
@@ -535,6 +603,18 @@ class _PayrollPaymentDashboardScreenState
     } finally {
       if (mounted) setState(() => _changeRequestsInFlight = false);
     }
+    // [impl_24 · L49 남음] 처리 전에 출발한 조회가 막 끝났다 → 처리 뒤 상태로 한 번 더(잠금 유지).
+    if (!mounted) return;
+    if (_changeRequestsAgainAfterMutation) {
+      _changeRequestsAgainAfterMutation = false;
+      unawaited(_reloadChangeRequests(afterMutation: true));
+      return;
+    }
+    if (_changeRequestsRefreshAfterMutation) {
+      setState(() => _changeRequestsRefreshAfterMutation = false);
+      // 처리 뒤 갱신이 실패했는데 목록은 보이는 중이면 그 사실을 말한다(예전엔 오류가 목록 뒤에 숨어 처리 전 목록이 정상처럼 남았다).
+      if (_changeRequestsError != null && _changeRequestsLoaded) ToastHelper.showError(_changeRequestsError!);
+    }
   }
 
   /// [R8-P1D] 중간정산 요청 목록만 다시 읽는다.
@@ -542,6 +622,13 @@ class _PayrollPaymentDashboardScreenState
   ///   거절(callableRejectInterimSettlement)은 이 목록만 바꾼다.
   ///   승인·이체처리·승인취소는 attendance 도 함께 쓰므로 base 도 같이 읽는다.
   Future<void> _reloadSettlements({bool afterMutation = false}) async {
+    // [impl_24 · L49 남음] 처리 뒤 갱신이면 보이는 목록(처리 전 조회)을 유지한 채 화면 누르기를 잠근다(§2-3 과 같은 방식).
+    //   이미 다른 조회가 진행 중이면 그 조회는 처리 **전에** 출발했다 — 버리지 않고 끝난 뒤 한 번 더 읽는다
+    //   (예전: 진행 중이면 처리 뒤 갱신을 그냥 버려, 처리 전 목록이 앉고 방금 처리한 요청에 승인 버튼이 남았다).
+    if (mounted && afterMutation) {
+      if (_settlementsLoaded && !_settlementsRefreshAfterMutation) setState(() => _settlementsRefreshAfterMutation = true);
+      if (_settlementsInFlight) _settlementsAgainAfterMutation = true;
+    }
     if (!mounted || _settlementsInFlight) return;
     setState(() {
       _settlementsInFlight = true;
@@ -563,6 +650,18 @@ class _PayrollPaymentDashboardScreenState
     } finally {
       if (mounted) setState(() => _settlementsInFlight = false);
     }
+    // [impl_24 · L49 남음] 처리 전에 출발한 조회가 막 끝났다 → 처리 뒤 상태로 한 번 더(잠금 유지).
+    if (!mounted) return;
+    if (_settlementsAgainAfterMutation) {
+      _settlementsAgainAfterMutation = false;
+      unawaited(_reloadSettlements(afterMutation: true));
+      return;
+    }
+    if (_settlementsRefreshAfterMutation) {
+      setState(() => _settlementsRefreshAfterMutation = false);
+      // 처리 뒤 갱신이 실패했는데 목록은 보이는 중이면 그 사실을 말한다(예전엔 오류가 목록 뒤에 숨어 처리 전 목록이 정상처럼 남았다).
+      if (_settlementRequestsError != null && _settlementsLoaded) ToastHelper.showError(_settlementRequestsError!);
+    }
   }
 
   // ─── [PHASE-2C] 전체 미이체 로드 ─────────────────────────────────────────────
@@ -571,9 +670,14 @@ class _PayrollPaymentDashboardScreenState
   ///   새로고침이 겹치면 **마지막에 시작한** 조회만 화면에 앉는다.
   int _outstandingGen = 0;
 
+  /// [PERF-L22] 배너가 넘긴 목록 — **첫** 전체 미이체 조회 한 번만 쓰고 비운다(새로고침·처리 뒤는 서버).
+  late List<AttendanceModel>? _outstandingSeed = widget.initialOutstanding;
+
   Future<void> _loadAllOutstanding() async {
     if (!mounted) return;
     final gen = ++_outstandingGen;
+    final seed = _outstandingSeed;
+    _outstandingSeed = null;
     // [ERROR-EMPTY-01] retry 진입 시 error flag 초기화. _outstandingAll은 유지
     // (refresh 중 기존 데이터가 화면에서 사라지지 않도록 함)
     setState(() {
@@ -581,9 +685,11 @@ class _PayrollPaymentDashboardScreenState
       _outstandingLoadError = false;
     });
     try {
-      final records = await _payService.getAllOutstandingWages(
-        businessId: widget.businessId,
-      );
+      // [PERF-L22] 배너가 막 읽은 목록이 있으면 첫 화면은 그것으로 — 같은 전 기간 조회를 두 번 하지 않는다.
+      final records = seed ??
+          await _payService.getAllOutstandingWages(
+            businessId: widget.businessId,
+          );
       if (!mounted || gen != _outstandingGen) return; // 더 새 조회가 있다
       // [PAYROLL-ALL-UNTRANSFERRED] 이름과 지급 준비는 서로의 결과를 쓰지 않는다 —
       //   함께 받고, 목록·지급 준비를 **한 번에** 앉힌다(지급 준비 없는 목록을 먼저
@@ -608,6 +714,7 @@ class _PayrollPaymentDashboardScreenState
         _outstandingStale = false;
         _outstandingUnreadable = 0;
         _outstandingRef = null;
+        _outstandingRefreshAfterMutation = false; // [PERF-L49]
       });
     } catch (e) {
       debugPrint('[Payroll] _loadAllOutstanding 실패: $e');
@@ -624,6 +731,8 @@ class _PayrollPaymentDashboardScreenState
         _outstandingUnreadable =
             e is PayrollQueryIncomplete ? e.unreadable.length : 0;
         _outstandingRef = e is PayrollQueryIncomplete ? e.reference : null;
+        // [PERF-L49] 잠금은 푼다 — 남은 목록은 위 _outstandingStale(이전 조회)로 쓰기가 막힌다.
+        _outstandingRefreshAfterMutation = false;
         // _outstandingAll: 변경하지 않음 — 기존 성공 데이터 보존
         //   (잘린 새 결과는 앉히지 않는다 — 이전의 완전한 목록이 남는다)
       });
@@ -1128,10 +1237,9 @@ class _PayrollPaymentDashboardScreenState
       }
       // [PARTIAL ≠ SUCCESS] 갱신하지 못한 건을 성공에 묻지 않는다.
       if (res.skipped.isNotEmpty) {
-        final lines = res.skipped.entries
-            .map((e) => '• ${PayrollReadinessReason.labelOf(e.value)}')
-            .toSet()
-            .join('\n');
+        // [impl_58 · server_297 §3] 건별 거래에서 급여 권한이 회수된 건(permissionRevoked)은 '급여계좌 확인 필요'로 뭉개지 않고
+        //   '권한이 바뀌어 처리하지 않은 n건'으로 따로 말한다. 나머지 사유는 예전처럼 이름만 중복 없이.
+        final lines = refreshSkippedLines(res.skipped, PayrollReadinessReason.labelOf).join('\n');
         await DialogHelper.showAlert(
           context,
           title: '갱신하지 못한 건이 있습니다',
@@ -1621,7 +1729,8 @@ class _PayrollPaymentDashboardScreenState
       if (mounted) _refreshAfterMutation(base: true);
     } catch (e) {
       debugPrint('❌ 이체 완료 처리 실패: $e');
-      if (mounted) ToastHelper.showError('이체 완료 처리에 실패했습니다\n$e');
+      // [impl_59] 예외 문자열 0 — 보여도 되는 서버 문구, 아니면 다시 읽은 상태를 보라는 안내.
+      if (mounted) ToastHelper.showError(adminActionErrorMessage(e, fallback: transferMarkFailedMessage));
       // 실패해도 서버가 일부를 바꿨을 수 있다 — 추측하지 않고 서버에서 다시 읽는다.
       if (mounted) _load(withRequestTabs: false);
     } finally {
@@ -1630,13 +1739,21 @@ class _PayrollPaymentDashboardScreenState
   }
 
   Future<void> _markBatch() async {
+    // [F291-C11 · PAYROLL-BATCH-STALE] 단건(_markWorker)과 같은 기준 — 입구와 두 확인 창 뒤 쓰기 직전에 본다.
+    if (_blockStaleWrite()) return;
     if (_isTransferring || _selectedIds.isEmpty) return;
     setState(() => _isTransferring = true);
+    // 확인 창에 보인 대상 = 실제로 보낼 대상. 창을 보는 사이 목록·선택이 바뀌면 쓰지 않는다.
+    final ids = _selectedIds.toList(growable: false);
+    final idSet = ids.toSet();
+    final gen0 = _recordsGen;
+    final selectedRecords = _allRecords.where((r) => idSet.contains(r.id)).toList();
+    final selectedNet = _sumNet(selectedRecords);
     try {
       final ok = await DialogHelper.showConfirm(
         context,
         title: '일괄 이체 완료 처리', // [5C.2-P2] ACTION 용어 통일
-        message: '선택된 ${_selectedIds.length}건 (${FormatHelper.formatWage(_selectedNet)})을\n이체 완료 처리하시겠습니까?\n실제 은행 이체를 완료한 건만 처리해 주세요.',
+        message: '선택된 ${ids.length}건 (${FormatHelper.formatWage(selectedNet)})을\n이체 완료 처리하시겠습니까?\n실제 은행 이체를 완료한 건만 처리해 주세요.',
         confirmText: '이체 완료 처리',
         cancelText: '취소',
       );
@@ -1646,17 +1763,22 @@ class _PayrollPaymentDashboardScreenState
 
       final tnResult = await _showTransferNoteDialog();
       if (tnResult.cancelled || !mounted) return; // back = cancel, finally resets _isTransferring
+      // [F291-C11] 쓰기 직전 — 이전 조회 결과가 됐거나, 확인 창을 보는 사이 목록·선택이 바뀌었으면 쓰지 않는다.
+      if (_blockStaleWrite()) return;
+      if (gen0 != _recordsGen || !setEquals(_selectedIds, idSet)) {
+        ToastHelper.showWarning('목록이 새로 바뀌었어요. 다시 확인하고 선택해 주세요.');
+        return;
+      }
       final note = tnResult.note;
 
-      final selectedRecords = _allRecords.where((r) => _selectedIds.contains(r.id)).toList();
-      if (selectedRecords.isEmpty) {
+      if (selectedRecords.isEmpty || selectedRecords.length != ids.length) {
         if (mounted) ToastHelper.showError('이체할 항목을 찾을 수 없습니다. 화면을 새로고침하세요');
         return;
       }
       final nameByUid = _notifyNameByUid;
 
       final batchResult = await _payService.markTransferredBatch(
-        attendanceIds:     _selectedIds.toList(),
+        attendanceIds:     ids,
         businessId:        selectedRecords.first.businessId,
         transferNote:      note,
         notificationInfos: buildTransferNotificationInfos(
@@ -1694,7 +1816,9 @@ class _PayrollPaymentDashboardScreenState
             '확인된 완료 ${e.confirmedProcessedCount}건 · 나머지 항목은 새로고침된 목록에서 확인해 주세요.',
           );
         } else {
-          ToastHelper.showError('일괄 처리에 실패했습니다\n$e');
+          // [impl_59] 예외 문자열(청크 오류 목록) 0 — 첫 실패 원인으로 안내를 고른다.
+          final cause = e is PartialBatchException ? (e.firstError ?? e) : e;
+          ToastHelper.showError(adminActionErrorMessage(cause, fallback: transferBatchFailedMessage));
         }
         _load(withRequestTabs: false);
       }
@@ -1741,6 +1865,7 @@ class _PayrollPaymentDashboardScreenState
       await PayrollExcelHelper.exportPayrollDetail(
         context:    context,
         records:    allFilteredRecs,
+        knownProfiles: _cachedProfilesFor(allFilteredRecs),
         title:      '$bizName $_selectedYear년 $_selectedMonth월 급여현황$suffix',
         filename:   '${bizName}_$_selectedYear년$_selectedMonth월_급여현황$suffix.xlsx',
         businessId: widget.businessId,
@@ -1751,6 +1876,23 @@ class _PayrollPaymentDashboardScreenState
     } finally {
       if (mounted) setState(() => _isExporting = false);
     }
+  }
+
+  /// [PERF-L54] 엑셀용 이름·번호를 이 화면 캐시(`_userBankCache` — 같은 사업장 · 같은 purposeWorkerDirectory
+  ///   `getUsersBatch` 결과)에서 만든다. 기록의 근로자 **모두**의 이름이 캐시에 있을 때만 — 하나라도 없으면 null 을
+  ///   돌려 헬퍼가 예전처럼 서버에서 읽는다(빠진 이름을 빈 칸으로 내보내지 않는다).
+  WorkerProfiles? _cachedProfilesFor(List<AttendanceModel> recs) {
+    final names = <String, String>{};
+    final personNos = <String, String>{};
+    for (final uid in recs.map((r) => r.userId).toSet()) {
+      final c = _userBankCache[uid];
+      final name = c?['name'];
+      if (c == null || name == null) return null;
+      names[uid] = name;
+      final no = c['personNo'];
+      if (no != null) personNos[uid] = no;
+    }
+    return (names: names, personNos: personNos);
   }
 
   // 미이체 탭 — 은행 이체 전용 단순 시트
@@ -1766,6 +1908,7 @@ class _PayrollPaymentDashboardScreenState
       plan = await PayrollExcelHelper.prepareTransferPlan(
         records:    pendingRecs,
         businessId: widget.businessId,
+        profiles:   _cachedProfilesFor(pendingRecs),
       );
     } catch (e) {
       debugPrint('❌ 이체 목록 준비 실패: $e');
@@ -1944,6 +2087,9 @@ class _PayrollPaymentDashboardScreenState
   /// [PAY-08] APPROVED → CANCELED — attendance lock 해제 공식 경로
   Future<void> _cancelApprovedSettlement(InterimSettlementRequestModel req) async {
     if (_isTransferring) return;
+    // [P12] 첫 await(사유 창) 전에 잠근다 — 창이 뜨기 전 연타가 두 번 들어오지 않는다. 창을 닫으면 finally 가 푼다.
+    setState(() => _isTransferring = true);
+    try {
     // 취소 사유 입력 (선택)
     final reason = await DialogHelper.showTextInput(
       context,
@@ -1963,8 +2109,6 @@ class _PayrollPaymentDashboardScreenState
     // reason == null 이면 사용자가 닫기 선택 → 중단
     if (reason == null) return;
 
-    setState(() => _isTransferring = true);
-    try {
       await _payService.cancelApprovedSettlement(
         req: req,
         cancelReason: reason.trim().isEmpty ? null : reason.trim(),
@@ -1976,7 +2120,8 @@ class _PayrollPaymentDashboardScreenState
       _refreshAfterMutation(base: true, settlements: true);
     } catch (e) {
       if (!mounted) return;
-      ToastHelper.showError('승인 취소 실패: ${e.toString().replaceFirst("Exception: ", "")}');
+      debugPrint('❌ 중간정산 승인 취소 실패: $e');
+      ToastHelper.showError(adminActionErrorMessage(e, fallback: interimApprovalCancelFailedMessage)); // [impl_59] 예외 문자열 0
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }
@@ -2026,7 +2171,8 @@ class _PayrollPaymentDashboardScreenState
         _refreshAfterMutation(base: true, settlements: true);
       }
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
+      // [impl_58] 예외 문자열을 붙이지 않는다 — 처리와 같은 안내(금액 형식 WAGE_VALUE_INVALID · 계좌 스냅샷 · 서버 문구 · 일반).
+      if (mounted) ToastHelper.showError(interimProcessErrorMessage(e));
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }
@@ -2058,7 +2204,8 @@ class _PayrollPaymentDashboardScreenState
         _refreshAfterMutation(base: true, settlements: true);
       }
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
+      // [AUD-3 M4] 승인 뒤 계좌 변경 등 서버 거절은 다음 할 일('승인 취소' → 계좌 갱신 → 다시 승인)로 말한다 — 예외 문자열 0.
+      if (mounted) ToastHelper.showError(interimProcessErrorMessage(e));
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }
@@ -2069,7 +2216,10 @@ class _PayrollPaymentDashboardScreenState
     // [FC-PAY-01 OWNERSHIP FIX] _RejectReasonDialog(StatefulWidget)이 ctrl을
     // 직접 소유하고 State.dispose()에서 해제한다.
     // addPostFrameCallback dispose 패턴 제거.
-    // [BUG-4] _isTransferring은 서비스 호출 직전에 설정 — dialog 표시 중 다른 버튼 비활성화 방지
+    // [P12] 첫 await(사유 창) 전에 잠근다 — 예전 [BUG-4] 는 창이 떠 있는 동안 다른 버튼이 비활성으로 보이는 것을
+    //   피하려고 늦게 잠갔지만, 창은 모달이라 다른 버튼을 누를 수 없고, 늦게 잠그면 창이 뜨기 전 연타로 사유 창이
+    //   두 번 열려 거절이 두 번 나갈 수 있다. 다른 처리(변경요청 거절 등)와 같은 순서로 맞춘다.
+    setState(() => _isTransferring = true);
     try {
       final reason = await showDialog<String>(
         context: context,
@@ -2080,7 +2230,6 @@ class _PayrollPaymentDashboardScreenState
         ),
       );
       if (reason == null || reason.isEmpty || !mounted) return;
-      setState(() => _isTransferring = true); // 실제 서비스 호출 직전에 설정
       await _payService.rejectInterimSettlement(
           req: req, rejectReason: reason);
       if (mounted) {
@@ -2090,7 +2239,8 @@ class _PayrollPaymentDashboardScreenState
         _refreshAfterMutation(settlements: true);
       }
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
+      debugPrint('❌ 중간정산 거절 실패: $e');
+      if (mounted) ToastHelper.showError(adminActionErrorMessage(e, fallback: interimRejectFailedMessage)); // [impl_59] 예외 문자열 0
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }
@@ -2119,7 +2269,13 @@ class _PayrollPaymentDashboardScreenState
         _refreshAfterMutation(changeRequests: true);
       }
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
+      // [impl_42] PCR_RELATION_MISMATCH(PENDING 보류)는 일반 실패가 아니다 · 그 밖은 서버 문구(예외 문자열 0)
+      if (mounted) {
+        final held = requestHeldMessageOf(e);
+        held != null
+            ? ToastHelper.showWarning(held)
+            : ToastHelper.showError(requestFailureMessageOf(e, fallback: '처리에 실패했습니다. 잠시 뒤 다시 시도해 주세요.'));
+      }
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }
@@ -2148,7 +2304,13 @@ class _PayrollPaymentDashboardScreenState
         _refreshAfterMutation(changeRequests: true);
       }
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
+      // [impl_42] PCR_RELATION_MISMATCH(PENDING 보류)는 일반 실패가 아니다 · 그 밖은 서버 문구(예외 문자열 0)
+      if (mounted) {
+        final held = requestHeldMessageOf(e);
+        held != null
+            ? ToastHelper.showWarning(held)
+            : ToastHelper.showError(requestFailureMessageOf(e, fallback: '처리에 실패했습니다. 잠시 뒤 다시 시도해 주세요.'));
+      }
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }
@@ -2207,7 +2369,9 @@ class _PayrollPaymentDashboardScreenState
               title: '접근 권한이 없습니다',
               subtitle: '급여 관리 권한이 있는 관리자에게 문의하세요.',
             )
-          : _isLoading
+          // [PERF-L25] 전체 미이체 모드는 월 목록을 그리지 않는다(아래 _buildAllOutstandingView 가 자기 로딩을
+          //   그린다) — 월 조회(급여 2종 + 계좌)가 끝날 때까지 화면 전체를 스피너로 막지 않는다.
+          : (_isLoading && !widget.showAllOutstanding)
           ? const LoadingWidget(message: '급여 현황 불러오는 중...')
           // [§14·§22·§30] 실패는 "없음"과 다른 화면이다. 금액을 보여주지
           //   않고, 다시 시도할 길을 준다. 자동 폴링은 두지 않는다.
@@ -2223,7 +2387,15 @@ class _PayrollPaymentDashboardScreenState
                 label: const Text('다시 시도'),
               ),
             )
-          : Column(children: [
+          // [PERF-L49] 처리 뒤 갱신 중에는 목록을 그대로 두고 누르기만 막는다(스크롤 위치·필터·탭 유지).
+          : AbsorbPointer(
+              absorbing: _refreshingAfterMutation,
+              child: Column(children: [
+              // [P12] 처리(이체·정산·변경요청·스냅샷) 중 — 화면 위 얇은 진행 표시. 버튼은 위에서 함께 잠긴다.
+              if (_isTransferring) const LinearProgressIndicator(minHeight: 2),
+              if (!_isTransferring && _refreshingAfterMutation)
+                const LinearProgressIndicator(
+                    key: ValueKey('payroll-refresh-after-mutation'), minHeight: 2),
               // ── 검색바
               AppSearchBar(controller: _searchCtrl, hintText: '근무자 이름으로 검색'),
               // ── 탭바
@@ -2287,7 +2459,7 @@ class _PayrollPaymentDashboardScreenState
                         ],
                       ),
               ),
-            ]),
+            ])),
     );
   }
 
@@ -2546,13 +2718,13 @@ class _PayrollPaymentDashboardScreenState
                       },
                       onSelect:          null,
                       // [PAYROLL-INCOMPLETE-STALE-ACTION] 이전 조회 결과에는 쓰기 버튼을 달지 않는다.
-                      onMarkTransferred: _outstandingWritable
+                      onMarkTransferred: _outstandingWritable && !_isTransferring
                           ? () => _markWorker(recs)
                           : null,
-                      onRefreshSnapshot: _outstandingWritable && _needsSnapshotRefresh(recs)
+                      onRefreshSnapshot: _outstandingWritable && !_isTransferring && _needsSnapshotRefresh(recs)
                           ? () => _refreshSnapshots(recs)
                           : null,
-                      onReviewBankDocument: _bankViewEligible(recs) && _outstandingWritable
+                      onReviewBankDocument: _bankViewEligible(recs) && _outstandingWritable && !_isTransferring
                           ? () => _reviewBankDocument(recs)
                           : null,
                       bankViewAttention: _needsManualReview(recs),
@@ -2693,7 +2865,9 @@ class _PayrollPaymentDashboardScreenState
           selectedAmount: _selectedNet,
           onSelectAll:    () => setState(() => _selectedIds.addAll(allIds)),
           onDeselectAll:  () => setState(() => _selectedIds.clear()),
-          onAction: _selectedIds.isNotEmpty && _selectedNet > 0 ? _markBatch : null,
+          // [P12] 처리 중에는 누를 수 없고, 버튼 자리에 진행 표시를 그린다.
+          onAction: _selectedIds.isNotEmpty && _selectedNet > 0 && !_isTransferring ? _markBatch : null,
+          busy: _isTransferring,
           actionLabel: '이체 완료 처리', // [5C.2-P2] ACTION 용어 통일
           actionIcon: Icons.send,
         ),
@@ -2747,13 +2921,13 @@ class _PayrollPaymentDashboardScreenState
                       if (i <= approvedSettlements.length) {
                         final req = approvedSettlements[i - 1];
                         final sdLabel = req.scheduledTransferDate != null
-                            ? DateFormat('MM/dd').format(req.scheduledTransferDate!)
+                            ? DateFormat('MM/dd').format(FormatHelper.toKstDate(req.scheduledTransferDate!)) /* [impl_40] UTC 자정 저장값 → 기기 시간대 무관 같은 날짜 */
                             : '-';
                         return RepaintBoundary(child: _RequestCard(
                           title:       '${req.workerName} · 중간정산',
                           subtitle:    '${req.periodLabel} · ${req.recordCount}건  ·  이체 예정일 $sdLabel',
                           detail:      '실수령: ${FormatHelper.formatWage(req.netAmount)}',
-                          onProcess:   () => _processSettlement(req),
+                          onProcess:   _isTransferring ? null : () => _processSettlement(req),
                           statusLabel: '이체 대기',
                         ));
                       }
@@ -2816,12 +2990,12 @@ class _PayrollPaymentDashboardScreenState
                           }
                         });
                       } : null,
-                      onMarkTransferred: !_batchMode ? () => _markWorker(recs) : null,
-                      onRefreshSnapshot: !_batchMode && _needsSnapshotRefresh(recs)
+                      onMarkTransferred: !_batchMode && !_isTransferring ? () => _markWorker(recs) : null,
+                      onRefreshSnapshot: !_batchMode && !_isTransferring && _needsSnapshotRefresh(recs)
                           ? () => _refreshSnapshots(recs)
                           : null,
                       onReviewBankDocument:
-                          !_batchMode && _bankViewEligible(recs)
+                          !_batchMode && !_isTransferring && _bankViewEligible(recs)
                               ? () => _reviewBankDocument(recs)
                               : null,
                       bankViewAttention:
@@ -3191,8 +3365,8 @@ class _PayrollPaymentDashboardScreenState
           title:     '${req.workerName} · 지급방식 변경',
           subtitle:  req.changeDescription,
           detail:    '효력: ${req.effectiveFrom}부터 · 사유: ${req.requestReason ?? '-'}',
-          onApprove: () => _approveChangeRequest(req),
-          onReject:  () => _rejectChangeRequest(req),
+          onApprove: _isTransferring ? null : () => _approveChangeRequest(req),
+          onReject:  _isTransferring ? null : () => _rejectChangeRequest(req),
         );
       },
     );
@@ -3235,18 +3409,18 @@ class _PayrollPaymentDashboardScreenState
       itemBuilder: (_, i) {
         final req = displayList[i];
         final scheduledLabel = req.scheduledTransferDate != null
-            ? '이체 예정일: ${DateFormat('MM/dd').format(req.scheduledTransferDate!)}'
+            ? '이체 예정일: ${DateFormat('MM/dd').format(FormatHelper.toKstDate(req.scheduledTransferDate!)) /* [impl_40] UTC 자정 저장값 → 기기 시간대 무관 같은 날짜 */}'
             : null;
         return _RequestCard(
           title:        '${req.workerName} · 중간정산 요청',
           subtitle:     '${req.periodLabel} · ${req.recordCount}건',
           detail:       '실수령: ${FormatHelper.formatWage(req.netAmount)}'
               '${scheduledLabel != null ? '  ·  $scheduledLabel' : ''}',
-          onApprove:         req.isPending  ? () => _approveSettlement(req)         : null,
-          onReject:          req.isPending  ? () => _rejectSettlement(req)          : null,
-          onProcess:         req.isApproved ? () => _processSettlement(req)         : null,
+          onApprove:         req.isPending  && !_isTransferring ? () => _approveSettlement(req)         : null,
+          onReject:          req.isPending  && !_isTransferring ? () => _rejectSettlement(req)          : null,
+          onProcess:         req.isApproved && !_isTransferring ? () => _processSettlement(req)         : null,
           // [PAY-08] APPROVED 취소 버튼 — 실제 은행 이체 전 lock 해제용
-          onCancelApproved:  req.isApproved ? () => _cancelApprovedSettlement(req) : null,
+          onCancelApproved:  req.isApproved && !_isTransferring ? () => _cancelApprovedSettlement(req) : null,
           statusLabel:  req.statusLabel,
         );
       },
@@ -4165,6 +4339,30 @@ class _PendingCalendarSheetState extends State<_PendingCalendarSheet> {
 }
 
 // ─── 급여 상세 화면 (공용 — 미이체/부분이체/이체완료 모두 사용) ─────────
+/// [impl_40 · AUD-4 H7] 주급 근무자 상세의 주차 — 대시보드 칩(`_calcWeekRanges` = `weeksOfMonth`)과 **같은 helper**.
+///   가장 이른 근무일(KST)의 주. 예전: '1일 이전 월요일'부터 세어(subtract · 1380행이 금지한 방식) 칩보다 1주차 컸고,
+///   기기 시간대 날짜를 썼다(UTC 기기에서 D-1).
+({String weekLabel, String rangeLabel}) workerPayWeekInfo(Iterable<DateTime> workDates) {
+  final first = workDates.reduce((a, b) => a.isBefore(b) ? a : b);
+  final w = PayslipPeriodHelper.weekOfWorkDate(first);
+  final s = w.start;
+  final e = w.end;
+  return (
+    weekLabel: '${w.month}월 ${w.weekNo}주차',
+    rangeLabel: '${w.weekNo}주차 · ${s.month}/${s.day} ~ ${e.month}/${e.day}',
+  );
+}
+
+/// [impl_40] 시험용 진입 — 화면 자체는 private 이다(대시보드 3곳이 push).
+@visibleForTesting
+Widget debugWorkerPayDetailScreen({
+  required String workerName,
+  required List<AttendanceModel> records,
+  required String businessId,
+  String? bankInfo,
+}) =>
+    _WorkerPayDetailScreen(workerName: workerName, records: records, businessId: businessId, bankInfo: bankInfo);
+
 class _WorkerPayDetailScreen extends StatefulWidget {
   final String workerName;
   final List<AttendanceModel> records;
@@ -4227,6 +4425,11 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
           );
 
   Future<void> _cancelTransfer(AttendanceModel r) async {
+    // [P12] 첫 await(사유 창) 전에 잠근다 — 예전에는 창을 닫은 뒤에야 잠가서, 창이 뜨기 전 연타로 취소 창이
+    //   두 번 열리고 취소가 두 번 나갈 수 있었다(버튼 비활성도 잠근 뒤에야 걸렸다). 닫으면 finally 가 푼다.
+    if (_isCancelling) return;
+    setState(() => _isCancelling = true);
+    try {
     final note = await DialogHelper.showTextInput(
       context,
       title: '이체 완료 처리 취소', // [5C.2-P2] CANCEL 용어 통일
@@ -4251,8 +4454,6 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
       return;
     }
 
-    setState(() => _isCancelling = true);
-    try {
       await _payService.cancelTransfer(
         attendanceId: r.id,
         businessId: r.businessId,
@@ -4263,7 +4464,8 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
-      ToastHelper.showError('이체 취소 실패: ${e.toString().replaceFirst("Exception: ", "")}');
+      debugPrint('❌ 이체 완료 취소 실패: $e');
+      ToastHelper.showError(adminActionErrorMessage(e, fallback: transferCancelFailedMessage)); // [impl_59] 예외 문자열 0
     } finally {
       if (mounted) setState(() => _isCancelling = false);
     }
@@ -4285,24 +4487,7 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
     final isWeekly = widget.records.any((r) => r.wageDetail?.payScheduleType == 'weekly');
     if (!isWeekly) return null;
 
-    final dates = widget.records.map((r) => r.workDate).toList()..sort();
-    final anchor     = dates.first;
-    final weekStart  = anchor.subtract(Duration(days: anchor.weekday - 1)); // 해당 주 월요일
-    final weekEnd    = weekStart.add(const Duration(days: 6));              // 해당 주 일요일
-
-    // 주차: 월요일 기준으로 해당 월의 몇 번째 주인지
-    final firstMonday = DateTime(weekStart.year, weekStart.month, 1).subtract(
-      Duration(days: (DateTime(weekStart.year, weekStart.month, 1).weekday - 1) % 7),
-    );
-    final weekNum = ((weekStart.difference(firstMonday).inDays) ~/ 7) + 1;
-
-    final startLabel = '${weekStart.month}/${weekStart.day}';
-    final endLabel   = '${weekEnd.month}/${weekEnd.day}';
-
-    return (
-      weekLabel: '${weekStart.month}월 $weekNum주차',
-      rangeLabel: '$weekNum주차 · $startLabel ~ $endLabel',
-    );
+    return workerPayWeekInfo(widget.records.map((r) => r.workDate));
   }
 
   Widget _buildDeductionSection(BuildContext context, List<AttendanceModel> records) {
@@ -4402,7 +4587,8 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
     final dueDate    = records.map((r) => r.paymentDueDate).whereType<DateTime>().firstOrNull;
     final titleSuffix = weekInfo != null
         ? weekInfo.weekLabel
-        : (dueDate != null ? '${dueDate.month}월' : '');
+        // [impl_40 · H11] 지급 예정일 instant → KST 달력 월(경계 시각에 기기 월로 읽지 않는다)
+        : (dueDate != null ? '${FormatHelper.toKstDate(dueDate).month}월' : '');
 
     final totalNet    = records.fold(0, (a, r) => a + (r.wageDetail?.effectiveNetWage ?? 0));
     final xferRecs    = records.where((r) => r.wageStatus == AttendanceModel.wageTransferred).toList();
@@ -4472,18 +4658,21 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
               // 부분이체일 때만 이체/잔여 분리 표시
               if (isPartial) ...[
                 const SizedBox(height: 10),
-                Row(children: [
-                  const Icon(Icons.circle, size: 7, color: AppColors.success),
-                  const SizedBox(width: 5),
-                  Text('이체 ${FormatHelper.formatWage(transferred)}',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.successDark, fontWeight: FontWeight.w600)),
-                  const SizedBox(width: 14),
-                  const Icon(Icons.circle, size: 7, color: AppColors.warning),
-                  const SizedBox(width: 5),
-                  Text('잔여 ${FormatHelper.formatWage(pending)}',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.warningDark, fontWeight: FontWeight.w600)),
+                // [impl_40 · H14] 좁은 폭·큰 글자에서 '잔여' 금액이 밖으로 밀려 안 보였다 — 두 조각을 줄바꿈 가능한 Wrap 으로
+                //   (각 조각 안의 점·금액은 붙여 둔다 · 금액을 말줄임하지 않는다).
+                Wrap(spacing: 14, runSpacing: 4, children: [
+                  Text.rich(TextSpan(children: [
+                    const WidgetSpan(alignment: PlaceholderAlignment.middle,
+                        child: Icon(Icons.circle, size: 7, color: AppColors.success)),
+                    TextSpan(text: ' 이체 ${FormatHelper.formatWage(transferred)}'),
+                  ]), style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.successDark, fontWeight: FontWeight.w600)),
+                  Text.rich(TextSpan(children: [
+                    const WidgetSpan(alignment: PlaceholderAlignment.middle,
+                        child: Icon(Icons.circle, size: 7, color: AppColors.warning)),
+                    TextSpan(text: ' 잔여 ${FormatHelper.formatWage(pending)}'),
+                  ]), style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.warningDark, fontWeight: FontWeight.w600)),
                 ]),
               ],
               const SizedBox(height: 14),
@@ -4569,7 +4758,8 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
               final wd     = r.wageDetail;
               final net    = wd?.effectiveNetWage ?? 0;
               final isXfer = r.wageStatus == AttendanceModel.wageTransferred;
-              final d      = r.workDate;
+              // [impl_40 · H11] workDate = KST 자정 instant — KST 달력으로 읽는다(UTC 기기에서 D-1 이던 것). 요일도 같은 날짜로.
+              final d      = FormatHelper.toKstDate(r.workDate);
               final dayLabel   = '${d.month}/${d.day} (${_weekdays[(d.weekday - 1) % 7]})';
               final minutes    = wd?.workMinutes ?? 0;
               final payLabel   = _payTypeLabel(wd?.payScheduleType);
@@ -4587,13 +4777,11 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
                     color: Colors.black.withValues(alpha: 0.04),
                     blurRadius: 6, offset: const Offset(0, 2))],
                 ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // 날짜 + 업무유형 + 급여유형 칩
-                    SizedBox(
-                      width: 76,
-                      child: Column(
+                // [impl_40 · H13/M23] 고정 76칸 + 제약 없는 금액 열이 320@2.0 에서 넘쳤고(가운데 열 폭 0), 1.0 에서도 '12/31 (수)'가
+                //   숫자 중간에서 줄바꿈됐다. 폭이 모자라거나 글자가 크면 위아래로 쌓는다(금액·날짜를 자르지 않는다 ·
+                //   payroll_worker_detail_screen 근무 카드와 같은 원칙).
+                child: LayoutBuilder(builder: (lctx, c) {
+                  final dateBlock = Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(dayLabel,
@@ -4620,12 +4808,8 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
                                       fontWeight: FontWeight.w600)),
                             ),
                         ],
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    // 사업장 + 시간 + 실근무
-                    Expanded(
-                      child: Column(
+                      );
+                  final infoBlock = Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           if (r.businessName.isNotEmpty)
@@ -4649,11 +4833,8 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
                                       color: AppColors.grey500)),
                             ),
                         ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    // 금액 + 상태 배지 + 이체일
-                    Column(
+                      );
+                  final amountBlock = Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         Text(net > 0 ? FormatHelper.formatWage(net) : '-',
@@ -4681,7 +4862,8 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
                         if (isXfer && xferDate != null) ...[
                           const SizedBox(height: 3),
                           Text(
-                            '${xferDate.month}/${xferDate.day} 이체',
+                            // [impl_40 · H11] 이체 시각 → KST 날짜(00–09시 이체가 D-1 로 보이던 것)
+                            '${FormatHelper.toKstDate(xferDate).month}/${FormatHelper.toKstDate(xferDate).day} 이체',
                             style: ResponsiveHelper.tinyStyle(ctx,
                                 color: AppColors.grey400),
                           ),
@@ -4725,9 +4907,25 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
                           ],
                         ],
                       ],
-                    ),
-                  ],
-                ),
+                    );
+                  final stacked = MediaQuery.textScalerOf(lctx).scale(1) > 1.15 || c.maxWidth < 300;
+                  if (!stacked) {
+                    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      ConstrainedBox(constraints: const BoxConstraints(minWidth: 76, maxWidth: 120), child: dateBlock),
+                      const SizedBox(width: 10),
+                      Expanded(child: infoBlock),
+                      const SizedBox(width: 8),
+                      amountBlock,
+                    ]);
+                  }
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    dateBlock,
+                    const SizedBox(height: 6),
+                    infoBlock,
+                    const SizedBox(height: 8),
+                    Align(alignment: Alignment.centerRight, child: amountBlock),
+                  ]);
+                }),
               );
             },
           ),

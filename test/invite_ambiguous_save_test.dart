@@ -32,6 +32,7 @@ import 'package:ALfit/screens/business_admin/dialogs/invite_worker_dialog.dart';
 import 'package:ALfit/services/available_workers_service.dart';
 import 'package:ALfit/services/invite_save_verifier.dart';
 import 'package:ALfit/utils/navigation_key.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 // ── Firebase core 대역(다른 테스트와 같은 레시피) ─────────────────────────
 class _FakeApp extends Fake
@@ -431,7 +432,7 @@ void main() {
       await tester.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       final close = tester.widget<OutlinedButton>(
-          find.ancestor(of: find.text('닫기'), matching: find.byType(OutlinedButton)));
+          find.ancestor(of: findVisibleText('닫기'), matching: find.byType(OutlinedButton)));
       expect(close.onPressed, isNull, reason: '확인 중에 닫으면 결과가 사라진다');
       gate.complete([_invitedRow()]);
       await tester.pumpAndSettle();

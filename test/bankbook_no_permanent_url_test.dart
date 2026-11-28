@@ -52,8 +52,10 @@ void main() {
 
   group('BBU-1 업로드가 영구 URL을 만들지 않는다', () {
     test('BBU-10 통장사본은 uploadImageNoUrl을 쓴다', () {
+      // [impl_17 · PERF-L42] 진행률 인자(onProgress)가 더해져 닫는 괄호 앞까지만 고정한다 —
+      //   지키는 것은 그대로다: 통장사본은 URL 을 만들지 않는 uploadImageNoUrl 로 같은 경로에 올린다.
       expect(_flat(bankbook).contains(
-          'uploadOk = await _storageService.uploadImageNoUrl(imagePath, storagePath);'),
+          'uploadOk = await _storageService.uploadImageNoUrl(imagePath, storagePath,'),
           true);
       expect(bankbook.contains('_storageService.uploadImage('), false,
           reason: 'uploadImage는 getDownloadURL()을 부른다');

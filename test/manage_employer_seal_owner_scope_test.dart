@@ -163,7 +163,8 @@ void main() {
   group('[R7-P4.4E.3A] Home 도 헛된 요청을 시키지 않는다', () {
     test('SEAL-ROLE-08 모를 때 본인 날인 등록을 권하지 않는다', () {
       final h = _home();
-      expect(h.contains("pendingHint: r.sealUnknown ? '사업장 관리자에게 확인하세요' : null"),
+      // [impl_57 · 홈 해요체] '확인하세요' → '확인해 주세요'(home:2523) — 모를 때 본인 날인을 권하지 않는 분기는 그대로
+      expect(h.contains("pendingHint: r.sealUnknown ? '사업장 관리자에게 확인해 주세요' : null"),
           isTrue);
       expect(h.contains('onTap: r.sealUnknown'), isTrue,
           reason: '눌러도 사업주란이 채워지지 않는 경로를 열어 두지 않는다');

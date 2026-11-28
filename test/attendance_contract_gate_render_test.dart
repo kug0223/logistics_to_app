@@ -152,7 +152,7 @@ Future<void> _pump(WidgetTester tester, _Reads reads) async {
 }
 
 LoadingButton _btn(WidgetTester tester) => tester.widget<LoadingButton>(
-    find.ancestor(of: find.text('출근하기'), matching: find.byType(LoadingButton)));
+    find.ancestor(of: findVisibleText('출근하기'), matching: find.byType(LoadingButton)));
 
 bool _open(WidgetTester t) => _btn(t).onPressed != null;
 
@@ -169,10 +169,10 @@ void main() {
   testWidgets('CG-1 계약 없음 → 닫힘', (t) async {
     final r = _Reads(app, [<EmploymentContractModel>[]]);
     await _pump(t, r);
-    expect(find.text('출근하기'), findsOneWidget, reason: '버튼은 비활성으로 보인다(사라지지 않는다)');
+    expect(findVisibleText('출근하기'), findsOneWidget, reason: '버튼은 비활성으로 보인다(사라지지 않는다)');
     expect(_open(t), isFalse);
     expect(find.text('아직 근로계약서를 받지 않았어요'), findsOneWidget);
-    expect(find.text('계약서 확인하고 동의하기'), findsNothing);
+    expect(findVisibleText('계약서 확인하고 동의하기'), findsNothing);
     expect(r.contractCalls, 1);
   });
 
@@ -180,14 +180,14 @@ void main() {
     await _pump(t, _Reads(app, [[checkInContractFor(app, status: ContractStatus.pendingEmployer)]]));
     expect(_open(t), isFalse);
     expect(find.text('사업주 서명을 기다리고 있어요'), findsOneWidget);
-    expect(find.text('계약서 확인하고 동의하기'), findsNothing);
+    expect(findVisibleText('계약서 확인하고 동의하기'), findsNothing);
   });
 
   testWidgets('CG-3 근로자 동의 대기 → 닫힘 · 동의 CTA · 결근 안내', (t) async {
     await _pump(t, _Reads(app, [[checkInContractFor(app, status: ContractStatus.pendingWorker)]]));
     expect(_open(t), isFalse);
     expect(find.text('근로계약서에 동의해야 출근할 수 있어요'), findsOneWidget);
-    expect(find.text('계약서 확인하고 동의하기'), findsOneWidget);
+    expect(findVisibleText('계약서 확인하고 동의하기'), findsOneWidget);
     expect(find.textContaining('결근 처리될 수 있어요'), findsOneWidget);
   });
 
@@ -225,7 +225,7 @@ void main() {
     expect(findVisibleText('근무 정보를 불러오지 못했습니다'), findsNothing,
         reason: '계약 읽기 실패가 근무 목록 실패로 번지지 않는다');
     expect(r.contractCalls, 1);
-    await t.tap(find.text('다시 시도'));
+    await t.tap(findVisibleText('다시 시도'));
     for (var i = 0; i < 10; i++) {
       await t.pump(const Duration(milliseconds: 100));
     }
@@ -242,7 +242,7 @@ void main() {
   testWidgets('CG-12b 초대 수락(CONFIRMED) + 동의 대기 → 닫힘 · CTA', (t) async {
     await _pump(t, _Reads(inv, [[checkInContractFor(inv, status: ContractStatus.pendingWorker)]]));
     expect(_open(t), isFalse);
-    expect(find.text('계약서 확인하고 동의하기'), findsOneWidget);
+    expect(findVisibleText('계약서 확인하고 동의하기'), findsOneWidget);
   });
   testWidgets('CG-12c 초대 수락(CONFIRMED) + 양측 서명 완료 → 열림', (t) async {
     await _pump(t, _Reads(inv, [[checkInContractFor(inv)]]));

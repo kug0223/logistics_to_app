@@ -30,6 +30,7 @@ import '../../work_type_icon.dart';
 import '../../../screens/business_admin/dialogs/work_applicants_dialog.dart';
 import '../../../utils/posting_presentation_mode.dart';
 import '../../../utils/staffing_clock.dart';
+import '../../../utils/expected_daily_wage.dart';
 
 /// ✨ 업무 상세 행 위젯 (간소화된 디자인)
 /// 
@@ -86,11 +87,25 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
     if (oldWidget.work != widget.work) _buildNow = StaffingClock.now();
   }
 
-  String get _netWorkTimeStr => FormatHelper.calcNetWorkTime(
-        widget.work.startTime,
-        widget.work.endTime,
-        breakMinutes: widget.work.breakMinutes,
-      );
+  // [F293-WAGE-01 · 판정293 §8] 실근무 표시 = 하루 예상과 같은 분 계산(종료 = 시작 → 24시간으로 말하지 않음 · 서식 그대로).
+  String get _netWorkTimeStr {
+    final net = ExpectedDailyWage.netMinutesOf(
+        widget.work.startTime, widget.work.endTime, widget.work.breakMinutes);
+    return net == null ? '' : FormatHelper.formatCompactHours(net);
+  }
+
+  /// [F293-WAGE-01] 하루 예상 금액 — 공용 helper(원문 시각 · 유형 여부를 아는 forWorkDetail).
+  ExpectedDailyWage get _expected => ExpectedDailyWage.forWorkDetail(widget.work);
+
+  /// 급여 한 줄 — 시급이면 공용 문구(`ExpectedWageText.combined`), 아니면 예전 '일급 N원'(붙임 공백 그대로).
+  String _wageLine() {
+    final c = ExpectedWageText.combined(_expected);
+    // [F294-WAGE-01 · C294-WAGE-C] 알려진 비시급 단가 누락(0 이하)은 '0원' 대신 '급여 확인 필요'.
+    if (c == null) return '${widget.work.wageTypeLabel} ${ExpectedWageText.rawWage(widget.work.wage)}';
+    // 조각 안의 띄어쓰기만 붙임 공백(U+00A0)으로 — 예전 '시급 N원' 과 같은 방식(낱말 묶음 표지는 넣지 않는다:
+    //   보이는 글자 그대로 찾을 수 있어야 한다 · e2_invited_reader IR-7).
+    return c.split(' · ').map((piece) => piece.replaceAll(' ', ' ')).join(' · ');
+  }
 
   /// 저장된 마감 시각 — 데이터 초기화 후 항상 존재
   DateTime? get _effectiveDeadline => widget.work.applicationDeadline;
@@ -244,12 +259,22 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                               style: ResponsiveHelper.tinyStyle(context)
                                   .copyWith(color: AppColors.grey500),
                             ),
+                          // [F293-WAGE-01] 시급 업무 = '하루 예상 N원 · 시급 N원'(주금액 먼저) + 짧은 말 '예상·세전'.
+                          //   계산할 수 없으면 '시급 N원 · 예상 금액 확인 필요'(0원 금지). 일급 · 월급은 예전 그대로.
+                          //   계산 입력 = 이 줄이 보여 주는 같은 시각 · 휴게(위 실근무와 같은 원천).
+                          //   [E2-NARROW] 조각 안은 붙임 공백으로 붙이고 줄은 구분점(·) 옆에서만 바뀐다(금액이 끊기지 않게).
                           TextSpan(
-                            text: '  ·  ${widget.work.wageTypeLabel} ${FormatHelper.formatWage(widget.work.wage)}',
+                            text: '  ·  ${_wageLine()}',
                             style: ResponsiveHelper.smallStyle(context,
                                     color: wageColor)
                                 .copyWith(fontWeight: FontWeight.w600),
                           ),
+                          if (_expected.isEstimate)
+                            TextSpan(
+                              text: ' ${ExpectedWageText.shortNote}',
+                              style: ResponsiveHelper.tinyStyle(context)
+                                  .copyWith(color: AppColors.grey500),
+                            ),
                         ]),
                       ),
                     ),

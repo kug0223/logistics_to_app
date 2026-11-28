@@ -640,8 +640,19 @@ class AttendanceModel {
   }
 
   /// 표시용 급여 (confirmed·transferred 상태일 때만)
+  ///
+  /// [HB3-VISIBILITY] 근무자에게 보이는 금액의 **유일한 기준**이다.
+  ///   관리자가 마감을 취소하면 서버는 wageStatus 만 calculated 로 되돌리고
+  ///   finalWage·wageDetail 은 재마감용으로 남긴다. 근무자 화면이 finalWage 를
+  ///   직접 읽으면 '숨겨진다'는 관리자 안내와 달리 취소된 금액이 보인다.
   int? get displayWage =>
       (isWageConfirmed || isWageTransferred) ? finalWage : null;
+
+  /// 표시용 급여 내역 — [displayWage] 와 같은 기준(confirmed·transferred 만).
+  ///
+  /// [HB3-VISIBILITY] 근무자 화면의 기본급·수당·공제·실수령액 항목은 이 값만 쓴다.
+  WageDetailModel? get displayWageDetail =>
+      (isWageConfirmed || isWageTransferred) ? wageDetail : null;
 
   String get formattedDisplayWage {
     if (displayWage == null) return '-';

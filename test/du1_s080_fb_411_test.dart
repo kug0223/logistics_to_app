@@ -140,6 +140,7 @@ void main() {
   });
 
   const views = [
+    // [판정285] strict = 섹션 삭제 확인 · before(DU_BEFORE_OBSERVE=411) = 옛 간격 관측 그대로.
     (id: 'F', s: 3.0, title: '이번 주 일정 숫자 상자 간격 320×640@3.0 — 가로 스크롤 · 이웃 상자 ≥ 4'),
     (id: 'B', s: 2.0, title: '이번 주 일정 7칸 균등 320×640@2.0 — 가로 스크롤 0 · 무변화'),
   ];
@@ -215,6 +216,20 @@ void main() {
         await t.dragFrom(Offset(vp.left + 4, vp.center.dy), const Offset(0, -300));
         await settle(8);
         k++;
+      }
+      if (!_before) {
+        // [판정285 갱신 2026-11-26 — CP03 주간 존재 대체] `이번 주 일정` 섹션(그 일주일 행·가로 스크롤 행)은 지웠다 —
+        //   같은 7칸 날짜 줄이 홈에 두 번 있었다. 확정·지원 중 점은 위 날짜띠가 말한다(worker_home_285_test WH-2·WH-5).
+        //   이 시험의 대상 표면이 없어졌으므로 strict 는 끝까지 내려도 그 섹션이 없음을 단언하고 끝낸다.
+        //   (간격 계측은 표면과 함께 사라졌다 — 날짜띠 숫자 한 줄·receiver ≥48·마지막 날짜 도달은 WH-5 가 320/2.0 에서 본다.)
+        must('이번 주 일정 섹션 0(판정285)', title.evaluate().isEmpty, '${title.evaluate().length}');
+        expect(find.text('일정 보기'), findsNothing);
+        final exc0 = t.takeException();
+        await t.pumpWidget(const SizedBox.shrink());
+        await settle(4);
+        expect(exc0, isNull);
+        expect(overflows, isEmpty, reason: '$tok 넘침');
+        return;
       }
       must('이번 주 일정 제목 1', title.evaluate().length == 1);
       final sec = find

@@ -180,7 +180,7 @@ void main() {
     }
     expect(findVisibleTextContaining('확정 급여 1건'), findsOneWidget, reason: '노쇼 0원·이체 완료 제외');
     expect(findVisibleTextContaining('대상 금액: 80,000원'), findsOneWidget);
-    await t.tap(find.text('취소'));
+    await t.tap(findVisibleText('취소'));
     for (var i = 0; i < 10; i++) {
       await t.pump(const Duration(milliseconds: 100));
     }
@@ -224,7 +224,7 @@ void main() {
     };
     await _pumpDetail(t);
     expect(findVisibleText('데이터를 불러오지 못했습니다'), findsOneWidget);
-    await t.tap(find.text('다시 시도'));
+    await t.tap(findVisibleText('다시 시도'));
     for (var i = 0; i < 5; i++) {
       await t.pump(const Duration(milliseconds: 50));
     }

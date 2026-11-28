@@ -550,7 +550,7 @@ void main() {
             ' · resolveStats=c${r.confirmed}/p${r.pending}/r${r.required}/s${r.shortage}';
       }
       final slotsFail = find.descendant(of: card, matching: find.text('근무 일정을 불러오지 못했습니다'));
-      final statsFail = find.descendant(of: card, matching: find.text('지원 현황을 불러오지 못했습니다'));
+      final statsFail = find.descendant(of: card, matching: findVisibleText('지원 현황을 불러오지 못했습니다'));
       final retryText = find.descendant(of: card, matching: find.text('재시도'));
       final loadingInCard = find.descendant(of: card, matching: find.text('불러오는 중...'));
       String whenLine() => cardTexts().firstWhere((s) => s.contains('QA 물류센터') && !s.contains('충원'), orElse: () => '?');

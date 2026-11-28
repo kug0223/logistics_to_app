@@ -109,6 +109,7 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
         if (user?.signatureBase64 != null) {
           if (mounted) setState(() => _savedSignatureBase64 = user!.signatureBase64);
         }
+        _prefetchEmployerSignature(); // [PERF-L41] 읽는 동안 PDF 에 넣을 사업주 서명을 미리 받는다
         await _loadBusinessSeal(); // 근로자 화면에도 사업주 인감 표시
       }
       // 스크롤이 불필요한 경우 자동 해제
@@ -421,6 +422,19 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
     await _performSign(bytes);
   }
 
+  /// [PERF-L41 · 판정291 §4] PDF 에 넣을 사업주 서명 **바이트** — 근로자가 계약서를 읽는 동안 미리 받아 둔다.
+  ///   예전에는 '동의하고 서명'을 누른 뒤에야 링크 발급(callable) + 내려받기를 기다렸다.
+  ///   받은 경로·권한 검사는 같다(`fetchContractSignatureBytes`). 아직 못 받았거나 실패했으면 누를 때 예전처럼 받는다 —
+  ///   기다리지 않는다(누를 때 새로 받는 것이 예전 동작 그대로다). 서명 시각·PDF 해시·보관은 서버 그대로다.
+  Uint8List? _employerSigPrefetched;
+
+  void _prefetchEmployerSignature() {
+    if (isEmployer || !widget.contract.hasEmployerSignature) return;
+    _service.fetchContractSignatureBytes(widget.contract.id, 'employer').then(
+        (b) => _employerSigPrefetched = b,
+        onError: (Object e) => debugPrint('⚠️ 사업주 서명 미리 받기 실패(누를 때 다시 받는다): $e'));
+  }
+
   // 서명 패드로 서명 처리
   Future<void> _signWithPad({required bool askToSave}) async {
     final bytes = await showSignaturePad(
@@ -435,6 +449,9 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
     if (!mounted) return;
 
     // 서명 저장 여부 묻기
+    // [PERF-L41] 서명 저장은 계약 서명과 **서로 독립**이다(내 서명 보관 vs 이 계약의 서명) — 저장을 기다린 뒤에
+    //   서명하던 것을 함께 진행한다. 저장 실패는 예전처럼 안내만 하고 계약 서명은 계속한다.
+    Future<void>? saveSignature;
     if (askToSave) {
       final save = await _askSaveSignature();
       if (save && mounted) {
@@ -442,28 +459,27 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
         final uid = userProvider.currentUser?.uid;
         if (uid != null) {
           final b64 = base64Encode(bytes);
-          bool signatureSaved = false;
-          try {
-            await _service.saveUserSignature(uid: uid, base64: b64);
-            signatureSaved = true;
-          } catch (e) {
-            debugPrint('⚠️ 서명 저장 실패: $e');
-            if (mounted) ToastHelper.showWarning('서명 저장에 실패했습니다. 계약 서명은 계속 진행합니다.');
-          }
-          if (!mounted) return;
-          if (signatureSaved) {
-            setState(() => _savedSignatureBase64 = b64);
+          saveSignature = () async {
+            try {
+              await _service.saveUserSignature(uid: uid, base64: b64);
+            } catch (e) {
+              debugPrint('⚠️ 서명 저장 실패: $e');
+              ToastHelper.showWarning('서명 저장에 실패했습니다. 계약 서명은 계속 진행합니다.');
+              return;
+            }
+            if (mounted) setState(() => _savedSignatureBase64 = b64);
             try {
               await userProvider.refreshCurrentUser();
             } catch (e) {
               debugPrint('⚠️ 사용자 정보 갱신 실패 (서명은 저장됨): $e');
             }
-          }
+          }();
         }
       }
     }
 
     if (mounted) await _performSign(bytes);
+    await saveSignature;
   }
 
   Future<bool> _askSaveSignature() async {
@@ -507,10 +523,12 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
         final workerBytes = bytes!; // 근로자 서명은 항상 손서명 바이트가 있다
         Uint8List? employerSigBytes;
         if (widget.contract.hasEmployerSignature) {
-          employerSigBytes = await _service.fetchContractSignatureBytes(
-            widget.contract.id,
-            'employer',
-          );
+          // [PERF-L41] 미리 받아 둔 바이트가 있으면 쓴다 — 없으면(아직·실패) 예전처럼 지금 받는다.
+          employerSigBytes = _employerSigPrefetched ??
+              await _service.fetchContractSignatureBytes(
+                widget.contract.id,
+                'employer',
+              );
         }
         final pdfBytes = await ContractPdfBuilder.build(
           snapshot: widget.contract.snapshot,
@@ -522,6 +540,8 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
           ownerNameOverride: _resolvedOwnerName,
           isLongTermOverride: _effectiveIsLongTerm,
           employerSealType: _businessSealType,
+          // [PERF-L41] 무거운 PDF 만들기를 별도 isolate 에서(실패·시간 초과면 이 isolate 에서 같은 방식으로).
+          offMain: true,
         );
         final updated = await _service.saveWorkerSignature(
           contract: widget.contract,

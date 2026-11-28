@@ -25,6 +25,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/users_create_rule.dart';
+
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('소스를 찾지 못했다: $p');
@@ -325,8 +327,8 @@ void main() {
       final rules = _src('firestore.rules');
       expect("'bankbookCleanupPendingPaths'".allMatches(rules).length,
           greaterThanOrEqualTo(2));
-      expect(rules, contains(
-          "request.resource.data.get('bankbookCleanupPendingPaths', null) == null"));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정278 C278-3] users create 가 전면 거부(if false)가 됐다 — 같은 결론(주입 불가)을 더 강하게 확인한다. 다시 열리면 옛 null 조건을 요구한다(support/users_create_rule.dart).
+      expect(usersCreateDeniesField(rules, 'bankbookCleanupPendingPaths'), isTrue);
     });
   });
 
@@ -372,10 +374,9 @@ void main() {
     test('BANK-REPL-52 클라이언트는 두 포인터를 직접 쓸 수 없다', () {
       final rules = _src('firestore.rules');
       expect(rules, contains("'bankbookImagePath', 'bankbookImageUrl',"));
-      expect(rules, contains(
-          "request.resource.data.get('bankbookImagePath', null) == null"));
-      expect(rules, contains(
-          "request.resource.data.get('bankbookImageUrl', null) == null"));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정278 C278-3] users create 가 전면 거부(if false)가 됐다 — 같은 결론(주입 불가)을 더 강하게 확인한다. 다시 열리면 옛 null 조건을 요구한다(support/users_create_rule.dart).
+      expect(usersCreateDeniesField(rules, 'bankbookImagePath'), isTrue);
+      expect(usersCreateDeniesField(rules, 'bankbookImageUrl'), isTrue);
     });
   });
 }

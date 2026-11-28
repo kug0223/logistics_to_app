@@ -177,7 +177,9 @@ void main() {
         expect(userBranch, isNot(contains(biz)));
       }
       // 근로자 측 blocker 는 별도 code 를 쓴다.
-      expect(userBranch, contains('hardBlocks.push({type: "UNSIGNED_CONTRACT"'));
+      // [판정296 정책 P2 · server_296] 미서명 계약은 하드 차단이 아니라 경고(탈퇴 취소 거래가 무효 + 사업주 알림).
+      expect(userBranch, contains('warnings.push({type: "UNSIGNED_CONTRACT"'));
+      expect(userBranch, isNot(contains('hardBlocks.push({type: "UNSIGNED_CONTRACT"')));
       expect(userBranch, contains('hardBlocks.push({type: "SUBADMIN_MEMBERSHIP"'));
       // [R7-P4.4E.11C.0C.0a.6.2 §15] PENDING_WAGES 는 warning 에서
       //   hardBlock 으로 승격됐다 — 계정이 사라지면 그 돈은 되살릴 수 없다.
@@ -366,10 +368,11 @@ void main() {
           'if (role === "BUSINESS_ADMIN" || role === "SUPER_ADMIN") {',
           'srvCountOrphanMoneyObligations');
       expect(_flat(seg), isNot(contains('role !==')));
-      // 근로자 측 hard gate 는 미서명 계약뿐이다.
+      // 근로자 측 hard gate — [판정296 정책 P2 · server_296] 미서명 계약 서명 강제는 제거됐다. 남은 것은 받을 급여(PENDING_WAGES).
       expect(_flat(assertFn), contains(
           'if (role !== "BUSINESS_ADMIN" && role !== "SUPER_ADMIN") {'));
-      expect(_flat(assertFn), contains('미서명 계약서'));
+      expect(_flat(assertFn), isNot(contains('먼저 서명해주세요')));
+      expect(_flat(assertFn), contains('[PENDING_WAGES]'));
     });
 
     test('WBP-ROLE-02 서브관리자는 애초에 탈퇴 경로가 막혀 있다', () {

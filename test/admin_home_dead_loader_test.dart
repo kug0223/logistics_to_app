@@ -239,7 +239,9 @@ void main() {
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
-      expect(titles, {'오늘', '다가오는 7일', '처리할 일'});
+      // [impl_26 · UX Master §150 「앱 전체 문구 정본과 두 홈 표현」(2026-11-11) · 대표 홈 정본 보충 표 · DU 0fa6948] 섹션 제목 = 「오늘의 근무 / 처리할 일 / 다가오는 근무 + 앞으로 7일」.
+      //   집합 크기 3 · 순서 단언은 그대로 — 이름만 정본으로 바뀌었다.
+      expect(titles, {'오늘의 근무', '다가오는 근무', '처리할 일'});
 
       // [HOME-V2-08D.2] 섹션 조립이 _buildSections로 옮겨졌다 — 순서는 그대로.
       final b = _bodyOf(home, 'Widget build(') +
@@ -261,7 +263,8 @@ void main() {
     test('§14 처리할 일 9종이 우선순위 순서를 따른다', () {
       final rows = _bodyOf(home, '_makeActionRows(BuildContext context');
       const order = [
-        '퇴사 요청', '지원 검토', '스케줄 변경 요청', '계약 미발송', '마감 필요',
+        // [impl_26 · UX Master §150 「앱 전체 문구 정본과 두 홈 표현」(2026-11-11) · 대표 홈 정본 보충 표 · DU 0fa6948] 할 일 제목 `스케줄 변경 요청` → `일정 변경 요청`(9종 · 순서 그대로).
+        '퇴사 요청', '지원 검토', '일정 변경 요청', '계약 미발송', '마감 필요',
         '중간정산 요청', '급여 변경 요청', '이체 대기', '계약 확인 필요',
       ];
       var prev = -1;
@@ -283,7 +286,8 @@ void main() {
 
       // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
 
-      expect(home.contains('향후 인력 현황을 불러오지 못했습니다'), isTrue);
+      // [impl_26 · UX Master §150 「앱 전체 문구 정본과 두 홈 표현」(2026-11-11) · 대표 홈 정본 보충 표 · DU 0fa6948] 해요체 — `…못했습니다` → `…못했어요`(같은 오류 상태 문구).
+      expect(home.contains('향후 인력 현황을 불러오지 못했어요'), isTrue);
       expect(home.contains('_partialStaffingNotice(s)'), isTrue);
     });
 
@@ -351,13 +355,20 @@ void main() {
       expect(verified.toLowerCase().contains('tour'), isFalse);
     });
 
-    test('initState 는 사업장 → loader 순서다', () {
+    test('initState 는 사업장 → 사업장 의존 loader 순서다', () {
+      // [PERF-L7 · 판정289 §1] 요약·인력은 `_businesses` 를 읽지 않으므로 사업장 읽기와 동시에
+      //   출발한다. 사업장에 의존하는 두 loader(공고 준비 · 오늘 출근)만 사업장 확정 뒤다.
       final init = _codeOf(_bodyOf(home, 'void initState()'));
       final bizAt = init.indexOf('await _loadApprovedBusinessStatus();');
-      final loadersAt = init.indexOf('_loadCanonicalSummary()');
       expect(bizAt, isNot(-1));
-      expect(bizAt, lessThan(loadersAt),
-          reason: '_loadPostingReadiness 가 _businesses 를 읽으므로 이 순서가 필요하다');
+      for (final dep in const ['_loadPostingReadiness()', '_loadTodayAttendance()']) {
+        expect(bizAt, lessThan(init.indexOf(dep)),
+            reason: '$dep 는 _businesses(캐시)를 읽으므로 사업장 확정 뒤다');
+      }
+      for (final indep in const ['_loadCanonicalSummary()', '_loadStaffingReadiness()']) {
+        expect(init.indexOf(indep), allOf(isNot(-1), lessThan(bizAt)),
+            reason: '$indep 는 사업장 읽기를 기다리지 않는다');
+      }
       expect(init.contains('Future.wait(['), isFalse,
           reason: '한쪽이 멈추면 둘 다 멈춘다');
     });

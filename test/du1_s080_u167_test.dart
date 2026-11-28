@@ -251,6 +251,8 @@ const _kTermUnknown = '계약해지 요청을 확인하지 못했어요';
 const _kIncomeErr = '이번 달 근무 기록을 불러오지 못했어요 · 다시 시도';
 const _kOvernightUnknown = '어제 근무의 퇴근 여부를 확인하지 못했어요';
 const _kPostingsErr = '공고를 불러오지 못했어요';
+// [판정285 갱신 2026-11-26] 정상0 안내는 큰 약속 카드에서 통합 날짜 영역의 짧은 안내(keepWords)로 옮겨졌다 —
+//   같은 조건(로딩 끝·지원 조회 성공·B/A 없음) · 보이는 글자 기준으로 찾는다(findVisibleText). 0/1 기대는 그대로.
 const _kPromiseEmpty = '오늘 확정된 근무가 없어요';
 // [F92-3] 정상 빈 수입 안내 — 홈은 keepWords 로 그린다(:2878) → 보이는 글자 기준으로 찾는다(findVisibleText).
 const _kIncomeEmpty = '아직 표시할 수입 금액이 없어요';
@@ -315,7 +317,7 @@ Future<void> _tapOwnedRetry(
     expect(b, isNotNull, reason: '$surface: owner 를 품는 ${scope.name} 경계가 없다');
     boundary = b!;
     final hits =
-        find.descendant(of: _el(boundary), matching: find.text('다시 시도')).evaluate().toList();
+        find.descendant(of: _el(boundary), matching: findVisibleText('다시 시도')).evaluate().toList();
     expect(hits.length, 1,
         reason: '$surface: 경계(${scope.name}) 안 다시 시도 ${hits.length}개 — 0 이면 자기 재시도 없음(밖으로 찾지 않는다) · 2 이상이면 섞임');
     retryEl = hits.single;
@@ -481,7 +483,7 @@ void main() {
     // [현행 관측] 이미지용 읽기 하나가 홈 실패 상태로 번진다(PARTIAL 표면 · 계약해지 모름 · 약속 0 숨김)
     expect(find.text(_kStale), findsOneWidget);
     expect(find.text(_kTermUnknown), findsOneWidget);
-    expect(find.text(_kPromiseEmpty), findsNothing);
+    expect(findVisibleText(_kPromiseEmpty), findsNothing);
     expect(find.text(_kAppsErr), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -513,7 +515,7 @@ void main() {
     expect(r.bizIds, [_biz, _biz]);
     expect(find.text(_kStale), findsNothing);
     expect(find.text(_kTermUnknown), findsNothing);
-    expect(find.text(_kPromiseEmpty), findsOneWidget);
+    expect(findVisibleText(_kPromiseEmpty), findsOneWidget);
     expect(_stats(), {'검토 중': '2', '확정': '0', '계약 대기': '0'});
     expect(tester.takeException(), isNull);
   });
@@ -524,7 +526,7 @@ void main() {
 
     expect(r.bizIds, [_biz]);
     expect(_stats(), {'검토 중': '2', '확정': '0', '계약 대기': '0'});
-    expect(find.text(_kPromiseEmpty), findsOneWidget);
+    expect(findVisibleText(_kPromiseEmpty), findsOneWidget);
     expect(find.text(_kStale), findsNothing);
     expect(find.text(_kTermUnknown), findsNothing);
     expect(tester.takeException(), isNull);

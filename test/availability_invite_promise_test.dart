@@ -233,7 +233,7 @@ void main() {
     );
 
     expect(findVisibleText(_promiseIntro), findsOneWidget);
-    expect(find.text('등록'), findsOneWidget);
+    expect(findVisibleText('등록'), findsOneWidget);
   });
 
   testWidgets('AIP-6 가능일은 지원·확정과 다른 자리다 — 화면이 둘을 섞지 않는다',

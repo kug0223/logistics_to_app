@@ -26,11 +26,16 @@ import '../../utils/responsive_helper.dart';
 import '../../utils/text_layout.dart';
 
 class LegalTaskCard extends StatefulWidget {
-  const LegalTaskCard({super.key, this.loadReadiness, this.scale = 1.0});
+  const LegalTaskCard({super.key, this.loadReadiness, this.scale = 1.0, this.onReadiness});
 
   /// 테스트에서 갈아끼우는 경계. 운영에서는 null → callable.
   final Future<LegalReadiness> Function()? loadReadiness;
   final double scale;
+
+  /// [PERF-P1 · 판정289 §4] 조회가 끝날 때마다(성공·error) 부모에게 알린다 — 근로자 홈의 첫 표시 조정이
+  ///   이 출처의 terminal 여부를 안다. 표시·판정·숨김 규칙은 바꾸지 않는다(error 는 여전히 숨김 · R7-LEGAL).
+  ///   null(관리자 홈 등)이면 아무 일도 없다.
+  final ValueChanged<LegalReadiness>? onReadiness;
 
   @override
   State<LegalTaskCard> createState() => _LegalTaskCardState();
@@ -72,11 +77,17 @@ class _LegalTaskCardState extends State<LegalTaskCard> with WidgetsBindingObserv
     final seq = ++_seq;
     try {
       final r = await _load();
-      if (mounted && seq == _seq) setState(() => _readiness = r);
+      if (mounted && seq == _seq) {
+        setState(() => _readiness = r);
+        widget.onReadiness?.call(r);
+      }
     } catch (e) {
       debugPrint('⚠️ 약관 상태 조회 실패: $e');
       // 모르는 것을 "동의하지 않았다" 로 바꾸지 않는다 — 카드를 숨길 뿐이다.
-      if (mounted) setState(() => _readiness = LegalReadiness.error);
+      if (mounted) {
+        setState(() => _readiness = LegalReadiness.error);
+        widget.onReadiness?.call(LegalReadiness.error);
+      }
     }
   }
 

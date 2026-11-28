@@ -85,7 +85,9 @@ void main() {
 
   group('PA-4 — 원래 약속은 보존된다', () {
     test('PA-40 resolver 는 Application/Contract 를 쓰지 않는다', () {
-      expect(code, isNot(contains('collection("applications")')));
+      // [F296-56b CH5 · server_296] resolver 는 지원서를 **읽기만** 한다(요청의 사업장·근로자가 지원서와 같은지 대조).
+      //   예전 핀은 applications 접근 자체를 막았다 — 뜻(쓰지 않는다)은 아래 쓰기 금지 단언이 그대로 지킨다.
+      expect(code, contains('await db.collection("applications").doc(applicationId).get()'));
       expect(code, isNot(contains('collection("employment_contracts")')));
       expect(code, isNot(contains('tx.update')));
       expect(code, isNot(contains('.set(')));

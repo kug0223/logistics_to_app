@@ -110,7 +110,8 @@ void main() {
   group('PID-4x 이름은 클라이언트가 바꿀 수 없다', () {
     test('PID-40 rules 가 users.name 본인 수정을 차단한다', () {
       final rules = _src(_rules);
-      final idx = rules.indexOf('allow update: if isLoggedIn() &&');
+      // [판정281 갱신] users 본인 update 는 fence 예외형 `(callerNotDeleting() || <로그인 시각·FCM 토큰만>) && (` — 안쪽 조건 단언은 그대로.
+      final idx = rules.indexOf('allow update: if (callerNotDeleting() ||');
       expect(idx, isNot(-1));
       // 글자 수(2500)로 자르면 같은 규칙에 주석이 늘 때 차단 목록이 창 밖으로 밀린다 — 다음 allow 까지가 이 규칙이다.
       final end = rules.indexOf('allow ', idx + 1);

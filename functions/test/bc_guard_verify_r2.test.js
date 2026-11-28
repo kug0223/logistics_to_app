@@ -382,6 +382,8 @@ try {
   process.exit(1);
 }
 const R = HMOD.exports;
+// [판정281] 공통 진입 판정(탈퇴 fence) 읽기를 검증 뒤 분리 — 업무 읽기 계약은 그대로(deletion_fence_observer.js).
+const FENCE_READS = require('./deletion_fence_observer').separateFenceReads(R, ROOTS, F.W);
 
 const GLOBAL_OK = new Set(['undefined', 'arguments', 'NaN', 'Infinity', 'Date', 'console',
   'module', 'exports', '__imp']);

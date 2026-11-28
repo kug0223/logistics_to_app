@@ -25,6 +25,9 @@ import '../../widgets/common/loading_widget.dart';
 import '../../utils/loading_state_mixin.dart';
 // badge_service, flutter/services: [5A.2A] trustScore 관련 제거로 불필요
 import '../../widgets/dialogs/styled_dialog.dart';
+import '../../utils/action_guard.dart';
+import '../../utils/keep_content_refresh.dart';
+import '../../widgets/common/keep_content_body.dart';
 
 /// 모든 사용자 조회·관리 화면 (최고관리자 전용)
 class AllUsersScreen extends StatefulWidget {
@@ -38,7 +41,7 @@ class AllUsersScreen extends StatefulWidget {
 }
 
 class _AllUsersScreenState extends State<AllUsersScreen>
-    with LoadingStateMixin {
+    with LoadingStateMixin, KeepContentRefreshMixin {
   late final AllUsersReads _reads = widget.reads ?? AllUsersReads.of();
   List<UserModel> _users = [];
   /// [.57] uid → 제한 성분(자동·수동/영구). 해제 확인 창이 '무엇이 풀리고 무엇이 남는지' 를 서버 값으로 말한다.
@@ -85,12 +88,14 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   }
 
   Future<void> _loadAllUsers() async {
-    setLoading(true);
+    // [L48 · impl_28] 처리 뒤 다시 읽기는 목록을 유지한다(잠금 + 얇은 진행 표시 · KeepContentRefreshMixin) — 첫 읽기·실패 화면만 전체 로딩 · 늦은 옛 응답 착지 0.
+    final t = beginContentLoad(canKeep: _loadError == null);
+    if (!t.keep) setLoading(true);
     if (mounted) setState(() => _loadError = null);
     try {
       final rawList = await _reads.allUsersRaw();
 
-      if (!mounted) return;
+      if (!isCurrentContentLoad(t.gen)) return;
       final restrictions = <String, _Restriction>{};
       final users = rawList.whereType<Map>().map((data) {
         try {
@@ -105,14 +110,16 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       }).whereType<UserModel>().toList();
       setState(() { _users = users; _restrictions = restrictions; _rebuildFilter(); });
       setLoading(false);
+      finishContentLoad(t.gen, shown: true);
     } catch (e) {
-      if (!mounted) return;
+      if (!isCurrentContentLoad(t.gen)) return;
       // [R7-P3-2 P32-X1] 조회 실패를 **대상 없음**으로 말하지 않는다.
       //   토스트는 사라지고 화면에는 `해당하는 사용자가 없습니다` 만 남았다 —
       //   문의 대상이 정말 없는 것과 못 읽은 것은 다른 사실이다.
       ToastHelper.showError('사용자 목록 불러오기 실패: $e');
       setState(() => _loadError = e);
       setLoading(false);
+      finishContentLoad(t.gen, shown: false);
     }
   }
 
@@ -171,7 +178,12 @@ class _AllUsersScreenState extends State<AllUsersScreen>
         '${biz != null && biz.isNotEmpty ? ' · $biz' : ''}';
   }
 
-  Future<void> _toggleBlacklist(UserModel user) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_toggleBlacklistLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _toggleBlacklist(UserModel user) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('allUsers._isProcessing', this), () => _toggleBlacklistLocked(user));
+
+  Future<void> _toggleBlacklistLocked(UserModel user) async {
     if (_isProcessing) return;
     if (user.isBlacklisted) {
       // [.57] 블랙리스트 해제(callableUnblacklistUser)는 이용 제한(노쇼 자동·수동)을 건드리지 않는다(LOCAL 확인).
@@ -237,7 +249,12 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     }
   }
 
-  Future<void> _clearRestriction(UserModel user) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_clearRestrictionLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _clearRestriction(UserModel user) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('allUsers._isProcessing', this), () => _clearRestrictionLocked(user));
+
+  Future<void> _clearRestrictionLocked(UserModel user) async {
     if (_isProcessing) return;
     final restrictedUntil = user.restrictedUntil;
     if (restrictedUntil == null) return;
@@ -328,7 +345,12 @@ class _AllUsersScreenState extends State<AllUsersScreen>
         : '$done. 아직 남은 제한: ${blocked.join(', ')}'));
   }
 
-  Future<void> _releaseManual(UserModel user) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_releaseManualLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _releaseManual(UserModel user) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('allUsers._isProcessing', this), () => _releaseManualLocked(user));
+
+  Future<void> _releaseManualLocked(UserModel user) async {
     if (_isProcessing) return;
     final r = _restrictions[user.uid];
     // 읽은 base 가 없으면 실행하지 않는다 — expectedBaseUntilMs 를 모르는 요청은 보내지 않는다.
@@ -461,7 +483,10 @@ class _AllUsersScreenState extends State<AllUsersScreen>
             child: Builder(builder: (context) {
               if (isLoading) return const LoadingWidget(message: '사용자 목록을 불러오는 중...');
               final filtered = _cachedFiltered;
-              return filtered.isEmpty ? _buildEmptyState() : _buildUserList(filtered);
+              return KeepContentBody(
+                refreshing: refreshingKeep,
+                child: filtered.isEmpty ? _buildEmptyState() : _buildUserList(filtered),
+              );
             }),
           ),
         ],

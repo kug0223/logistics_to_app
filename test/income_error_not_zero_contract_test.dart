@@ -66,9 +66,11 @@ void main() {
     });
 
     test('금액 자리에 0원 대신 모른다고 쓴다', () {
-      expect(flat.contains('String _amountOrUnknown(int amount) =>'), true);
+      // [impl_39 · AUD-3 M3 핀 갱신] 같은 판정 함수가 이제 '계산 불가 근무 수'도 받아 부분합을 전체처럼 말하지 않는다
+      //   (unknownShifts 0 이면 예전과 같은 formatWage). 실패 = '확인 불가' 는 그대로.
+      expect(flat.contains('String _amountOrUnknown(int amount, {int unknownShifts = 0}) =>'), true);
       expect(
-        flat.contains("_loadFailed ? '확인 불가' : FormatHelper.formatWage(amount)"),
+        flat.contains("_loadFailed ? '확인 불가' : ExpectedWageText.partialTotal(amount, unknownShifts)"),
         true,
       );
     });

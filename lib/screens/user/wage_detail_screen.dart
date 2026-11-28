@@ -45,7 +45,7 @@ class WageDetailScreen extends StatelessWidget {
   ///
   /// 상태 흐름:
   ///   wagePending     → 급여 처리 전 (중립 회색)
-  ///   wageCalculated  → 급여 계산 완료 (연한 초록)
+  ///   wageCalculated  → 정산 중 (중립 회색 · 금액·내역 숨김 — 마감 취소 건 포함 · HB3-VISIBILITY)
   ///   wageConfirmed   → 지급 예정 (brand blue)
   ///   wageTransferred → 이체 처리 완료 (진한 초록)
   ///   [future] paid   → 입금 완료 (금융 API 연결 후)
@@ -60,9 +60,13 @@ class WageDetailScreen extends StatelessWidget {
         (label: '급여 처리 전', color: AppColors.textTertiary);
   }
 
-  /// 표시 금액 — 관리자가 확정한 finalWage 우선, 없으면 예상 일당
+  /// 확정 금액이 보이는 건인가 — [HB3-VISIBILITY] 확정·이체 완료만(AttendanceModel.displayWage).
+  ///   마감 취소로 calculated 로 돌아간 건은 남아 있는 finalWage·wageDetail 을 보여 주지 않는다.
+  bool get _hasConfirmedWage => attendance?.displayWage != null;
+
+  /// 표시 금액 — 확정된 금액(displayWage) 우선, 없으면 예상 일당
   int get _displayWage {
-    final fw = attendance?.finalWage;
+    final fw = attendance?.displayWage;
     if (fw != null) return fw;
     if (application.wageType == 'hourly') {
       int toMin(String t) {
@@ -121,7 +125,9 @@ class WageDetailScreen extends StatelessWidget {
     final s = _s(context);
     final app = application;
     final att = attendance;
-    final wd = att?.wageDetail; // WageDetailModel — 실근무·통상시급 등 계산 기준
+    // WageDetailModel — 실근무·통상시급 등 계산 기준.
+    // [HB3-VISIBILITY] 확정·이체 완료 건만(displayWageDetail) — 마감 취소된 계산값은 보이지 않는다.
+    final wd = att?.displayWageDetail;
     // [SIM-WORKER-WAGE-VIEW] 근무일은 KST 자정 instant 다 — 기기 성분이 아니라
     //   KST 달력일로 읽는다(GMT 기기에서 10/17 근무가 10/16 으로 보였다).
     final d = FormatHelper.toKstDate(app.workDate);
@@ -467,13 +473,15 @@ class WageDetailScreen extends StatelessWidget {
   //   ────────────────────────────
   //   실수령액          108,715원   ← effectiveNetWage (brand blue, bold)
   Widget _buildWageBreakdown(double s) {
-    final wd = attendance?.wageDetail;
+    // [HB3-VISIBILITY] 확정·이체 완료 건만 세부 내역을 보인다(마감 취소 · 계산 중 건은 숨김).
+    final wd = attendance?.displayWageDetail;
 
     // WageDetailModel 없음 → 간단히 총 급여 1줄
+    //   확정 금액이 없으면 지원서 기준 예상 금액이므로 '예상 급여' 라고 말한다.
     if (wd == null) {
       return _detailRow(
         s: s,
-        label: '총 급여',
+        label: _hasConfirmedWage ? '총 급여' : '예상 급여',
         value: FormatHelper.formatWage(_displayWage),
         valueBold: true,
       );

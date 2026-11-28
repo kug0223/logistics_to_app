@@ -217,7 +217,7 @@ void main() {
 
     // 마지막 페이지까지 넘긴다.
     for (var i = 0; i < 2; i++) {
-      await t.tap(find.text('다음'));
+      await t.tap(findVisibleText('다음'));
       await t.pumpAndSettle();
     }
     // [DU1 구현83] 마지막 CTA 표시 문자열이 낱말 단위(keepWords) — 보이는 글자로 찾는다
@@ -315,7 +315,7 @@ void main() {
 
   testWidgets('R3 큰 배율에서도 CTA 가 화면 안에 있고 본문은 스크롤된다', (t) async {
     await _pumpOnboarding(t, size: const Size(320, 740), scale: 2.0);
-    final cta = find.textContaining('다음');
+    final cta = findVisibleTextContaining('다음');
     expect(cta, findsWidgets);
     final r = t.getRect(cta.first);
     expect(r.bottom, lessThanOrEqualTo(740.0),

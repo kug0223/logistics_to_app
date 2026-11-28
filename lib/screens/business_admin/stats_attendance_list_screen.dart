@@ -110,7 +110,11 @@ class _StatsAttendanceListScreenState extends State<StatsAttendanceListScreen> {
   }
 
   /// [afterChange] 정정 뒤 다시 읽기 — 실패해도 이전 목록을 지우지 않고 낡았다고 말한다.
+  /// [impl_27b · L48 같은 꼴] 읽기 차례 — 늦게 끝난 옛 내역이 처리 뒤 새 내역을 덮지 않게.
+  int _reloadGen = 0;
+
   Future<void> _reload({bool afterChange = false}) async {
+    final gen = ++_reloadGen;
     final before = _rows?.map((r) => r.id).toSet() ?? const <String>{};
     setState(() { _loading = true; if (!afterChange) _loadFailed = false; });
     StatsAttendanceSnapshot? snap;
@@ -120,7 +124,7 @@ class _StatsAttendanceListScreenState extends State<StatsAttendanceListScreen> {
       debugPrint('⚠️ [STATS-TO-ATTENDANCE] 내역 조회 실패: $e');
       snap = null;
     }
-    if (!mounted) return;
+    if (!mounted || gen != _reloadGen) return;
     setState(() {
       _loading = false;
       if (snap == null) {

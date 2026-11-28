@@ -186,7 +186,7 @@ void main() {
     expect(inDialog, findsOneWidget);
     expect(findVisibleTextContaining('따로 열 수 있는 화면이 없는 알림'), findsOneWidget);
     expect(p.markedRead, ['u']);
-    await t.tap(find.text('확인'));
+    await t.tap(findVisibleText('확인'));
     await t.pump(const Duration(milliseconds: 300));
   });
 
@@ -197,7 +197,7 @@ void main() {
     await t.pump(const Duration(milliseconds: 300));
     expect(find.descendant(of: find.byType(Dialog), matching: findVisibleTextContaining('오늘 밤 점검합니다.')), findsOneWidget);
     expect(findVisibleTextContaining('따로 열 수 있는 화면이 없는 알림'), findsNothing);
-    await t.tap(find.text('확인'));
+    await t.tap(findVisibleText('확인'));
     await t.pump(const Duration(milliseconds: 300));
   });
 

@@ -320,16 +320,22 @@ void main() {
     final card = _sliceOf(_src(_homePath), 'Widget _buildReadinessCard(', '\n  }');
 
     test('26 신분증 + 급여정보 두 축을 본다', () {
+      // [대표 결정 2026-11-25 갱신] 가입 후 흐름 개편 — 홈 「시작 준비」 체크리스트(지역 → 신분 → 급여).
+      //   두 축(신분증 · 급여정보 presence) 판정은 그대로이고, 지역 줄이 앞에 더해져 '전부 끝남' 기준이 3 이 됐다.
       expect(_codeOf(card), contains('user.hasIdDocument'));
       expect(_codeOf(card),
           contains('user.hasBankAccount && user.hasBankbookDocument'));
-      expect(_codeOf(card), contains('completed == 2'));
+      expect(_codeOf(card), contains('completed == 3'));
     });
 
     test('27 §10 — 하나만 하면 끝나는 것처럼 말하지 않는다', () {
-      expect(card, contains('지원 전에 신분증과 급여정보를 등록해 주세요'));
-      expect(card, contains('계좌와 통장사본을 등록해 주세요'));
-      expect(card, contains('신분증을 등록해 주세요'));
+      // [대표 결정 2026-11-25 갱신] 가입 후 흐름 개편 — 홈 「시작 준비」 체크리스트(지역 → 신분 → 급여).
+      //   요약 문장 대신 남은 줄을 모두 보이는 체크리스트다 — 하나만 남아도 다른 줄이 '완료' 로 함께 보이고
+      //   전부 끝나야 카드가 사라진다. 신분 · 급여 줄이 각각 있다는 것을 고정한다.
+      expect(card, contains("'신분증 등록'"));
+      expect(card, contains("title: '급여 계좌 · 통장사본 등록'"));
+      expect(card, contains("title: '일할 지역 고르기'"));
+      expect(_codeOf(card), contains('StartReadinessCard('));
     });
 
     test('28 등록 여부만 본다 — 검수 상태는 읽지 않는다', () {

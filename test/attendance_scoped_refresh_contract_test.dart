@@ -76,10 +76,16 @@ void main() {
     test('AS-20 노쇼 취소는 지원서·슬롯까지 바꾼다 — 전체 로드 유지', () {
       final cancel = _sliceOf(fn, 'export const callableBatchCancelNoShow =',
           'export const callableBatchResetAttendance');
-      expect(_flat(_codeOf(cancel)), contains('collection("applications").doc(restore.appId)'));
+      // [판정294 F294-NOSHOW-01] 좌석 복원은 거래 안에서 실제 취소한 근태의 지원서만 읽고(getAll) 지원서·공고·슬롯을 쓴다.
+      final cf2 = _flat(_codeOf(cancel));
+      expect(cf2, contains('await tx.getAll(...cnAppIds.map((id) => db.collection("applications").doc(id)))'));
+      expect(cf2, contains('tx.update(a.ref, {'));
+      expect(cf2, contains('confirmedCount: admin.firestore.FieldValue.increment(sd.n)'));
       // 클라이언트도 전체 로드를 유지한다
+      // [impl_16 · impl_23 발견] 다음 함수는 ActionGuard 감싸기(`_showBatchResetDialog() =>` + 본문 `…Locked`)가 됐다 —
+      //   끝 표지를 시그니처 앞부분으로 둔다(가운데 노쇼 취소 처리기의 뜻은 그대로).
       final handler = _sliceOf(code, "httpsCallable('callableBatchCancelNoShow')",
-          'Future<void> _showBatchResetDialog() async {');
+          'Future<void> _showBatchResetDialog(');
       expect(_flat(handler), contains('await _loadData();'));
     });
 

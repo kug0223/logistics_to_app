@@ -931,7 +931,9 @@ class MonthlyReviewService {
       return ReviewPage(records: records, cursor: cursor, hasMore: hasMore);
     } catch (e) {
       debugPrint('❌ 사업장 작성 리뷰 페이지 조회 실패: $e');
-      return const ReviewPage(records: [], cursor: null, hasMore: false);
+      // [impl_54 · AUD-4 H2] 실패를 빈 페이지로 돌려주면 관리자 화면이 '리뷰가 없습니다'로 말한다 — 다시 던져
+      //   화면의 실패 상태(_hasError · 더 불러오기 실패 토스트)가 받게 한다.
+      rethrow;
     }
   }
 
@@ -969,7 +971,9 @@ class MonthlyReviewService {
       return ReviewPage(records: records, cursor: cursor, hasMore: hasMore);
     } catch (e) {
       debugPrint('❌ 사업장 받은 리뷰 페이지 조회 실패: $e');
-      return const ReviewPage(records: [], cursor: null, hasMore: false);
+      // [impl_54 · AUD-4 H2] 실패를 빈 페이지로 돌려주면 관리자 화면이 '리뷰가 없습니다'로 말한다 — 다시 던져
+      //   화면의 실패 상태(_hasError · 더 불러오기 실패 토스트)가 받게 한다.
+      rethrow;
     }
   }
 
@@ -1010,8 +1014,9 @@ class MonthlyReviewService {
         hasMore: result.data['hasMore'] as bool? ?? false,
       );
     } catch (e) {
+      // [AUD-4 M1 같은 꼴 · impl_60] 실패를 빈 페이지(hasMore=false)로 접지 않는다 — 화면이 '평가 없음' 과 실패를 구분한다.
       debugPrint('❌ 근무자 리뷰 페이지 조회 실패: $e');
-      return const ReviewPage(records: [], cursor: null, hasMore: false);
+      rethrow;
     }
   }
 
@@ -1048,8 +1053,10 @@ class MonthlyReviewService {
         hasMore: result.data['hasMore'] as bool? ?? false,
       );
     } catch (e) {
+      // [AUD-4 M1 · impl_60] 실패를 빈 페이지로 접지 않는다 — 내 근무 평가 화면은 던져진 실패로 '리뷰를 불러오지 못했습니다 ·
+      //   다시 시도'(첫 조회) · '리뷰를 더 불러오지 못했습니다'(다음 페이지)를 이미 구분한다. 예전에는 '아직 받은 평가가 없습니다'.
       debugPrint('❌ 근무자 전체 리뷰 조회 실패: $e');
-      return const ReviewPage(records: [], cursor: null, hasMore: false);
+      rethrow;
     }
   }
 }

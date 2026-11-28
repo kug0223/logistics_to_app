@@ -37,7 +37,8 @@ void main() {
     final home = _code('lib/screens/user/user_home_screen.dart');
     expect(home.contains('FormatHelper.formatWageWithType(app.wage, wageType)'), isTrue);
     final sheet = _code('lib/widgets/dialogs/apply/multi_apply_confirm_sheet.dart');
-    expect(sheet.contains(r"${work.wageTypeLabel} ${work.formattedWage}"), isTrue);
+    // [F294-WAGE-01 · impl_33 핀 갱신] 저장 급여 형태 라벨은 그대로 — 금액은 누락 0 을 '0원' 으로 말하지 않는 rawWage.
+    expect(sheet.contains(r"${work.wageTypeLabel} ${ExpectedWageText.rawWage(work.wage)}"), isTrue);
   });
   test('[82-R §2] 급여 목록 휴게 칩은 미확정(pending)만 편집한다 — 계산분은 명세 경로', () {
     final src = _code('lib/screens/business_admin/dialogs/wage_confirm_dialog.dart');

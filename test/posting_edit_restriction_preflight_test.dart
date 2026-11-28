@@ -632,8 +632,9 @@ void main() {
       expect(body.contains('final workDetailsChanged = _hasWorkDetailsChanged();'),
           true);
       expect(
+          // [impl_29 · J3 · 의도된 기대 변경] 실리는 목록 = 새 정체의 마감·긴급을 비운 `_workDetailsForSave`. '바뀌었을 때만 싣는다' 는 그대로.
           body.contains("if (workDetailsChanged) ...{ "
-              "'workDetails': WorkDetailData.listToFirestore(_workDetails), "
+              "'workDetails': WorkDetailData.listToFirestore(_workDetailsForSave), "
               "'totalRequired': totalRequired, },"),
           true,
           reason: '확정자가 있으면 키가 실린 것만으로 전체 저장이 거부된다');

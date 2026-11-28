@@ -231,7 +231,7 @@ void main() {
             expect(find.text('필요 12명'), findsOneWidget);
 
             // 닫기가 화면 안에 있다.
-            final r = tester.getRect(find.text('닫기'));
+            final r = tester.getRect(findVisibleText('닫기'));
             expect(r.bottom, lessThanOrEqualTo(size.height + 0.5),
                 reason: '닫기가 화면 밖으로 밀렸다 (bottom=${r.bottom})');
 
@@ -303,7 +303,7 @@ void main() {
         keyboard: 320,
       ));
       await tester.pump();
-      final r = tester.getRect(find.text('닫기'));
+      final r = tester.getRect(findVisibleText('닫기'));
       expect(r.bottom, lessThanOrEqualTo(740 - 320 + 0.5));
       expect(tester.takeException(), isNull);
     });
@@ -320,7 +320,7 @@ void main() {
       ));
       await tester.pump();
       expect(tester.takeException(), isNull);
-      expect(find.text('닫기'), findsOneWidget);
+      expect(findVisibleText('닫기'), findsOneWidget);
     });
   });
 }

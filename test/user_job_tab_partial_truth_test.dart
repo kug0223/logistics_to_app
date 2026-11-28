@@ -856,7 +856,7 @@ class _K1H {
         'dateRowLabel': r(inSheet(find.text(dateRowText()))),
         'sortLatest': r(inSheet(find.text('최신순'))),
         'sortDeadline': r(inSheet(find.text('마감임박순'))),
-        'typeAll': r(inSheet(find.text('전체'))),
+        'typeAll': r(inSheet(findVisibleText('전체'))),
       },
       'labelPlain': plain,
       'labelLines': boxes.map((b) => b.top.round()).toSet().length,
@@ -970,7 +970,7 @@ class _K1H {
     expect(titles.every(vis), isTrue, reason: 'P4 현재 모집단 양수 3');
     obs('P4', 'mounted');
     await openSheet('P4');
-    await tapOn(inSheet(find.text('단기')), 'P4 시트 단기');
+    await tapOn(inSheet(findVisibleText('단기')), 'P4 시트 단기');
     expect(sheetType(), '단기', reason: 'P4 임시 유형=단기(미조회)');
     expect(srv.log.length, 1, reason: 'P4 선택만으로 조회 0');
     obs('P4', 'sheet-flex');
@@ -1029,7 +1029,7 @@ Future<void> _k1After(WidgetTester tester) async {
   expect(h.vis('필터 조건에 맞는 공고가 없습니다'), isTrue, reason: 'K1-2 다시 flex 0');
   await h.openSheet('K1-2 재진입');
   h.expectSheet('K1-2 재진입 현재 flex(알려진 0)', '조건에 맞는 공고 없음', false);
-  await h.tapOn(h.inSheet(find.text('장기')), 'K1-2 시트 장기');
+  await h.tapOn(h.inSheet(findVisibleText('장기')), 'K1-2 시트 장기');
   expect(h.sheetType(), '장기');
   h.expectSheet('K1-2 장기', '적용하기', true);
   await h.apply('K1-2 장기');
@@ -1164,7 +1164,7 @@ class _C210 {
 
   WidgetTester get t => h.tester;
   Finder get listF => find.byType(ListView);
-  Finder get retryF => find.text('다시 시도');
+  Finder get retryF => findVisibleText('다시 시도');
   Finder get moreF => find.text('더 많은 공고 보기');
 
   List<double> r(Finder f) {
@@ -1438,8 +1438,8 @@ Future<void> _c210After(WidgetTester tester) async {
   await c.capture('F2-after');
   await h.openSheet('F2');
   h.expectSheet('F2 실패 뒤(알려진 0 아님)', '적용하기', true);
-  await h.tapOn(h.inSheet(find.text('단기')), 'F2 시트 단기(선택만)');
-  await h.tapOn(h.inSheet(find.text('전체')), 'F2 시트 전체(선택만)');
+  await h.tapOn(h.inSheet(findVisibleText('단기')), 'F2 시트 단기(선택만)');
+  await h.tapOn(h.inSheet(findVisibleText('전체')), 'F2 시트 전체(선택만)');
   await h.closeSheet('F2');
   expect(h.srv.log.length, 2, reason: 'F2 선택·닫기만으로 조회 0');
   await h.openSheet('F2 재열기');

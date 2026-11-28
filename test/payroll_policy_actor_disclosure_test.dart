@@ -255,10 +255,11 @@ void main() {
       //   첫 `isSuperAdmin()` 는 **권한**이고, 세 번째 절의 `(isSuperAdmin() ||`
       //   가 필드 제한을 면제하는 **우회 분기**다. 차단 목록이 그 우회보다
       //   앞이어야 슈퍼어드민도 이 필드를 직접 쓸 수 없다.
+      // [판정281 갱신] 서버 fence: 쓰기 규칙 바깥에 `callerNotDeleting() && (` 감싸기만 붙었다 — 안쪽 조건 단언은 그대로.
       final bizUpdate = _slice(
           rules,
-          'allow update: if (isAdminOf(businessId)',
-          'allow update: if isAdminOf');
+          'allow update: if callerNotDeleting() && ((isAdminOf(businessId)',
+          'allow update: if callerNotDeleting() && (isAdminOf');
       final iDeny = bizUpdate.indexOf("'attendancePolicyConfirmation'");
       final iBypass = bizUpdate.indexOf('(isSuperAdmin() ||');
       expect(iDeny, greaterThan(-1));

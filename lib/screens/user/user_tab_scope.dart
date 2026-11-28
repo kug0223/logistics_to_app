@@ -49,6 +49,19 @@ class UserTabScope extends InheritedWidget {
   /// 홈의 "근무 기록 보기" 버튼에서만 호출한다.
   final VoidCallback switchToScheduleNow;
 
+  /// [판정285 §4·§5] 홈 선택일 「내 일정에서 보기」 → 일정 탭(index=2)을 **그 날짜**로 연다.
+  ///   일자리용 [switchToTabWithDate] 와 따로 둔다(그 함수는 일자리 날짜만 남긴다).
+  ///   날짜는 홈의 KST 달력일 키(`DateTime.utc(y, m, d)`)다 — 년·월·일 성분만 쓴다.
+  ///   null = 이 범위를 주지 않는 대역(시험 등) — 홈은 일반 탭 전환으로 물러난다.
+  final void Function(DateTime date)? switchToScheduleDate;
+
+  /// 홈에서 전달된 일정 날짜. MyScheduleScreen 이 소비(월·날짜·당일 목록 · 상태 필터 ALL)하고
+  /// [clearPendingScheduleDate] 로 지운다. null = 미설정.
+  final DateTime? pendingScheduleDate;
+
+  /// MyScheduleScreen 이 [pendingScheduleDate] 를 소비한 뒤 호출.
+  final VoidCallback? clearPendingScheduleDate;
+
   const UserTabScope({
     super.key,
     required this.switchToTab,
@@ -58,6 +71,9 @@ class UserTabScope extends InheritedWidget {
     required this.pendingScheduleMonth,
     required this.clearPendingScheduleMonth,
     required this.switchToScheduleNow,
+    this.switchToScheduleDate,
+    this.pendingScheduleDate,
+    this.clearPendingScheduleDate,
     required super.child,
   });
 
@@ -69,5 +85,6 @@ class UserTabScope extends InheritedWidget {
   bool updateShouldNotify(UserTabScope oldWidget) =>
       switchToTab != oldWidget.switchToTab ||
       pendingJobDate != oldWidget.pendingJobDate ||
-      pendingScheduleMonth != oldWidget.pendingScheduleMonth;
+      pendingScheduleMonth != oldWidget.pendingScheduleMonth ||
+      pendingScheduleDate != oldWidget.pendingScheduleDate;
 }

@@ -17,6 +17,7 @@ import 'package:ALfit/services/firestore_service.dart';
 import 'package:ALfit/theme/role_theme.dart';
 import 'package:ALfit/utils/id_card_helper.dart';
 import 'package:ALfit/widgets/dialogs/ocr_verification_dialog.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 // ── 글꼴(상대 경로) ──
 Future<void> _loadFonts() async {
@@ -212,7 +213,7 @@ Future<void> _ocre(_Ctx c) async {
   for (final b in const ['그대로 등록', '다시 시도', '취소']) {
     await c.visible(find.descendant(of: dlg, matching: find.text(b)), '단추 $b');
   }
-  await c.tap(find.descendant(of: dlg, matching: find.text('취소')), '취소');
+  await c.tap(find.descendant(of: dlg, matching: findVisibleText('취소')), '취소');
   expect(dlg, findsNothing, reason: '취소 → 창 닫힘');
   expect(result, false, reason: '결과 false');
 }
@@ -234,7 +235,7 @@ Future<void> _idr(_Ctx c, String arg) async {
   }
   await c.tap(find.descendant(of: dlg, matching: find.text('소득세 신고')), '소득세 신고 선택');
   await c.visible(find.descendant(of: dlg, matching: find.text('요청 보내기')), "'요청 보내기'");
-  await c.tap(find.descendant(of: dlg, matching: find.text('취소')), '취소');
+  await c.tap(find.descendant(of: dlg, matching: findVisibleText('취소')), '취소');
   expect(dlg, findsNothing, reason: '취소 → 창 닫힘');
   expect(done, isTrue);
 }

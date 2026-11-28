@@ -627,7 +627,9 @@ void main() {
     return {'paragraphs': n, 'bad': bad};
   }
 
-  String taskLabel(String title, String desc, [List<String> subs = const []]) => [title, desc, ...subs, '열기'].join(', ');
+  // [판정283 A안 갱신 2026-11-26] 설명은 총수를 되풀이하지 않고 알약 = 총수+단위 · 의미 이름 = 제목, 알약, 설명[, 보조줄], 열기
+  String taskLabel(String title, String pill, String desc, [List<String> subs = const []]) =>
+      [title, pill, desc, ...subs, '열기'].join(', ');
 
   final cases = <({String state, bool pngW, bool pngB, String fixture})>[
     (state: 'ownerSingle', pngW: true, pngB: true, fixture: '소유자 1곳 · 오늘 5명 중 3명·2명 추가 필요 · 할 일 5종 · 다가오는 2일'),
@@ -805,17 +807,17 @@ void main() {
                 expectSameCallback(t, drill, '$id 인원 현황 보기');
                 // 할 일 5종 — 정확 설명·알약·보조줄·순서·의미 이름
                 final rows = [
-                  ('퇴사 요청', '퇴사 요청 1건을 검토해 주세요', ['수동 검토 1건', '빠른 검토 필요 1건'], '1'),
-                  ('지원 검토', '대기 중인 지원 3건을 확인해 주세요', ['긴급 1건'], '3'),
-                  ('일정 변경 요청', '근로자의 일정 변경 요청 2건이 있어요', <String>[], '2'),
-                  ('계약 미발송', '발송이 필요한 계약 1건이 있어요', <String>[], '1'),
-                  ('마감 필요', '사업장별 미마감 근무일 합계 4일이에요', ['가장 오래된 날 2026.11.03'], '4일'),
+                  ('퇴사 요청', '퇴사 요청을 검토해 주세요', ['수동 검토 1건', '빠른 검토 필요 1건'], '1건'),
+                  ('지원 검토', '대기 중인 지원을 확인해 주세요', ['긴급 1건'], '3건'),
+                  ('일정 변경 요청', '근로자의 일정 변경 요청이 있어요', <String>[], '2건'),
+                  ('계약 미발송', '발송이 필요한 계약이 있어요', <String>[], '1건'),
+                  ('마감 필요', '사업장별 미마감 근무일 합계', ['가장 오래된 날 2026.11.03'], '4일'),
                 ];
                 var lastY = -1.0;
                 for (final (title, desc, subs, pill) in rows) {
-                  final sem = semLabel(taskLabel(title, desc, subs));
+                  final sem = semLabel(taskLabel(title, pill, desc, subs));
                   expect(sem, findsOneWidget, reason: '$id 행 $title 의미 이름');
-                  expectNode(t, sem, '$id 행 $title', label: taskLabel(title, desc, subs), tap: true);
+                  expectNode(t, sem, '$id 행 $title', label: taskLabel(title, pill, desc, subs), tap: true);
                   expectSameCallback(t, sem, '$id 행 $title');
                   expect(find.descendant(of: sem, matching: plain(pill)), findsOneWidget, reason: '$id $title 알약 $pill');
                   final r = t.getRect(sem);
@@ -825,7 +827,7 @@ void main() {
                 }
                 expect(para(t, plain('긴급 1건')).text.style?.color, AppColors.errorDark, reason: '$id 긴급만 errorDark');
                 expect(para(t, plain('빠른 검토 필요 1건')).text.style?.color, AppColors.warningDark);
-                expect(para(t, plain('대기 중인 지원 3건을 확인해 주세요')).text.style?.fontSize, 14);
+                expect(para(t, plain('대기 중인 지원을 확인해 주세요')).text.style?.fontSize, 14);
                 expect(para(t, plain('지원 검토')).text.style?.fontSize, 17);
                 // 다가오는 근무
                 expect(plain('내일'), findsOneWidget, reason: '$id D+1 = 내일(고정 clock)');
@@ -839,16 +841,16 @@ void main() {
                 expect(plain('지금 모집 중인 업무만 센 숫자예요'), findsNothing);
                 expect(plain('확정 근무 · 업무 2개 · 시간대 2개'), findsOneWidget, reason: '$id 업무 여럿 — 대표 시간 없음');
                 final rows = [
-                  ('이체 대기', '이체 확인이 필요한 급여 3건이 있어요', ['연체 1건', '지급일 확인 필요 1건'], '3'),
-                  ('중간정산 요청', '대기 중인 중간정산 요청 1건이 있어요', <String>[], '1'),
-                  ('급여 변경 요청', '지급방식 변경 요청 1건을 확인해 주세요', <String>[], '1'),
-                  ('계약 확인 필요', '연장·종료를 정할 계약 3건을 확인해 주세요', ['만료 후 미결정 1건'], '3'),
+                  ('이체 대기', '이체 확인이 필요한 급여가 있어요', ['연체 1건', '지급일 확인 필요 1건'], '3건'),
+                  ('중간정산 요청', '대기 중인 중간정산 요청이 있어요', <String>[], '1건'),
+                  ('급여 변경 요청', '지급방식 변경 요청을 확인해 주세요', <String>[], '1건'),
+                  ('계약 확인 필요', '연장·종료를 정할 계약을 확인해 주세요', ['만료 후 미결정 1건'], '3건'),
                 ];
                 var lastY = -1.0;
                 for (final (title, desc, subs, pill) in rows) {
-                  final sem = semLabel(taskLabel(title, desc, subs));
+                  final sem = semLabel(taskLabel(title, pill, desc, subs));
                   expect(sem, findsOneWidget, reason: '$id 행 $title');
-                  expectNode(t, sem, '$id 행 $title', label: taskLabel(title, desc, subs), tap: true);
+                  expectNode(t, sem, '$id 행 $title', label: taskLabel(title, pill, desc, subs), tap: true);
                   expect(find.descendant(of: sem, matching: plain(pill)), findsOneWidget, reason: '$id $title 알약 $pill');
                   expect(t.getRect(sem).top > lastY, isTrue, reason: '$id 행 순서(연체 이체 상향) $title');
                   lastY = t.getRect(sem).top;
@@ -858,11 +860,11 @@ void main() {
                 expect(para(t, plain('지급일 확인 필요 1건')).text.style?.color, AppColors.textSecondary);
                 if (v.id == 'B') {
                   // 할 일 도달 프레임 — 첫 행 전문·receiver·중심 hit
-                  final first = semLabel(taskLabel('이체 대기', '이체 확인이 필요한 급여 3건이 있어요', ['연체 1건', '지급일 확인 필요 1건']));
+                  final first = semLabel(taskLabel('이체 대기', '3건', '이체 확인이 필요한 급여가 있어요', ['연체 1건', '지급일 확인 필요 1건']));
                   await reach(t, first);
                   await shot(t, key, 'CP04-ownerMulti-B-tasks', v, c.fixture, frame: 'task-reach');
                   expectReceiver(t, first, v, '$id 이체 대기 행');
-                  expectWordsKept(para(t, plain('이체 확인이 필요한 급여 3건이 있어요')), '이체 확인이 필요한 급여 3건이 있어요', '$id 이체 설명');
+                  expectWordsKept(para(t, plain('이체 확인이 필요한 급여가 있어요')), '이체 확인이 필요한 급여가 있어요', '$id 이체 설명');
                 }
               }
               if (c.state == 'subContract' || c.state == 'subWorkers') {
@@ -876,13 +878,13 @@ void main() {
               if (c.state == 'subContract') {
                 expect(plain('오늘의 근무'), findsNothing, reason: '$id 계약 단독 — 오늘 숨김');
                 expect(plain('다가오는 근무'), findsNothing);
-                expect(semLabel(taskLabel('계약 미발송', '발송이 필요한 계약 1건이 있어요')), findsOneWidget);
-                expect(semLabel(taskLabel('계약 확인 필요', '연장·종료를 정할 계약 2건을 확인해 주세요')), findsOneWidget);
+                expect(semLabel(taskLabel('계약 미발송', '1건', '발송이 필요한 계약이 있어요')), findsOneWidget);
+                expect(semLabel(taskLabel('계약 확인 필요', '2건', '연장·종료를 정할 계약을 확인해 주세요')), findsOneWidget);
               }
               if (c.state == 'subWorkers') {
                 expect(semLabel('인원 현황 보기'), findsNothing, reason: '$id 공고 권한 없음 — 행동 없음');
                 expect(plain('인원 현황 보기'), findsNothing);
-                expect(semLabel(taskLabel('일정 변경 요청', '근로자의 일정 변경 요청 1건이 있어요')), findsOneWidget);
+                expect(semLabel(taskLabel('일정 변경 요청', '1건', '근로자의 일정 변경 요청이 있어요')), findsOneWidget);
                 expect(plain('스케줄 변경 요청'), findsNothing);
               }
               if (c.state == 'empty') {

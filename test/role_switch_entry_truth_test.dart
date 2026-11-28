@@ -16,6 +16,7 @@ import 'package:ALfit/providers/theme_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/common/settings_screen.dart';
 import 'package:ALfit/screens/user/tabs/user_my_tab.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake
     with MockPlatformInterfaceMixin
@@ -95,7 +96,7 @@ void main() {
     expect(tester.takeException(), isNull);
 
     // 들어가는 문 — 섹션명 `관리자`, 항목 `관리자 모드로 전환`.
-    expect(find.text('관리자'), findsOneWidget);
+    expect(findVisibleText('관리자'), findsOneWidget);
     expect(find.text('관리자 모드로 전환'), findsOneWidget);
   });
 

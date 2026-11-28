@@ -362,8 +362,10 @@ void main() {
     test('ISC-UI-04 APPROVED 행에 이체 처리 CTA 가 있다', () {
       final dash = _src(
           'lib/screens/business_admin/payroll/payroll_payment_dashboard_screen.dart');
+      // [impl_11 P12 · impl_23 발견] 처리 중(_isTransferring)에는 다른 돈 행동처럼 잠근다 — APPROVED 행에만
+      //   CTA 가 있다는 뜻은 그대로(조건에 잠금이 더해졌을 뿐).
       expect(_flat(dash),
-          contains('onProcess: req.isApproved ? () => _processSettlement(req) : null'));
+          contains('onProcess: req.isApproved && !_isTransferring ? () => _processSettlement(req) : null'));
       // 그리고 그 화면 진입은 canManageWage 로 fail-closed 다.
       expect(_flat(dash), contains('if (perms == null || !perms.canManageWage)'));
     });

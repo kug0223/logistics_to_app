@@ -664,8 +664,8 @@ void main() {
 
           // ② 배치 좌표 기록(W 는 TB = TA 여야 한다 — 손 대조. 없는 요소는 '-').
           final bulkBtn = find.descendant(of: dlg, matching: find.widgetWithText(TextButton, _bulkText), skipOffstage: true);
-          final extInk = find.ancestor(of: find.text('연장'), matching: find.byType(InkWell));
-          final endInk = find.ancestor(of: find.text('종료'), matching: find.byType(InkWell));
+          final extInk = find.ancestor(of: findVisibleText('연장'), matching: find.byType(InkWell));
+          final endInk = find.ancestor(of: findVisibleText('종료'), matching: find.byType(InkWell));
           final ddF = find.text(_dday[c.id] ?? '(없음)');
           String chipRect(String lab) {
             final f = find.text(lab);
@@ -725,8 +725,8 @@ void main() {
 
             if (c.id == 'RENEW') {
               // ⑤ 연장 · 종료 — 색(DU536 그대로) → 첫 화면 캡처 → 명단을 끌어 버튼을 보이는 칸에 넣고 보임 · hit · 받는 자리(기록). 누르지 않는다.
-              final extF = find.text('연장');
-              final endF = find.text('종료');
+              final extF = findVisibleText('연장');
+              final endF = findVisibleText('종료');
               final nExt = extF.evaluate().length;
               final nEnd = endF.evaluate().length;
               need('연장 · 종료 각 1', nExt == 1 && nEnd == 1, 'ext $nExt end $nEnd');

@@ -78,6 +78,16 @@ class UserModel {
   /// 체류기간 만료일 (외국인등록증 기재 정보. 법무부 실시간 조회 아님).
   final DateTime? stayExpiryDate;
 
+  // ── [ALFIT-AUTH-KAKAO-ONBOARDING.1] 공통 KG 가입(카카오) 필드 — 서버(CF) writer 전용, 읽기만 ──
+  //   toMap 에 넣지 않는다(rules 가 클라 write 를 막는다 — R-3).
+  /// 'unknown' | 'domestic' | 'foreign'. 새 흐름 계정만 갖는다. 옛 계정은 null(기존 isForeign 판정 그대로).
+  ///   'unknown' = 가입 직후 서류(신분증/외국인등록증) 전. **법적 국적·진위·취업자격 판정이 아니다.**
+  final String? nationalityStatus;
+  /// 연결된 로그인 수단(예: ['kakao']). 옛 아이디 계정은 빈 목록.
+  final List<String> authProviders;
+  /// 'kakao_v1' 등 — 새 흐름으로 만들어진 계정 표식. 옛 계정은 null.
+  final String? signupSource;
+
   // ── 신분증 정보 ──
   final String? idCardImageUrl;         // 신분증 앞면 이미지 URL (legacy — 신규 flow는 idCardImagePath 사용)
   final String? idCardImagePath;        // [BUG-ID-01] authoritative Storage path (신규 flow)
@@ -253,6 +263,10 @@ class UserModel {
     this.koreanName,
     this.visaType,
     this.stayExpiryDate,
+    // [ALFIT-AUTH-KAKAO-ONBOARDING.1]
+    this.nationalityStatus,
+    List<String>? authProviders,
+    this.signupSource,
     // 전화번호 시스템
     this.authPhone,
     this.phoneVerificationLevel,
@@ -334,6 +348,7 @@ class UserModel {
        managedBusinessIds = managedBusinessIds ??
            (businessId != null ? [businessId] : const []),
        subAdminBusinessIds = subAdminBusinessIds ?? const [],
+       authProviders = authProviders ?? const [],
        preferredJobRegions = preferredJobRegions ?? const [],
        _rawIdCardDocumentState = idCardDocumentState,
        _rawBankbookDocumentState = bankbookDocumentState;
@@ -357,7 +372,16 @@ class UserModel {
   bool isSubAdminOf(String businessId) => subAdminBusinessIds.contains(businessId);
 
   /// 외국인 여부 — 신규: foreignIdentityFingerprint(CF 기록), 레거시: foreignIdNumber 폴백
-  bool get isForeign => foreignIdentityFingerprint != null || foreignIdNumber != null;
+  /// [ALFIT-AUTH-KAKAO-ONBOARDING.1] 새 흐름 계정은 서버가 외국인등록증 등록 뒤 nationalityStatus='foreign' 을 쓴다.
+  ///   'unknown' 은 false 지만 **내국인이라는 뜻이 아니다** — 서류 입구는 [isNationalityUnconfirmed] 를 먼저 본다.
+  bool get isForeign => foreignIdentityFingerprint != null || foreignIdNumber != null || nationalityStatus == 'foreign';
+
+  /// [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정278 §4] 가입 직후 서류 전(국적 미확정) 상태.
+  ///   서류 종류를 사용자가 고르기 전에는 내국인(1~4)·외국인(5~8) 어느 쪽 규칙도 적용하지 않는다.
+  bool get isNationalityUnconfirmed => nationalityStatus == 'unknown';
+
+  /// 새 흐름(카카오 등 외부 로그인)으로 만들어진 계정 — 비밀번호가 없다.
+  bool get isProviderAccount => signupSource != null || authProviders.isNotEmpty;
 
   /// 앱 표시용 이름 — koreanName → legalName → name 순서.
   /// 기존 name 필드 사용처의 호환성을 위해 직접 변경 대신 이 getter 사용 권장.
@@ -399,7 +423,10 @@ class UserModel {
       role == UserRole.USER &&
       accountStatus == 'active' &&
       !isForeign &&
-      passVerifiedAt == null;
+      passVerifiedAt == null &&
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정278 §4] 새 흐름 계정은 가입 때 KG 를 마쳤다(passVerifiedAt 서버 기록).
+      //   값이 빠져 와도 닫힌 옛 PASS 재인증(finalizePassReauth)으로 보내지 않는다.
+      !isProviderAccount;
 
   /// PASS 인증 완료 여부 (내국인)
   /// SUPER_ADMIN은 시스템 계정이므로 항상 true
@@ -584,6 +611,12 @@ class UserModel {
       koreanName: map['koreanName'] as String?,
       visaType: map['visaType'] as String?,
       stayExpiryDate: _parseDateTime(map['stayExpiryDate']),
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1] 서버 전용 필드 — 형식이 다르면 없는 것으로 읽는다.
+      nationalityStatus: map['nationalityStatus'] is String ? map['nationalityStatus'] as String : null,
+      authProviders: map['authProviders'] is List
+          ? (map['authProviders'] as List).whereType<String>().toList()
+          : null,
+      signupSource: map['signupSource'] is String ? map['signupSource'] as String : null,
       // 전화번호 시스템
       authPhone: map['authPhone'] as String?,
       // MIGRATION-TEMP: phoneVerificationLevel 없는 기존 사용자 추론
@@ -925,6 +958,10 @@ class UserModel {
       koreanName: clearKoreanName ? null : (koreanName ?? this.koreanName),
       visaType: visaType ?? this.visaType,
       stayExpiryDate: clearStayExpiryDate ? null : (stayExpiryDate ?? this.stayExpiryDate),
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1] 서버 값 — copyWith 를 거쳐도 떨어뜨리지 않는다.
+      nationalityStatus: nationalityStatus,
+      authProviders: authProviders,
+      signupSource: signupSource,
       authPhone: authPhone ?? this.authPhone,
       phoneVerificationLevel: phoneVerificationLevel ?? this.phoneVerificationLevel,
       contactPhone: contactPhone ?? this.contactPhone,

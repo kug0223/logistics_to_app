@@ -33,6 +33,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/users_create_rule.dart';
+
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('소스를 찾지 못했다: $p');
@@ -84,10 +86,12 @@ void main() {
 
   // ══════════════════════════════════════════════════════════════
   group('BANK-CLEAN-RULE 제어 필드는 CF 전용 (§7·§8)', () {
+    // [판정281 갱신] users 본인 update 는 fence 예외형 `(callerNotDeleting() || <로그인 시각·FCM 토큰만>) && (` — 안쪽 조건 단언은 그대로.
     String selfUpdate() => _flat(_slice(rules,
-        'allow update: if isLoggedIn() &&\n                       isOwner(userId)', ']);'));
+        ') && (isLoggedIn() &&\n                       isOwner(userId)', ']);'));
+    // [판정281 갱신] 서버 fence: 쓰기 규칙 바깥에 `callerNotDeleting() && (` 감싸기만 붙었다 — 안쪽 조건 단언은 그대로.
     String superUpdate() => _flat(_slice(rules,
-        'allow update: if isSuperAdmin() &&', ']);'));
+        'allow update: if callerNotDeleting() && (isSuperAdmin() &&', ']);'));
 
     test('BANK-CLEAN-RULE-01·02 owner inject/clear DENY', () {
       expect(selfUpdate(), contains("'$field'"),
@@ -99,7 +103,8 @@ void main() {
     });
 
     test('BANK-CLEAN-RULE-04 CREATE with field DENY', () {
-      expect(rules, contains("request.resource.data.get('$field', null) == null"));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정278 C278-3] users create 가 전면 거부(if false)가 됐다 — 같은 결론(주입 불가)을 더 강하게 확인한다. 다시 열리면 옛 null 조건을 요구한다(support/users_create_rule.dart).
+      expect(usersCreateDeniesField(rules, field), isTrue);
     });
 
     test('BANK-CLEAN-RULE-05 무관한 프로필 수정은 영향 없다', () {

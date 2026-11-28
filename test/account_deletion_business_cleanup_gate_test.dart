@@ -99,6 +99,16 @@ int _count(String s, String needle) {
   }
 }
 
+/// [판정292] 작업 실행기 direct 분기 결속.
+bool _delRunnerBound(String cf) {
+  final i = cf.indexOf('async function srvRunNotificationJob(');
+  if (i < 0) return false;
+  final r = cf.substring(i, cf.indexOf('\n}\n', i));
+  return r.contains('job.kind === "direct"') &&
+      r.contains('srvPersistNotificationWithId(recipientUid, job.notificationId as string,') &&
+      r.contains('?.code !== 6');
+}
+
 void main() {
   final raw = _src('functions/src/index.ts');
   final fnRaw = _fnRaw(raw, 'callableDeleteAccountFinal');
@@ -330,8 +340,12 @@ void main() {
       expect(fn, contains('srvAssertNoStaleOwnerBusiness(staleOwnerResidual)'));
       expect(fn, contains('srvDeletionPersonalCleared('));
       expect(fn, contains('srvDeletionIdentityCleared('));
-      expect(_count(fn, 'partial: true'), 10,
-          reason: 'gate 9개 + user 문서 삭제 실패 1개');
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 10 → 12. 새 흐름(카카오) 계정의 identity 정리 실패 1 + 잔존 계수 1 이 같은 '재시도 가능 미완료'
+      //   gate 로 늘었다(설계 §2.9 — 잔존 0 확인 전 Auth 삭제 금지). 늘어난 두 자리를 이름으로 함께 고정한다.
+      expect(fn, contains('if (newIdentityCleanup.failed > 0)'));
+      expect(fn, contains('newIdentityResidual.residual !== 0'));
+      expect(_count(fn, 'partial: true'), 12,
+          reason: 'gate 9개 + 새 identity gate 2개 + user 문서 삭제 실패 1개');
     });
   });
 
@@ -352,10 +366,16 @@ void main() {
     test('DEL-INT-02 승인은 근로자 프로필을 읽지 않는다 (알림 쓰기만)', () {
       // [0a.5 갱신] 알림 쓰기가 canonical helper 로 옮겨졌다. 묻는 것은
       //   그대로다 — 이 함수가 근로자 **프로필**을 읽지 않는다는 것.
+      // [L56 · C08 갱신] 알림은 승인 거래 안 **작업 문서**(notification_jobs, kind direct)로 접수되고
+      //   작업 worker 가 canonical helper(srvPersistNotificationWithId · tombstone barrier)로 쓴다.
+      //   이 함수가 하는 일은 여전히 '수신자 uid 와 본문을 정해 알림을 남기는 것'뿐이다 — 아래 users/계좌 단언은 그대로.
       expect(
         _flat(approve),
-        contains('srvPersistNotification(workerId, {'),
+        contains('tx.create(approveJobRef, srvNotificationJobDoc("direct", {'),
       );
+      expect(_flat(approve), contains('recipientUid: workerId,'));
+      expect(_flat(approve).contains('srvPersistNotification('), isFalse,
+          reason: '커밋 뒤 알림 쓰기를 다시 두지 않는다(승인 실패 오보 경로)');
       expect(_count(approve, 'collection("users")'), 0,
           reason: 'user 문서를 직접 읽거나 쓰지 않는다');
       for (final f in [
@@ -369,8 +389,11 @@ void main() {
     });
 
     test('DEL-INT-03 지급 금액의 출처는 근태다 (user 문서가 아니다)', () {
-      expect(process, contains('ad.finalWage'));
-      expect(process, contains('netWage'));
+      // [판정296 M2/A1 · server_296] 금액 읽기를 공용 helper(srvAttendanceMoneyOf — 숫자 아님 명시 거절)로 모았다. 출처는 여전히 근태.
+      expect(process, contains('srvAttendanceMoneyOf(ad, snap.id)'));
+      final money = _helperBody(raw, 'srvAttendanceMoneyOf');
+      expect(money, contains('ad.finalWage'));
+      expect(money, contains('netWage'));
       expect(
         _flat(process),
         contains(r'if (ad.wageStatus !== "confirmed")'),
@@ -385,7 +408,13 @@ void main() {
           reason: '읽기 1 + 낡은 스냅샷 판정 1 — 다른 용도로 쓰이면 다시 본다');
       expect(_flat(process),
           contains('srvWageSnapshotStaleReason(ad, piWorkerUserSnap.data())'));
-      expect(_flat(process), contains('srvPersistNotification(workerId, {'));
+      // [L56 r4 · 판정292] 알림은 helper 를 거친다 — 본문 직접 호출 **또는** 같은 거래의 direct 작업, 정확히 하나.
+      //   작업 경로면 실행기 direct 분기가 canonical helper 로 쓰는지까지 본다(누락·이중 발송 각각 실패).
+      final delDirect = _flat(process).contains('srvPersistNotification(workerId, {');
+      final delJob = _flat(process).contains('tx.create(piJobRef, srvNotificationJobDoc("direct", {') &&
+          _flat(process).contains('recipientUid: workerId,') && _delRunnerBound(raw);
+      expect(delDirect || delJob, isTrue, reason: '이체 완료 알림 경로가 없다');
+      expect(delDirect && delJob, isFalse, reason: '직접 호출과 작업이 함께 있다 — 이중 발송 가능');
       for (final f in [
         'bankName',
         'accountNumber',

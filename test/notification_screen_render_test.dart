@@ -365,7 +365,7 @@ void main() {
     // 이동할 목적지가 없다 — 없는 곳으로 밀지 않는다. [.66] 카드 본문은 2줄로 잘리므로
     //   전문은 알림 화면 위 안내 창으로 보인다(무반응이 아니다). 닫으면 알림 화면 그대로.
     expect(find.byType(Dialog), findsOneWidget);
-    await t.tap(find.text('확인'));
+    await t.tap(findVisibleText('확인'));
     await t.pumpAndSettle();
     expect(findVisibleText('알림'), findsOneWidget);
     expect(findVisibleText('점검 안내'), findsOneWidget);

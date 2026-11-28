@@ -97,9 +97,10 @@ void main() {
 
     test('SETUP-PARITY-06 저장 경로가 provider 를 갱신한다', () {
       final s = _settings();
-      // 저장·삭제 모두 refreshUserData 를 거친다 — 그래야 다른 화면까지 닿는다.
-      expect('await userProvider.refreshUserData();'.allMatches(s).length,
-          greaterThanOrEqualTo(2));
+      // 저장·삭제 모두 provider 를 갱신한다 — 그래야 다른 화면까지 닿는다.
+      // [impl_12 의도적 갱신] 전체 재적재(refreshUserData) → 서버 확정 값 반영(`applyConfirmedSeal` · 알림 1회 · RF-2).
+      expect('userProvider.applyConfirmedSeal('.allMatches(s).length, greaterThanOrEqualTo(2));
+      expect(s.contains('await userProvider.refreshUserData();'), isFalse);
     });
 
     test('SETUP-PARITY-06b 새 listener 나 polling 을 추가하지 않았다', () {

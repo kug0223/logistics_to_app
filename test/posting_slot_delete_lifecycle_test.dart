@@ -494,8 +494,10 @@ void main() {
     test('07-f 관계 거부를 성공 분기에서 다루지 않는다 (§10)', () {
       expect(cardBlock.contains('postingDeleteBlockedReason'), false);
       // [POSTING-AUTH-45] 경고는 부분 반영 거절 안내 하나뿐이다(관계 거부 문구가 아니다).
-      expect('showWarning'.allMatches(cardBlock).length, 1);
+      // [impl_35 · 판정294 F294-DEL-01] + 정리 미완료(CLEANUP_INCOMPLETE) 안내 — 이것도 관계 거부 문구가 아니다.
+      expect('showWarning'.allMatches(cardBlock).length, 2);
       expect(cardBlock.contains('ToastHelper.showWarning(postingPartialRevokeMessage);'), true);
+      expect(cardBlock.contains('ToastHelper.showWarning(postingDeleteIncompleteMessage);'), true);
       final catchIdx = cardBlock.indexOf('} catch (e) {');
       expect(catchIdx, greaterThan(-1));
       expect(cardBlock.substring(catchIdx).contains('_cfErrorMessage(e'), true,

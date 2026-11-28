@@ -68,8 +68,15 @@ void main() {
       expect(i, greaterThan(-1));
       final body = src.substring(i, i + 3000);
       expect(body.contains('adminIds'), isTrue);
-      expect(body.contains('subAdminBusinessIds'), isTrue,
+      // [server_299 §8 갱신] 하위 관리자 소속은 공용 helper 가 판정한다 — assertBizAdmin 이 부르고,
+      //   helper 가 subAdminBusinessIds·subAdminOf 를 후보로 읽어 현재 members 행을 확인한다.
+      expect(body.contains('srvIsCurrentSubAdminOf(callerUid, businessId, callerData)'), isTrue,
           reason: '소속으로 판정한다 — 역할만으로 통과시키지 않는다');
+      final ha = src.indexOf('function srvAssignedSubAdminBusinessIds(');
+      expect(ha, greaterThan(-1));
+      expect(src.substring(ha, src.indexOf('\n}\n', ha)).contains('subAdminBusinessIds'), isTrue);
+      final hs = src.indexOf('async function srvIsCurrentSubAdminOf(');
+      expect(src.substring(hs, src.indexOf('\n}\n', hs)).contains('collection("members").doc(uid).get()'), isTrue);
       expect(body.contains('"not-found", "사업장을 찾을 수 없습니다."'), isTrue,
           reason: '존재하지 않는 사업장은 여전히 거부된다');
     });

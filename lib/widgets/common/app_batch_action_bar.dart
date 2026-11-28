@@ -37,6 +37,9 @@ class AppBatchActionBar extends StatelessWidget {
   final String actionLabel;
   final IconData actionIcon;
 
+  /// [P12] 처리 중 — 실행 버튼 아이콘 자리에 작은 진행 표시를 그리고 선택 조작을 막는다(기본 false = 예전과 같다).
+  final bool busy;
+
   const AppBatchActionBar({
     super.key,
     required this.selectedCount,
@@ -46,6 +49,7 @@ class AppBatchActionBar extends StatelessWidget {
     required this.onAction,
     this.actionLabel = '처리',
     this.actionIcon = Icons.check,
+    this.busy = false,
   });
 
   @override
@@ -53,7 +57,7 @@ class AppBatchActionBar extends StatelessWidget {
     // [DU257] 시안 기준 — 흰 면·위 선, 선택 행동은 대표색 글자(터치 48), 주 행동은 대표색 채움(테마, 48).
     //   글자 1.3배 이상이면 선택 줄 위·실행 버튼 아래(전체 폭)로 세운다(DU256 정보 줄과 같은 기준).
     final stacked = MediaQuery.textScalerOf(context).scale(10) >= 13;
-    TextButton choice(String label, VoidCallback onPressed) => TextButton(
+    TextButton choice(String label, VoidCallback? onPressed) => TextButton(
           onPressed: onPressed,
           style: TextButton.styleFrom(
               foregroundColor: AppColors.brand,
@@ -68,8 +72,8 @@ class AppBatchActionBar extends StatelessWidget {
     final controls = Wrap(
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        choice('전체선택', onSelectAll),
-        choice('해제', onDeselectAll),
+        choice('전체선택', busy ? null : onSelectAll),
+        choice('해제', busy ? null : onDeselectAll),
         if (selectedCount > 0 && selectedAmount > 0) ...[
           const SizedBox(width: 6),
           // [UI-INTEGRATION.33] 선택 금액을 말줄임하지 않는다(1억 이상 선택 시 끝자리가
@@ -86,8 +90,14 @@ class AppBatchActionBar extends StatelessWidget {
     // [DU257 r1] 실행 글자는 낱말 단위로 줄을 바꾼다(B320 전체 폭 버튼에서 '12건 이체 완료 처/리' 로 끊겼다).
     final actionText = '${FormatHelper.formatNumber(selectedCount)}건 $actionLabel';
     final action = ElevatedButton.icon(
-      onPressed: onAction,
-      icon: Icon(actionIcon, size: 18),
+      onPressed: busy ? null : onAction,
+      icon: busy
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(actionIcon, size: 18),
       label: Text(TextLayout.keepWords(actionText), semanticsLabel: actionText),
       // 색·높이·반경은 앱 테마(대표색 채움·흰 글자·최소 48·반경 12)
       style: ElevatedButton.styleFrom(

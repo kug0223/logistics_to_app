@@ -27,6 +27,7 @@ import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/loading_widget.dart';
 import 'payslip_pdf_builder.dart';
+import '../../utils/pdf_font_cache.dart';
 
 class PayslipViewScreen extends StatefulWidget {
   final AttendanceModel attendance;
@@ -65,7 +66,7 @@ class _PayslipViewScreenState extends State<PayslipViewScreen> {
   /// PDF bytes lazy getter — _dataFuture 완료 후 최초 접근 시만 PayslipPdfBuilder.build() 실행
   Future<Uint8List> get _pdfBytes {
     _pdfBytesFuture ??=
-        _dataFuture!.then((data) => PayslipPdfBuilder.build(data));
+        _dataFuture!.then((data) => PayslipPdfBuilder.build(data, offMain: true)); // [PERF impl_19] 별도 isolate
     return _pdfBytesFuture!;
   }
 
@@ -80,9 +81,11 @@ class _PayslipViewScreenState extends State<PayslipViewScreen> {
     if (widget.attendance.wageDetail == null) {
       throw Exception('급여 정보가 없습니다. 관리자에게 문의해주세요.');
     }
-    // [PERF-5] 폰트 사전 로드 + 캐시 — build() 호출 시 캐시 히트로 재파싱 방지
+    // [PERF-5 → impl_19] 폰트가 있는지 먼저 본다(없으면 아래 같은 문구). 해석은 별도 isolate 빌드가 한다 —
+    //   여기서 메인 isolate 가 두 폰트를 해석하지 않는다. 차례로 읽는다(SynchronousFuture 함정 · PF-5).
     try {
-      await PayslipPdfBuilder.loadFonts();
+      await PdfFontCache.loadBytes(PdfFontCache.regularAsset);
+      await PdfFontCache.loadBytes(PdfFontCache.boldAsset);
     } catch (e) {
       throw Exception('PDF 생성에 필요한 폰트를 로드할 수 없습니다: $e');
     }

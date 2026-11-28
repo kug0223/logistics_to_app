@@ -46,6 +46,10 @@ class _ContractTemplateListScreenState
   late final ContractTemplateService _service = widget.templateService ?? ContractTemplateService();
   List<ContractTemplateModel> _templates = [];
   bool _loading = false; // initState → _load() 가드 통과를 위해 false 초기화
+
+  /// [impl_27b · L48 같은 꼴] 읽는 중에 들어온 다시 읽기(처리 뒤) — 버리지 않고 끝난 뒤 한 번 더 읽는다.
+  ///   예전에는 진행 중이면 return 해, 처리 **전에** 출발한 조회가 앉아 방금 만든·지운 템플릿이 옛 목록으로 남았다.
+  bool _reloadAgain = false;
   bool _isDuplicating = false;
 
   /// [UX-P2-04] 복사해올 수 있는 다른 사업장 수.
@@ -79,7 +83,11 @@ class _ContractTemplateListScreenState
   }
 
   Future<void> _load() async {
-    if (!mounted || _loading) return;
+    if (!mounted) return;
+    if (_loading) {
+      _reloadAgain = true;
+      return;
+    }
     setState(() => _loading = true);
     try {
       if (kDebugMode) debugPrint('📂 [ContractTemplateListScreen] businessId=${widget.businessId}');
@@ -92,6 +100,7 @@ class _ContractTemplateListScreenState
         _countOtherBusinesses(),
       ]);
       if (!mounted) return;
+      if (_reloadAgain) return; // [impl_27b] 이 결과는 다시 읽기 요청보다 먼저 출발했다 — 앉히지 않고 아래에서 한 번 더
       setState(() {
         _templates = results[0] as List<ContractTemplateModel>;
         _otherBusinessCount = results[1] as int;
@@ -99,12 +108,16 @@ class _ContractTemplateListScreenState
       });
     } catch (e) {
       debugPrint('❌ 템플릿 로드 실패: $e');
-      if (mounted) {
+      if (mounted && !_reloadAgain) {
         setState(() => _loadFailed = true); // [DU353] 실패를 상태로 들고 있는다(목록 · 다른 사업장 수는 건드리지 않는다)
         ToastHelper.showError('템플릿 목록을 불러오지 못했습니다');
       }
     } finally {
       if (mounted) setState(() => _loading = false);
+      if (mounted && _reloadAgain) {
+        _reloadAgain = false;
+        unawaited(_load());
+      }
     }
   }
 
@@ -756,6 +769,9 @@ class _OtherBusinessTemplateSheetState
   List<ContractTemplateModel> _templates = [];
   bool _loading = true;
 
+  /// [impl_57 · AUD-4 H4 같은 꼴] 내 사업장 목록 조회 실패 — '다른 사업장 템플릿 없음'이 아니다.
+  bool _loadFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -771,7 +787,8 @@ class _OtherBusinessTemplateSheetState
         return;
       }
       final firestoreService = FirestoreService();
-      final businesses = await firestoreService.getMyBusiness(uid);
+      // [impl_57] 실패를 [] 로 접는 getMyBusiness 대신 OrThrow — 실패는 아래 catch 의 실패 화면으로.
+      final businesses = await firestoreService.getMyBusinessOrThrow(uid);
 
       // 현재 사업장 제외한 다른 사업장들의 템플릿 수집
       final others = businesses.where((b) => b.id != widget.excludeBusinessId).toList();
@@ -795,10 +812,11 @@ class _OtherBusinessTemplateSheetState
       setState(() {
         _templates = allTemplates;
         _loading = false;
+        _loadFailed = false;
       });
     } catch (e) {
       debugPrint('❌ 다른 사업장 템플릿 조회 실패: $e');
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() { _loading = false; _loadFailed = true; });
     }
   }
 
@@ -865,6 +883,20 @@ class _OtherBusinessTemplateSheetState
                         padding: EdgeInsets.all(32),
                         child: Center(child: CircularProgressIndicator()),
                       )
+                    : _loadFailed
+                        ? AppEmptyState(
+                            key: const ValueKey('other-biz-templates-load-failed'),
+                            icon: Icons.cloud_off_outlined,
+                            title: '사업장 목록을 불러오지 못했어요',
+                            subtitle: '잠시 뒤 다시 시도해 주세요.',
+                            action: TextButton(
+                              onPressed: () {
+                                setState(() { _loading = true; _loadFailed = false; });
+                                _loadOtherBusinessTemplates();
+                              },
+                              child: const Text('다시 시도'),
+                            ),
+                          )
                     : _templates.isEmpty
                         ? Padding(
                             padding: EdgeInsets.all(

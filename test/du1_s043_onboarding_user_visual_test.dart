@@ -12,6 +12,7 @@ import 'package:ALfit/screens/common/onboarding_screen.dart';
 import 'package:ALfit/theme/role_theme.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 void main() {
   testWidgets('S043-N 지원자 온보딩 첫 페이지 392×851@1.0 — 전체·receiver·scroll 실측', (t) async {
@@ -57,7 +58,7 @@ void main() {
       return hit.path.any((e) => e.target == t.renderObject(f));
     }
     final skip = find.widgetWithText(TextButton, '건너뛰기');
-    final next = find.ancestor(of: find.text('다음'), matching: find.byType(GestureDetector)).first;
+    final next = find.ancestor(of: findVisibleText('다음'), matching: find.byType(GestureDetector)).first;
     final rSkip = t.getRect(skip);
     final rNext = t.getRect(next);
     String tr(String s) => find.text(s).evaluate().isEmpty ? '-' : t.getRect(find.text(s).first).toString();
@@ -125,7 +126,7 @@ void main() {
       return hit.path.any((e) => e.target == t.renderObject(f));
     }
     final screen = find.byType(OnboardingScreen);
-    final next = find.ancestor(of: find.text('다음'), matching: find.byType(GestureDetector)).first;
+    final next = find.ancestor(of: findVisibleText('다음'), matching: find.byType(GestureDetector)).first;
     final skip = find.widgetWithText(TextButton, '건너뛰기');
     final rNext = t.getRect(next);
     final rSkip = t.getRect(skip);

@@ -323,7 +323,7 @@ void main() {
       }
       expect(find.text('초대 수락'), findsOneWidget);
       // 취소하면 잠금이 풀린다.
-      await t.tap(find.text('취소'));
+      await t.tap(findVisibleText('취소'));
       for (var i = 0; i < 10; i++) {
         await t.pump(const Duration(milliseconds: 100));
       }
@@ -334,7 +334,7 @@ void main() {
   group('PC-D 동의 창', () {
     testWidgets('PC-09 수락이 아니라고 말하고 **초대 문구**를 그대로 보인다', (t) async {
       await _pump(t, _invite(InviteAcceptReadiness.consentRequired));
-      await t.tap(find.text('서류 열람 동의'));
+      await t.tap(findVisibleText('서류 열람 동의'));
       for (var i = 0; i < 10; i++) {
         await t.pump(const Duration(milliseconds: 100));
       }
@@ -350,7 +350,7 @@ void main() {
           reason: '초대 화면에 일반 지원 문안(v4)을 보이지 않는다');
       expect(find.text('동의하기'), findsOneWidget);
       // 취소 → 아무것도 보내지 않고 닫힌다.
-      await t.tap(find.text('취소'));
+      await t.tap(findVisibleText('취소'));
       for (var i = 0; i < 10; i++) {
         await t.pump(const Duration(milliseconds: 100));
       }
@@ -375,9 +375,9 @@ void main() {
     testWidgets('PC-11 320dp × 2.0 — 동의 창 넘침 0, 버튼 보임', (t) async {
       await _pump(t, _invite(InviteAcceptReadiness.consentRequired),
           size: const Size(320, 900), textScale: 2.0);
-      await t.ensureVisible(find.text('서류 열람 동의'));
+      await t.ensureVisible(findVisibleText('서류 열람 동의'));
       await t.pump();
-      await t.tap(find.text('서류 열람 동의'));
+      await t.tap(findVisibleText('서류 열람 동의'));
       for (var i = 0; i < 10; i++) {
         await t.pump(const Duration(milliseconds: 100));
       }
@@ -483,7 +483,7 @@ void main() {
         await t.pump(const Duration(milliseconds: 100));
       }
       final before = reads;
-      await t.tap(find.text('다시 확인'));
+      await t.tap(findVisibleText('다시 확인'));
       for (var i = 0; i < 25; i++) {
         await t.pump(const Duration(milliseconds: 100));
       }

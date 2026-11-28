@@ -415,6 +415,8 @@ try {
   process.exit(1);
 }
 const R = HMOD.exports;
+// [판정281] 공통 진입 판정(탈퇴 fence) 읽기를 검증 뒤 분리 — 업무 읽기 계약은 그대로(deletion_fence_observer.js).
+const FENCE_READS = require('./deletion_fence_observer').separateFenceReads(R, ROOTS, F.W);
 
 const GLOBAL_OK = new Set(['undefined', 'arguments', 'NaN', 'Infinity', 'Date', 'console',
   'module', 'exports', '__imp']);
@@ -711,7 +713,9 @@ async function cell(id, name, fn) {
       'srvResolveMatchingReadiness', 'srvBuildMatchingProvenance', 'getWorkDetailCount', 'db']) {
       assert.ok(NEED.has(n), `폐포에 ${n} 없음`);
     }
-    for (const n of ['cr4ConsentInheritance', 'cr4LineageBlock', 'onCall', 'HttpsError']) {
+    // [판정281] firebase onCall 은 fbOnCall 로 가져오고, 같은 이름 onCall 은 탈퇴 fence 래퍼다 — 둘 다 폐포에 있어야 한다.
+    for (const n of ['onCall', 'srvAssertCallerNotInDeletion']) assert.ok(NEED.has(n), `폐포에 ${n} 없음`);
+    for (const n of ['cr4ConsentInheritance', 'cr4LineageBlock', 'fbOnCall', 'HttpsError']) {
       assert.ok(USED_IMPORTS.has(n), `가져온 이름에 ${n} 없음`);
     }
     assert.strictEqual(typeof R.callableAcceptTOInvitation, 'function');
@@ -931,9 +935,17 @@ async function cell(id, name, fn) {
     // 이 트랜잭션의 시도 = 이 커밋의 쓰기(다른 경로로 새는 쓰기 없음)
     assert.deepStrictEqual(ops(W.attempts.filter((w) => w.tx === main.tx)), ops(main.writes));
     const others = committed().filter((w) => w.via !== 'tx' + main.tx);
-    assert.ok(others.every((w) => /^users\/admin1\/notifications\//.test(w.path)),
-      '수락 커밋 밖 쓰기는 관리자 알림뿐이어야 한다 — ' + ops(others).join(', '));
-    assert.strictEqual(others.length, 1, '관리자 알림 1건');
+    // [L56 r5] 관리자 알림은 수락 커밋 안의 direct 작업이다(커밋 밖 쓰기 0) — 예전 모양(커밋 밖 관리자 알림 1건)도 받는다.
+    const jobsInMain = main.writes.filter((w) => /^notification_jobs\//.test(w.path));
+    if (jobsInMain.length > 0) {
+      assert.strictEqual(others.length, 0, '수락 커밋 밖 쓰기가 있다 — ' + ops(others).join(', '));
+      assert.strictEqual(jobsInMain.length, 1, '관리자 알림 작업 1건');
+      assert.strictEqual(jobsInMain[0].data.recipientUid, 'admin1');
+    } else {
+      assert.ok(others.every((w) => /^users\/admin1\/notifications\//.test(w.path)),
+        '수락 커밋 밖 쓰기는 관리자 알림뿐이어야 한다 — ' + ops(others).join(', '));
+      assert.strictEqual(others.length, 1, '관리자 알림 1건');
+    }
     const to = F.get('tos/t1');
     const s = F.get(SLOT_PATH);
     assert.deepStrictEqual([to.totalConfirmed, to.totalPending], [1, 0]);

@@ -566,7 +566,7 @@ void main() {
           matching: find.byType(GestureDetector)).first;
       String chipText(DateTime d) => t.widgetList<Text>(find.descendant(of: chipOf(d), matching: find.byType(Text)))
           .map((w) => visibleText(w.data ?? '')).join(' ');
-      final failText = find.descendant(of: card, matching: find.text('지원 현황을 불러오지 못했습니다'));
+      final failText = find.descendant(of: card, matching: findVisibleText('지원 현황을 불러오지 못했습니다'));
       final retryText = find.descendant(of: card, matching: find.text('재시도'));
       final loadingInCard = find.descendant(of: card, matching: find.text('불러오는 중...'));
       String rendered() {

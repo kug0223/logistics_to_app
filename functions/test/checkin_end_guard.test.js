@@ -165,7 +165,10 @@ const BIZ = 'qa_biz';
 const LAT = 37.0;
 const LNG = 127.0;
 
-function seed({app, contracts = [], attendance = null}) {
+// [SERVER-MERGE-1 §2차 2026-11-26] 이 시험(10-20)은 출근 계약 관문(CONTRACT-BEFORE-CHECKIN, 10-25 · 대표 11-26 확정 정책)보다 먼저
+//   쓰였다. 관문은 '그 지원서·그 근로자·그 사업장의 양측 서명 완료 계약'을 요구하므로, 종료 상한을 보려는 셀은 기본으로
+//   **시각 정보 없는 동의 계약 1건**(slots·snapshot 없음 → 종료 시각 판정에 기여 0)을 함께 심는다. 관문 자체는 CE-27 이 본다.
+function seed({app, contracts = [], attendance = null, consent = true}) {
   STORE = new Map();
   WRITES = [];
   STORE.set(`users/${UID}`, {accountStatus: 'active', role: 'USER'});
@@ -179,6 +182,11 @@ function seed({app, contracts = [], attendance = null}) {
     ...app.fields,
   });
   contracts.forEach((c, i) => STORE.set(`employment_contracts/c${i}`, c));
+  if (consent) {
+    STORE.set('employment_contracts/consent', {status: 'completed', workerId: UID, businessId: BIZ,
+      applicationId: app.id, applicationIds: [app.id], slots: [],
+      employerSignedAt: FakeTimestamp.fromMillis(D20 - 86400000), workerSignedAt: FakeTimestamp.fromMillis(D20 - 86400000)});
+  }
   if (attendance) STORE.set(`attendance/${app.id}_${attendance.day}`, attendance.data);
 }
 
@@ -314,6 +322,11 @@ const ZDN7 = {id: 'Zdn7', fields: {startTime: '10:00', endTime: '11:00'}};
     assert.ok(hb.includes('if (endMin === startMin) return {ok: false, reason: "SHIFT_TIME_INVALID"};'));
     assert.ok(hb.includes('if (endMin < startMin) endMin += 1440;'));
     assert.ok(!hb.includes('endMin <= startMin'));
+  });
+
+  await t('CE-27', '[계약 관문] 동의 계약이 없으면 종료 판정 전에 CONTRACT_MISSING 거절 · 쓰기 0', async () => {
+    seed({app: RUBE, consent: false});
+    expectRejected(await call('RUBE', at(2026, 10, 20, 12, 36, 12)), 'CONTRACT_MISSING');
   });
 
   console.log('\n[CE-D] 종료 시각 출처');

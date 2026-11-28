@@ -261,7 +261,7 @@ void main() {
         if (findVisibleTextContaining(n).evaluate().isNotEmpty) rows.add(n);
       }
       pendingBadges += find.text('미응답').evaluate().length;
-      gpsBadges += find.text('GPS').evaluate().length;
+      gpsBadges += findVisibleText('GPS').evaluate().length;
     }
     collect(); // 기본 탭(확인필요)
     for (final tab in ['정상', '확인완료', '처리완료']) {

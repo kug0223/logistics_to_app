@@ -15,6 +15,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/wage_calculator.dart';
 import '../app_select_field.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/server_reject_codes.dart';
 
 // ============================================================
 // 🎨 업무 추가 다이얼로그 (세련된 디자인)
@@ -2588,6 +2589,12 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
         ToastHelper.showError('유효한 금액(0원 초과)과 인원(1명 이상)을 입력하세요');
         return;
       }
+      // [impl_58 · server_296 A4] 서버 경계(정수 1–999)와 같게.
+      if (!isValidRequiredCount(count)) {
+        _scrollToFirstError(_keyCount);
+        ToastHelper.showError(requiredCountInvalidMessage);
+        return;
+      }
 
       if (widget.currentCount > 0 && count < widget.currentCount) {
         if (!mounted) return;
@@ -2732,6 +2739,12 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
       if (count == null || count <= 0) {
         _scrollToFirstError(_keyCount);
         ToastHelper.showError('유효한 인원 수를 입력해주세요');
+        return;
+      }
+      // [impl_58 · server_296 A4] 서버 경계(정수 1–999)와 같게.
+      if (!isValidRequiredCount(count)) {
+        _scrollToFirstError(_keyCount);
+        ToastHelper.showError(requiredCountInvalidMessage);
         return;
       }
 

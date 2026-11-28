@@ -40,6 +40,7 @@ import '../../widgets/common/notification_badge.dart';
 import '../../widgets/dialogs/worker_detail_dialog.dart';
 import 'contract_dispatch_flow.dart';
 import '../common/notification_screen.dart';
+import '../../utils/action_guard.dart';
 
 // ─── 우선순위 분류 ────────────────────────────────────────────────────────────
 
@@ -399,7 +400,12 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
   bool _canActOn(ApplicationModel app) =>
       _actCheck(app) == PermissionCheck.allowed;
 
-  Future<void> _approveApp(ApplicationModel app, String? userName) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_approveAppLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _approveApp(ApplicationModel app, String? userName) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('supportReviewQueue._isActing', this), () => _approveAppLocked(app, userName));
+
+  Future<void> _approveAppLocked(ApplicationModel app, String? userName) async {
     // [CROSS-DOMAIN-R5.1F.2] 서버와 같은 단위로 먼저 막는다.
     if (!_canActOn(app)) {
       ToastHelper.showWarning(_actCheck(app) == PermissionCheck.denied
@@ -484,7 +490,12 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
     }
   }
 
-  Future<void> _rejectApp(ApplicationModel app, String? userName) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_rejectAppLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _rejectApp(ApplicationModel app, String? userName) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('supportReviewQueue._isActing', this), () => _rejectAppLocked(app, userName));
+
+  Future<void> _rejectAppLocked(ApplicationModel app, String? userName) async {
     // [CROSS-DOMAIN-R5.1F.2] 승인과 같은 권한·같은 단위다.
     if (!_canActOn(app)) {
       ToastHelper.showWarning(_actCheck(app) == PermissionCheck.denied

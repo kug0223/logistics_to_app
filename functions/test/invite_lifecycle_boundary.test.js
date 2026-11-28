@@ -250,7 +250,11 @@ async function cell(id, name, fn) {
   });
   await cell('IL-21', '두 삭제 callable 이 쓰기 전에 가드를 부른다', () => {
     const del = bodyOfCallable('callableDeleteTO');
-    assert.ok(del.indexOf('await assertNoPostingRelations(') < del.indexOf('batch.update('));
+    // [판정293 §10] 페이지 정리가 batch.update → srvCommitAppGroups 로 바뀌었다 — 가드는 남은 모든 쓰기 진입보다 앞이어야 한다.
+    const g = del.indexOf('await assertNoPostingRelations(');
+    const writes = ['batch.update(', 'srvCommitAppGroups(', 'srvLifecycleCancelBulk(', '.update(', '.set(', '.delete(']
+      .map((k) => del.indexOf(k)).filter((x) => x >= 0);
+    assert.ok(g >= 0 && writes.length > 0 && writes.every((x) => g < x));
     const delSlots = bodyOfCallable('callableDeleteSlots');
     assert.ok(delSlots.includes('await assertNoSlotRelations('));
   });

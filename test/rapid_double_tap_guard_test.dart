@@ -18,6 +18,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ALfit/utils/action_guard.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 // ── 소스 계약 검사 helper ────────────────────────────────────────────────
 String _src(String path) => File(path).readAsStringSync();
@@ -195,11 +196,11 @@ void main() {
           reason: '가드 없는 구조에서 모달이 2개 쌓이지 않으면 이 테스트의 전제가 무너진다');
 
       // 위 다이얼로그 확인 → mutation 1
-      await tester.tap(find.text('확인').last);
+      await tester.tap(findVisibleText('확인').last);
       await tester.pumpAndSettle();
       // 아래 다이얼로그가 아직 남아 있다 — 여기서 또 누를 수 있다는 것이 문제다.
       expect(find.text('정말요?'), findsOneWidget);
-      await tester.tap(find.text('확인'));
+      await tester.tap(findVisibleText('확인'));
       await tester.pumpAndSettle();
       await done;
 
@@ -218,7 +219,7 @@ void main() {
 
       expect(find.text('정말요?'), findsOneWidget);
 
-      await tester.tap(find.text('확인'));
+      await tester.tap(findVisibleText('확인'));
       await tester.pumpAndSettle();
       await done;
 
@@ -235,7 +236,7 @@ void main() {
 
       final done = _doubleFire(tester, key);
       await tester.pump();
-      await tester.tap(find.text('확인'));
+      await tester.tap(findVisibleText('확인'));
       await tester.pumpAndSettle();
       await done;
       expect(mutations, 1);

@@ -326,7 +326,8 @@ void main() {
     });
 
     test('05-i 초대만 있는 날도 목록을 그린다', () {
-      final b = _after(dlg, 'Widget _buildBody(BuildContext context)', 1600);
+      // [impl_57] 날짜별 지원자 본문 서명이 바뀌었다(statsFirst 선택 인자 · 좁은 창에서 통계를 본문 첫 항목으로) — 판정식은 그대로
+      final b = _after(dlg, 'Widget _buildBody(BuildContext context, {Widget? statsFirst})', 1600);
       expect(b.contains('_dayInvitations?.isNotEmpty ?? false'), isTrue);
     });
   });

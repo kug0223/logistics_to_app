@@ -44,6 +44,7 @@ import 'package:ALfit/screens/user/my_applications_screen.dart';
 import 'package:ALfit/services/tax_identity_service.dart';
 import 'package:ALfit/utils/format_helper.dart';
 import 'package:ALfit/widgets/dialogs/apply/document_access_consent.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake
     with MockPlatformInterfaceMixin
@@ -397,13 +398,13 @@ void main() {
       final s = _texts(t);
       expect(s, contains('모집이 마감된 초대예요'));
       expect(find.text('수락하기'), findsNothing);
-      expect(find.text('거절'), findsNothing);
+      expect(findVisibleText('거절'), findsNothing);
       expect(find.text('초대 정리'), findsNothing);
     });
     testWidgets('IC-OLD-2 정원 찬 초대 — full → 인원 찼음 안내 + `거절`만', (t) async {
       await _pump(t, _invite(cap: InviteCapacityState.full, intakeClosed: false));
       expect(_texts(t), contains('모집 인원이 찼어요'));
-      expect(find.text('거절'), findsOneWidget);
+      expect(findVisibleText('거절'), findsOneWidget);
       expect(find.text('수락하기'), findsNothing);
       expect(find.text('초대 정리'), findsNothing);
     });
@@ -416,7 +417,7 @@ void main() {
     testWidgets('IC-OLD-4 판정 불가(unknown) → 확인 실패 안내 + `거절`', (t) async {
       await _pump(t, _invite(cap: InviteCapacityState.unknown, intakeClosed: false));
       expect(_texts(t), contains('근무 가능 여부를 확인하지 못했어요'));
-      expect(find.text('거절'), findsOneWidget);
+      expect(findVisibleText('거절'), findsOneWidget);
       expect(find.text('수락하기'), findsNothing);
     });
   });

@@ -7,6 +7,11 @@
 //   그 뒤 각 화면의 최종 표시와 서비스 캐시를 본다.
 //     A 확정: 옛=대기, 새=확정 → 일정 탭 `확정 근무` 1일이어야 한다
 //     B 취소: 옛=대기, 새=취소 → 일자리 탭 카드에 `지원완료` 가 없어야 한다
+//
+//   [impl_9 PERF-L5 의도적 갱신 2026-11-26] 루트가 탭을 **방문 시** 만든다(판정289 §5). 예전 전제("첫 진입에 세 탭이 같은
+//     진행 중 조회를 기다림")는 이제 사용자가 그 사이 두 탭을 연 경우다 → 첫 응답을 붙잡은 동안 두 탭을 먼저 방문한다
+//     (`_visitEarly`). 탭 라벨은 CP02 뒤 '내 일정'이다 — 옛 `find.text('일정')` 은 그 전부터 찾지 못해 실패하던 줄이다.
+//     단언(기대값)은 바꾸지 않았다.
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -32,6 +37,7 @@ import 'package:ALfit/screens/user/user_home_screen.dart';
 import 'package:ALfit/screens/user/user_root_screen.dart';
 import 'package:ALfit/services/firestore_service.dart';
 import 'package:ALfit/utils/format_helper.dart';
+import 'package:ALfit/widgets/common/app_bottom_tab_bar.dart';
 
 class _FakeApp extends Fake
     with MockPlatformInterfaceMixin
@@ -219,16 +225,31 @@ Map<String, String> _snapshot(WidgetTester t) {
   };
 }
 
+/// [impl_9] 하단 탭 막대 안의 라벨만 누른다(본문의 같은 낱말과 섞이지 않게).
+Future<void> _tapTabBar(WidgetTester t, String label) => t.tap(find.descendant(
+    of: find.byType(AppBottomTabBar),
+    matching: find.byWidgetPredicate((w) => w is Text && (w.data ?? '').replaceAll('⁠', '') == label)));
+
+/// [impl_9 PERF-L5] 첫 응답을 붙잡은 동안 탭을 먼저 연다 — 지연 생성 뒤에도 '같은 진행 중 조회를 기다림' 전제를 만든다.
+Future<void> _visitEarly(WidgetTester t, List<String> labels) async {
+  for (final l in labels) {
+    await _tapTabBar(t, l);
+    await t.pump(const Duration(milliseconds: 50));
+  }
+  await _tapTabBar(t, '홈');
+  await t.pump(const Duration(milliseconds: 50));
+}
+
 /// 일정 탭: 첫 조회가 끝나기 전에는 로딩 화면이라 당겨서 새로고침이 없다 — 겹치는 두 번째 조회를 만들 수 없다.
 Future<bool> _scheduleRefreshAvailable(WidgetTester t) async {
-  await t.tap(find.text('일정').last);
+  await _tapTabBar(t, '내 일정');
   await _pumpFor(t, 300);
   return find.byType(RefreshIndicator).evaluate().isNotEmpty;
 }
 
 /// 일자리 탭: 로딩 중에도 검색창은 쓸 수 있다 — 검색어를 바꾸면 `_loadAllTOs` 가 다시 돈다.
 Future<void> _jobSearch(WidgetTester t, String q) async {
-  await t.tap(find.text('일자리').last);
+  await _tapTabBar(t, '일자리');
   await _pumpFor(t, 300);
   await t.enterText(find.descendant(of: find.byType(UserJobTab), matching: find.byType(TextField)).first, q);
   await _pumpFor(t, 1500); // 디바운스 500ms + 응답
@@ -248,6 +269,7 @@ Future<Map<String, Object>> _run(WidgetTester t, String fresh) async {
     ],
     child: const MaterialApp(home: UserRootScreen()),
   ));
+  await _visitEarly(t, ['내 일정', '일자리']); // [impl_9 PERF-L5]
   await _pumpFor(t, 1000);
   final callsWhileHeld = s.my;
   // 지원 변경이 커밋됐다 — 서비스가 하는 것과 같은 무효화
@@ -311,6 +333,7 @@ void main() {
       ],
       child: const MaterialApp(home: UserRootScreen()),
     ));
+    await _visitEarly(t, ['일자리']); // [impl_9 PERF-L5] 첫 응답을 붙잡은 동안 일자리 탭을 먼저 연다
     await _pumpFor(t, 1000);
     return s;
   }
@@ -318,7 +341,7 @@ void main() {
   testWidgets('JLR-2 로딩 중 검색을 연달아 바꿔도 재조회는 한 번, 마지막 조건으로 수렴', (t) async {
     final s = await mount(t);
     FirestoreService().invalidateMyApplicationsCache('u1'); // 지원서 변경(취소) 커밋
-    await t.tap(find.text('일자리').last);
+    await _tapTabBar(t, '일자리');
     await _pumpFor(t, 300);
     final field = find.descendant(of: find.byType(UserJobTab), matching: find.byType(TextField)).first;
     await t.enterText(field, '없는말');
@@ -338,7 +361,7 @@ void main() {
 
   testWidgets('JLR-3 첫 로드가 실패하면 보류 요청을 자동으로 돌리지 않는다(무한 반복 없음)', (t) async {
     final s = await mount(t, failFirstPaged: true);
-    await t.tap(find.text('일자리').last);
+    await _tapTabBar(t, '일자리');
     await _pumpFor(t, 300);
     await t.enterText(find.descendant(of: find.byType(UserJobTab), matching: find.byType(TextField)).first, '합성');
     await _pumpFor(t, 700);
@@ -350,7 +373,7 @@ void main() {
 
   testWidgets('JLR-4 화면이 닫히면 보류 요청을 돌리지 않는다', (t) async {
     final s = await mount(t);
-    await t.tap(find.text('일자리').last);
+    await _tapTabBar(t, '일자리');
     await _pumpFor(t, 300);
     await t.enterText(find.descendant(of: find.byType(UserJobTab), matching: find.byType(TextField)).first, '합성');
     await _pumpFor(t, 700);

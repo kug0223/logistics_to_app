@@ -503,7 +503,13 @@ void main() {
     });
 
     test('제안 급여를 앞에 세운다', () {
-      expect(m.contains("'\${app.formattedWage} · 회원님께 제안된 급여입니다',"), true);
+      // [F293-WAGE-01 · impl_30 핀 갱신] 시급 제안이면 '하루 예상 … · 시급 …'(제안 지원서 자체의 금액·시간·휴게로 계산)이
+      //   같은 자리에 먼저 온다 — 금액 원천은 여전히 제안 급여(app.wage)이고 공고 기본급이 아니다. 시급이 아니면 예전 그대로.
+      // [F294-WAGE-01 · impl_33 핀 갱신] 시급이 아닌 제안도 금액 원천은 app.wage — 누락 0 만 '급여 확인 필요'(rawWage).
+      expect(m.contains("'\${_expectedLine(app) ?? ExpectedWageText.rawWage(app.wage)} · 회원님께 제안된 급여입니다',"), true);
+      // _expectedLine 은 그 지원서 자체의 약속 조건만 쓴다(rate = a.wage).
+      expect(m.contains('rate: a.wage,'), true);
+      expect(m.contains('static String? _expectedLine(ApplicationModel a) =>'), true);
     });
 
     test('공고 기본급을 경쟁 truth로 띄우지 않는다', () {

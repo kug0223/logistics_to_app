@@ -31,6 +31,7 @@ import '../../theme/app_text_styles.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../common/notification_screen.dart';
+import '../../utils/action_guard.dart';
 
 /// 📦 업무유형 상세 화면
 class WorkTypeDetailScreen extends StatefulWidget {
@@ -856,7 +857,12 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
   // ==================== 기능 메서드 ====================
 
   /// 이미지 선택
-  Future<void> _pickImages() async {
+  // [I9 · impl_19] 사진 고르기 창(첫 await) **전에** 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_pickImagesLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _pickImages() =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('workTypeDetail.pickImages', this), () => _pickImagesLocked());
+
+  Future<void> _pickImagesLocked() async {
     try {
       final image = await ImageHelper.pickAndCompressImage(
         context,

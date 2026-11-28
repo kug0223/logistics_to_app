@@ -26,6 +26,7 @@ import 'package:ALfit/theme/role_theme.dart';
 import 'package:ALfit/utils/text_layout.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake with MockPlatformInterfaceMixin implements FirebaseAppPlatform {
   @override
@@ -146,7 +147,7 @@ void main() {
         ));
         await settle();
         Future<bool> goNext() async {
-          final next = find.text('다음');
+          final next = findVisibleText('다음');
           if (next.evaluate().isEmpty) return false;
           await t.ensureVisible(next.first);
           await t.pump();

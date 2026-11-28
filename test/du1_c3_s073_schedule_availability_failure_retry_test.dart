@@ -26,6 +26,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ALfit/models/core/application_model.dart';
+import 'package:ALfit/utils/expected_daily_wage.dart';
 import 'package:ALfit/models/core/attendance_model.dart';
 import 'package:ALfit/models/core/invite_region_preference.dart';
 import 'package:ALfit/models/core/user_model.dart';
@@ -174,8 +175,10 @@ void main() {
 
   // 실행 전 고정 사전(소스 근거: didChangeDependencies → _loadApplications · initState postFrame → _loadAvailability + _loadInvitePref ·
   //   applications 성공 뒤 Phase2 myMonthlyAttendances · 재시도 = TextButton(onRetry: _loadAvailability) · 같은 월 날짜 탭 = setState 캐시 계산)
-  const expectedHeld = {'myApplications': 1, 'myAvailability': 1, 'invitePreference': 1};
-  const expectedApps = {...expectedHeld, 'myMonthlyAttendances': 1};
+  // [impl_9 PERF-L20 의도적 갱신 2026-11-26] 지원·표시월 근태를 **같이 출발**시킨다(분석2 §6 #6) — 지원이 보류된 ①에서도
+  //   월 근태 호출 1 이 이미 나가 있다(반영은 여전히 지원 먼저 · ② 의 화면 기대는 그대로). 예전: 지원 성공 뒤 Phase2 에서 출발.
+  const expectedHeld = {'myApplications': 1, 'myAvailability': 1, 'invitePreference': 1, 'myMonthlyAttendances': 1};
+  const expectedApps = expectedHeld;
   const expectedFinal = {'myApplications': 1, 'myAvailability': 2, 'invitePreference': 1, 'myMonthlyAttendances': 1};
 
   for (final c in const [
@@ -263,8 +266,8 @@ void main() {
           .map((w) => visibleText(w.data ?? w.textSpan?.toPlainText() ?? '')).where((s) => s.trim().isNotEmpty).toList();
       final checking = find.text('근무 가능일을 확인하고 있어요');
       final availFail = find.text('등록한 근무 가능일을 불러오지 못했어요');
-      final retryText = find.text('다시 시도');
-      final schedLoading = find.text('일정을 불러오고 있어요');
+      final retryText = findVisibleText('다시 시도');
+      final schedLoading = findVisibleText('일정을 불러오고 있어요');
       // 확정 단기 dot(7px 원, 채움) · 가능일 윤곽선(원 테두리, 채움 없음) — schedule_calendar.dart markerBuilder
       final confirmedDot = find.descendant(of: cal, matching: find.byWidgetPredicate((w) {
         if (w is! Container) return false;
@@ -365,7 +368,10 @@ void main() {
           (label: '업무', text: '상하차'),
           (label: '예정시간', text: '09:00~13:00'),
           (label: '상태', text: '확정'),
-          (label: '임금', text: '12,000원 (시급)'),
+          // [F293-WAGE-01 · impl_30 핀 갱신] 예상 단계 시급 약속은 같은 helper 의 한 줄(예전 '12,000원 (시급)').
+          //   이 fixture 의 약속 휴게는 null(모름) → '시급 12,000원 · 예상 금액 확인 필요'(임의 0 금지).
+          (label: '임금', text: ExpectedWageText.combined(ExpectedDailyWage.forPromise(
+              wageType: 'hourly', rate: 12000, startTime: '09:00', endTime: '13:00', breakMinutes: null))!),
         ]) {
           final f = find.descendant(of: card.first, matching: find.byWidgetPredicate((w) => w is Text && visibleText(w.data ?? w.textSpan?.toPlainText() ?? '') == e.text));
           if (f.evaluate().isEmpty) {
@@ -388,7 +394,7 @@ void main() {
       // ── ① 최초: applications·availability 보류 ──
       await frames(6);
       out('① 최초 calls=$calls · 그림 ${rendered()}');
-      expect(calls, expectedHeld, reason: 'applications-held 3');
+      expect(calls, expectedHeld, reason: 'applications-held 3 + 동시 출발한 월 근태 1(impl_9 L20)');
       expect(schedLoading, findsOneWidget, reason: '일정 로딩(body 전체)');
       await vqCapture(t, key, '${c.id}_1_held', conditions: cond('applications·availability 보류 · ${rendered()}'));
 
@@ -396,7 +402,7 @@ void main() {
       appGates[0].complete();
       await frames(10);
       out('② applications 해제 · calls=$calls · 그림 ${rendered()}');
-      expect(calls, expectedApps, reason: '+monthlyAttendances = 4');
+      expect(calls, expectedApps, reason: '월 근태는 ① 에서 이미 출발 — 지원 해제 뒤 추가 호출 0(impl_9 L20)');
       expect(checking, findsOneWidget, reason: '가능일 확인 중');
       expect(hasText('일 등록됨'), isFalse, reason: '보류 중 등록 n일(0일 포함) 주장 없음');
       expect(confirmedDot, findsOneWidget, reason: 'Q 확정 dot');

@@ -6,7 +6,6 @@ import 'dart:typed_data';
 
 import 'package:excel/excel.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -20,9 +19,11 @@ import '../widgets/common/loading_widget.dart';
 import '../widgets/dialogs/styled_dialog.dart';
 import 'dialog_helper.dart';
 import 'format_helper.dart';
+import 'pdf_font_cache.dart';
 import 'responsive_helper.dart';
 import 'toast_helper.dart';
 import 'person_label.dart';
+import 'off_main.dart';
 
 /// 그룹(파트) 정렬 기준
 enum AttendanceGroupSort {
@@ -136,21 +137,17 @@ class AttendanceListPdf {
     }
 
     _isLoading = true;
-    
+    _fontLoadStarts++;
+
     try {
       debugPrint('📝 [PDF] 한글 폰트 로딩 시작 (Assets)...');
       final stopwatch = Stopwatch()..start();
       
       // ✅ Assets에서 로드 (네트워크 다운로드 없음 - 즉시!)
-      final fontResults = await Future.wait([
-        rootBundle.load('assets/fonts/NotoSansKR-Regular.ttf'),
-        rootBundle.load('assets/fonts/NotoSansKR-Bold.ttf'),
-      ]);
-      final regularData = fontResults[0];
-      final boldData = fontResults[1];
-      
-      _koreanFont = pw.Font.ttf(regularData);
-      _koreanBoldFont = pw.Font.ttf(boldData);
+      // [L30] 앱 세션 공용 캐시(PdfFontCache) — 계약서·임금명세서 PDF 와 같은 Font 를 쓴다(따로 해석 0).
+      final fonts = await Future.wait([PdfFontCache.regular(), PdfFontCache.bold()]);
+      _koreanFont = fonts[0];
+      _koreanBoldFont = fonts[1];
       
       stopwatch.stop();
       debugPrint('✅ [PDF] 한글 폰트 로드 완료: ${stopwatch.elapsedMilliseconds}ms');
@@ -163,8 +160,26 @@ class AttendanceListPdf {
   }
 
   /// ✅ 폰트 미리 로딩 (외부에서 호출 가능)
+  ///   [PERF-L6] 홈 화면 진입에서는 부르지 않는다 — 큰 TTF 두 개를 메인 isolate 에서 해석한다.
+  ///   `generatePdf` 가 필요할 때 스스로 읽는다.
   static Future<void> preloadFonts() async {
     await _loadFonts();
+  }
+
+  /// [PERF-L6] 실제 폰트 읽기가 시작된 횟수(이미 읽었거나 진행 중이면 세지 않는다).
+  static int _fontLoadStarts = 0;
+
+  @visibleForTesting
+  static int get debugFontLoadStarts => _fontLoadStarts;
+
+  @visibleForTesting
+  static bool get debugFontsLoaded => _koreanFont != null && _koreanBoldFont != null;
+
+  @visibleForTesting
+  static void debugResetFonts() {
+    _koreanFont = null;
+    _koreanBoldFont = null;
+    _fontLoadStarts = 0;
   }
 
   /// ✅ 미리 생성된 PDF로 바로 미리보기 표시 (로딩 없음)
@@ -195,7 +210,8 @@ class AttendanceListPdf {
   }
 
   /// Excel 명단 생성 (.xlsx)
-  static Future<Uint8List> generateExcel(AttendanceListData data) async {
+  ///   [PERF impl_19] [offMain] — 인코딩(XML + zip)을 다른 isolate 에서(`OffMain.encodeExcel` · 실패 시 이 자리).
+  static Future<Uint8List> generateExcel(AttendanceListData data, {bool offMain = false}) async {
     final excel = Excel.createExcel();
     excel.delete('Sheet1');
     final sheet = excel['근무명단'];
@@ -275,7 +291,7 @@ class AttendanceListPdf {
     final printTime = '출력일시: ${FormatHelper.formatDateDot(now)} ${FormatHelper.formatTime(now)}';
     _excelCell(sheet, row, 0, printTime, fontSize: 9);
 
-    final bytes = excel.encode();
+    final bytes = await OffMain.encodeExcel(excel, tag: 'attendanceXlsx', enabled: offMain);
     if (bytes == null) throw Exception('Excel 생성 실패');
     return Uint8List.fromList(bytes);
   }
@@ -303,7 +319,7 @@ class AttendanceListPdf {
 
   /// Excel 파일 공유 (기기 공유 시트)
   static Future<void> shareAsExcel(AttendanceListData data) async {
-    final bytes = await generateExcel(data);
+    final bytes = await generateExcel(data, offMain: true);
     final dir = await getTemporaryDirectory();
     final fileName =
         '${data.businessName}_근무명단_${FormatHelper.formatDateStamp(data.date)}.xlsx';
@@ -322,47 +338,68 @@ class AttendanceListPdf {
   }
 
   /// PDF 문서 생성
-  static Future<Uint8List> generatePdf(AttendanceListData data) async {
+  ///
+  /// [PERF impl_19] [offMain] — 폰트 해석·부분집합·저장을 **다른 isolate** 에서 한다(`OffMain.buildPdf`).
+  ///   같은 입력이면 같은 문서다. 별도 isolate 경로가 실패하면 아래 예전 경로(세션 폰트 · 폰트를 못 읽으면
+  ///   기본 폰트)로 만든다. 기본값 false — 다른 호출자·시험 동작은 그대로다. [debugUncompressed] 는 시험 전용.
+  static Future<Uint8List> generatePdf(AttendanceListData data,
+      {bool offMain = false, @visibleForTesting bool debugUncompressed = false}) async {
+    if (offMain) {
+      try {
+        return await OffMain.buildPdf(
+            'AttendanceList', (r, b) => _buildPdfDoc(data, r, b, debugUncompressed),
+            offMain: true);
+      } catch (e) {
+        debugPrint('⚠️ [PDF] 별도 isolate 경로 실패 — 예전 경로로 만든다: $e');
+      }
+    }
     try {
       await _loadFonts();
     } catch (e) {
       // 폰트 로딩 실패 시 기본 폰트 사용
     }
+    return _buildPdfDoc(data, _koreanFont, _koreanBoldFont, debugUncompressed);
+  }
 
-    final pdf = pw.Document();
+  /// 폰트를 받아 문서를 만든다 — 이 isolate 와 별도 isolate 가 같은 함수를 쓴다(폰트가 null 이면 기본 폰트).
+  static Future<Uint8List> _buildPdfDoc(
+      AttendanceListData data, pw.Font? font, pw.Font? boldFont, bool debugUncompressed) async {
+    final pdf = debugUncompressed
+        ? pw.Document(compress: false, version: PdfVersion.pdf_1_4)
+        : pw.Document();
     
     // 날짜 포맷 (한글 로케일 문제 방지)
     final dateStr = '${data.date.year}년 ${data.date.month}월 ${data.date.day}일 (${FormatHelper.weekday(data.date)})';
 
     // 스타일 정의 (폰트가 null이면 기본 폰트 사용)
     final titleStyle = pw.TextStyle(
-      font: _koreanBoldFont,
-      fontFallback: _koreanFont != null ? [_koreanFont!] : [],
+      font: boldFont,
+      fontFallback: font != null ? [font] : [],
       fontSize: 18,
       fontWeight: pw.FontWeight.bold,
     );
 
     final subtitleStyle = pw.TextStyle(
-      font: _koreanFont,
+      font: font,
       fontSize: 12,
       color: PdfColors.grey700,
     );
 
     final headerStyle = pw.TextStyle(
-      font: _koreanBoldFont,
-      fontFallback: _koreanFont != null ? [_koreanFont!] : [],
+      font: boldFont,
+      fontFallback: font != null ? [font] : [],
       fontSize: 11,
       fontWeight: pw.FontWeight.bold,
     );
 
     final bodyStyle = pw.TextStyle(
-      font: _koreanFont,
+      font: font,
       fontSize: 10,
     );
 
     final sectionStyle = pw.TextStyle(
-      font: _koreanBoldFont,
-      fontFallback: _koreanFont != null ? [_koreanFont!] : [],
+      font: boldFont,
+      fontFallback: font != null ? [font] : [],
       fontSize: 12,
       fontWeight: pw.FontWeight.bold,
     );
@@ -810,7 +847,7 @@ class _PreviewBottomSheetWithBytesState
         groupSort: newGroup,
         itemSort: newItem,
       );
-      final newBytes = await AttendanceListPdf.generatePdf(newData);
+      final newBytes = await AttendanceListPdf.generatePdf(newData, offMain: true);
       if (mounted) {
         setState(() {
           _data = newData;

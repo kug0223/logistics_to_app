@@ -18,6 +18,7 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'package:ALfit/utils/image_helper.dart';
 import 'package:ALfit/utils/picker_cache_scope.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakePaths extends PathProviderPlatform with MockPlatformInterfaceMixin {
   _FakePaths(this.temp, this.support);
@@ -137,12 +138,12 @@ Future<File?> runPick(WidgetTester t) async {
   ));
   await t.tap(find.text('pick'));
   // 선택 전 cache 스냅샷(실제 파일 IO)이 끝나야 소스 다이얼로그가 뜬다.
-  for (var i = 0; i < 200 && find.text('갤러리에서 선택').evaluate().isEmpty; i++) {
+  for (var i = 0; i < 200 && findVisibleText('갤러리에서 선택').evaluate().isEmpty; i++) {
     await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
     await t.pump();
   }
   await t.pumpAndSettle();
-  await t.tap(find.text('갤러리에서 선택'));
+  await t.tap(findVisibleText('갤러리에서 선택'));
   for (var i = 0; i < 200 && !done; i++) {
     await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
     await t.pump();
@@ -224,12 +225,12 @@ void main() {
         ),
       ))));
       await t.tap(find.text('pick'));
-      for (var i = 0; i < 40 && find.text('취소').evaluate().isEmpty; i++) {
+      for (var i = 0; i < 40 && findVisibleText('취소').evaluate().isEmpty; i++) {
         await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
         await t.pump();
       }
       await t.pumpAndSettle();
-      await t.tap(find.text('취소'));
+      await t.tap(findVisibleText('취소'));
       for (var i = 0; i < 20 && !done; i++) {
         await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
         await t.pump();

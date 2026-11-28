@@ -32,6 +32,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/users_create_rule.dart';
+
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('소스를 찾지 못했다: $p');
@@ -221,12 +223,16 @@ void main() {
     });
 
     test('AFT-UNIQ-03 .0C.1 rules barrier 가 그대로다 (§15)', () {
-      expect(rulesFlat, contains(
-          'allow delete: if isSuperAdmin() && request.auth.uid != userId && '
-          '!accountDeletionBarrierExists(userId);'));
-      expect(rulesFlat, contains(
-          'allow create: if isLoggedIn() && '
-          '!accountDeletionBarrierExists(userId) && ('));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] delete: barrier 조건 그대로 + 새 흐름 계정 삭제 금지 conjunct(더 강함).
+      expect(rulesCodeFlat(_src('firestore.rules')), contains(
+          // [판정281 갱신] 서버 fence: 쓰기 규칙 바깥에 `callerNotDeleting() && (` 감싸기만 붙었다 — 안쪽 조건 단언은 그대로.
+          'allow delete: if callerNotDeleting() && (isSuperAdmin() && request.auth.uid != userId && '
+          '!accountDeletionBarrierExists(userId) && '
+          "resource.data.get('signupSource', null) == null);"));
+      // create: 전면 거부(판정278 C278-3) — 다시 열리면 옛 barrier conjunct 를 요구한다.
+      expect(usersCreateClosed(rulesFlat) ||
+          rulesFlat.contains('allow create: if isLoggedIn() && '
+              '!accountDeletionBarrierExists(userId) && ('), isTrue);
     });
 
     test('AFT-UNIQ-04 Auth-tail 증거 판정은 그대로다 (§30)', () {

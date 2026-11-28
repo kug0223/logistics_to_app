@@ -98,7 +98,11 @@ class StorageService {
   /// [BUG-ID-01] 신분증 등 민감 파일 업로드 전용.
   /// getDownloadURL()을 호출하지 않으므로 permanent download URL이 생성되지 않는다.
   /// 호출자는 업로드 전에 storagePath를 직접 구성하고, 성공 후 CF에 storagePath를 전달한다.
-  Future<bool> uploadImageNoUrl(String filePath, String storagePath) async {
+  ///
+  /// [PERF-L42 · 판정291 §4] [onProgress] — 보낸 비율(0~1). 화면이 "올리는 중 N%" 를 보여 줄 수 있게 한다.
+  ///   업로드 방식·경로·메타데이터·결과(성공 여부)는 그대로다. 진행 알림 실패는 업로드에 영향이 없다.
+  Future<bool> uploadImageNoUrl(String filePath, String storagePath,
+      {void Function(double fraction)? onProgress}) async {
     if (!_isValidImagePath(filePath)) {
       debugPrint('❌ 유효하지 않은 이미지 형식: $filePath');
       return false;
@@ -112,16 +116,28 @@ class StorageService {
       final contentType = _mimeFromPath(filePath) ?? 'image/jpeg';
       final metadata = SettableMetadata(contentType: contentType);
 
+      final UploadTask task;
       if (kIsWeb) {
         final bytes = await XFile(filePath).readAsBytes();
-        await ref.putData(bytes, metadata);
+        task = ref.putData(bytes, metadata);
       } else {
         final file = File(filePath);
         if (!await file.exists()) {
           debugPrint('❌ 파일이 존재하지 않음: $filePath');
           return false;
         }
-        await ref.putFile(file, metadata);
+        task = ref.putFile(file, metadata);
+      }
+      final progress = onProgress == null
+          ? null
+          : task.snapshotEvents.listen((s) {
+              final total = s.totalBytes;
+              if (total > 0) onProgress(s.bytesTransferred / total);
+            }, onError: (Object _) {});
+      try {
+        await task;
+      } finally {
+        await progress?.cancel();
       }
       if (kDebugMode) debugPrint('✅ Storage 업로드 성공(URL 미생성): $storagePath');
       return true;

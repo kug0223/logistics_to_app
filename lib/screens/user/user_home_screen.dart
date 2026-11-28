@@ -13,13 +13,16 @@ import '../../models/core/attendance_model.dart';
 import '../../models/core/business_model.dart';
 import '../../models/core/employment_contract_model.dart';
 import '../../models/core/id_card_access_request_model.dart';
+import '../../models/core/legal_readiness.dart';
 import '../../models/core/slot_model.dart';
 import '../../models/core/to_model.dart';
+import '../../models/core/work_detail_data.dart';
 import '../../models/core/user_model.dart';
 import '../../models/core/user_region.dart';
 import '../../models/ui/pending_id_request_surface.dart';
 import '../../models/ui/pending_termination_surface.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/expected_daily_wage.dart';
 import '../../utils/text_layout.dart';
 import '../../providers/user_provider.dart';
 import '../../theme/app_colors.dart';
@@ -36,6 +39,8 @@ import '../../widgets/common/alfit_wordmark.dart';
 import '../../widgets/user/cards/job_image_placeholder.dart';
 import '../common/notification_screen.dart';
 import '../common/document_management_screen.dart';
+import '../../widgets/home/start_readiness_card.dart';
+import '../../main.dart' show openHomeRegionSetup;
 import '../common/job_posting_screen.dart';
 import '../../utils/navigation_helper.dart';
 import '../common/tour_screen.dart';
@@ -51,6 +56,10 @@ import '../../utils/calendar_helper.dart';
 import 'income_detail_screen.dart';
 import '../auth/pass_auth_recovery_screen.dart';
 import '../../services/payroll_correction_service.dart';
+import '../../services/home_recommend_cache.dart';
+import '../../services/firestore_service.dart' show HomeBundleOutcome, WorkerHomeBundle;
+import '../legal/legal_consent_reads.dart';
+import 'package:firebase_core/firebase_core.dart';
 import '../../models/core/renewal_proposal_model.dart';
 import 'renewal_proposal_screen.dart';
 import 'home_recruitable_projection.dart';
@@ -58,7 +67,10 @@ import 'user_home_reads.dart';
 
 // ── 지원자 홈 화면 ────────────────────────────────────────────────
 class UserHomeScreen extends StatefulWidget {
-  const UserHomeScreen({super.key, this.reads, this.clock});
+  const UserHomeScreen({super.key, this.reads, this.clock, this.tourCompleted, this.recommendCache});
+
+  /// [impl_12 · P2] 추천 표시 캐시(RAM). production 은 null → [HomeRecommendCache.shared].
+  final HomeRecommendCache? recommendCache;
 
   /// [R7-P2-1 P21-E] 홈이 나가서 읽는 **원시 외부 호출**만 모은 경계.
   ///   production 은 null — 기존 `FirestoreService` 인스턴스를 그대로 쓴다.
@@ -69,6 +81,16 @@ class UserHomeScreen extends StatefulWidget {
   ///   출퇴근 화면과 **같은 시각**으로 두 화면의 날짜 판정을 맞대 보기 위한
   ///   자리다. 화면 로직은 그대로 지난다.
   final DateTime Function()? clock;
+
+  /// [PERF-L3] 홈 투어를 이미 봤는지(로컬 저장소 한 줄). production 은 null → `TourHelper`.
+  ///   **데이터의 전제가 아니다** — 이 future 가 늦거나 던져도 홈 읽기는 이미 출발해 있다.
+  final Future<bool> Function()? tourCompleted;
+
+  /// [판정290 D290-02 · 시험 전용] 위쪽 변화 보정 계수 — scheduled(예약) · applied(실행) · discarded(실행 직전 재검사 실패) ·
+  ///   noop(순변화 없음/이미 그 위치). 운영 동작에 쓰지 않는다(시험이 비운다).
+  @visibleForTesting
+  static final Map<String, int> debugZoneAnchorStats = <String, int>{};
+  static void _stat(String k) => debugZoneAnchorStats[k] = (debugZoneAnchorStats[k] ?? 0) + 1;
 
   @override
   State<UserHomeScreen> createState() => _UserHomeScreenState();
@@ -132,25 +154,121 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   ///   관측되면 그때 트리거를 복구한다(추정으로 넣지 않는다).
   bool _isLoadingData = true;
 
+  // ── [PERF-P1 · 판정289 §4 · 판정290] 「필수응답 + 약속」 구역의 첫 표시 조정 ─────────────────
+  //   출처 7(자정 퇴근 · 신분증 요청 · 계약해지 · 연장 제안 · 서류 보완 · 약관 · 약속)이 모두 terminal
+  //   (성공 0/비0 · ERROR · PARTIAL)이 되면 구역을 **한 번에** 보인다. 그 전에는 약속 자리 뼈대 하나만 둔다.
+  //   600ms 는 첫 뼈대 프레임 기준 **최초 표시 잠정 상한**이다 — 최소 대기·조회 timeout·정상0 기한이 아니다.
+  //   상한이 지나면 끝난 것은 보이고 끝나지 않은 것은 '확인 중'으로 남는다(원 조회는 계속 · 늦은 응답 반영).
+  //   긴급 행동(자정 퇴근 · 계약해지 응답 · 오늘 약속)이 확정되면 다른 출처를 기다리지 않는다.
+  //   최초 1회 조정이다 — 재조회에는 다시 걸지 않는다.
+  static const Duration _kRevealCap = Duration(milliseconds: 600);
+  bool _zoneRevealed = false;
+  bool _revealCapPassed = false;
+  Timer? _revealTimer;
+
+  /// 1라운드(지원·근태·신분증·계약)가 **이 uid 로** 한 번이라도 끝났다(성공·실패 모두 terminal).
+  ///   재조회 중에도 true 로 남아 마지막 성공 값을 내리지 않는다 — 같은 데이터에 구역이 접혔다 펼쳐지지 않는다.
+  bool _mainRoundDone = false;
+  String? _mainRoundUid;
+
+  /// `_initSeenIds`(SharedPreferences)가 끝났다 — 새 확정(A)이 보였다 사라지지 않게 약속 출처는 이것도 본다.
+  bool _seenIdsLoaded = false;
+
+  /// [판정290 D290-01] **현재 조회**가 실패한 출처. 실재 카드는 성공해 읽은 근거가 있을 때만 그대로 그리고,
+  ///   실패는 출처·건수를 말하지 않는 일반 한 줄(「일부 정보를 확인하지 못했어요 · 다시 시도」)만 말한다.
+  bool _idRequestsFailed = false;
+  bool _renewalProposalsFailed = false;
+  bool _retryingFailedSources = false;
+
+  /// 약관 카드가 알려 온 마지막 상태(null = 아직). error 도 terminal 이다(R7-LEGAL 숨김 유지 · 일반 행 대상 아님).
+  LegalReadiness? _legalReadiness;
+
+  // ── [판정290 D290-02] 위쪽 구역 변화 때 보던 내용 유지(조건부) ─────────────────────────────
+  //   구역 전체가 이미 화면 위로 지나갔고 사용자가 조작하지 않을 때만, 구역 아래끝 표지의 **실제 순변화량**만큼
+  //   다음 프레임에 한 번 offset 을 옮긴다. 새 카드를 찾아가지 않는다(animateTo·ensureVisible·초점 이동 0).
+  final ScrollController _homeScroll = ScrollController();
+  final GlobalKey _zoneEndKey = GlobalKey(debugLabel: 'worker-home-zone-end');
+  /// 보정 기준(anchor) = 구역 **아래의 첫 상시 블록**(통합 날짜 영역). 구역 끝 표지는 '구역이 화면 위로 지나갔나'만 본다 —
+  ///   표지 자체를 기준으로 쓰면 구역 마지막 칸의 종류에 따라 바뀌는 다음 블록 간격(12/24)이 빠진다.
+  final GlobalKey _anchorKey = GlobalKey(debugLabel: 'worker-home-zone-anchor');
+  int _pointersDown = 0;
+  int _inputEpoch = 0;
+  bool _userScrolling = false;
+  bool _selfCorrecting = false;
+  _ZoneAnchor? _zoneAnchor;
+
+  // ── [impl_12 · P2 · 판정289 §6 C289-05 · 판정291 D291-02/C291-P2] 추천 '마지막 성공' 표시 ─────────────────
+  //   첫 1라운드 전(= 아직 live 결과 없음)·날짜 미선택일 때만, 같은 uid·범위의 마지막 성공 추천(최대 2장 · 표시 문구 +
+  //   공개 대표사진)을 '마지막 확인 HH:MM · 확인 중'과 함께 보인다. live 결과가 오면 그것으로 바뀐다 —
+  //   live 가 0장·실패·부분이면 캐시는 보이지 않는다(정상0·오류를 캐시로 가리지 않는다). 누르면 아무 일도 없다(live 확인 전).
+  //   홈 원천 목록(_applications·_publishedTos 등)에 넣지 않는다 — 표시 전용 경로.
+  late final HomeRecommendCache _recCache = widget.recommendCache ?? HomeRecommendCache.shared;
+
+  // ── [PERF-L9 · impl_15] 묶음 경로의 약관 준비 — 첫 1라운드 묶음이 함께 읽어 약관 카드에 넘긴다 ─────────────
+  //   약관 카드는 자기 첫 조회를 이 future 로 받는다(같은 값 · 따로 호출 0). 그 뒤의 조회(앱 복귀·동의 뒤)는 원래 경로다.
+  Completer<LegalReadiness>? _bundleLegal;
+  bool _bundleLegalHandedOut = false;
+
+  Future<LegalReadiness> _legalLoader() {
+    final c = _bundleLegal;
+    if (c != null && !_bundleLegalHandedOut) {
+      _bundleLegalHandedOut = true;
+      return c.future;
+    }
+    return (_reads.legalReadiness ?? LegalConsentReads.of().readiness)();
+  }
+
+  /// 묶음의 약관 결과를 카드에 넘긴다. null(구서버 폴백 · 묶음 전체 실패) = 카드가 원래 경로로 직접 읽는다.
+  void _resolveBundleLegal(HomeBundleOutcome<LegalReadiness>? o) {
+    final c = _bundleLegal;
+    if (c == null || c.isCompleted) return;
+    if (o == null) {
+      c.complete((_reads.legalReadiness ?? LegalConsentReads.of().readiness)());
+    } else if (o.ok) {
+      c.complete(o.value!);
+    } else {
+      c.completeError(o.error!); // 개별 호출 실패와 같다 — 카드는 error(숨김 · R7-LEGAL)
+    }
+  }
+  HomeRecommendSnapshot? _recSnapshot;
+
+  HomeRecommendScope _recScope(UserModel user) {
+    String env = '';
+    try {
+      env = Firebase.app().options.projectId;
+    } catch (_) {}
+    final r = user.homeRegion;
+    return HomeRecommendScope(
+      env: env,
+      role: 'USER',
+      regionKey: r == null ? '' : '${r.city}|${r.district ?? ''}',
+      queryKey: 'home-recommend-v1:unselected',
+    );
+  }
+
   // ── 초대 카운트 (INVITED 상태 지원서 수) ────────────────────────
   int get _invitedCount =>
       _applications.where((a) => a.status == AppStatus.invited).length;
 
   // ── 캐시 필드 — _applications/_attendances 변경 시에만 재계산 ────────
-  Set<DateTime> _cachedThisWeekEntryDates = {};
-  Set<DateTime> _cachedThisWeekConfirmedDates = {};
-  Set<DateTime> _cachedThisWeekPendingDates = {};
+  // [판정285 C285-03] 옛 `이번 주 일정`(오늘~+6 확정·지원 중 Set)과 날짜띠 확정 Set(workDate 만)은 지웠다 —
+  //   표시 날짜마다 [_scheduleOn] 하나가 점과 인라인 본문을 함께 계산한다(다른 범위의 캐시 재사용 0).
   List<ApplicationModel> _cachedRecentApplications = [];
   int _cachedPendingCount = 0;
   int _cachedConfirmedCount = 0;
   int _cachedContractPendingCount = 0;
   Map<String, int> _cachedWorkTypeStats = {};
-  // STATE C — 날짜별 공고 수 (오늘 이후 60일 범위, _publishedTos 기반)
-  final Map<DateTime, int> _toDateCounts = {};
+  // [판정286] 날짜띠·날짜 시트·선택일 요약의 공고 수 표시를 없앴다 — 날짜 영역은 내 일정만 말한다.
+  //   날짜별 공고 수 캐시(_toDateCounts)도 읽는 곳이 없어 지웠다. 추천 후보 projection(_recruitable)은 그대로다.
 
   /// [R7-P4.4E.8A] 날짜별 모집 가능한 공고 — **날짜칩과 추천 목록의 공용 결과**.
   ///   두 곳이 각각 판단하면 "칩은 1인데 목록은 0" 같은 어긋남이 생긴다.
   HomeRecruitableProjection? _recruitable;
+
+  /// [BL287-01] 같은 입력으로 **약속 충돌만 판정하지 않은** projection(`commitmentsKnown: false`).
+  ///   두 projection 의 차이 = 확정 근무와 시간이 겹쳐 빠진 공고다 — 다른 제외 사유(마감·관계·슬롯)는 양쪽이 같다.
+  ///   새 조회 0(이미 읽은 공고·지원·슬롯만). 지원 목록을 못 읽었으면 만들지 않는다(겹침을 말할 근거 없음).
+  HomeRecruitableProjection? _recruitableIgnoringCommitments;
 
   /// 내가 **활성 지원을 가진 flex 공고**의 슬롯만 담는다.
   ///   그 날짜에 형제 근무가 남아 있는지는 슬롯을 봐야 정확히 알 수 있고,
@@ -160,15 +278,42 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
   /// 이미 슬롯을 시도한 공고 id — 같은 로드에서 두 번 읽지 않는다.
   final Set<String> _slotFetchAttempted = {};
-  // STATE C — 확정 근무가 있는 날짜 Set (Green Dot Indicator용)
-  // AppStatus.confirmedStatuses(confirmed, contractPending) 기준
-  // contractPending은 계약 대기 상태이지만 시간 점유가 확정된 상태이므로 포함
-  final Set<DateTime> _confirmedDateSet = {};
   // STATE C — Hero 7일 스트립의 시작일 (기본: 오늘)
   // 날짜 더보기 캘린더에서 범위 외 날짜 선택 시 해당 날짜로 이동
   late DateTime _stripStart;
-  // STATE C — 선택된 날짜 (null = 미선택, CTA 숨김)
+  // STATE C — 선택된 날짜 (null = 미선택, 선택일 요약·CTA 숨김)
+  // [판정285 §4] 같은 날 재탭은 선택 유지 — 해제는 `날짜 해제` 한 곳뿐이다.
   DateTime? _selectedDateChip;
+
+  /// [판정285 §3 · C285-03] 한 날짜의 내 일정 — 날짜띠 점과 선택일 인라인 본문이 **같은 결과**를 읽는다.
+  ///
+  ///   확정 근무 = `CONFIRMED`·`CONTRACT_PENDING`(AppStatus.confirmedStatuses) 중 그날 **실제 근무일**
+  ///     (`isWorkingOnDate` — 장기의 휴무일 제외·추가근무/효력일 포함). 종료가 그날 이미 발효된 장기는 뺀다.
+  ///   지원 중 = `PENDING` 만(INVITED 는 초대 배너 · 합치지 않는다). 장기는 `isScheduledOnDate` 의
+  ///     `desiredStartDate ?? workDate` 당일만 — 매주 반복시키지 않는다. 근무 약속으로 부르지 않는다.
+  ///   정렬 = 상태 안에서 시작 시각 순(확정이 먼저 — 인라인이 이어 붙인다).
+  ///   표시 범위를 미리 정하지 않는다 — 띠가 어느 주·달로 옮겨 가도 그 날짜로 다시 계산한다.
+  ({List<ApplicationModel> confirmed, List<ApplicationModel> pending}) _scheduleOn(DateTime dayKey) {
+    final confirmed = <ApplicationModel>[];
+    final pending = <ApplicationModel>[];
+    for (final a in _applications) {
+      if (AppStatus.confirmedStatuses.contains(a.status)) {
+        if (a.isLongTermApplication && a.isExitEffectiveOn(dayKey)) continue;
+        if (a.isWorkingOnDate(dayKey)) confirmed.add(a);
+      } else if (a.status == AppStatus.pending) {
+        if (a.isScheduledOnDate(dayKey)) pending.add(a);
+      }
+    }
+    int byStart(ApplicationModel x, ApplicationModel y) => x.startTime.compareTo(y.startTime);
+    confirmed.sort(byStart);
+    pending.sort(byStart);
+    return (confirmed: confirmed, pending: pending);
+  }
+
+  /// [판정285 §4] 지원 목록 읽기는 한 번에 최대 200 건이다(application_firestore `limit:200`).
+  ///   그만큼 받았으면 더 있을 수 있다 — 날짜 요약을 완전한 목록이라고 말하지 않는다.
+  static const int _kApplicationsReadLimit = 200;
+  bool get _applicationsMaybePartial => _applications.length >= _kApplicationsReadLimit;
 
   // ── Priority Hero 캐시 ─────────────────────────────────────────
   // STATE B: 오늘 확정 근무 (출퇴근 CTA 표시)
@@ -256,20 +401,6 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
     final now = _now();
     final today = FormatHelper.toKstDate(now);
-    final endDate = today.add(const Duration(days: 6));
-    final dates = <DateTime>{};
-    for (final app in _applications) {
-      if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
-      if (!app.isLongTermApplication) {
-        final wd = FormatHelper.toKstDate(app.workDate);
-        if (!wd.isBefore(today) && !wd.isAfter(endDate)) dates.add(wd);
-      } else {
-        for (var d = today; !d.isAfter(endDate); d = d.add(const Duration(days: 1))) {
-          if (app.isWorkingOnDate(d)) dates.add(d);
-        }
-      }
-    }
-    _cachedThisWeekEntryDates = dates;
 
     // ── Priority Hero 캐시 계산 ──────────────────────────────────
     // STATE B: 오늘 확정 근무 존재 여부 (출퇴근 CTA 최우선)
@@ -277,7 +408,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     // [R7-P2-1 P21-H] 예전에는 `toKstDate(workDate) == today` 만 봤다.
     //   장기 근무의 `workDate` 는 **계약 시작일(고정값)** 이라, 시작일 하루를
     //   빼면 오늘 실제로 일하는 장기 근무자에게 Hero 가 비어 버렸다 —
-    //   출퇴근 CTA 를 홈에서 잃는다. 같은 화면의 주간 7일(위 `_cachedThisWeekEntryDates`)
+    //   출퇴근 CTA 를 홈에서 잃는다. 같은 화면의 날짜띠 점([_scheduleOn])
     //   과 출근 화면(`attendance_check_screen`)은 이미 `isWorkingOnDate` 를 쓴다
     //   (그 화면 주석이 같은 이유를 적고 있다). 한 화면이 두 가지로 말하지 않게
     //   **같은 canonical 술어**로 맞춘다 — 휴무일·추가근무·퇴사일이 함께 반영된다.
@@ -319,18 +450,6 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     _cachedConfirmedCount = _applications.where((a) => AppStatus.confirmedStatuses.contains(a.status)).length;
     _cachedContractPendingCount = _applications.where((a) => a.status == AppStatus.contractPending).length;
 
-    // 이번 주 PENDING dot
-    _cachedThisWeekPendingDates = {};
-    for (final app in _applications) {
-      if (app.status != AppStatus.pending) continue;
-      final wd = FormatHelper.toKstDate(app.workDate);
-      if (!wd.isBefore(today) && !wd.isAfter(endDate)) {
-        _cachedThisWeekPendingDates.add(wd);
-      }
-    }
-    // CONFIRMED dot — _cachedThisWeekEntryDates 재활용
-    _cachedThisWeekConfirmedDates = Set.from(_cachedThisWeekEntryDates);
-
     // 업무 경험 집계 (AttendanceModel.workType)
     _cachedWorkTypeStats = {};
     for (final att in _attendances) {
@@ -364,22 +483,28 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       slotsByToId: _slotsByToId,
       commitmentsKnown: !_homeLoadFailed,
     );
-    _toDateCounts.clear();
-    for (final entry in _recruitable!.byDate.entries) {
-      // 홈의 `일자리 N개` 는 **공고 수**다 — 업무 수로 바꾸지 않는다.
-      _toDateCounts[entry.key] = _recruitable!.countOn(entry.key);
-    }
+    _recruitableIgnoringCommitments = _homeLoadFailed
+        ? null
+        : HomeRecruitableProjection.build(
+            publishedTos: _publishedTos,
+            myApplications: _applications,
+            today: today,
+            cutoff: cutoff,
+            slotsByToId: _slotsByToId,
+            commitmentsKnown: false,
+          );
+  }
 
-
-    // STATE C — 확정 근무 날짜 Set 계산
-    // 날짜 스트립 Green Dot: 지원중/검토중 제외, 확정(confirmed+contractPending)만
-    _confirmedDateSet.clear();
-    for (final app in _applications) {
-      if (AppStatus.confirmedStatuses.contains(app.status)) {
-        final d = app.workDate;
-        _confirmedDateSet.add(FormatHelper.toKstDate(d));
-      }
-    }
+  /// [BL287-01] 선택일에 **확정 근무와 시간이 겹쳐서** 빠진 공고 수 — 확인된 사유일 때만 센다.
+  ///   = 겹침을 보지 않았다면 그날 후보였는데 실제 후보에는 없는 공고(같은 후보 필터 · 같은 날짜 필터).
+  ///   로딩·공고 조회 실패·지원 조회 실패/잔존·200 건 상한(일부만 읽음)이면 0 — 사유를 말하지 않는다.
+  int _conflictExcludedOn(UserModel user) {
+    if (_selectedDateChip == null) return 0;
+    if (_isLoadingData || _postingsFailed || _homeLoadFailed || _applicationsMaybePartial) return 0;
+    final free = _recruitableIgnoringCommitments;
+    if (free == null || _recruitable == null) return 0;
+    final shown = _getRecommendedTos(user).map((t) => t.id).toSet();
+    return _getRecommendedTos(user, projection: free).where((t) => !shown.contains(t.id)).length;
   }
 
   // ── [DS-03] 신분증 열람 요청 진입점 ────────────────────────────
@@ -439,20 +564,65 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     //   만들지 않는다(쓰는 곳은 관리자 화면뿐이고, 쓸 때 _loadFonts 가 스스로 읽는다).
     //   여기서는 큰 TTF 두 개를 메인 스레드에서 해석해 첫 화면 직후 홈 로드 시작을 ~1.2초 밀었다(LOCAL 디버그 로그).
     _initSeenIds(); // STATE A "미확인" 목록 복원 (SharedPreferences)
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
+    // [PERF-L9 · impl_15] 묶음 경로면 첫 약관 준비도 묶음이 읽는다(카드가 첫 프레임에 이 future 를 받는다).
+    if (_reads.homeBundle != null) {
+      _bundleLegal = Completer<LegalReadiness>();
+      _bundleLegal!.future.ignore();
+    }
+    // [impl_12 · P2] 첫 프레임 전에 동기로 본다(기다리지 않음 · RAM 거울).
+    final recUser = context.read<UserProvider>().currentUser;
+    if (recUser != null) _recSnapshot = _recCache.peek(uid: recUser.uid, scope: _recScope(recUser));
+    // [PERF-L3] 홈 읽기는 투어 확인(SharedPreferences)을 기다리지 않는다.
+    //   예전에는 투어 완료 여부를 await 한 뒤에야 `_loadHomeData()` 를 불렀다 — 기기에서
+    //   initState → 첫 읽기 사이 969ms 가 이 대기였다(user_home_first_entry_state_test 머리 주석).
+    //   그 future 가 던지면 홈 읽기가 아예 시작하지 않았다. 관리자 홈 H2 와 같은 순서다:
+    //   데이터 먼저 출발 → 투어는 따로 확인 · 실패는 삼키고 완료로 저장하지 않는다.
+    //   홈 읽기의 오류 안내(토스트)는 투어 판정·투어가 끝난 뒤에 보인다(`_toastAfterTour`).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final tourDone = await TourHelper.isCompleted(TourHelper.userHome);
-      if (!tourDone) {
-        if (mounted) _showTourDialog();
-      }
+      final tourSettled = Completer<void>();
+      _tourSettled = tourSettled.future;
+      // [PERF-P1] t0 = 첫 뼈대 프레임. 상한은 한 번만 건다(권한창·투어로 늘리지 않는다).
+      _revealTimer = Timer(_kRevealCap, () => _zoneSetState(() => _revealCapPassed = true));
       _loadHomeData();
+      unawaited(() async {
+        try {
+          final tourDone = await (widget.tourCompleted ??
+              () => TourHelper.isCompleted(TourHelper.userHome))();
+          if (!tourDone && mounted) await _showTourDialog();
+        } catch (e) {
+          debugPrint('⚠️ 홈 투어 확인 실패(투어 생략 · 완료 저장 안 함): $e');
+        } finally {
+          tourSettled.complete();
+          if (identical(_tourSettled, tourSettled.future)) _tourSettled = null;
+        }
+      }());
     });
+  }
+
+  /// [PERF-L3] 투어 판정·투어 화면이 끝나면 완료되는 future. null = 기다릴 투어가 없다.
+  Future<void>? _tourSettled;
+
+  /// [PERF-L3] 홈 읽기 오류 안내 — 투어가 떠 있는 동안 생긴 오류는 투어가 닫힌 뒤에 보인다.
+  ///   오류 **상태**(`_homeLoadFailed`)는 호출부가 즉시 기록한다. 늦추는 것은 토스트뿐이다.
+  void _toastAfterTour(String message) {
+    final gate = _tourSettled;
+    if (gate == null) {
+      ToastHelper.showError(message);
+      return;
+    }
+    unawaited(gate.then((_) {
+      if (mounted) ToastHelper.showError(message);
+    }));
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     FCMService().removeUserDataRefreshListener(_onFcmRefresh);
+    _revealTimer?.cancel();
+    _zoneAnchor = null;
+    _homeScroll.dispose();
     super.dispose();
   }
 
@@ -477,13 +647,16 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       final prefs = await SharedPreferences.getInstance();
       final ids = prefs.getStringList(_kSeenKey) ?? [];
       if (!mounted) return;
-      setState(() {
+      _zoneSetState(() {
         _seenConfirmIds = ids.toSet();
         // seenIds 로드 후 Hero 캐시 재계산 — STATE A 노출 여부 갱신
         _rebuildCaches();
+        _seenIdsLoaded = true;
       });
     } catch (_) {
       // SharedPreferences 실패 시 빈 set 유지 (STATE A가 과도 표시될 수 있으나 치명적이지 않음)
+      // [PERF-P1] 실패도 terminal — 약속 출처를 영원히 '확인 중'으로 두지 않는다.
+      if (mounted) _zoneSetState(() => _seenIdsLoaded = true);
     }
   }
 
@@ -530,7 +703,15 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       return context.read<UserProvider>().currentUser?.uid != uid;
     }
     _isLoadingHomeData = true;
-    setState(() => _isLoadingData = true);
+    setState(() {
+      _isLoadingData = true;
+      // [PERF-P1] 다른 계정의 마지막 성공 값을 '재조회 중 유지'로 보이지 않는다.
+      if (_mainRoundUid != null && _mainRoundUid != uid) {
+        _mainRoundDone = false;
+        _idRequestsFailed = false;
+        _renewalProposalsFailed = false;
+      }
+    });
     // [R7-P4.4E.8A] 새로고침마다 슬롯을 다시 본다 — 정원·마감이 바뀐다.
     //   읽기 수는 "내가 활성 지원을 가진 flex 공고 수"(보통 0~2)이고
     //   후보 공고 수와 무관하다.
@@ -567,7 +748,97 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       final needsTail = kstNow.day == 1;
       final prevMonthDay =
           DateTime.utc(kstNow.year, kstNow.month, 0); // 지난달 말일(KST)
-      final results = await Future.wait([
+      // [PII-DOC-R1.6.1] 보완 요청은 홈의 숫자를 만들지 않으므로 별도로
+      //   가져오고, 실패해도 다른 영역을 오류 상태로 만들지 않는다.
+      //   단 실패를 "할 일 없음"으로 바꾸지는 않는다 — 카드를 숨길 뿐이다.
+      // [PERF-P1 H] 보완·연장은 1라운드 결과를 쓰지 않는다 — 1라운드와 **같이** 출발시켜 구역이 한 번에 정해질
+      //   가능성을 높인다(호출 수 변화 0 · 순서만). 같은 `superseded()` 가드로 늦은 응답을 버린다.
+      unawaited(_reads.documentCorrections().then((s) {
+        if (!mounted || superseded()) return;
+        _zoneSetState(() {
+          _correctionSurface = s;
+          _correctionsLoaded = true;
+        });
+      }, onError: (Object e) {
+        // 운영 읽기(loadMine)는 스스로 failed 를 돌려준다. 그래도 던지면 같은 '확인 못 함' 카드로 — 영원히 LOADING 에 두지 않는다.
+        debugPrint('⚠️ 보완 요청 조회 실패: $e');
+        if (!mounted || superseded()) return;
+        _zoneSetState(() {
+          _correctionSurface = DocumentCorrectionSurface.failed;
+          _correctionsLoaded = true;
+        });
+      }));
+
+      // [RENEWAL-PROPOSAL-COMMITMENT] 연장 제안은 **근로자가 할 일**이다.
+      //
+      //   관리자가 제안을 보내면 근로자가 수락하거나 거절해야 새 기간이
+      //   정해진다. 알림을 읽거나 지워도 그 일은 사라지지 않는다 —
+      //   출처는 알림이 아니라 제안 문서다.
+      //
+      //   실패를 "제안 없음"으로 바꾸지 않는다: 못 읽었으면 카드를
+      //   숨기고 다음 조회를 기다린다. 없는 할 일을 지어내지도 않는다.
+      //   [판정290 D290-01] 실패는 일반 한 줄이 말한다(카드 숨김은 그대로).
+      unawaited(_reads.myRenewalProposals().then((list) {
+        if (!mounted || superseded()) return;
+        final now = _now();
+        _zoneSetState(() {
+          _renewalProposals =
+              list.where((p) => p.isActionableAt(now)).toList();
+          _renewalProposalsLoaded = true;
+          _renewalProposalsFailed = false;
+        });
+      }).catchError((Object e) {
+        debugPrint('⚠️ [연장제안] 홈 조회 실패: $e');
+        if (!mounted || superseded()) return;
+        _zoneSetState(() => _renewalProposalsFailed = true);
+      }));
+
+      // [PERF-L9 · impl_15] 묶음 경로 — 같은 6 섹션을 한 번에(실패 섹션 의미는 아래 개별 경로와 같다).
+      final bundleFn = _reads.homeBundle;
+      final List<Object?> results;
+      if (bundleFn != null) {
+        final includeLegal = _bundleLegal != null && !_bundleLegal!.isCompleted;
+        final WorkerHomeBundle b;
+        try {
+          b = await bundleFn(
+            uid: uid,
+            generation: '$uid#$seq',
+            months: [
+              (year: kstNow.year, month: kstNow.month),
+              if (needsTail) (year: prevMonthDay.year, month: prevMonthDay.month),
+            ],
+            includeLegal: includeLegal,
+          );
+        } catch (e) {
+          // 묶음 클라이언트는 섹션별로 돌려주며 던지지 않는다 — 던졌다면 예상 밖(전부 실패로 본다 · 약관은 원래 경로).
+          if (includeLegal) _resolveBundleLegal(null);
+          rethrow;
+        }
+        if (includeLegal) _resolveBundleLegal(b.legalReadiness);
+        T v<T>(HomeBundleOutcome<T> o, T empty) => o.ok ? o.value as T : empty;
+        appsErr = b.applications.error;
+        final cur = b.monthlyAttendances[WorkerHomeBundle.monthKey(kstNow.year, kstNow.month)] ??
+            HomeBundleOutcome<List<AttendanceModel>>.fail(StateError('month missing'));
+        attsErr = cur.error;
+        tosErr = b.publishedTOs.error;
+        idErr = b.idCardRequests.error;
+        HomeBundleOutcome<List<AttendanceModel>>? tail;
+        if (needsTail) {
+          tail = b.monthlyAttendances[WorkerHomeBundle.monthKey(prevMonthDay.year, prevMonthDay.month)] ??
+              HomeBundleOutcome<List<AttendanceModel>>.fail(StateError('month missing'));
+          tailErr = tail.error;
+        }
+        contractsErr = b.contracts.error;
+        results = [
+          v(b.applications, <ApplicationModel>[]),
+          v(cur, <AttendanceModel>[]),
+          v(b.publishedTOs, <TOModel>[]),
+          v(b.idCardRequests, <IdCardAccessRequestModel>[]),
+          tail == null ? const <AttendanceModel>[] : v(tail, <AttendanceModel>[]),
+          v(b.contracts, <EmploymentContractModel>[]),
+        ];
+      } else {
+      results = await Future.wait([
         _reads.myApplications(uid).catchError((Object e) {
           appsErr = e;
           return <ApplicationModel>[];
@@ -606,6 +877,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           return <EmploymentContractModel>[];
         }),
       ]);
+      }
       if (!mounted || superseded()) return;
 
       // 지원 내역이 실패했으면 이전 값을 유지한다 — 0으로 덮어쓰지 않는다.
@@ -633,6 +905,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         _idRequestSurface =
             PendingIdRequestSurface.from(results[3] as List<IdCardAccessRequestModel>);
         _idRequestsLoaded = true;
+        _idRequestsFailed = false;
+      } else {
+        // [판정290 D290-01] ERROR 는 terminal 이지만 정상 0 이 아니다 — loaded 를 세우지 않고 실패만 적는다.
+        debugPrint('⚠️ 신분증 요청 조회 실패: $idErr');
+        _idRequestsFailed = true;
       }
       if (tailErr == null) {
         _prevMonthTail = results[4] as List<AttendanceModel>;
@@ -655,44 +932,15 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       //   이고 후보 공고 수와 무관하다.
       unawaited(_loadRelationSlots(superseded));
 
-      // [PII-DOC-R1.6.1] 보완 요청은 홈의 숫자를 만들지 않으므로 별도로
-      //   가져오고, 실패해도 다른 영역을 오류 상태로 만들지 않는다.
-      //   단 실패를 "할 일 없음"으로 바꾸지는 않는다 — 카드를 숨길 뿐이다.
-      unawaited(_reads.documentCorrections().then((s) {
-        if (!mounted || superseded()) return;
-        setState(() {
-          _correctionSurface = s;
-          _correctionsLoaded = true;
-        });
-      }));
-
-      // [RENEWAL-PROPOSAL-COMMITMENT] 연장 제안은 **근로자가 할 일**이다.
-      //
-      //   관리자가 제안을 보내면 근로자가 수락하거나 거절해야 새 기간이
-      //   정해진다. 알림을 읽거나 지워도 그 일은 사라지지 않는다 —
-      //   출처는 알림이 아니라 제안 문서다.
-      //
-      //   실패를 "제안 없음"으로 바꾸지 않는다: 못 읽었으면 카드를
-      //   숨기고 다음 조회를 기다린다. 없는 할 일을 지어내지도 않는다.
-      unawaited(_reads.myRenewalProposals().then((list) {
-        if (!mounted || superseded()) return;
-        final now = _now();
-        setState(() {
-          _renewalProposals =
-              list.where((p) => p.isActionableAt(now)).toList();
-          _renewalProposalsLoaded = true;
-        });
-      }).catchError((Object e) {
-        debugPrint('⚠️ [연장제안] 홈 조회 실패: $e');
-      }));
-
       // 지원 내역은 홈의 숫자를 만드는 축이다 — 그것만 오류 상태로 올린다.
       if (appsErr != null) {
-        setState(() {
+        _zoneSetState(() {
           _isLoadingData = false;
           _homeLoadFailed = true;
+          _mainRoundDone = true;
+          _mainRoundUid = uid;
         });
-        ToastHelper.showError('지원 현황을 불러오지 못했어요.');
+        _toastAfterTour('지원 현황을 불러오지 못했어요.');
         return;
       }
 
@@ -700,9 +948,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       //   아래 사업장 문서는 추천 카드 **이미지**(mainImageUrl)에만 쓰인다 — 그것 때문에
       //   지원·근태·수입까지 스켈레톤으로 붙잡아 두지 않는다(LOCAL 추적: 주요 정보가
       //   1라운드 + 사업장 문서 왕복을 다 기다렸다). 값은 모두 이번 회차의 새 응답이다.
-      setState(() {
+      _zoneSetState(() {
         _isLoadingData = false;
         _homeLoadFailed = false;
+        _mainRoundDone = true;
+        _mainRoundUid = uid;
       });
 
       // ── BusinessModel 캐시 로드 — 추천 카드에 사업장 이미지·혜택 표시용
@@ -732,20 +982,273 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           final biz = bizResults[i];
           if (biz != null) cache[targetBizIds[i]] = biz;
         }
+        // [PERF-P6] 보이는 두 장의 사진 받기를 카드가 그려지기 전에 출발시킨다(기다리지 않음).
+        if (user != null) _precacheRecommendImages(user, cache);
         setState(() => _businessCache = cache);
+      }
+      // [impl_12 · P2] 이번 진입의 **완전한 성공**만 저장한다 — 공고·지원 조회 성공 · 지원 200 상한(일부) 아님 · 날짜 미선택.
+      //   0장이면 옛 추천을 지운다(0장 스냅샷 저장 0). 같은 회차·같은 계정일 때만.
+      if (user != null && !superseded()) {
+        _saveRecommendCache(user,
+            complete: tosErr == null && !_postingsFailed && !_applicationsMaybePartial && _selectedDateChip == null);
       }
     } catch (e) {
       debugPrint('❌ 홈 데이터 로드 실패: $e');
       if (mounted) {
         // 실패를 화면 상태로 남긴다 — 토스트는 사라지고 숫자는 남는다.
-        setState(() {
+        _zoneSetState(() {
           _isLoadingData = false;
           _homeLoadFailed = true;
+          if (!superseded()) {
+            _mainRoundDone = true;
+            _mainRoundUid = uid;
+          }
         });
-        ToastHelper.showError('홈 정보를 불러오지 못했어요. 다시 시도해 주세요');
+        _toastAfterTour('홈 정보를 불러오지 못했어요. 다시 시도해 주세요');
       }
     } finally {
       _isLoadingHomeData = false;
+    }
+  }
+
+  // ── [PERF-P1 · 판정289 §4 · 판정290] 구역 조정 · 일반 실패 행 · 위쪽 변화 보정 ─────────────────
+
+  bool get _legalTerminal =>
+      _legalReadiness != null && _legalReadiness!.status != LegalReadinessStatus.loading;
+  bool get _renewalTerminal => _renewalProposalsLoaded || _renewalProposalsFailed;
+
+  /// 모든 필수 출처가 terminal 인가(새 읽기 0 · 기존 필드에서 계산). ERROR 도 terminal 이다(≠ 정상 0).
+  bool get _allRequiredTerminal =>
+      _mainRoundDone && _seenIdsLoaded && _correctionsLoaded && _renewalTerminal && _legalTerminal;
+
+  /// 약속 자리가 구역 '확인 중' 뼈대인가.
+  bool get _promisePlaceholder =>
+      !_zoneRevealed || !_mainRoundDone || (!_seenIdsLoaded && _heroTodayApp == null);
+
+  /// 긴급 행동이 확정됐다 — 자정 퇴근(필요/모름) · 계약해지 응답(요청/모름) · 오늘 약속.
+  bool get _urgentConfirmed {
+    if (!_mainRoundDone) return false;
+    if (_overnightUnknown || _openOvernightAttendance() != null) return true;
+    if (_heroTodayApp != null) return true;
+    final term = PendingTerminationSurface.from(_applications, available: !_homeLoadFailed);
+    return term.isVisible || term.isUnavailable;
+  }
+
+  void _updateReveal() {
+    if (_zoneRevealed) return;
+    if (_revealCapPassed || _allRequiredTerminal || _urgentConfirmed) {
+      _zoneRevealed = true;
+      _revealTimer?.cancel();
+    }
+  }
+
+  /// 구역에 영향을 주는 상태 변경은 모두 여기로 — (1) 바뀌기 **전** 기하로 보정 조건을 잡고 (2) 첫 표시 판정을 같이 한다.
+  void _zoneSetState(VoidCallback fn) {
+    if (!mounted) return;
+    _captureZoneAnchor();
+    setState(() {
+      fn();
+      _updateReveal();
+    });
+  }
+
+  void _onLegalReadiness(LegalReadiness r) {
+    if (!mounted) return;
+    _zoneSetState(() => _legalReadiness = r);
+  }
+
+  /// [판정290 D290-01] 실패한 출처만 실제로 다시 읽는다. 진행 중이면 겹쳐 부르지 않는다(홈 재조회 중에도 행은 잠긴다).
+  ///   같은 uid · 같은 홈 회차의 응답만 반영한다 — 그 사이 새 홈 조회가 출발했거나 계정이 바뀌면 버린다.
+  ///   성공(정상 0 포함)만 실패를 지운다. 이미 읽어 둔 성공 카드는 건드리지 않는다.
+  Future<void> _retryFailedSources() async {
+    if (_retryingFailedSources || _isLoadingHomeData) return;
+    final uid = context.read<UserProvider>().currentUser?.uid;
+    if (uid == null) return;
+    final seq = _homeLoadSeq;
+    bool stale() => !mounted || seq != _homeLoadSeq || context.read<UserProvider>().currentUser?.uid != uid;
+    final wantId = _idRequestsFailed;
+    final wantRenewal = _renewalProposalsFailed;
+    if (!wantId && !wantRenewal) return;
+    _zoneSetState(() => _retryingFailedSources = true);
+    try {
+      await Future.wait<void>([
+        if (wantId)
+          _reads.pendingIdCardRequests(uid).then((reqs) {
+            if (stale()) return;
+            _zoneSetState(() {
+              _idRequestSurface = PendingIdRequestSurface.from(reqs);
+              _idRequestsLoaded = true;
+              _idRequestsFailed = false;
+            });
+          }, onError: (Object e) => debugPrint('⚠️ 신분증 요청 다시 확인 실패: $e')),
+        if (wantRenewal)
+          _reads.myRenewalProposals().then((list) {
+            if (stale()) return;
+            final now = _now();
+            _zoneSetState(() {
+              _renewalProposals = list.where((p) => p.isActionableAt(now)).toList();
+              _renewalProposalsLoaded = true;
+              _renewalProposalsFailed = false;
+            });
+          }, onError: (Object e) => debugPrint('⚠️ 연장 제안 다시 확인 실패: $e')),
+      ]);
+    } finally {
+      if (mounted) _zoneSetState(() => _retryingFailedSources = false);
+    }
+  }
+
+  /// 구역 하단·약속 앞의 상태 줄 — '확인 중'(약속 자리 뼈대가 아닐 때만) · '확인 실패'(신분증·연장 현재 ERROR).
+  ///   출처·사업장·건수·요청 존재를 말하지 않는다. 퇴근·해지·보완은 자기 실패 카드가 말하므로 여기서 다시 말하지 않는다.
+  Widget _buildRequiredStatusRows(BuildContext context, double s) {
+    if (!_zoneRevealed) return const SizedBox.shrink();
+    final rows = <Widget>[];
+    final infoStyle = ConceptText.body(color: AppColors.textSecondary);
+    if (!_promisePlaceholder && !_allRequiredTerminal) {
+      rows.add(Semantics(
+        key: const ValueKey('worker-home-required-pending'),
+        container: true,
+        label: '일부 정보를 확인하고 있어요',
+        excludeSemantics: true,
+        // 움직이지 않는 표지 — 출처 하나가 오래 걸려도 끝없는 애니메이션(매 프레임 다시 그리기)을 만들지 않는다.
+        child: Row(children: [
+          Icon(Icons.hourglass_empty_rounded, size: 16 * s, color: AppColors.textSecondary),
+          SizedBox(width: 10 * s),
+          Expanded(child: Text(TextLayout.keepWords('일부 정보를 확인하고 있어요'), style: infoStyle)),
+        ]),
+      ));
+    }
+    if (_idRequestsFailed || _renewalProposalsFailed) {
+      final busy = _retryingFailedSources || _isLoadingData;
+      if (rows.isNotEmpty) rows.add(SizedBox(height: 8 * s));
+      rows.add(Semantics(
+        key: const ValueKey('worker-home-required-error'),
+        container: true,
+        button: true,
+        enabled: !busy,
+        label: busy ? '일부 정보를 다시 확인하고 있어요' : '일부 정보를 확인하지 못했어요 · 다시 시도',
+        onTap: busy ? null : _retryFailedSources,
+        excludeSemantics: true,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: busy ? null : _retryFailedSources,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 48),
+            padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 12 * s),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.borderLight),
+            ),
+            child: Row(children: [
+              Icon(Icons.cloud_off_outlined, size: 20 * s, color: AppColors.textSecondary),
+              SizedBox(width: 10 * s),
+              Expanded(
+                child: Text(
+                  TextLayout.keepWords('일부 정보를 확인하지 못했어요'),
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                ),
+              ),
+              SizedBox(width: 8 * s),
+              if (busy)
+                Icon(Icons.hourglass_empty_rounded, size: 16 * s, color: AppColors.textSecondary)
+              else
+                const Text('다시 시도',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.brand)),
+            ]),
+          ),
+        ),
+      ));
+    }
+    if (rows.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: rows),
+    );
+  }
+
+  bool _onHomeScrollNotification(ScrollNotification n) {
+    if (n.depth != 0 || _selfCorrecting) return false;
+    if (n is ScrollStartNotification) {
+      _userScrolling = true;
+      _inputEpoch++;
+    } else if (n is UserScrollNotification) {
+      if (n.direction != ScrollDirection.idle) {
+        _userScrolling = true;
+        _inputEpoch++;
+      }
+    } else if (n is ScrollEndNotification) {
+      _userScrolling = false;
+    }
+    return false;
+  }
+
+  /// 표지([_zoneEndKey]) 또는 기준 블록([_anchorKey])의 **내용 좌표**(스크롤 0 기준 y). 없거나 아직 배치 전이면 null.
+  double? _contentY(GlobalKey key) {
+    final ro = key.currentContext?.findRenderObject();
+    if (ro is! RenderBox || !ro.attached || !ro.hasSize) return null;
+    final viewport = RenderAbstractViewport.maybeOf(ro);
+    if (viewport == null) return null;
+    return viewport.getOffsetToReveal(ro, 0.0).offset;
+  }
+
+  bool get _homeScrollIdle {
+    if (!_homeScroll.hasClients) return false;
+    final pos = _homeScroll.position;
+    return _pointersDown == 0 && !_userScrolling && !pos.isScrollingNotifier.value;
+  }
+
+  /// 바뀌기 전 기하로 보정 조건을 잡는다 — 프레임당 1회(같은 프레임의 여러 변경은 다음 프레임 한 번의 순변화로 묶는다).
+  void _captureZoneAnchor() {
+    if (_zoneAnchor != null) return;
+    if (!_homeScroll.hasClients) return;
+    final pos = _homeScroll.position;
+    if (!pos.hasContentDimensions || !pos.hasPixels) return;
+    if (pos.pixels <= 0) return; // 최상단 — 자연 삽입
+    if (!_homeScrollIdle) return; // 끌기·관성·hold·프로그램 스크롤 중 보정 0
+    final endY = _contentY(_zoneEndKey);
+    if (endY == null || endY > pos.pixels) return; // 구역 일부라도 보이면 자연 삽입
+    final anchorY = _contentY(_anchorKey);
+    if (anchorY == null) return;
+    final anchor = _ZoneAnchor(
+      position: pos,
+      pixels: pos.pixels,
+      viewport: pos.viewportDimension,
+      endY: anchorY,
+      epoch: _inputEpoch,
+      seq: _homeLoadSeq,
+      uid: context.read<UserProvider>().currentUser?.uid,
+    );
+    _zoneAnchor = anchor;
+    UserHomeScreen._stat('scheduled');
+    WidgetsBinding.instance.addPostFrameCallback((_) => _applyZoneAnchor(anchor));
+  }
+
+  /// 실행 직전 재검사 — 하나라도 달라졌으면 버린다(조작 뒤 누적 보정 0 · 자기 보정 재귀 0).
+  void _applyZoneAnchor(_ZoneAnchor a) {
+    if (!identical(_zoneAnchor, a)) return;
+    _zoneAnchor = null;
+    void discard() => UserHomeScreen._stat('discarded');
+    if (!mounted) return discard();
+    if (a.seq != _homeLoadSeq || a.uid != context.read<UserProvider>().currentUser?.uid) return discard();
+    if (!_homeScroll.hasClients || !identical(_homeScroll.position, a.position)) return discard();
+    final pos = _homeScroll.position;
+    if (!pos.hasContentDimensions || !pos.hasPixels) return discard();
+    if (_inputEpoch != a.epoch || !_homeScrollIdle) return discard();
+    if ((pos.viewportDimension - a.viewport).abs() > 0.5) return discard();
+    final anchorY = _contentY(_anchorKey);
+    if (anchorY == null) return discard();
+    final delta = anchorY - a.endY; // 카드·간격·확인 중/실패 행의 삽입·제거를 모두 담은 실제 순변화(기준 블록의 이동)
+    final target = (a.pixels + delta).clamp(pos.minScrollExtent, pos.maxScrollExtent).toDouble();
+    if (delta.abs() <= 0.5 || (target - pos.pixels).abs() <= 0.5) {
+      UserHomeScreen._stat('noop');
+      return;
+    }
+    _selfCorrecting = true;
+    try {
+      pos.jumpTo(target);
+      UserHomeScreen._stat('applied');
+    } finally {
+      _selfCorrecting = false;
     }
   }
 
@@ -761,7 +1264,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     try {
       final reqs = await _reads.pendingIdCardRequests(uid);
       if (!mounted) return;
-      setState(() => _idRequestSurface = PendingIdRequestSurface.from(reqs));
+      _zoneSetState(() {
+        _idRequestSurface = PendingIdRequestSurface.from(reqs);
+        _idRequestsLoaded = true;
+        _idRequestsFailed = false;
+      });
     } catch (e) {
       debugPrint('❌ 신분증 요청 갱신 실패: $e');
       if (mounted) ToastHelper.showError('요청 목록을 새로 불러오지 못했어요');
@@ -785,7 +1292,6 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     return 1.08;
   }
 
-  String _dayLabel(DateTime d) => ['월', '화', '수', '목', '금', '토', '일'][d.weekday - 1];
 
   @override
   Widget build(BuildContext context) {
@@ -827,10 +1333,27 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                       _reads.invalidatePublishedTOsCache();
                       return _loadHomeData();
                     },
-                    child: SingleChildScrollView(
-                      physics: const AlwaysScrollableScrollPhysics(
-                          parent: BouncingScrollPhysics()),
-                      child: _buildUserBody(context, s, up),
+                    // [판정290 D290-02] 손가락 접촉·끌기/관성·프로그램 스크롤을 각각 본다(하나의 notifier 로 대신하지 않는다).
+                    child: Listener(
+                      onPointerDown: (_) {
+                        _pointersDown++;
+                        _inputEpoch++;
+                      },
+                      onPointerUp: (_) {
+                        if (_pointersDown > 0) _pointersDown--;
+                      },
+                      onPointerCancel: (_) {
+                        if (_pointersDown > 0) _pointersDown--;
+                      },
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: _onHomeScrollNotification,
+                        child: SingleChildScrollView(
+                          controller: _homeScroll,
+                          physics: const AlwaysScrollableScrollPhysics(
+                              parent: BouncingScrollPhysics()),
+                          child: _buildUserBody(context, s, up),
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -1077,15 +1600,12 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     return Padding(
       padding: const EdgeInsets.only(bottom: ConceptSpace.sectionGap),
       child: _RhythmColumn(children: [
-        // ① 계정 이름 · 큰 머리 · KST 날짜 →16→ 탐색 날짜띠(선택 뒤 일자리 CTA)
-        _RhythmSlot(
-          kind: _Rhythm.block,
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            _buildGreeting(context, s, up),
-            const SizedBox(height: ConceptSpace.dateToStrip),
-            _buildDateExplorer(context, s, theme),
-          ]),
-        ),
+        // [판정285 §2 · 대표 지시 2026-11-26] 순서 = 머리(인사·KST 날짜) → 독립 필수응답 → 실제 약속(B>A) →
+        //   필요한 시작 준비 → 통합 날짜 영역(띠·선택일 내 일정·그날 일자리) → 지원 현황 → 초대 → 추천 2 → 수입 → 근무 기록.
+        //   날짜띠는 머리 바로 아래(CP03 Q2)에서 내려왔다 — 응답 기한·출퇴근이 탐색보다 먼저 온다.
+        //   `이번 주 일정` 섹션은 지웠다(같은 7칸 줄이 두 번 · 과거/전체는 하단 내 일정 탭).
+        // ① 계정 이름 · 큰 머리 · KST 날짜
+        _RhythmSlot(kind: _Rhythm.block, child: _buildGreeting(context, s, up)),
         // ② 독립 필수응답 — 약속보다 앞(Q2). 각자 표시 조건으로 스스로 숨는다.
         // [R7-P2-1 잔여] 자정을 넘긴 근무의 **퇴근**은 이미 시작된 일이다 — 응답하지 않으면
         //   `missed_checkout` 으로 자동 처리돼 임금이 다퉈진다. 오늘 약속이 함께 있으면 **둘 다** 보인다.
@@ -1099,16 +1619,33 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         // [PII-DOC-R1.6.1] 서류 보완 할 일 — 이미 일한 급여가 막혀 있을 수 있다.
         _RhythmSlot(kind: _Rhythm.card, child: _buildCorrectionTaskCard(context, s)),
         // [R7-LEGAL.1B.1] 약관 재동의 — 해당 없으면 스스로 사라진다(공용 카드, 안쪽 여백은 범위 밖).
-        _RhythmSlot(kind: _Rhythm.card, child: LegalTaskCard(scale: s, loadReadiness: _reads.legalReadiness)),
-        // ③ 약속 — B(오늘) > A(새 확정) > 정상0. 로딩 중 skeleton, 지원 조회 실패면 숨김.
+        // [PERF-P1] 첫 표시 전에도 마운트는 유지한다(자기 조회·복귀 갱신 그대로) — 보이지만 않게(높이 0 · 간격 0).
+        _RhythmSlot(
+            kind: _Rhythm.card,
+            child: Offstage(
+                offstage: !_zoneRevealed,
+                child: LegalTaskCard(
+                    scale: s,
+                    loadReadiness: _reads.homeBundle != null ? _legalLoader : _reads.legalReadiness,
+                    onReadiness: _onLegalReadiness))),
+        // [PERF-P1 · 판정290 D290-01] 구역 하단·약속 앞 — '확인 중'(끝나지 않은 출처) · '확인 실패'(신분증·연장) 각 최대 1행.
+        _RhythmSlot(kind: _Rhythm.card, child: _buildRequiredStatusRows(context, s)),
+        // ③ 실제 약속 — B(오늘) > A(새 확정). 로딩 중 skeleton. [판정285 §2] 정상 0 의 큰 카드는 없앴다 —
+        //   그 사실은 통합 날짜 영역의 짧은 안내가 말한다(지원 조회 실패·로딩은 0 으로 말하지 않는다).
         _RhythmSlot(kind: _Rhythm.section, child: _buildPriorityCard(context, s, theme)),
-        // 일반 지원 준비 — 자기 서류 등록 안내(필수응답으로 재분류하지 않는다)
+        // [판정290 D290-02] 구역 아래끝 표지(높이 0 · 간격 0) — 위쪽 변화의 실제 순높이를 이 표지의 이동으로 잰다.
+        _RhythmSlot(kind: _Rhythm.card, child: SizedBox(key: _zoneEndKey, height: 0)),
+        // ④ [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 대표 결정 2026-11-25 · 판정285 §2-4] 「시작 준비」(지역 · 신분 · 급여) —
+        //   실제 약속 바로 뒤 한 자리(약속이 없으면 필수응답 바로 뒤). 자기 준비 안내다(필수응답으로 재분류하지 않는다).
         _RhythmSlot(kind: _Rhythm.card, child: _buildReadinessCard(context, s, up)),
-        // ④ 내 지원 현황 → 초대 → 일자리 발견 → 이번 주 일정 → 이번 달 수입 → 내 근무 기록
+        // ⑤ 통합 날짜 영역 — 내 일정만: 띠(확정/지원 중 두 점) → 범례·날짜 해제/선택 → 오늘 정상0 안내 | 선택일 내 일정.
+        _RhythmSlot(kind: _Rhythm.section, child: KeyedSubtree(key: _anchorKey, child: _buildDateExplorer(context, s, theme))),
+        // ⑥ [판정286] 일자리 섹션 하나 — 날짜 영역 바로 아래. 미선택 「추천 일자리」 ↔ 선택 「M월 D일 일자리」 ·
+        //   카드 최대 2 · 상태 안내와 맨 아래 탐색 행동 하나(일자리 관련 안내·버튼은 여기 한 곳뿐).
+        _RhythmSlot(kind: _Rhythm.section, child: _buildRecommendSection(context, s, up)),
+        // ⑦ 내 지원 현황 → 초대 → 이번 달 수입 → 내 근무 기록
         _RhythmSlot(kind: _Rhythm.section, child: _buildApplicationStatus(context, s)),
         _RhythmSlot(kind: _Rhythm.card, child: _buildInviteBanner(context, s, theme)),
-        _RhythmSlot(kind: _Rhythm.section, child: _buildRecommendSection(context, s, up)),
-        _RhythmSlot(kind: _Rhythm.section, child: _buildThisWeekSchedule(context, s, theme)),
         _RhythmSlot(kind: _Rhythm.section, child: _buildIncomeSection(context, s, theme)),
         _RhythmSlot(kind: _Rhythm.section, child: _buildCareerSection(context, s, up)),
       ]),
@@ -1380,7 +1917,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   }
 
   Widget _buildOvernightCheckoutCard(BuildContext context, double s) {
-    if (_isLoadingData) return const SizedBox.shrink();
+    // [PERF-P1] 첫 1라운드 전·구역 첫 표시 전에는 그리지 않는다. 재조회 중에는 마지막 값을 그대로 둔다.
+    if (!_zoneRevealed || !_mainRoundDone) return const SizedBox.shrink();
 
     // [ERROR ≠ EMPTY] 못 읽었으면 "퇴근이 남지 않았다"고 말하지 않는다.
     if (_overnightUnknown) {
@@ -1583,14 +2121,21 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   Widget _buildPriorityCard(BuildContext context, double s, ThemeData theme) {
     final g = _gutter(context);
     // 로딩 중: skeleton (State B/A 여부 미확정이므로 자리 유지)
-    if (_isLoadingData) {
+    // [PERF-P1] 구역 첫 표시 전 · 첫 1라운드 전 · (오늘 약속이 없는데) 확인한 새 확정 목록 복원 전 = 구역 전체의 '확인 중' 자리.
+    //   재조회 중(_mainRoundDone)에는 뼈대로 돌아가지 않고 마지막 약속을 그대로 둔다.
+    if (_promisePlaceholder) {
       return Padding(
         padding: EdgeInsets.symmetric(horizontal: g),
-        child: Container(
-          height: 90 * s,
-          decoration: BoxDecoration(
-            color: AppColors.grey100,
-            borderRadius: BorderRadius.circular(16),
+        child: Semantics(
+          key: const ValueKey('worker-home-required-pending'),
+          container: true,
+          label: '오늘 할 일을 확인하고 있어요',
+          child: Container(
+            height: 90 * s,
+            decoration: BoxDecoration(
+              color: AppColors.grey100,
+              borderRadius: BorderRadius.circular(16),
+            ),
           ),
         ),
       );
@@ -1612,39 +2157,23 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     if (_heroNewConfirmApp != null) {
       return section('새로 확정된 근무', _buildHeroStateA(context, s, _heroNewConfirmApp!));
     }
-    // [CP03 Q7] 정상 약속 0 — 로딩 끝(위에서 걸렀다)·지원 조회 성공·B/A 없음일 때만.
-    //   지원 조회 실패·이전 값 유지(stale)는 0 으로 말하지 않는다 — 아래 `내 지원 현황`의 실패/고지 표면이 말한다.
-    //   독립 필수응답·서류/근태 오류·지원 준비 카드는 숨김 조건에 넣지 않는다(각자 위치에서 함께 보인다).
-    if (!_homeLoadFailed) {
-      return section('오늘의 약속', _buildPromiseEmpty(context));
-    }
+    // [판정285 §2 — CP03 Q7 대체] 정상 약속 0 의 큰 「오늘의 약속」 카드와 그 안의 `일자리 찾기` 는 없앴다.
+    //   "오늘 확정된 근무가 없어요" 는 통합 날짜 영역이 한 번 말한다([_todayZeroNotice] — 같은 조건:
+    //   로딩 끝·지원 조회 성공·B/A 없음). 지원 조회 실패·이전 값 유지(stale)는 여전히 0 으로 말하지 않는다.
     return const SizedBox.shrink();
   }
 
-  /// [CP03 Q7] 정상 약속 0 카드 — conceptRaised(이 카드 한정 opt-in).
-  ///   안내 16/400 textSecondary + 보조 outlined `일자리 찾기`(brand, 최소 48, 기존 일자리 탭 경로). 채움 주 CTA 는 쓰지 않는다.
-  Widget _buildPromiseEmpty(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(ConceptSpace.cardPadding),
-      decoration: ConceptSurface.raised(),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('오늘 확정된 근무가 없어요', style: ConceptText.body(color: AppColors.textSecondary)),
-        const SizedBox(height: ConceptSpace.infoToCta),
-        OutlinedButton(
-          onPressed: () => UserTabScope.of(context)?.switchToTab(1),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.brand,
-            side: const BorderSide(color: AppColors.brand),
-            minimumSize: const Size(ConceptSpace.minTouch, ConceptSpace.minTouch),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-          child: Text('일자리 찾기', style: ConceptText.button().copyWith(color: AppColors.brand)),
-        ),
-      ]),
-    );
-  }
+  /// [판정285 §2] 오늘 정상 0 — 미선택·로딩 끝·지원 조회 성공·실제 약속(B/A) 없음일 때만.
+  ///   옛 큰 카드의 조건(`!_homeLoadFailed`)과 같다. 날짜를 고르면 선택일 상태로 바뀐다.
+  bool get _todayZeroNotice =>
+      _selectedDateChip == null && _mainRoundDone && !_homeLoadFailed && !_hasPromiseHero &&
+      !_applicationsMaybePartial; // [판정287 C287-01] 200 건 상한으로 일부만 읽었으면 오늘 0 을 단정하지 않는다
+
+  /// [판정287 C287-01] 오늘 0 을 단정할 수 없는 경우 — 일부만 읽음(200 건 상한)인데 읽은 목록에 오늘 약속이 없다.
+  ///   정상 0 대신 미확인 안내를 한 번 말한다(새 전량 조회 0).
+  bool get _todayPartialNotice =>
+      _selectedDateChip == null && _mainRoundDone && !_homeLoadFailed && !_hasPromiseHero &&
+      _applicationsMaybePartial;
 
   /// [CP03 Q4] 큰 시간 — `HH:mm` 과 `–HH:mm` 두 토큰 사이에서만 줄을 바꾼다(시각 안 숫자는 나누지 않는다). 의미는 원문 한 줄.
   Widget _promiseTime(String start, String end) {
@@ -1661,7 +2190,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   // ── 날짜 기반 일자리 탐색 — 상시 노출 (Priority Card와 독립) ──
   // 확정/출근 유무와 무관하게 항상 표시. ALfit의 핵심 탐색 기능.
   Widget _buildDateExplorer(BuildContext context, double s, ThemeData theme) {
-    // [CP03 Q6] KST 날짜 아래 16(본문 블록 안) — 좌우 화면 여백만. 안쪽 카드·테두리 없음.
+    // [판정285 §2] 시작 준비 아래 한 섹션(섹션 사이는 본문 리듬) — 좌우 화면 여백만. 안쪽 카드·테두리 없음.
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
       child: _buildHeroStateC(context, s, theme),
@@ -1855,9 +2384,17 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         hasCheckedOut: hasCheckedOut);
     final wageType = app.wageType; // 없으면 라벨을 지어내지 않는다
     final showWage = app.wage > 0; // 모델이 누락 wage 를 0 으로 읽는다 — 0 이하이면 줄과 간격을 두지 않는다
-    final wageStr = wageType != null
-        ? FormatHelper.formatWageWithType(app.wage, wageType)
-        : FormatHelper.formatWage(app.wage);
+    // [F293-WAGE-01] 예상 단계(퇴근 전)의 시급 약속은 하루 예상 + 시급 — 이 카드가 보여 주는 app 시각으로 계산.
+    //   퇴근 뒤는 예전 표시(산정 금액 미공개 HB3 를 예상액으로 대신하지 않는다).
+    final expectedLine = hasCheckedOut
+        ? null
+        : ExpectedWageText.combined(ExpectedDailyWage.forPromise(
+            wageType: wageType, rate: app.wage, startTime: app.startTime,
+            endTime: app.endTime, breakMinutes: app.breakMinutes));
+    final wageStr = expectedLine ??
+        (wageType != null
+            ? FormatHelper.formatWageWithType(app.wage, wageType)
+            : FormatHelper.formatWage(app.wage));
     return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(ConceptSpace.cardPadding),
@@ -1968,11 +2505,15 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     final kstDate = FormatHelper.toKstDate(app.workDate);
     final dateStr = '${kstDate.month}월 ${kstDate.day}일';
     final hasTime = app.startTime.isNotEmpty && app.endTime.isNotEmpty;
-    // [DU1-F2] 금액 단위 — 저장 wageType 의 기존 라벨(시급/일급). 예상 총액·실수령 새 계산은 하지 않는다.
+    // [DU1-F2] 금액 단위 — 저장 wageType 의 기존 라벨(시급/일급). 실수령 새 계산은 하지 않는다.
+    // [F293-WAGE-01] 시급 약속은 하루 예상(세전 · 무급 휴게 차감) + 시급 — 이 카드가 보여 주는 app 시각으로 계산.
     final wageType = app.wageType; // 없으면 라벨을 지어내지 않는다
-    final wageStr = wageType != null
-        ? FormatHelper.formatWageWithType(app.wage, wageType)
-        : FormatHelper.formatWage(app.wage);
+    final wageStr = ExpectedWageText.combined(ExpectedDailyWage.forPromise(
+            wageType: wageType, rate: app.wage, startTime: app.startTime,
+            endTime: app.endTime, breakMinutes: app.breakMinutes)) ??
+        (wageType != null
+            ? FormatHelper.formatWageWithType(app.wage, wageType)
+            : FormatHelper.formatWage(app.wage));
 
     return GestureDetector(
       onTap: () async {
@@ -2130,52 +2671,12 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     _rebuildCaches();
                   },
                   onPageChanged: (foc) => setSheet(() => focusedDay = foc),
-                  // 공고 있는 날만 이벤트 1개 (점 on/off용)
-                  eventLoader: (day) {
-                    final d = DateTime.utc(day.year, day.month, day.day);
-                    return (_toDateCounts[d] ?? 0) > 0 ? [1] : [];
-                  },
-                  // #1565C0 작은 점 — 공고 있는 날짜만
-                  markerBuilder: (ctx3, date, events) {
-                    if (events.isEmpty) return null;
-                    return Positioned(
-                      bottom: 6,
-                      child: Container(
-                        width: 5,
-                        height: 5,
-                        decoration: const BoxDecoration(
-                          color: AppColors.infoDark,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    );
-                  },
+                  // [판정286] 공고 점(eventLoader·markerBuilder)을 뺐다 — 날짜를 고르는 시트다(일정 달력 기능은 배정 0).
+                  eventLoader: (_) => const [],
                   enabledDayPredicate: (day) =>
                       !DateTime.utc(day.year, day.month, day.day).isBefore(today),
                 ),
-                // 범례 — 처음 사용자에게 점의 의미를 설명
-                Padding(
-                  padding: EdgeInsets.fromLTRB(4 * s, 2 * s, 4 * s, 2 * s),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: const BoxDecoration(
-                          color: AppColors.infoDark,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      SizedBox(width: 5 * s),
-                      Text('공고 있음',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.textSecondary,
-                          )),
-                    ],
-                  ),
-                ),
+                // [판정286] `공고 있음` 범례도 함께 뺐다.
                 SizedBox(height: 4 * s),
               ],
             ),
@@ -2186,149 +2687,135 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     );
   }
 
-  // ── STATE C: 기본 — 날짜 탐색 (시안 .hC) ───────────────────────
+  // ── STATE C: 통합 날짜 영역 (판정285 §3·§4) ───────────────────────
+  //   띠(오늘~+6 · 날짜 선택 시트로 옮김) → 범례·날짜 선택/해제 → (미선택) 오늘 정상0 안내 | (선택) 그날 내 일정 → 그날 일자리.
+  //   모든 날짜를 고를 수 있다(공고·일정·조회 결과와 무관 — C285-01). 오늘은 외곽선, 자동 선택 0.
+  //   같은 날 재탭 = 선택 유지 · `날짜 해제` 로만 해제. 날짜 탭은 쓰기 0(출퇴근·지원 실행 없음) · 자동 스크롤/포커스 이동 0.
   Widget _buildHeroStateC(BuildContext context, double s, ThemeData theme) {
-    // 오늘부터 7일 (과거 없음, _stripStart는 날짜 선택 시트에서 바뀐다)
     final stripDays = List.generate(7, (i) => _stripStart.add(Duration(days: i)));
-    final hasSelectedDate = _selectedDateChip != null;
-    // 범례는 현재 표시 중인 7일 스트립 안에 확정 근무가 있을 때만 표시.
-    // _confirmedDateSet.isNotEmpty 조건은 스트립 밖 과거/미래 확정 근무에도 반응하므로 부정확.
-    final hasConfirmedInStrip = stripDays.any(
-      (d) => _confirmedDateSet.contains(DateTime.utc(d.year, d.month, d.day)),
-    );
-    // [DU1 구현98 S080 V8] 7일 중 공고가 있는 날이 **하나도 없으면** 공고 수 줄 자체를 두지 않는다.
-    //   하루라도 공고가 있으면 일곱 칸 모두 같은 크기로 자리를 지켜 기준선을 맞춘다(DATE-STRIP-COUNT-CLIP 그대로).
-    final stripHasJobs = stripDays.any(
-      (d) => (_toDateCounts[DateTime.utc(d.year, d.month, d.day)] ?? 0) > 0,
-    );
+    final selected = _selectedDateChip;
+    // [C285-03] 표시 중인 일곱 날 각각의 내 일정 — 점·범례·의미 이름이 같은 결과를 읽는다(선택일 본문도 같은 함수).
+    final schedules = {
+      for (final d in stripDays) DateTime.utc(d.year, d.month, d.day): _scheduleOn(DateTime.utc(d.year, d.month, d.day)),
+    };
+    final hasConfirmedInStrip = schedules.values.any((v) => v.confirmed.isNotEmpty);
+    final hasPendingInStrip = schedules.values.any((v) => v.pending.isNotEmpty);
+    // [판정286] 띠의 공고 수(`N개`) 줄·의미 이름·폭 계산을 뺐다 — 날짜 영역은 내 일정만. 공고는 바로 아래 일자리 섹션.
     const wd = ['월', '화', '수', '목', '금', '토', '일'];
     // [S080 T1 · 판정59] 오늘(KST · 주입 시계) — 오늘 칸은 미선택이면 brand 외곽선 · brand 숫자, 선택이면 기존 채움이 우선한다.
     //   범위(7일) 밖이면 표시하지 않는다(억지 노출 0). 오늘을 자동 선택하지 않는다.
     final todayKst = FormatHelper.toKstDate(_now());
     final todayKey = DateTime.utc(todayKst.year, todayKst.month, todayKst.day);
 
-    // [CP03 Q6] 제목·부제 없이 KST 날짜 아래 띠(질문 `언제 일하고 싶으세요?`·부제 `일할 날짜를 선택해보세요.` 시각 삭제).
-    //   요일 12/400·숫자 15/700, 주말도 중립색(일요일 빨강 제거). 선택 = brand 채움 + 흰 숫자, 확정 점·조건부 `N개` 유지.
+    // [CP03 Q6] 요일 12/400·숫자 15/700, 주말도 중립색. 선택 = brand 채움 + 흰 숫자, 점·조건부 `N개` 유지.
     //   각 칸 폭 ≥48 이고 실제 배율의 필요 폭만큼 늘린다. 일곱 칸이 들어가면 균등 분배, 넘치면 가로 스크롤.
     final dowStyle = const TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: AppColors.textSecondary);
     const numStyle = TextStyle(fontSize: 15, fontWeight: FontWeight.w700);
-    const countStyle = TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.brand);
     final circleD = 36.0 * s;
+    // [판정285 §3] 확정 = successDark · 지원 중 = warningDarkest — 옛 `이번 주 일정`·일정 달력과 같은 범례 색(새 색 0).
+    Widget dot(Color c) => Container(
+          width: 5 * s,
+          height: 5 * s,
+          decoration: BoxDecoration(color: c, shape: BoxShape.circle),
+        );
+
+    void selectDay(DateTime dayKey) {
+      // [판정285 §4] 같은 날을 다시 눌러도 선택을 유지한다(해제는 `날짜 해제`).
+      if (_selectedDateChip == dayKey) return;
+      setState(() => _selectedDateChip = dayKey);
+    }
 
     Widget cell(DateTime day) {
       final dayKey = DateTime.utc(day.year, day.month, day.day);
-      final count = _toDateCounts[dayKey] ?? 0;
-      final hasJobs = count > 0;
-      // 확정 근무 있는 날 — Green Dot 표시 + 선택 활성
-      final hasConfirmed = _confirmedDateSet.contains(dayKey);
-      final isSelected = _selectedDateChip == dayKey;
-      // [S080 T2 · 판정59 — CP03 Q6 시각 술어 재개정] 칸 전체 흐림(.38 · 숫자 약 2.28:1)을 없앤다.
-      //   탭 불가 날 = 불투명 textSecondary 숫자(흰 5.92) · 요일은 기존 textSecondary. 탭 조건(기존 술어)은 그대로다.
-      final tappable = !(!hasJobs && !hasConfirmed);
+      final sch = schedules[dayKey]!;
+      final hasConfirmed = sch.confirmed.isNotEmpty;
+      final hasPending = sch.pending.isNotEmpty;
+      final isSelected = selected == dayKey;
       final isToday = dayKey == todayKey;
-      final numColor = isSelected
-          ? Colors.white
-          : (isToday ? AppColors.brand : (tappable ? AppColors.textPrimary : AppColors.textSecondary));
+      // [판정285 C285-01] 모든 날짜가 선택 가능 — 흐린 숫자(옛 비활성 술어)를 두지 않는다.
+      final numColor = isSelected ? Colors.white : (isToday ? AppColors.brand : AppColors.textPrimary);
       final dowLabel = wd[day.weekday - 1];
-      // 의미 — 전체 날짜·선택(플래그)·확정 존재·기존 조회 건수만. `지원 가능` 보장으로 바꾸지 않는다.
+      // 의미 — 전체 날짜·오늘·선택(플래그)·확정/지원 중 존재. [판정286] 공고 수는 날짜 의미에서 뺐다.
       final semLabel = [
         '${day.month}월 ${day.day}일 $dowLabel요일',
         if (isToday) '오늘', // [S080 T1] 날짜 의미에서 한 번만 구별 — 선택 플래그와 합치지 않는다
         if (hasConfirmed) '확정 근무 있음',
-        if (hasJobs) '일자리 $count개',
+        if (hasPending) '지원 중 있음',
       ].join(', ');
-      // [CP03 C1] 콜백 하나를 의미 노드(excludeSemantics 바깥)와 GestureDetector 가 함께 쓴다 — 탭 가능한 날짜에만.
-      // 공고가 없어도 확정 근무가 있는 날은 선택 가능(같은 날 추가 근무 탐색, 기존 일정 인지 목적)
-      final VoidCallback? onCellTap = tappable
-          ? () => setState(() {
-                _selectedDateChip = _selectedDateChip == dayKey ? null : dayKey;
-              })
-          : null;
+      // [CP03 C1] 콜백 하나를 의미 노드(excludeSemantics 바깥)와 GestureDetector 가 함께 쓴다 — 모든 날짜.
+      void onCellTap() => selectDay(dayKey);
       return Semantics(
         container: true,
         button: true,
-        enabled: tappable,
+        enabled: true, // [C285-01] 모든 날짜가 선택 가능 — 활성 상태를 의미에도 밝힌다
         selected: isSelected,
         label: semLabel,
         excludeSemantics: true,
         onTap: onCellTap,
         child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: onCellTap,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: ConceptSpace.minTouch, minHeight: ConceptSpace.minTouch),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(dowLabel, style: dowStyle),
-                  SizedBox(height: 5 * s),
-                  // 숫자 상자 = 최소 36*s + 내용(구현100 C100-1 — 큰 배율에서 숫자가 잘리지 않게). 확정 점은 상자 아래 겹쳐 그린다.
-                  Stack(
-                    clipBehavior: Clip.none,
-                    alignment: Alignment.topCenter,
-                    children: [
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 160),
-                        curve: Curves.easeOut,
-                        constraints: BoxConstraints(minWidth: circleD, minHeight: circleD),
-                        padding: EdgeInsets.symmetric(horizontal: 2 * s),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
-                          color: isSelected ? AppColors.brand : Colors.transparent,
-                        ),
-                        // [S080 T1] 미선택 오늘 = brand 외곽선(앞면 장식 — 상자 크기 · 숫자 위치 불변)
-                        foregroundDecoration: (isToday && !isSelected)
-                            ? BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.brand, width: 1.5))
-                            : null,
-                        child: Center(
-                          widthFactor: 1.0,
-                          heightFactor: 1.0,
-                          child: Text('${day.day}', style: numStyle.copyWith(color: numColor)),
-                        ),
+          behavior: HitTestBehavior.opaque,
+          onTap: onCellTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: ConceptSpace.minTouch, minHeight: ConceptSpace.minTouch),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(dowLabel, style: dowStyle),
+                SizedBox(height: 5 * s),
+                // 숫자 상자 = 최소 36*s + 내용(구현100 C100-1). 점은 상자 아래 겹쳐 그린다 — 확정·지원 중이 같은 날이면 둘 다.
+                Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.topCenter,
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      curve: Curves.easeOut,
+                      constraints: BoxConstraints(minWidth: circleD, minHeight: circleD),
+                      padding: EdgeInsets.symmetric(horizontal: 2 * s),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        color: isSelected ? AppColors.brand : Colors.transparent,
                       ),
-                      if (hasConfirmed)
-                        Positioned(
-                          bottom: -8 * s,
-                          left: 0,
-                          right: 0,
-                          child: Center(
-                            child: Container(
-                              width: 5 * s,
-                              height: 5 * s,
-                              decoration: const BoxDecoration(color: AppColors.successDark, shape: BoxShape.circle),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  SizedBox(height: 10 * s),
-                  // 공고 수 — 없는 날은 같은 크기를 유지한 채 감춘다(일곱 칸 기준선 유지, DATE-STRIP-COUNT-CLIP).
-                  if (stripHasJobs)
-                    Visibility(
-                      visible: hasJobs,
-                      maintainSize: true,
-                      maintainAnimation: true,
-                      maintainState: true,
-                      child: Text('$count개', textAlign: TextAlign.center, style: countStyle),
+                      // [S080 T1] 미선택 오늘 = brand 외곽선(앞면 장식 — 상자 크기 · 숫자 위치 불변)
+                      foregroundDecoration: (isToday && !isSelected)
+                          ? BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.brand, width: 1.5))
+                          : null,
+                      child: Center(
+                        widthFactor: 1.0,
+                        heightFactor: 1.0,
+                        child: Text('${day.day}', style: numStyle.copyWith(color: numColor)),
+                      ),
                     ),
-                ],
-              ),
+                    if (hasConfirmed || hasPending)
+                      Positioned(
+                        bottom: -8 * s,
+                        left: 0,
+                        right: 0,
+                        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                          if (hasConfirmed) dot(AppColors.successDark),
+                          if (hasConfirmed && hasPending) SizedBox(width: 3 * s),
+                          if (hasPending) dot(AppColors.warningDarkest),
+                        ]),
+                      ),
+                  ],
+                ),
+                // [판정286] 점이 상자 아래로 8*s 내려온다 — 그 자리만 남긴다(공고 수 줄 없음).
+                SizedBox(height: 10 * s),
+              ],
             ),
           ),
+        ),
       );
     }
 
-    // 칸 필요 폭 — 실제 배율의 숫자(두 자리)·`N개`·요일·숫자 상자 중 가장 넓은 것, 최소 48.
+    // 칸 필요 폭 — 실제 배율의 숫자(두 자리)·요일·숫자 상자 중 가장 넓은 것, 최소 48.
     double cellNeed() {
       var w = ConceptSpace.minTouch;
       for (final d in stripDays) {
-        final dayKey = DateTime.utc(d.year, d.month, d.day);
-        final count = _toDateCounts[dayKey] ?? 0;
         final candidates = <double>[
           circleD,
           _oneLineWidth(context, '${d.day}', numStyle) + 4 * s,
           _oneLineWidth(context, wd[d.weekday - 1], dowStyle),
-          if (stripHasJobs) _oneLineWidth(context, '$count개', countStyle),
         ];
         for (final c in candidates) {
           if (c > w) w = c;
@@ -2352,110 +2839,247 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       );
     });
 
-    // 범례(조건부) + `날짜 선택` — 들어가면 한 줄, 아니면 범례 아래 오른쪽 줄(자연 높이).
+    // 범례(표시 중인 일곱 날에 실제로 있을 때만) · `날짜 선택`(시트) · `날짜 해제`(선택 중일 때만).
+    //   들어가면 한 줄(양 끝), 아니면 자연 줄바꿈 — 글자 축소·말줄임 0.
     const legendStyle = TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: AppColors.textSecondary);
-    final legendDot = Container(
-      width: 5 * s,
-      height: 5 * s,
-      decoration: const BoxDecoration(color: AppColors.successDark, shape: BoxShape.circle),
-    );
-    // 날짜 선택 — 기존 날짜 선택 시트(7일 밖 날짜). 행동 이름을 보이는 글자로 남긴다.
-    // [CP03 C1] 같은 콜백을 의미 노드(독립)와 GestureDetector 에 둔다.
-    void onPick() => _showDatePickerSheet(context, s);
-    final pick = Semantics(
-      container: true,
-      button: true,
-      label: '날짜 선택',
-      excludeSemantics: true,
-      onTap: onPick,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onPick,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: ConceptSpace.minTouch, minHeight: ConceptSpace.minTouch),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Text('날짜 선택', style: ConceptText.count().copyWith(height: 1.3)),
-            const Icon(Icons.chevron_right, size: 18, color: AppColors.brand),
-          ]),
-        ),
-      ),
-    );
-    final belowStrip = LayoutBuilder(builder: (context, c) {
-      if (!hasConfirmedInStrip) return Align(alignment: Alignment.centerRight, child: pick);
-      final legendW = 5 * s + 4 + _oneLineWidth(context, '확정 근무', legendStyle);
-      if (legendW + 8 + _actionWidth(context, '날짜 선택') <= c.maxWidth) {
-        // 한 줄에 들어간다(측정) — 범례 글자는 고정 폭으로 둔다.
-        return Row(children: [
-          legendDot,
+    Widget legendItem(Color c, String label) => Row(mainAxisSize: MainAxisSize.min, children: [
+          dot(c),
           const SizedBox(width: 4),
-          const Text('확정 근무', style: legendStyle),
-          const Spacer(),
-          pick,
+          Text(label, style: legendStyle),
         ]);
-      }
-      // 들어가지 않으면 범례 아래 오른쪽 줄로 `날짜 선택`(자연 높이). 범례 글자는 남는 폭에서 줄을 바꾼다.
-      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
-        Row(children: [
-          legendDot,
-          const SizedBox(width: 4),
-          const Expanded(child: Text('확정 근무', style: legendStyle)),
-        ]),
-        Align(alignment: Alignment.centerRight, child: pick),
-      ]);
-    });
+    Widget action(String label, VoidCallback onTap) => Semantics(
+          // [CP03 C1] 같은 콜백을 의미 노드(독립)와 GestureDetector 에 둔다.
+          container: true,
+          button: true,
+          label: label,
+          excludeSemantics: true,
+          onTap: onTap,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onTap,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: ConceptSpace.minTouch, minHeight: ConceptSpace.minTouch),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Text(label, style: ConceptText.count().copyWith(height: 1.3)),
+                if (label == '날짜 선택') const Icon(Icons.chevron_right, size: 18, color: AppColors.brand),
+              ]),
+            ),
+          ),
+        );
+    final legends = <Widget>[
+      if (hasConfirmedInStrip) legendItem(AppColors.successDark, '확정 근무'),
+      if (hasPendingInStrip) legendItem(AppColors.warningDarkest, '지원 중'),
+    ];
+    final actions = <Widget>[
+      if (selected != null) action('날짜 해제', () => setState(() => _selectedDateChip = null)),
+      action('날짜 선택', () => _showDatePickerSheet(context, s)),
+    ];
+    // 범례가 없으면 행동만 오른쪽(옛 `날짜 선택` 자리 그대로).
+    final belowStrip = legends.isEmpty
+        ? Align(alignment: Alignment.centerRight, child: Wrap(spacing: 8, alignment: WrapAlignment.end, children: actions))
+        : Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Wrap(spacing: 12, runSpacing: 4, children: legends),
+              Wrap(spacing: 8, children: actions),
+            ],
+          );
 
+    // 띠가 오늘에서 옮겨 갔으면(날짜 선택 시트) 범위를 글로 밝힌다 — 월이 바뀌어도 어느 날들인지 알 수 있게.
+    final stripEnd = stripDays.last;
+    final moved = DateTime.utc(_stripStart.year, _stripStart.month, _stripStart.day) != todayKey;
+
+    // 영역 키 — 시험·캡처가 이 영역만 잰다(동작 없음).
     return Column(
+      key: const ValueKey('worker-home-date-area'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 그룹 의미 `일할 날짜 선택` — 탐색용 날짜(주간 확정 일정 선택이 아님). 각 날짜는 따로 읽힌다.
+        _sectionHeader(context, title: '날짜별 일정 · 일자리'),
+        const SizedBox(height: ConceptSpace.sectionTitleToCard),
+        if (moved) ...[
+          Text(
+            TextLayout.keepWords('${_stripStart.month}월 ${_stripStart.day}일 – ${stripEnd.month}월 ${stripEnd.day}일'),
+            style: ConceptText.meta(),
+          ),
+          const SizedBox(height: 8),
+        ],
+        // 그룹 의미 — 각 날짜는 따로 읽힌다(전체 날짜·오늘·선택·확정/지원 중·일자리 수).
         Semantics(
           container: true,
           explicitChildNodes: true,
-          label: '일할 날짜 선택',
+          label: '날짜별 일정과 일자리',
           child: strip,
         ),
         const SizedBox(height: 8),
         belowStrip,
-        // CTA — 날짜 선택 후에만 등장(미선택 시 완전 숨김). 흐름: 날짜 선택 → 공고 수 확인 → 이동
+        if (selected == null && _todayZeroNotice)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(TextLayout.keepWords('오늘 확정된 근무가 없어요'),
+                semanticsLabel: '오늘 확정된 근무가 없어요', style: ConceptText.body(color: AppColors.textSecondary)),
+          ),
+        if (selected == null && _todayPartialNotice)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(TextLayout.keepWords('오늘 일정을 모두 확인하지 못했어요. 내 일정에서 확인해 주세요'),
+                semanticsLabel: '오늘 일정을 모두 확인하지 못했어요. 내 일정에서 확인해 주세요',
+                style: ConceptText.body(color: AppColors.textSecondary)),
+          ),
+        // 선택일 — 그날 내 일정(최대 2) → 그날 일자리 안내 → 「M월 D일 일자리 보기」(항상).
         AnimatedSize(
           duration: const Duration(milliseconds: 220),
           curve: Curves.easeOut,
-          child: hasSelectedDate
-              ? Padding(
-                  padding: const EdgeInsets.only(top: ConceptSpace.infoGroupGap),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        final scope = UserTabScope.of(context);
-                        if (_selectedDateChip != null) {
-                          // 날짜 지정 이동 — 일자리 탭의 날짜 필터로 전달
-                          scope?.switchToTabWithDate(1, _selectedDateChip!);
-                        } else {
-                          scope?.switchToTab(1);
-                        }
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.brand,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        minimumSize: const Size.fromHeight(ConceptSpace.primaryCtaMinHeight),
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      // [DU194 C2] 큰 글자에서 음절 끊김 없이 낱말 사이에서만 줄바꿈
-                      child: Text(
-                        TextLayout.keepWords('${_selectedDateChip!.month}월 ${_selectedDateChip!.day}일 '
-                            '일자리 ${_toDateCounts[_selectedDateChip] ?? 0}개 보기'),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, height: 1.3),
-                      ),
-                    ),
-                  ),
-                )
-              : const SizedBox.shrink(),
+          child: selected != null ? _selectedDayPanel(context, s, selected) : const SizedBox.shrink(),
         ),
       ],
+    );
+  }
+
+  /// [판정285 §4 B(a)] 선택일 인라인 — 「M월 D일 내 일정」 최대 2건(확정 먼저 · 시각순 · 상태/시간/사업장) ·
+  ///   더 있으면 `외 N건` + 「내 일정에서 보기」. [판정286] 그날 일자리 안내·버튼은 일자리 섹션으로 옮겼다.
+  ///   로딩/실패/일부만 읽음은 0 으로 말하지 않는다 — 일정 조회 상태만 말한다(공고 상태는 일자리 섹션).
+  Widget _selectedDayPanel(BuildContext context, double s, DateTime day) {
+    final md = '${day.month}월 ${day.day}일';
+    final sch = _scheduleOn(day);
+    final entries = [...sch.confirmed, ...sch.pending];
+    // [PERF-P1] '불러오는 중'은 첫 1라운드 전뿐이다 — 재조회 중에는 마지막 성공 값으로 그대로 말한다.
+    final appsUnknown = !_mainRoundDone || (_homeLoadFailed && _applications.isEmpty);
+    final appsStale = _mainRoundDone && _homeLoadFailed && _applications.isNotEmpty;
+    final appsPartial = _mainRoundDone && !_homeLoadFailed && _applicationsMaybePartial;
+    final infoStyle = ConceptText.body(color: AppColors.textSecondary);
+
+    void openSchedule() {
+      final scope = UserTabScope.of(context);
+      // [판정285 §4] 선택일의 월·날짜·당일 목록 + 상태 필터 ALL 로 — 홈 Navigator 에 일정 화면을 쌓지 않는다(탭 전환).
+      final go = scope?.switchToScheduleDate;
+      if (go != null) {
+        go(day);
+      } else {
+        scope?.switchToTab(2);
+      }
+    }
+
+    Widget link(String label) => Semantics(
+          container: true,
+          button: true,
+          label: label,
+          excludeSemantics: true,
+          onTap: openSchedule,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: openSchedule,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: ConceptSpace.minTouch, minHeight: ConceptSpace.minTouch),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Flexible(child: Text(TextLayout.keepWords(label), style: ConceptText.count().copyWith(height: 1.3))),
+                const Icon(Icons.chevron_right, size: 18, color: AppColors.brand),
+              ]),
+            ),
+          ),
+        );
+
+    String statusOf(ApplicationModel a) => switch (a.status) {
+          AppStatus.confirmed => '확정',
+          AppStatus.contractPending => '계약 진행 중',
+          _ => '지원 중',
+        };
+    Widget entry(ApplicationModel a) {
+      final isPending = a.status == AppStatus.pending;
+      final time = (a.startTime.isNotEmpty && a.endTime.isNotEmpty) ? '${a.startTime}–${a.endTime}' : null;
+      final place = [
+        if (a.businessName.isNotEmpty) a.businessName,
+        if (a.selectedWorkType.isNotEmpty) a.selectedWorkType,
+      ].join(' · ');
+      final status = statusOf(a);
+      return Semantics(
+        container: true,
+        label: [status, if (time != null) time, if (place.isNotEmpty) place].join(', '),
+        excludeSemantics: true,
+        child: Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Padding(
+              padding: EdgeInsets.only(top: 7 * s, right: 8),
+              child: Container(
+                width: 6 * s,
+                height: 6 * s,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isPending ? AppColors.warningDarkest : AppColors.successDark,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(
+                  TextLayout.keepWords([status, if (time != null) time].join(' · ')),
+                  style: ConceptText.body().copyWith(fontWeight: FontWeight.w700),
+                ),
+                if (place.isNotEmpty)
+                  Text(TextLayout.keepWords(place), style: ConceptText.body(color: AppColors.textSecondary)),
+              ]),
+            ),
+          ]),
+        ),
+      );
+    }
+
+    final children = <Widget>[
+      Text(TextLayout.keepWords('$md 내 일정'), semanticsLabel: '$md 내 일정', style: ConceptText.taskTitle()),
+    ];
+    if (appsUnknown) {
+      children.add(Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Text(
+          TextLayout.keepWords(!_mainRoundDone ? '일정을 불러오고 있어요' : '일정을 확인하지 못했어요. 내 일정에서 확인해 주세요'),
+          style: infoStyle,
+        ),
+      ));
+      if (_mainRoundDone) children.add(link('내 일정에서 보기'));
+    } else {
+      if (entries.isEmpty && (appsStale || appsPartial)) {
+        // [판정287 C287-01] 일부만 읽음(200 건 상한) · 이전 목록 잔존(재조회 실패)에서 그날 0 은 '없다'가 아니라 '모른다'.
+        children.add(Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(TextLayout.keepWords('이 날짜의 일정을 모두 확인하지 못했어요. 내 일정에서 확인해 주세요'), style: infoStyle),
+        ));
+      } else if (entries.isEmpty) {
+        // 정상 조회 · 전량(상한 미만)일 때만 정상 0 을 말한다.
+        children.add(Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(TextLayout.keepWords('이 날짜의 확정 근무나 지원 중인 일정이 없어요'), style: infoStyle),
+        ));
+      } else {
+        for (final a in entries.take(2)) {
+          children.add(entry(a));
+        }
+        if (entries.length > 2) {
+          children.add(Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text('외 ${entries.length - 2}건', style: infoStyle),
+          ));
+        }
+      }
+      // 읽은 일정이 있을 때만 최신/일부 고지를 덧붙인다(그날 0 이면 위 미확인 안내가 이미 말했다).
+      if (entries.isNotEmpty && (appsStale || appsPartial)) {
+        children.add(Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            TextLayout.keepWords(appsStale
+                ? '최신 일정이 아닐 수 있어요. 내 일정에서 확인해 주세요'
+                : '일부 일정만 보여요. 내 일정에서 모두 확인해 주세요'),
+            style: infoStyle,
+          ),
+        ));
+      }
+      if (entries.isNotEmpty || appsStale || appsPartial) children.add(link('내 일정에서 보기'));
+    }
+
+    // [판정286] 그날 일자리 안내·「M월 D일 일자리 보기」는 바로 아래 일자리 섹션 한 곳으로 옮겼다(날짜 영역 = 내 일정만).
+    return Padding(
+      padding: const EdgeInsets.only(top: ConceptSpace.infoGroupGap),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children),
     );
   }
 
@@ -2802,22 +3426,6 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     );
   }
 
-  /// 지원서 1건의 일급 계산 — 시급 타입은 시급×시간으로 환산
-  static int _scheduledDailyWage(ApplicationModel app) {
-    if (app.wageType == 'hourly') {
-      int toMin(String t) {
-        final p = t.split(':');
-        if (p.length < 2) return 0;
-        return (int.tryParse(p[0]) ?? 0) * 60 + (int.tryParse(p[1]) ?? 0);
-      }
-      int startMin = toMin(app.startTime);
-      int endMin = toMin(app.endTime);
-      if (endMin <= startMin) endMin += 1440; // 야간 교대
-      return ((endMin - startMin) / 60 * app.wage).round();
-    }
-    return app.wage;
-  }
-
   // ── 수입 현황 — 이번 달 compact (섹션 → IncomeDetailScreen) ──────────
   Widget _buildIncomeSection(BuildContext context, double s, ThemeData theme) {
     // [R7-P2-1 최종] '이번 달'의 기준은 **KST 달력월**이다.
@@ -2834,11 +3442,22 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     // [PREDEVICE-INCOME-NOSHOW] 미출근 여부만 보면 NO_SHOW·결근이 계속
     //   "벌 예정"으로 남는다 — 그 날은 벌 돈이 0으로 이미 마감됐다.
     //   판정은 CalendarHelper.isScheduledIncome 한 곳에 있다.
-    final wageScheduled = monthApps
+    // [AUD-3 M3 · 판정293 §6] 근무 1회 금액은 하루 예상 helper 와 같은 계산(CalendarHelper.expectedShiftWage —
+    //   약속 휴게 차감 · 종료=시작/휴게 모름 = 계산 불가 · 월급·유형 모름은 근무 1회 금액 없음). 계산할 수 없는 근무는
+    //   합계에 0 으로 넣지 않고 '금액 확인 필요 N건' 으로 따로 말한다.
+    var wageScheduled = 0;
+    var scheduledUnknown = 0;
+    for (final a in monthApps
         .where((a) => AppStatus.confirmedStatuses.contains(a.status))
         .where((a) =>
-            CalendarHelper.isScheduledIncome(a, _attendances, now: _now()))
-        .fold<int>(0, (sum, a) => sum + _scheduledDailyWage(a));
+            CalendarHelper.isScheduledIncome(a, _attendances, now: _now()))) {
+      final w = CalendarHelper.expectedShiftWage(a);
+      if (w == null) {
+        scheduledUnknown++;
+      } else {
+        wageScheduled += w;
+      }
+    }
 
     // 일했지만 금액이 아직 확정되지 않은 근무 — 어느 합계에도 더하지 않는다.
     final settlementPending =
@@ -2876,7 +3495,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           if (!_isLoadingData &&
               !_attendancesFailed &&
               wageCompleted == 0 &&
-              wageScheduled == 0)
+              wageScheduled == 0 &&
+              scheduledUnknown == 0)
             Container(
               width: double.infinity,
               padding: EdgeInsets.symmetric(vertical: 20 * s, horizontal: 16 * s),
@@ -2937,10 +3557,23 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     s: s,
                     label: '근무 예정',
                     labelColor: AppColors.textSecondary,
-                    value: _isLoadingData ? null : FormatHelper.formatWage(wageScheduled),
+                    // [AUD-3 M3 · 판정296] 계산할 수 없는 근무가 있으면 부분합·0원을 전체처럼 말하지 않는다.
+                    value: _isLoadingData ? null : ExpectedWageText.partialTotal(wageScheduled, scheduledUnknown),
                     valueColor: AppColors.textPrimary,
                     valueBold: false,
                   ),
+                  // ── 금액 확인 필요 행 — 근무 예정이지만 예상 금액을 계산할 수 없는 근무 [AUD-3 M3] ──
+                  if (!_isLoadingData && scheduledUnknown > 0) ...[
+                    SizedBox(height: 8 * s),
+                    _incomeRow(
+                      s: s,
+                      label: '금액 확인 필요',
+                      labelColor: AppColors.textSecondary,
+                      value: '$scheduledUnknown건',
+                      valueColor: AppColors.textPrimary,
+                      valueBold: false,
+                    ),
+                  ],
                   // ── 정산 중 행 — 일했지만 금액이 아직 확정되지 않은 근무 ──
                   // [PREDEVICE-PENDING-WAGE-VISIBILITY] 그 날은 출근했으므로
                   //   근무 예정에서 빠지고, 아직 확정 전이라 근무 완료에도 들어
@@ -2973,7 +3606,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                         ? null
                         : (_attendancesFailed
                             ? '확인 못함'
-                            : FormatHelper.formatWage(wageTotal)),
+                            : ExpectedWageText.partialTotal(wageTotal, scheduledUnknown)),
                     valueColor: AppColors.brand,
                     valueBold: true,
                   ),
@@ -3011,137 +3644,6 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   }
 
 
-  // ── 이번 주 일정 — 7일 dot 뷰 + 범례 ─────────────────────────────
-  Widget _buildThisWeekSchedule(BuildContext context, double s, ThemeData theme) {
-    final now = _now();
-    final today = FormatHelper.toKstDate(now);
-    final weekStart = today.subtract(Duration(days: today.weekday - 1));
-    final weekDays = List.generate(7, (i) => weekStart.add(Duration(days: i)));
-
-    return Container(
-      color: Colors.white,
-      // [CP03 Q9] 좌우 화면 여백만 — 섹션 사이 24 는 본문 리듬이 맡는다.
-      padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 섹션 헤더 — `일정 보기`(꺾쇠 아이콘 1개). 목적지 그대로.
-          _sectionHeader(
-            context,
-            title: '이번 주 일정',
-            actionText: '일정 보기',
-            // switchToTab(2): 탭0 Navigator에 push하지 않고 일정 탭으로 전환
-            // Navigator.push 사용 시 탭0 스택에 MyScheduleScreen이 쌓여
-            // 탭 전환 후 탭0 복귀 시 일정화면이 홈 자리에 나타나는 버그 발생
-            onAction: () => UserTabScope.of(context)?.switchToTab(2),
-          ),
-          const SizedBox(height: ConceptSpace.sectionTitleToCard),
-          // 7일 도트 뷰
-          // [DU397] 숫자 상자 폭 = max(32*s, 실제 한 줄 숫자 폭 + 1) — 내용 기준(칸 전체 배경 아님, 한 자리 · 기본 배율은 그대로 32*s).
-          //   칸 필요 폭(숫자 상자 · 요일 · 점 최대)이 가용/7 안이면 기존 7칸 균등, 넘으면 일주일 행만 가로 스크롤(_ThisWeekScrollRow).
-          //   숫자 분리 · 축소 · 말줄임 · 이웃 칸 침범으로 풀지 않는다(DU394 11-30 B@2.0 '30' → '3/0' 수리).
-          LayoutBuilder(builder: (context, constraints) {
-            // [CP03] 정밀 §4 지원자 홈 — 토·일 요일 글자도 다른 날과 같은 textSecondary(주말 파랑·빨강 제거).
-            const dayStyle = TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600);
-            TextStyle numStyle(bool isToday) => TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: isToday ? Colors.white : AppColors.textPrimary,
-                );
-            final boxW = <DateTime, double>{};
-            var cellNeed = 5 * s;
-            for (final d in weekDays) {
-              final digits = _oneLineWidth(context, TextLayout.unit('${d.day}'), numStyle(false)) + 1;
-              final w = digits > 32 * s ? digits : 32 * s;
-              boxW[d] = w;
-              if (w > cellNeed) cellNeed = w;
-              final label = _oneLineWidth(context, _dayLabel(d), dayStyle);
-              if (label > cellNeed) cellNeed = label;
-            }
-            final avail = constraints.maxWidth;
-
-            Widget cell(DateTime day) {
-              final isToday = day == today;
-              final hasConfirmed = _cachedThisWeekConfirmedDates.contains(day);
-              final hasPending = _cachedThisWeekPendingDates.contains(day);
-              // [DU1 구현100 셀B] 확정 = 같은 홈 날짜 탐색 줄·일정 달력과 같은 successDark(#166534).
-              // [DU1 후속101 C101-3] 대기 점 warningDarkest(#E65100, 3.79) — 일정 달력 대기 점과 같은 색.
-              final Color dotColor = hasConfirmed
-                  ? AppColors.successDark
-                  : hasPending
-                      ? AppColors.warningDarkest
-                      : Colors.transparent;
-              return Column(children: [
-                Text(_dayLabel(day), style: dayStyle),
-                SizedBox(height: 4 * s),
-                Container(
-                  width: boxW[day],
-                  // [DU203 C201-1] 고정 높이 32*s → 최소 높이: 큰 글자에서 숫자 아래가 잘리지 않게 내용 높이까지 늘어난다.
-                  constraints: BoxConstraints(minHeight: 32 * s),
-                  // [DU1] 오늘 표시 = brand 채운 둥근 사각형(날짜 선택 표시와 같은 형태)
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
-                    color: isToday ? AppColors.brand : Colors.transparent,
-                  ),
-                  alignment: Alignment.center,
-                  // [DU397] 숫자 묶음 표시(숫자 사이 줄바꿈 0) · 접근성 원문
-                  child: Text(TextLayout.unit('${day.day}'), semanticsLabel: '${day.day}', style: numStyle(isToday)),
-                ),
-                SizedBox(height: 4 * s),
-                Container(
-                  width: 5 * s,
-                  height: 5 * s,
-                  decoration: BoxDecoration(shape: BoxShape.circle, color: dotColor),
-                ),
-              ]);
-            }
-
-            if (cellNeed <= avail / 7) {
-              return Row(children: [for (final d in weekDays) Expanded(child: cell(d))]);
-            }
-            // [DU411] 가로 스크롤 분기만 — 칸 폭(pitch) = 필요 폭 + 이웃 숫자 상자 사이 최소 4 logical px.
-            //   가장 넓은 숫자 상자가 칸 폭과 같으면 이웃 상자가 맞닿았다(3.0 FB). 숫자 상자는 칸 가운데라 양옆 2px 씩 비운다.
-            //   초기 위치 · 끝 이동량도 같은 pitch 로 계산한다. 7칸 균등 분기(위)는 그대로다.
-            const minGap = 4.0;
-            final pitch = cellNeed + minGap;
-            final todayIx = weekDays.indexWhere((d) => d == today);
-            final maxOff = pitch * 7 - avail;
-            var initial = todayIx < 0 ? 0.0 : todayIx * pitch - (avail - pitch) / 2;
-            if (initial < 0) initial = 0;
-            if (initial > maxOff) initial = maxOff;
-            return _ThisWeekScrollRow(
-              initialOffset: initial,
-              children: [for (final d in weekDays) SizedBox(width: pitch, child: cell(d))],
-            );
-          }),
-          SizedBox(height: 10 * s),
-          // 범례
-          Row(children: [
-            _legendDot(s, AppColors.successDark, '확정'),
-            SizedBox(width: 12 * s),
-            _legendDot(s, AppColors.warningDarkest, '지원 중'),
-          ]),
-        ],
-      ),
-    );
-  }
-
-  Widget _legendDot(double s, Color color, String label) {
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      Container(
-        width: 6 * s, height: 6 * s,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-      ),
-      SizedBox(width: 4 * s),
-      // [DU1 구현100 C 분리 제안] 범례는 점이 무슨 뜻인지 읽어야 하는 글자 — textHint(#BDBDBD) → textSecondary.
-      Text(label,
-          style: TextStyle(
-              fontSize: 12,
-              color: AppColors.textSecondary,
-              fontWeight: FontWeight.w600)),
-    ]);
-  }
-
   // ── [DS-03] 신분증 열람 요청 진입점 ────────────────────────────
   /// 처리 대기 중인 신분증 열람 요청이 있을 때만 표시하는 Compact Card.
   ///
@@ -3163,6 +3665,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   ///   source 는 알림이 아니라 제안 문서다. 알림을 읽거나 지워도, 앱을
   ///   다시 켜도 수락/거절하기 전까지 이 카드는 남는다.
   Widget _buildRenewalProposalCard(BuildContext context, double s) {
+    if (!_zoneRevealed) return const SizedBox.shrink(); // [PERF-P1]
     if (!_renewalProposalsLoaded) return const SizedBox.shrink();
     if (_renewalProposals.isEmpty) return const SizedBox.shrink();
     final first = _renewalProposals.first;
@@ -3322,6 +3825,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   }
 
   Widget _buildCorrectionTaskCard(BuildContext context, double s) {
+    if (!_zoneRevealed) return const SizedBox.shrink(); // [PERF-P1]
     if (!_correctionsLoaded) return const SizedBox.shrink();
     // [R7-P2-1 후속 H6-E] 조회 실패는 "할 일 없음"이 아니다.
     //
@@ -3401,6 +3905,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   }
 
   Widget _buildIdRequestCard(BuildContext context, double s, UserProvider up) {
+    if (!_zoneRevealed) return const SizedBox.shrink(); // [PERF-P1]
     // LOADING: 첫 조회 전에는 자리 차지 없음
     if (!_idRequestsLoaded) return const SizedBox.shrink();
     // EMPTY (조회 실패 포함): 노출 없음
@@ -3475,8 +3980,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   //   동의는 같은 사건이 아니다.
   Widget _buildTerminationRequestCard(
       BuildContext context, double s, UserProvider up) {
-    // LOADING: 첫 조회 전에는 자리 차지 없음
-    if (_isLoadingData) return const SizedBox.shrink();
+    // LOADING: 첫 조회 전에는 자리 차지 없음 · [PERF-P1] 재조회 중에는 마지막 값 유지 · 첫 표시 전 숨김
+    if (!_zoneRevealed || !_mainRoundDone) return const SizedBox.shrink();
     final uid = up.currentUser?.uid;
     if (uid == null) return const SizedBox.shrink();
 
@@ -3606,123 +4111,62 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   ///
   /// 날짜 Hero보다 시각적 우선순위가 낮은 Compact 스타일.
   /// 탭 → DocumentManagementScreen (내 서류 관리)
+  /// [대표 결정 2026-11-25] 오늘의 약속 · 새 확정 근무 Hero 가 있는가 — 있으면 「시작 준비」를 그 아래에 둔다.
+  bool get _hasPromiseHero => _heroTodayApp != null || _heroNewConfirmApp != null;
+
   Widget _buildReadinessCard(BuildContext context, double s, UserProvider up) {
     final user = up.currentUser;
     if (user == null) return const SizedBox.shrink();
 
+    // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 대표 결정 2026-11-25] 「시작 준비」 — 일할 지역 → 신분증/외국인등록증 →
+    //   급여 계좌·통장사본. 가입 때 묻지 않은 것을 홈에서 단계별로 안내한다. 지원 시점의 서버 gate·사전 안내는 그대로.
+    //   판정은 기존 값 그대로(새 판정 0): 지역 = homeRegion 존재 · 신분 = hasIdDocument ·
+    //   급여 = 계좌 3필드 + 통장사본 등록 여부(presence only — 검수 상태는 읽지 않는다).
+    // ⓪ 일할 지역: 가입 때 묻지 않는다(지역 gate 제거). 없으면 일자리는 전체 지역으로 보인다.
+    final hasRegion = user.homeRegion != null;
     // ① 신분 확인: 신분증 이미지 등록 여부 (idCardImagePath 신규 flow + idCardImageUrl legacy 양쪽 허용)
     final hasId = user.hasIdDocument;
     // ② 급여정보: 계좌 3필드 + 통장사본 등록 여부 (presence only)
     final hasWage = user.hasBankAccount && user.hasBankbookDocument;
 
-    final completed = (hasId ? 1 : 0) + (hasWage ? 1 : 0);
-    if (completed == 2) return const SizedBox.shrink();
+    // 하나라도 남으면 모든 줄을 보인다 — 하나만 하면 끝나는 것처럼 말하지 않는다. 전부 끝나면 카드 없음.
+    final completed = (hasRegion ? 1 : 0) + (hasId ? 1 : 0) + (hasWage ? 1 : 0);
+    if (completed == 3) return const SizedBox.shrink();
 
-    // 남은 것이 둘이면 둘 다 말한다 — 하나만 하면 끝나는 것처럼 말하지 않는다.
-    final String subText;
-    if (!hasId && !hasWage) {
-      subText = '지원 전에 신분증과 급여정보를 등록해 주세요';
-    } else if (hasId) {
-      subText = '계좌와 통장사본을 등록해 주세요';
-    } else {
-      subText = '신분증을 등록해 주세요';
-    }
-    final theme = Theme.of(context);
-
-    // ── 디자인: Warning이 아닌 Progress Status ──────────────────────
-    // 배경·테두리는 매우 연한 파란 계열 → 날짜 Hero보다 시각적 강도 낮게 유지
-    const cardBg     = Color(0xFFF5F9FF); // 매우 연한 파랑 (날짜 카드보다 약함)
+    // 국적 미확정(새 계정 · 서류 전)은 두 서류를 같은 틀로 받는다는 것을 말한다. 옛 계정 문구는 '신분증'.
+    final idTitle = user.isNationalityUnconfirmed ? '신분증 또는 외국인등록증 등록' : '신분증 등록';
+    void openDocuments() => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const DocumentManagementScreen()),
+        );
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: _gutter(context)), // [CP03 Q9] 간격은 본문 리듬
-      child: GestureDetector(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const DocumentManagementScreen()),
-        ),
-        child: Container(
-          padding: EdgeInsets.symmetric(
-              horizontal: 16 * s, vertical: 12 * s),
-          decoration: BoxDecoration(
-            color: cardBg,
-            borderRadius: BorderRadius.circular(14),
-            // [DU-VQ-01 · 후속14] 약관·지원 준비·날짜 카드가 연속 테두리로 겹쳐 보였다 — 이 카드는 연한 배경만으로 구분한다
-            // 그림자 없음 — 날짜 Hero와 경쟁하지 않도록
+      child: StartReadinessCard(
+        items: [
+          StartReadinessItem(
+            icon: Icons.place_outlined,
+            title: '일할 지역 고르기',
+            // [판정287 C287-02] 거리 계산이 없다 — 행정구역(시·군·구) 우선이라는 실제 동작만 말한다.
+            subtitle: '선택한 지역의 일자리를 먼저 보여 드려요',
+            done: hasRegion,
+            onTap: () => openHomeRegionSetup(context),
           ),
-          child: Row(
-            children: [
-              // 원형 아이콘 배지 — 체크리스트/준비 계열 (경고 아이콘 사용 금지)
-              Container(
-                width: 38 * s,
-                height: 38 * s,
-                decoration: BoxDecoration(
-                  color: theme.primaryColor.withValues(alpha: 0.08),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(Icons.checklist_rounded,
-                    size: 20 * s, color: theme.primaryColor),
-              ),
-              SizedBox(width: 12 * s),
-              // 텍스트 영역 — 2줄 고정
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // 1줄: "지원 준비  0/2"
-                    // [R7-P2-1 P21-H] flex 가 없어 배율 2.0 에서 진행도가
-                    //   잘렸다(320dp 83px · 360dp 57px · 412dp 17px).
-                    //   `0 / 2` 가 안 보이면 **몇 개가 남았는지**를 잃는다 —
-                    //   줄이지 말고 줄바꿈시킨다.
-                    Wrap(
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 6 * s,
-                      runSpacing: 2 * s,
-                      children: [
-                        Text('지원 준비',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary,
-                            )),
-                        Text('$completed / 2',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                              // ALfit Blue — Warning Orange 사용 금지
-                              color: theme.primaryColor,
-                            )),
-                      ],
-                    ),
-                    SizedBox(height: 3 * s),
-                    // 2줄: 안내 문구
-                    Text(subText,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: AppColors.textSecondary,
-                        )),
-                    // 1/2 상태에서만: 얇은 progress bar (카드 크기 변화 없음)
-                    if (completed == 1) ...[
-                      SizedBox(height: 6 * s),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(2),
-                        child: LinearProgressIndicator(
-                          value: 0.5,
-                          minHeight: 3,
-                          backgroundColor: theme.primaryColor.withValues(alpha: 0.12),
-                          valueColor: AlwaysStoppedAnimation<Color>(theme.primaryColor),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              SizedBox(width: 4 * s),
-              Icon(Icons.chevron_right,
-                  color: AppColors.grey400, size: 20 * s),
-            ],
+          StartReadinessItem(
+            icon: Icons.badge_outlined,
+            title: idTitle,
+            subtitle: '지원하기 전에 한 번 등록해요',
+            done: hasId,
+            onTap: openDocuments,
           ),
-        ),
+          StartReadinessItem(
+            icon: Icons.account_balance_outlined,
+            title: '급여 계좌 · 통장사본 등록',
+            subtitle: '급여를 받을 본인 계좌예요',
+            done: hasWage,
+            onTap: openDocuments,
+          ),
+        ],
       ),
     );
   }
@@ -3737,22 +4181,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   //   preferredJobRegions 일치(city) +3  / district 추가 +2
   //   homeRegion 일치(city) +2           / district 추가 +1
   //   이미 지원한 TO 제외, 마감·만원 TO 제외
-  Widget _buildRecommendSection(BuildContext context, double s, UserProvider up) {
-    final user = up.currentUser;
-    if (user == null) return const SizedBox.shrink();
-
-    // 전체 정렬 목록 → 홈에는 상위 2개만 표시, 총 개수는 헤더에 사용
-    // 신규 사용자도 "지금 지원 가능한 일자리" 제목으로 섹션 표시
-    final allRecommended = _getRecommendedTos(user);
-    final totalCount = allRecommended.length;
+  /// [PERF-P6] 홈 추천 섹션에 **보이는** 공고(최대 2)와 STATE — 화면과 사진 미리 불러오기가 같이 쓴다.
+  ///   (분류 규칙은 예전 `_buildRecommendSection` 본문 그대로 옮겼다.)
+  ({int recState, List<TOModel> tos}) _homeRecommendPick(
+      UserModel user, List<TOModel> allRecommended) {
     final homeRegion = user.homeRegion;
-
-    // ── STATE A/B/C/D 분류 — homeRegion 기반 표시 전략 ──────────────
-    // STATE A: 내 city TO 2건 이상 → city TO 2건만 표시, city 부제목
-    // STATE B: 내 city TO 1건     → city TO 1건 + 타지역 TO 1건 혼합 표시, 부제목 없음
-    // STATE C: 내 city TO 0건     → 타지역 TO 2건 표시 + 지역 안내 배너
-    // STATE D: 전체 TO 0건        → 빈 상태 안내 메시지
-    // STATE 0 (homeRegion 없음 또는 로딩 중): 기존 동작 유지 (상위 2건)
     final List<TOModel> displayedTos;
     final int recState; // 0=no_home, 1=A, 2=B, 3=C, 4=D
 
@@ -3783,66 +4216,235 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       recState = 0;
       displayedTos = allRecommended.take(2).toList();
     }
+    return (recState: recState, tos: displayedTos);
+  }
 
-    // ── 섹션 제목 — 맥락에 따라 동적 결정 ─────────────────────────
-    // 1순위: 날짜 선택됨 → "M월 D일 일자리"
-    // 2순위 (STATE A): 내 city TO 2건+ → city 부제목 + 업무경험 여부로 제목 분기
-    // 기본: 부제목 없음
-    final String sectionTitle;
-    final String? sectionSubtitle;
-    if (_selectedDateChip != null) {
-      sectionTitle =
-          '${_selectedDateChip!.month}월 ${_selectedDateChip!.day}일 일자리';
-      sectionSubtitle = null; // 날짜가 제목에 있으므로 부제 불필요
-    } else if (recState == 1) {
-      // [CP03] 경험 분기·신규 fallback 을 합치지 않는다 — 정렬 결과를 '지원 가능' 확정으로 부르지 않는다.
-      sectionTitle =
-          _cachedWorkTypeStats.isNotEmpty ? '추천 일자리' : '둘러볼 일자리';
-      sectionSubtitle = '${homeRegion!.city} 일자리를 먼저 보여드려요';
-    } else {
-      sectionTitle =
-          _cachedWorkTypeStats.isNotEmpty ? '추천 일자리' : '둘러볼 일자리';
-      sectionSubtitle = null;
-    }
-    // [CP03 Q8] 전체 추천 수(기존 allRecommended.length)는 행동 문구에서 떼어 부제 요약으로 둔다.
-    //   표시 조건은 기존 행동과 같다(totalCount > 2). 홈에 보이는 두 카드 수·지역 건수로 다시 세지 않는다.
-    final countSummary = totalCount > 2 ? '일자리 $totalCount개' : null;
-    final headerSubtitle = [
-      if (sectionSubtitle != null) sectionSubtitle,
-      if (countSummary != null) countSummary,
+  /// [PERF-P6] 추천 카드 사진 칸의 **실제 표시 폭**(dp) — 카드 LayoutBuilder 가 마지막으로 잰 값.
+  ///   null = 아직 그린 적 없음(미리 불러오기를 건너뛴다) · 0 = 큰 글자로 사진 칸을 숨김(건너뛴다).
+  double? _recommendImageW;
+
+  /// [PERF-P6] 추천 카드 사진 디코드 폭(px) — 표시 폭 × 화면 배율 × cover 여유 2.
+  ///   사진은 `BoxFit.cover` 로 그린다. 칸 높이(IntrinsicHeight = 글자 덩이 높이)가 폭보다 크고
+  ///   사진은 대개 가로형이라, 실제로 그려지는 사진 폭은 칸 폭의 1.3~2배가 된다. 칸 폭 그대로
+  ///   디코드하면 그만큼 늘려 그려 흐려진다. 원본(최대 1920px) 디코드보다는 여전히 훨씬 작다.
+  ///   화면 위젯과 미리 불러오기가 **같은 값**을 써야 이미지 캐시 키가 같아 한 번만 받는다.
+  static int _recommendImageDecodeW(double displayW, double dpr) =>
+      (displayW * dpr * 2).round();
+
+  /// [PERF-P6] 보이는 추천 카드 사진(최대 2장)을 화면 위젯과 같은 키·크기로 미리 불러온다.
+  ///   기다리지 않는다(첫 프레임·홈 읽기와 무관) · 실패는 삼킨다(카드가 자리표시를 그린다).
+  ///   사진 칸이 숨겨졌거나 아직 잰 적이 없으면 아무것도 하지 않는다.
+  /// [impl_12 · P2] 지금 보이는(날짜 미선택) 추천 두 장을 표시 DTO 로 만들어 저장한다. 날짜를 골라 둔 상태면 저장하지 않는다.
+  void _saveRecommendCache(UserModel user, {required bool complete}) {
+    if (!complete) return;
+    final picks = _homeRecommendPick(user, _getRecommendedTos(user)).tos.take(HomeRecommendCache.maxCards);
+    final cards = [
+      for (final to in picks)
+        HomeRecommendCard(
+          toId: to.id,
+          title: to.title.isNotEmpty ? to.title : to.businessName,
+          businessName: to.businessName,
+          regionLabel: _recommendLocationText(to),
+          dateLabel: _recommendDateTextUnselected(
+              to, to.workDetails.where((d) => !d.isClosed && !d.isTimeExpired).toList()),
+          wageLabel: _recommendWageText(
+              to.workDetails.where((d) => !d.isClosed && !d.isTimeExpired).toList()),
+          workTypeIcon: to.workDetails.firstOrNull?.workTypeIcon,
+          imageUrl: _businessCache[to.businessId]?.mainImageUrl, // 생성자가 공개 대표사진 출처·경로만 남긴다
+        ),
     ];
+    unawaited(_recCache.saveSuccess(
+        uid: user.uid, scope: _recScope(user), cards: cards, fromCompleteSuccess: true));
+  }
+
+  void _precacheRecommendImages(UserModel user, Map<String, BusinessModel> cache) {
+    final w = _recommendImageW;
+    if (!mounted || w == null || w <= 0) return;
+    final memW = _recommendImageDecodeW(w, MediaQuery.devicePixelRatioOf(context));
+    final picks = _homeRecommendPick(user, _getRecommendedTos(user)).tos.take(2);
+    for (final to in picks) {
+      final url = cache[to.businessId]?.mainImageUrl;
+      if (url == null || url.isEmpty) continue;
+      unawaited(precacheImage(
+        ResizeImage.resizeIfNeeded(memW, null, CachedNetworkImageProvider(url)),
+        context,
+        onError: (Object e, StackTrace? st) =>
+            debugPrint('⚠️ 추천 사진 미리 불러오기 실패(무시)'),
+      ));
+    }
+  }
+
+  /// [impl_12 · P2] 캐시 추천 묶음 — 표시 문구·공개 대표사진만. 누르면 아무 일도 없다(live 상세는 확인 뒤 카드가 맡는다).
+  Widget _cachedRecommendBlock(BuildContext context, double s, HomeRecommendSnapshot snap) {
+    final k = snap.savedAt.toUtc().add(const Duration(hours: 9));
+    final hhmm = '${k.hour.toString().padLeft(2, '0')}:${k.minute.toString().padLeft(2, '0')}';
+    final note = '마지막 확인 $hhmm · 확인 중';
+    return Column(
+      key: const ValueKey('worker-home-recommend-cached'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Semantics(
+          label: '추천 일자리 마지막 확인 $hhmm, 지금 다시 확인하고 있어요',
+          excludeSemantics: true,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: 8 * s),
+            child: Text(TextLayout.keepWords(note), style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          ),
+        ),
+        for (var i = 0; i < snap.cards.length; i++) ...[
+          if (i > 0) SizedBox(height: 8 * s),
+          _cachedRecommendCard(context, s, snap.cards[i]),
+        ],
+      ],
+    );
+  }
+
+  Widget _cachedRecommendCard(BuildContext context, double s, HomeRecommendCard c) {
+    return Container(
+      padding: EdgeInsets.all(12 * s),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14 * s),
+        border: Border.all(color: AppColors.borderLight, width: 1.5),
+      ),
+      child: LayoutBuilder(builder: (context, box) {
+        // 이미지 칸 규칙은 live 카드와 같다(글자 영역 ≥ 160 × 글자 배율 · 96→72→숨김).
+        final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+        var imageW = 0.0;
+        for (final w in [96 * s, 72 * s]) {
+          if (box.maxWidth - w - 10 * s >= 160.0 * textScale) {
+            imageW = w;
+            break;
+          }
+        }
+        final placeholder = JobImagePlaceholder(workTypeIcon: c.workTypeIcon);
+        return IntrinsicHeight(
+          child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            if (imageW > 0) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12 * s),
+                child: SizedBox(
+                  width: imageW,
+                  child: c.imageUrl != null
+                      ? CachedNetworkImage(
+                          imageUrl: c.imageUrl!,
+                          fit: BoxFit.cover,
+                          memCacheWidth: _recommendImageDecodeW(imageW, MediaQuery.devicePixelRatioOf(context)),
+                          placeholder: (_, __) => placeholder,
+                          errorWidget: (_, __, ___) => placeholder,
+                        )
+                      : placeholder,
+                ),
+              ),
+              SizedBox(width: 10 * s),
+            ],
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                Text(c.title, style: AppTextStyles.jobTitle(), maxLines: 2, overflow: TextOverflow.ellipsis),
+                SizedBox(height: 2 * s),
+                Text(c.businessName, style: AppTextStyles.businessName(), maxLines: 2, overflow: TextOverflow.ellipsis),
+                SizedBox(height: 6 * s),
+                if (c.dateLabel.isNotEmpty) _iconRow(icon: Icons.calendar_today_outlined, text: c.dateLabel, s: s),
+                if (c.dateLabel.isNotEmpty) SizedBox(height: 3 * s),
+                if (c.regionLabel.isNotEmpty) _iconRow(icon: Icons.location_on_outlined, text: c.regionLabel, s: s),
+                if (c.wageLabel.isNotEmpty) ...[
+                  SizedBox(height: 6 * s),
+                  Text(c.wageLabel, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                ],
+              ]),
+            ),
+          ]),
+        );
+      }),
+    );
+  }
+
+  Widget _buildRecommendSection(BuildContext context, double s, UserProvider up) {
+    final user = up.currentUser;
+    if (user == null) return const SizedBox.shrink();
+
+    // 전체 정렬 목록 → 홈에는 상위 2개만 표시. [판정286] 후보 총수는 더 이상 보이지 않는다(도착 수량과 같다는 보장 없음).
+    final allRecommended = _getRecommendedTos(user);
+    final homeRegion = user.homeRegion;
+
+    // ── STATE A/B/C/D 분류 — homeRegion 기반 표시 전략 ──────────────
+    // STATE A: 내 city TO 2건 이상 → city TO 2건만 표시, city 부제목
+    // STATE B: 내 city TO 1건     → city TO 1건 + 타지역 TO 1건 혼합 표시, 부제목 없음
+    // STATE C: 내 city TO 0건     → 타지역 TO 2건 표시 + 지역 안내 배너
+    // STATE D: 전체 TO 0건        → 빈 상태 안내 메시지
+    // STATE 0 (homeRegion 없음 또는 로딩 중): 기존 동작 유지 (상위 2건)
+    // [PERF-P6] 분류는 `_homeRecommendPick` 하나 — 사진 미리 불러오기가 **실제로 보이는 두 장**을 고르는 데 같은 답을 쓴다.
+    final pick = _homeRecommendPick(user, allRecommended);
+    final List<TOModel> displayedTos = pick.tos;
+    final int recState = pick.recState; // 0=no_home, 1=A, 2=B, 3=C, 4=D
+
+    // ── [판정286] 섹션 제목 — 미선택 「추천 일자리」(신규·경험·지역 무관) ↔ 선택 「M월 D일 일자리」 ──
+    //   경험별 `추천/둘러볼` 분기·후보 수 부제·머리 `전체 보기`는 대체했다. 탐색 행동은 섹션 맨 아래 하나뿐.
+    final selected = _selectedDateChip;
+    final String sectionTitle =
+        selected != null ? '${selected.month}월 ${selected.day}일 일자리' : '추천 일자리';
+    // 지역 우선 안내 — 행정구역(시·군·구) 우선이라는 사실만 말한다(거리 계산 없음 · `근처`/`가까운 순` 0).
+    //   날짜를 고르면 제목에 날짜가 있으므로 부제를 두지 않는다(기존 규칙).
+    final String? sectionSubtitle =
+        (selected == null && recState == 1) ? '${homeRegion!.city} 일자리를 먼저 보여드려요' : null;
+    // 탐색 행동 하나 — 미선택은 일반 일자리 탭(새 날짜 만들지 않음), 선택은 같은 KST 하루 날짜 필터.
+    //   정상0·로딩·실패에도 유지한다(수량 없음 · 도착 수량·지원 가능을 약속하지 않음). 재시도는 별개 복구 행동.
+    final String ctaLabel = selected != null ? '${selected.month}월 ${selected.day}일 일자리 보기' : '일자리 더 보기';
+    void onCta() {
+      final scope = UserTabScope.of(context);
+      if (selected != null) {
+        scope?.switchToTabWithDate(1, selected);
+      } else {
+        scope?.switchToTab(1);
+      }
+    }
+
+    final infoStrong = TextStyle(fontSize: 13, color: AppColors.textPrimary, fontWeight: FontWeight.w600);
+    final infoSub = TextStyle(fontSize: 12, color: AppColors.textSecondary);
+    // [BL287-01] 겹침으로 빠진 공고 수(확인된 사유만) · 한 줄 안내.
+    final conflictExcluded = _conflictExcludedOn(user);
+    Widget conflictNote(String text) => Padding(
+          padding: EdgeInsets.only(top: 8 * s),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Padding(
+              padding: EdgeInsets.only(top: 2 * s),
+              child: Icon(Icons.info_outline, size: 14 * s, color: AppColors.textSecondary),
+            ),
+            SizedBox(width: 6 * s),
+            Expanded(
+              child: Text(TextLayout.keepWords(text), semanticsLabel: text,
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+            ),
+          ]),
+        );
+    Widget emptyNotice(String head, String sub) => Container(
+          padding: EdgeInsets.symmetric(vertical: 8 * s),
+          alignment: Alignment.center,
+          child: Column(children: [
+            Text(TextLayout.keepWords(head), semanticsLabel: head, style: infoStrong, textAlign: TextAlign.center),
+            SizedBox(height: 4 * s),
+            Text(TextLayout.keepWords(sub), semanticsLabel: sub, style: infoSub, textAlign: TextAlign.center),
+          ]),
+        );
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
+          key: const ValueKey('worker-home-jobs-section'), // 영역 키 — 시험·캡처가 이 섹션만 잰다(동작 없음)
           color: Colors.white,
           // [CP03 Q9] 좌우 화면 여백만 — 섹션 사이 24 는 본문 리듬이 맡는다.
           padding: EdgeInsets.symmetric(horizontal: _gutter(context)),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-          // 섹션 헤더 — 동적 제목·부제(지역 안내 · 일자리 N개), 3개 이상일 때만 `전체 보기`
-          _sectionHeader(
-            context,
-            title: sectionTitle,
-            subtitle: headerSubtitle.isEmpty ? null : headerSubtitle.join(' · '),
-            actionText: totalCount > 2 ? '전체 보기' : null,
-            onAction: totalCount > 2
-                ? () {
-                    final scope = UserTabScope.of(context);
-                    // 날짜가 선택된 상태면 동일한 날짜 필터를 일자리 탭에 전달
-                    if (_selectedDateChip != null) {
-                      scope?.switchToTabWithDate(1, _selectedDateChip!);
-                    } else {
-                      scope?.switchToTab(1);
-                    }
-                  }
-                : null,
-          ),
+          _sectionHeader(context, title: sectionTitle, subtitle: sectionSubtitle),
           const SizedBox(height: ConceptSpace.sectionTitleToCard),
-          // 추천 카드 목록
-          if (_isLoadingData)
+          // 상태 — 로딩 → 공고 조회 실패 → 정상 표시 0 → 카드(285 우선순위 그대로). 안내는 이 섹션에서 한 번만.
+          if (!_mainRoundDone && selected == null && _recSnapshot != null)
+            // [impl_12 · P2] 마지막 성공 추천 — live 확인 전까지만 · '확인 중' 표지 · 누름 0
+            _cachedRecommendBlock(context, s, _recSnapshot!)
+          else if (_isLoadingData)
             Column(children: [
               _recommendSkeletonCard(s),
               SizedBox(height: 8 * s),
@@ -3853,42 +4455,17 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           //   날짜별 문구든 전체 문구든 모두 사실이 아니다.
           else if (_postingsFailed)
             _postingsFailedCard(s)
-          else if (_selectedDateChip != null && displayedTos.isEmpty)
-            // 날짜 선택 + 해당 날짜 TO 없음
-            Container(
-              padding: EdgeInsets.symmetric(vertical: 20 * s),
-              alignment: Alignment.center,
-              child: Text(
-                '이 날짜에 표시할 일자리가 없어요',
-                style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
-              ),
-            )
-          else if (recState == 4)
-            // STATE D: 전체 TO 없음
-            // [DU1 구현98 S080 V8·V9] 안내만 있는 빈 안내(행동 없음) — 위아래 20 → 8: 제목 → 안내 간격이 다른 섹션의
-            //   제목 → 내용(14)과 같은 리듬이 되고, 안내가 빈 면 한가운데 떠 있지 않는다. 문구·역할·가운데 정렬은 그대로.
-            //   설명 글자 textHint(#BDBDBD, 흰 바탕 1.88:1 — 실측) → textSecondary(읽어야 하는 안내).
-            Container(
-              padding: EdgeInsets.symmetric(vertical: 8 * s),
-              alignment: Alignment.center,
-              child: Column(
-                children: [
-                  Text(
-                    '지금 표시할 일자리가 없어요',
-                    style: TextStyle(
-                        fontSize: 13,
-                        color: AppColors.textPrimary,
-                        fontWeight: FontWeight.w600),
-                  ),
-                  SizedBox(height: 4 * s),
-                  Text(
-                    '새 일자리가 등록되면 여기에서 확인할 수 있어요',
-                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            )
+          else if (selected != null && displayedTos.isEmpty)
+            // 날짜 선택 + 그날 표시할 공고 0 — 다른 날 안내도 여기서 한 번(날짜 변경은 바로 위 띠).
+            //   [BL287-01] 확정 근무와 겹쳐 빠진 공고가 확인되면 그 수를 함께 말한다(단정 0 · 사유 불명이면 기존 문구만).
+            Column(children: [
+              emptyNotice('이 날짜에 표시할 일자리가 없어요', '다른 날짜도 골라 보세요'),
+              if (conflictExcluded > 0) conflictNote('확정된 근무 시간과 겹치는 일자리 $conflictExcluded개는 뺐어요'),
+            ])
+          // [판정285 C285-02] 정상 조회 뒤 표시 목록 0 — 지역 유무와 무관(recState 4 는 지역 분류 결과일 뿐 빈 조건이 아니다).
+          else if (displayedTos.isEmpty)
+            // STATE D: 전체 TO 없음 — [DU1 구현98 S080 V8·V9] 위아래 8 · 설명 textSecondary.
+            emptyNotice('지금 표시할 일자리가 없어요', '새 일자리가 등록되면 여기에서 확인할 수 있어요')
           else ...[
             // STATE C: 내 city TO 없음 → 타지역 공고 표시 + 안내 배너
             if (recState == 3 && homeRegion != null) ...[
@@ -3933,7 +4510,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                 ),
               ),
             ],
-            // 카드 목록 (STATE A/B/C/0 공통)
+            // 카드 목록 (STATE A/B/C/0 공통) — 최대 2(선택일이면 그날 공고만 · 다른 날로 채우지 않는다)
             Column(
               children: displayedTos.asMap().entries.map((entry) {
                 final i = entry.key;
@@ -3945,12 +4522,124 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                 );
               }).toList(),
             ),
+            // [BL287-01] 카드가 있어도 겹쳐서 빠진 공고가 확인되면 카드 아래 한 줄.
+            if (conflictExcluded > 0) conflictNote('확정된 근무 시간과 겹치는 일자리 $conflictExcluded개는 빼고 보여 드려요'),
           ],
+          // [판정286] 섹션 맨 아래 탐색 행동 하나 — 보조 위계(아웃라인 · brand · 최소 48). 큰 채움 CTA 를 쓰지 않는다.
+          const SizedBox(height: ConceptSpace.infoGroupGap),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: onCta,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.brand,
+                side: const BorderSide(color: AppColors.brand),
+                minimumSize: const Size(ConceptSpace.minTouch, ConceptSpace.minTouch),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              child: Text(
+                TextLayout.keepWords(ctaLabel),
+                semanticsLabel: ctaLabel,
+                textAlign: TextAlign.center,
+                style: ConceptText.button().copyWith(color: AppColors.brand),
+              ),
+            ),
+          ),
             ],
           ),
         ),  // 내부 Container 닫기
       ],  // 외부 Column.children 닫기
     );  // 외부 Column 닫기
+  }
+
+  // ── [impl_12 · P2] 추천 카드 문구 — 카드와 추천 표시 캐시(DTO)가 **같은 함수**를 쓴다(어긋남 0) ──────────
+  /// 지역 줄(시·군·구).
+  static String _recommendLocationText(TOModel to) {
+    final city = to.businessCity;
+    final district = to.businessDistrict;
+    return [
+      if (city != null && city.isNotEmpty) city,
+      if (district != null && district.isNotEmpty) district,
+    ].join(' ');
+  }
+
+  /// 날짜 미선택 모드의 날짜 줄 — 그룹 전체 기간 + 시간대 요약.
+  static String _recommendDateTextUnselected(TOModel to, List<WorkDetailData> activeDetails) {
+    String dateText;
+    // 날짜 미선택 모드: Group 전체 기간 요약
+    if (to.isFlexType) {
+      final rs = to.rangeStart;
+      if (rs != null) {
+        // [TZ-FIX] KST calendar date 기준 표시 — device timezone 무관
+        dateText = FormatHelper.formatDateShort(rs);
+        if (to.totalSlots > 1) dateText += ' 외 ${to.totalSlots - 1}일';
+      } else {
+        dateText = '${to.totalSlots}일';
+      }
+    } else {
+      // 신규 preset: workStartAvailableFrom ~ Until / custom·legacy: rangeStart ~ rangeEnd
+      final DateTime? rs = to.hasWorkStartAvailableRange
+          ? to.workStartAvailableFrom
+          : to.rangeStart;
+      final DateTime? endDt = to.hasWorkStartAvailableRange
+          ? to.workStartAvailableUntil
+          : to.rangeEnd;
+      if (rs != null) {
+        // [TZ-FIX] KST calendar date 기준 표시 — device timezone 무관
+        dateText = FormatHelper.formatDateShort(rs);
+        if (endDt != null) dateText += ' ~ ${FormatHelper.formatDateShort(endDt)}';
+      } else {
+        dateText = '';
+      }
+    }
+    // 시간대 요약 — 모든 Work Slot이 같은 시간이면 표시, 다르면 "다양한 시간대"
+    final times = activeDetails
+        .map((d) => '${d.startTime}~${d.endTime}')
+        .toSet();
+    if (times.length == 1) {
+      if (dateText.isNotEmpty) {
+        dateText += ' · ${times.first}';
+      } else {
+        dateText = times.first;
+      }
+    } else if (times.length > 1) {
+      if (dateText.isNotEmpty) {
+        dateText += ' · 다양한 시간대';
+      } else {
+        dateText = '다양한 시간대';
+      }
+    }
+    return dateText;
+  }
+
+  /// 급여 줄 — [details] 중 급여가 있는 것의 최저(범위면 `~`).
+  static String _recommendWageText(List<WorkDetailData> details) {
+    // [F293-WAGE-01] 시급 업무가 있으면 이 카드가 대표하는 업무 각각을 환산한 하루 예상 범위 + 시급 범위(보조) + 짧은 말.
+    //   시급과 다른 유형이 섞이면 '업무별 급여 확인' · 일부 계산 불가면 '업무별 예상 금액 확인'(0원 합성 없음).
+    final er = ExpectedWageRange.ofWorkDetails(details);
+    final daily = ExpectedWageText.dailyRange(er);
+    if (daily != null) {
+      final rate = ExpectedWageText.rateRange(er);
+      return [daily, if (rate != null) rate, if (er.complete) ExpectedWageText.shortNote].join(' · ');
+    }
+    final wageSources =
+        details.where((d) => d.wage > 0).toList();
+    String wageText = '';
+    if (wageSources.isNotEmpty) {
+      wageSources.sort((a, b) => a.wage.compareTo(b.wage));
+      final minW = wageSources.first;
+      final maxW = wageSources.last;
+      if (maxW.wage > minW.wage) {
+        // 범위 표시: "일급 40,000원~" (최저만, 물결로 범위 암시)
+        wageText =
+            '${FormatHelper.formatWageWithType(minW.wage, minW.wageType)}~';
+      } else {
+        wageText =
+            FormatHelper.formatWageWithType(minW.wage, minW.wageType);
+      }
+    }
+    return wageText;
   }
 
   /// 추천 TO 카드 — Group → Date Slot → Work Slot 구조 기반 요약 카드
@@ -3973,13 +4662,9 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
     // ── 지역 정보 ─────────────────────────────────────────────
     final city = to.businessCity;
-    final district = to.businessDistrict;
     final isNearby =
         homeRegion != null && city != null && city == homeRegion.city;
-    final locationText = [
-      if (city != null && city.isNotEmpty) city,
-      if (district != null && district.isNotEmpty) district,
-    ].join(' ');
+    final locationText = _recommendLocationText(to); // [impl_12] 카드·캐시 공용
 
     // ── 마감되지 않은 활성 Work Slot ─────────────────────────
     final activeDetails =
@@ -4039,70 +4724,13 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           ? '$dayStr · 업무 $count개'
           : '$dayStr · 표시할 업무 없음';
     } else {
-      // 날짜 미선택 모드: Group 전체 기간 요약
-      if (to.isFlexType) {
-        final rs = to.rangeStart;
-        if (rs != null) {
-          // [TZ-FIX] KST calendar date 기준 표시 — device timezone 무관
-          dateText = FormatHelper.formatDateShort(rs);
-          if (to.totalSlots > 1) dateText += ' 외 ${to.totalSlots - 1}일';
-        } else {
-          dateText = '${to.totalSlots}일';
-        }
-      } else {
-        // 신규 preset: workStartAvailableFrom ~ Until / custom·legacy: rangeStart ~ rangeEnd
-        final DateTime? rs = to.hasWorkStartAvailableRange
-            ? to.workStartAvailableFrom
-            : to.rangeStart;
-        final DateTime? endDt = to.hasWorkStartAvailableRange
-            ? to.workStartAvailableUntil
-            : to.rangeEnd;
-        if (rs != null) {
-          // [TZ-FIX] KST calendar date 기준 표시 — device timezone 무관
-          dateText = FormatHelper.formatDateShort(rs);
-          if (endDt != null) dateText += ' ~ ${FormatHelper.formatDateShort(endDt)}';
-        } else {
-          dateText = '';
-        }
-      }
-      // 시간대 요약 — 모든 Work Slot이 같은 시간이면 표시, 다르면 "다양한 시간대"
-      final times = activeDetails
-          .map((d) => '${d.startTime}~${d.endTime}')
-          .toSet();
-      if (times.length == 1) {
-        if (dateText.isNotEmpty) {
-          dateText += ' · ${times.first}';
-        } else {
-          dateText = times.first;
-        }
-      } else if (times.length > 1) {
-        if (dateText.isNotEmpty) {
-          dateText += ' · 다양한 시간대';
-        } else {
-          dateText = '다양한 시간대';
-        }
-      }
+      dateText = _recommendDateTextUnselected(to, activeDetails); // [impl_12] 카드·캐시 공용
     }
 
     // ── 급여 범위 ─────────────────────────────────────────────
     // 날짜 선택 시: 가능한 Work Slot(충돌 제외) 기준
     // 날짜 미선택 시: 전체 활성 Work Slot 기준 (최저~최고 범위)
-    final wageSources =
-        availableDetails.where((d) => d.wage > 0).toList();
-    String wageText = '';
-    if (wageSources.isNotEmpty) {
-      wageSources.sort((a, b) => a.wage.compareTo(b.wage));
-      final minW = wageSources.first;
-      final maxW = wageSources.last;
-      if (maxW.wage > minW.wage) {
-        // 범위 표시: "일급 40,000원~" (최저만, 물결로 범위 암시)
-        wageText =
-            '${FormatHelper.formatWageWithType(minW.wage, minW.wageType)}~';
-      } else {
-        wageText =
-            FormatHelper.formatWageWithType(minW.wage, minW.wageType);
-      }
-    }
+    final wageText = _recommendWageText(availableDetails); // [impl_12] 카드·캐시 공용
 
     // [CP03] 상태 배지(`마감임박` = 남은 인원≤2, `모집중` = 그 밖)는 삭제했다 — 실제 마감 기한·공개모집 상태의
     //   근거가 아니었다(문구 감사 U:4023–4038). 후보 필터·정렬·reader 는 그대로다.
@@ -4167,8 +4795,25 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           children: [
             // [COMMON-TEXT-LAYOUT.28] 이미지 칸(96)이 고정이라 큰 글자에서 제목이 '[합성] …', 시간이 '09:00~1…' 로
             //   잘렸다. 카드 폭이 모자라면(글자 배율 반영) 장식 이미지 칸을 내리고 글자에 폭을 준다.
+            // [대표 지적 2026-11-26 · 판정286 묶음] 옛 문턱 `카드 안쪽 ≥ 300 × 글자 배율`은 360dp 폰의 안쪽(≈295)에서도
+            //   늘 이미지를 숨겼다. 문턱을 **이미지 뒤 남는 글자 영역**으로 바꾼다: 글자 영역 ≥ 160 × 글자 배율
+            //   (제목 17/700 약 9자 + 찜 아이콘이 한 줄에 드는 폭). 96*s 가 안 되면 72*s 로 한 번 줄이고, 그래도 안 되면 숨긴다.
+            //   360/1.0 · 320/1.0 = 96 표시 · 320/1.3 이상 큰 글자 = 숨김(글자 우선). 이미지 없는 사업장은 JobImagePlaceholder 그대로.
             LayoutBuilder(builder: (context, c) {
-            final showImage = TextLayout.fits(context, c.maxWidth, 300);
+            final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+            const kTextMinBase = 160.0;
+            var imageW = 0.0;
+            for (final w in [96 * s, 72 * s]) {
+              if (c.maxWidth - w - 10 * s >= kTextMinBase * textScale) {
+                imageW = w;
+                break;
+              }
+            }
+            final showImage = imageW > 0;
+            // [PERF-P6] 미리 불러오기가 같은 크기·같은 숨김 판정을 쓰도록 마지막으로 잰 칸 폭을 남긴다(상태 아님 · 다시 그리지 않음).
+            _recommendImageW = imageW;
+            final imageDecodeW = _recommendImageDecodeW(
+                imageW, MediaQuery.devicePixelRatioOf(context));
             return IntrinsicHeight(
               child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -4178,11 +4823,13 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             ClipRRect(
               borderRadius: BorderRadius.circular(12 * s),
               child: SizedBox(
-                width: 96 * s,
+                width: imageW,
                 child: imageUrl != null
                     ? CachedNetworkImage(
                         imageUrl: imageUrl,
                         fit: BoxFit.cover,
+                        // [PERF-P6] 원본 해상도(최대 1920px) 대신 표시 크기로 디코드 — 미리 불러오기와 같은 값.
+                        memCacheWidth: imageDecodeW,
                         placeholder: (_, __) => JobImagePlaceholder(
                           workTypeIcon:
                               to.workDetails.firstOrNull?.workTypeIcon,
@@ -4532,11 +5179,12 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   ///   3. 업무 경험 일치 여부
   ///   4. 마감임박 (남은 자리 적을수록 우선)
   ///   5. 최신 등록 (Firebase auto-id 역순)
-  List<TOModel> _getRecommendedTos(UserModel user) {
+  List<TOModel> _getRecommendedTos(UserModel user, {HomeRecruitableProjection? projection}) {
     // [R7-P4.4E.8A] 여기 있던 `appliedToIds.contains(to.id)` 를 지웠다.
     //   지원서 하나가 공고 전체를 지웠고, 그래서 flex 의 다른 날짜 모집이
     //   사라졌다. 판정은 날짜칩과 **같은** projection 이 한다.
-    final proj = _recruitable;
+    // [BL287-01] [projection] 을 주면 그것으로 같은 필터를 돌린다(겹침 제외 수 비교용 · 기본은 실제 후보).
+    final proj = projection ?? _recruitable;
 
     // ── 날짜 선택 시: 해당 날짜의 확정 일정 캐시 (충돌 검사용) ──
     final List<ApplicationModel> confirmedOnDate;
@@ -4892,6 +5540,27 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 //   카드들은 숨을 때 SizedBox.shrink(높이 0)를 돌려준다 — 그 자리에는 간격도 남지 않는다.
 //   폭은 부모 폭 그대로(세로 Column 의 stretch 와 같다). 그리기·누르기는 자식 위치 그대로다.
 // ─────────────────────────────────────────────────────────────
+/// [판정290 D290-02] 보정 예약 — 바뀌기 전 기하와 그때의 입력·회차·계정.
+class _ZoneAnchor {
+  _ZoneAnchor({
+    required this.position,
+    required this.pixels,
+    required this.viewport,
+    required this.endY,
+    required this.epoch,
+    required this.seq,
+    required this.uid,
+  });
+  final ScrollPosition position;
+  final double pixels;
+  final double viewport;
+  /// 바뀌기 전 기준 블록(통합 날짜 영역)의 내용 좌표.
+  final double endY;
+  final int epoch;
+  final int seq;
+  final String? uid;
+}
+
 enum _Rhythm { block, card, section }
 
 class _RhythmColumn extends MultiChildRenderObjectWidget {
@@ -5021,33 +5690,4 @@ class _RenderRhythmColumn extends RenderBox
   @override
   bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
       defaultHitTestChildren(result, position: position);
-}
-
-/// [DU397] 이번 주 일정 일주일 행의 가로 스크롤(필요 칸 폭 × 7 > 가용 폭일 때만). 오늘 칸이 첫 화면에 보이도록 처음 위치만 정한다.
-///   컨트롤러 수명을 이 위젯이 가진다. 탭 · 쓰기 · 새 receiver 없음.
-class _ThisWeekScrollRow extends StatefulWidget {
-  const _ThisWeekScrollRow({required this.initialOffset, required this.children});
-
-  final double initialOffset;
-  final List<Widget> children;
-
-  @override
-  State<_ThisWeekScrollRow> createState() => _ThisWeekScrollRowState();
-}
-
-class _ThisWeekScrollRowState extends State<_ThisWeekScrollRow> {
-  late final ScrollController _ctl = ScrollController(initialScrollOffset: widget.initialOffset);
-
-  @override
-  void dispose() {
-    _ctl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        controller: _ctl,
-        child: Row(children: widget.children),
-      );
 }

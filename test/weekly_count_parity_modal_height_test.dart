@@ -33,6 +33,7 @@ import 'package:ALfit/models/core/attendance_model.dart';
 import 'package:ALfit/utils/format_helper.dart';
 import 'package:ALfit/utils/week_helper.dart';
 import 'package:ALfit/widgets/dialogs/styled_dialog.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 DateTime _kst(int y, int m, int d, [int h = 0]) =>
     DateTime.utc(y, m, d, h).subtract(const Duration(hours: 9));
@@ -237,7 +238,7 @@ void main() {
     /// 사용자가 보는 모달 높이 = 머리말 top ~ 닫기 bottom.
     ///   `Dialog` 의 렌더 박스는 오버레이 전체라 그것으로는 측정되지 않는다.
     double modalHeight(WidgetTester tester) =>
-        tester.getRect(find.text('닫기')).bottom -
+        tester.getRect(findVisibleText('닫기')).bottom -
         tester.getRect(find.text('머리말')).top;
 
     testWidgets('WCP-C1 행이 적으면 모달이 내용만큼 줄어든다', (tester) async {
@@ -270,7 +271,7 @@ void main() {
       expect(h, lessThanOrEqualTo(800), reason: '화면을 넘지 않는다');
       // 스크롤이 살아 있고 닫기 경로가 남아 있다.
       expect(find.byType(Scrollable), findsWidgets);
-      expect(find.text('닫기'), findsOneWidget);
+      expect(findVisibleText('닫기'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -344,7 +345,7 @@ void main() {
                 reason: 'overflow/clipping 이 발생했다');
 
             // 닫기가 화면 안에 있다.
-            final close = find.text('닫기');
+            final close = findVisibleText('닫기');
             expect(close, findsOneWidget);
             final r = tester.getRect(close);
             expect(r.bottom, lessThanOrEqualTo(size.height + 0.5),
@@ -367,7 +368,7 @@ void main() {
           size: const Size(360, 740), textScale: 1.0, rows: 20, keyboard: 320));
       await tester.pump();
       expect(tester.takeException(), isNull);
-      final r = tester.getRect(find.text('닫기'));
+      final r = tester.getRect(findVisibleText('닫기'));
       expect(r.bottom, lessThanOrEqualTo(740 - 320 + 0.5),
           reason: '키보드 영역 위에 남아야 한다 (bottom=${r.bottom})');
     });
@@ -382,7 +383,7 @@ void main() {
       ));
       await tester.pump();
       expect(tester.takeException(), isNull);
-      expect(find.text('닫기'), findsOneWidget);
+      expect(findVisibleText('닫기'), findsOneWidget);
     });
 
     testWidgets('WCP-C4 긴 제목·확대 글자에서도 잘리지 않는다', (tester) async {
@@ -405,7 +406,7 @@ void main() {
         ),
       ));
       expect(tester.takeException(), isNull, reason: 'overflow 없이 그려진다');
-      expect(find.text('닫기'), findsOneWidget, reason: '닫기 경로가 남아 있다');
+      expect(findVisibleText('닫기'), findsOneWidget, reason: '닫기 경로가 남아 있다');
     });
   });
 }

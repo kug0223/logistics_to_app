@@ -493,7 +493,7 @@ void main() {
       final badgeOne = Size(badgeOnePainter.width, badgeOnePainter.height);
       badgeOnePainter.dispose();
       final badgeBox = t.getRect(find.ancestor(of: badgeTextF, matching: find.byType(SlotStatusBadge)).first);
-      final typeR = t.getRect(find.descendant(of: card, matching: find.text('단기')));
+      final typeR = t.getRect(find.descendant(of: card, matching: findVisibleText('단기')));
       final menuF = find.descendant(of: card, matching: find.widgetWithIcon(IconButton, Icons.more_vert));
       final menuR = t.getRect(menuF);
       final badgeR = t.getRect(badgeTextF);
@@ -542,7 +542,7 @@ void main() {
       expect(expandHeldDelta, {'functions callableGetApplicationsByBiz@asia-northeast3': 1}, reason: '펼침 = capacity 1 · 슬롯 재조회 0');
       out('   보류 중 카드 글=${cardTexts()}');
       // 보류(미확인)를 실패로 말하지 않는다 — 감사59 §5.2 통계 해석(보류/미확인 → 정상 empty → 확인된 0 구분)
-      final heldFail = find.descendant(of: card, matching: find.text('지원 현황을 불러오지 못했습니다'));
+      final heldFail = find.descendant(of: card, matching: findVisibleText('지원 현황을 불러오지 못했습니다'));
       final heldLoading = find.descendant(of: card, matching: find.byType(CircularProgressIndicator));
       out('   보류 중 실패 문구=${heldFail.evaluate().length} · 카드 안 spinner=${heldLoading.evaluate().length} · 0 숫자 노출(충원 0 행)=${find.descendant(of: card, matching: find.text('미충원 3')).evaluate().length}');
       if (heldFail.evaluate().isNotEmpty) deferred.add('capacity 보류(요청 진행 중)인데 "지원 현황을 불러오지 못했습니다"+재시도 표시');

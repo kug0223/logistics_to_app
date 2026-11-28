@@ -359,7 +359,7 @@ void main() {
       expect(_write, findsNothing);
       expect(find.text('근로자 u1'), findsWidgets);
       expect(_notice, findsOneWidget, reason: '버튼만 조용히 사라지지 않는다');
-      expect(find.text('다시 시도'), findsOneWidget);
+      expect(findVisibleText('다시 시도'), findsOneWidget);
     });
     testWidgets('NCG-D9 재시도 성공(근태 없음) — 안내가 사라지고 버튼이 돌아온다', (t) async {
       var fail = true;
@@ -369,7 +369,7 @@ void main() {
       }));
       expect(_notice, findsOneWidget);
       fail = false;
-      await t.tap(find.text('다시 시도'));
+      await t.tap(findVisibleText('다시 시도'));
       for (var i = 0; i < 10; i++) {
         await t.pump(const Duration(milliseconds: 50));
       }
@@ -383,7 +383,7 @@ void main() {
         return [_att(a, 'NO_SHOW')];
       }));
       fail = false;
-      await t.tap(find.text('다시 시도'));
+      await t.tap(findVisibleText('다시 시도'));
       for (var i = 0; i < 10; i++) {
         await t.pump(const Duration(milliseconds: 50));
       }
@@ -444,7 +444,7 @@ void main() {
       }));
       expect(_notice, findsOneWidget);
       fail = false;
-      await t.tap(find.text('다시 시도'));
+      await t.tap(findVisibleText('다시 시도'));
       for (var i = 0; i < 10; i++) {
         await t.pump(const Duration(milliseconds: 50));
       }

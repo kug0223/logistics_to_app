@@ -53,7 +53,10 @@ void main() {
       expect(_src(_settings).contains("? (showAdminSection ? '관리' : '설정')"),
           isTrue);
       // 홈은 제목 대신 제품 이름(로고 + 워드마크)을 쓴다 — 의도된 예외다.
-      expect(_src(_home).contains("Text('ALfit',"), isTrue);
+      // [impl_57 · 홈 A안] Text('ALfit', …) → 공용 글자 로고 AlfitWordmark(CP01 · 의미 이름 'ALfit')
+      expect(_src(_home).contains('const AlfitWordmark(),'), isTrue);
+      expect(_src('lib/widgets/common/alfit_wordmark.dart').contains("label: 'ALfit',"),
+          isTrue);
     });
   });
 

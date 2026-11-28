@@ -600,7 +600,10 @@ void main() {
     test('POSTING-V2-01B 회귀 없음', () {
       expect(ctrlCode.contains('_loadError = e;'), isTrue);
       expect(ctrlCode.contains('Object? get loadError => _loadError;'), isTrue);
-      expect(listCode.contains('return _buildErrorState();'), isTrue);
+      // [impl_26 · DU231 F4] 빈·오류·로딩 본문 위에 한도 요약을 둔다 — 오류 본문을 `_withSummary` 로 감쌌다.
+      //   ERROR != EMPTY(오류면 error state 를 돌려준다)는 그대로다.
+      expect(listCode.contains('return _withSummary(_buildErrorState());'), isTrue);
+      expect(listCode.contains('if (controller.loadError != null && controller.items.isEmpty) {'), isTrue);
     });
 
     test('POSTING-V2-01C 회귀 없음', () {

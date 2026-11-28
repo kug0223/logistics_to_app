@@ -11,6 +11,7 @@ import '../../theme/app_text_styles.dart';
 import '../../utils/calendar_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/expected_daily_wage.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/worker_wage_status.dart';
 import '../../widgets/common/viewport_fill_surface.dart';
@@ -84,8 +85,9 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   /// 0원은 "그 달에 번 돈이 없다"는 사실이고, 조회 실패는 "얼마인지 모른다"는
   /// 전혀 다른 상태다. 둘을 같은 화면으로 그리면 근로자는 일한 돈이 사라진
   /// 것으로 읽는다.
-  String _amountOrUnknown(int amount) =>
-      _loadFailed ? '확인 불가' : FormatHelper.formatWage(amount);
+  /// [AUD-3 M3 · 판정296] [unknownShifts] > 0 이면 부분합을 전체처럼 말하지 않는다('22,000원 + 확인 필요' · 0 이면 '확인 필요').
+  String _amountOrUnknown(int amount, {int unknownShifts = 0}) =>
+      _loadFailed ? '확인 불가' : ExpectedWageText.partialTotal(amount, unknownShifts);
 
   /// 일했지만 금액이 아직 확정되지 않은 근무 건수 (이 달 기준).
   int get _settlementPending => CalendarHelper.settlementPendingCount(
@@ -416,28 +418,24 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   ///
   /// [PREDEVICE-INCOME-NOSHOW] NO_SHOW·결근으로 마감된 날은 제외한다 —
   /// 판정은 홈과 같은 CalendarHelper.isScheduledIncome을 쓴다.
-  int get _wageScheduled {
-    return _monthApps
+  ///
+  /// [AUD-3 M3 · 판정293 §6] 근무 1회 금액은 CalendarHelper.expectedShiftWage(하루 예상 helper 와 같은 계산).
+  ///   계산할 수 없는 근무는 합계에 0 으로 넣지 않고 [unknown] 으로 센다.
+  ({int total, int unknown}) get _wageScheduled {
+    var total = 0;
+    var unknown = 0;
+    for (final a in _monthApps
         .where((a) => AppStatus.confirmedStatuses.contains(a.status))
         .where((a) => CalendarHelper.isScheduledIncome(a, _attendances,
-            now: DateTime.now()))
-        .fold(0, (sum, a) => sum + _dailyWageOf(a));
-  }
-
-  /// 시급 타입을 일당으로 환산 (CalendarHelper._dailyWage와 동일 로직)
-  static int _dailyWageOf(ApplicationModel app) {
-    if (app.wageType == 'hourly') {
-      int toMin(String t) {
-        final p = t.split(':');
-        if (p.length < 2) return 0;
-        return (int.tryParse(p[0]) ?? 0) * 60 + (int.tryParse(p[1]) ?? 0);
+            now: DateTime.now()))) {
+      final w = CalendarHelper.expectedShiftWage(a);
+      if (w == null) {
+        unknown++;
+      } else {
+        total += w;
       }
-      int startMin = toMin(app.startTime);
-      int endMin = toMin(app.endTime);
-      if (endMin <= startMin) endMin += 1440; // 야간 교대
-      return ((endMin - startMin) / 60 * app.wage).round();
     }
-    return app.wage;
+    return (total: total, unknown: unknown);
   }
 
   /// [.6-P2] 실제로 일한 근무인가 — 서버 ACTUAL_WORK_STATUSES 와 같은 집합.
@@ -508,7 +506,11 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   Widget build(BuildContext context) {
     final s = _s(context);
     final wageCompleted = _wageCompleted;
-    final wageScheduled = _wageScheduled;
+    final scheduled = _wageScheduled;
+    final wageScheduled = scheduled.total;
+    // [AUD-4 H3] 지원서를 200 건 상한까지만 읽었으면 근무 예정 일부가 빠졌을 수 있다 — 부분합을 전체처럼 말하지 않는다.
+    final scheduledUnknown = scheduled.unknown;
+    final valueUnknown = scheduledUnknown + (_allApplications.length >= 200 ? 1 : 0);
     final wageTotal = wageCompleted + wageScheduled;
 
     return Scaffold(
@@ -636,8 +638,18 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                       _incomeRow(
                         s: s,
                         label: '근무 예정',
-                        value: _isLoading ? null : _amountOrUnknown(wageScheduled),
+                        // [AUD-3 M3 · 판정296] 부분합·0원을 전체처럼 말하지 않는다.
+                        value: _isLoading ? null : _amountOrUnknown(wageScheduled, unknownShifts: valueUnknown),
                       ),
+                      // [AUD-3 M3] 근무 예정이지만 예상 금액을 계산할 수 없는 근무 — 합계에 넣지 않고 건수로.
+                      if (!_isLoading && !_loadFailed && scheduledUnknown > 0) ...[
+                        SizedBox(height: 10 * s),
+                        _incomeRow(
+                          s: s,
+                          label: '금액 확인 필요',
+                          value: '$scheduledUnknown건',
+                        ),
+                      ],
                       // [PREDEVICE-PENDING-WAGE-VISIBILITY] 홈에서 '정산 중 N건'을
                       //   보고 들어온 사람이 여기서 같은 사실을 확인할 수 있어야
                       //   한다. 아래 근무 내역에 '근무 완료' 행으로 실제 건들이
@@ -658,7 +670,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                       _incomeRow(
                         s: s,
                         label: '예상 수입',
-                        value: _isLoading ? null : _amountOrUnknown(wageTotal),
+                        value: _isLoading ? null : _amountOrUnknown(wageTotal, unknownShifts: valueUnknown),
                         isTotalRow: true,
                       ),
                     ],
@@ -781,20 +793,30 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
             letterSpacing: -0.3,
           );
 
-    return Row(children: [
-      Text(label, style: labelStyle),
-      const Spacer(),
-      value == null
-          ? SizedBox(
-              width: 80 * s,
-              height: 16 * s,
-              child: LinearProgressIndicator(
-                borderRadius: BorderRadius.circular(4),
-                color: AppColors.brand.withValues(alpha: 0.25),
-                backgroundColor: AppColors.borderLight,
-              ))
-          : Text(value, style: valueStyle),
-    ]);
+    // [AUD-3 M3 · impl_39] 홈 수입 행(R7-P2-1 P21-H)과 같은 배치 — 라벨·값 어느 쪽에도 flex 가 없는 Row 는
+    //   '22,000원 + 확인 필요' 같은 긴 값이나 큰 글자에서 넘쳤다(390@1.0 50px · 320@2.0 기존 넘침). 금액은 줄이지 않고
+    //   자리가 모자라면 다음 줄로 내린다. 들어갈 때의 모양은 이전과 같다(라벨 왼쪽 · 값 오른쪽).
+    return SizedBox(
+      width: double.infinity,
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        runSpacing: 4 * s,
+        children: [
+          Text(label, style: labelStyle),
+          value == null
+              ? SizedBox(
+                  width: 80 * s,
+                  height: 16 * s,
+                  child: LinearProgressIndicator(
+                    borderRadius: BorderRadius.circular(4),
+                    color: AppColors.brand.withValues(alpha: 0.25),
+                    backgroundColor: AppColors.borderLight,
+                  ))
+              : Text(value, style: valueStyle),
+        ],
+      ),
+    );
   }
 
   // ── 근무 내역 행 ──────────────────────────────────────────────
@@ -898,7 +920,8 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
             : _attendances.where((a) => a.applicationId == app.id).firstOrNull);
 
     // 지급 상태별 레이블 — AttendanceModel 상수 사용, 타입 프로모션 보장
-    final int displayWage;
+    // [AUD-3 M3] null = 예상 금액을 계산할 수 없다(약속 휴게 모름 · 월급 · 유형 모름 등) — 0원으로 말하지 않는다.
+    final int? displayWage;
     final String statusLabel;
     final Color statusColor;
 
@@ -911,18 +934,21 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
         (att.status == AttendanceModel.statusNoShow ||
             att.status == AttendanceModel.statusAbsent);
 
-    if (wageInfo != null && (att!.finalWage != null || isNoShowOrAbsent)) {
-      displayWage = att.finalWage ?? 0;
+    // [HB3-VISIBILITY] 금액은 확정·이체 완료일 때만(displayWage). 마감 취소로
+    //   calculated 로 돌아간 건은 finalWage 가 남아 있어도 아래 '정산 중' 으로 간다.
+    if (wageInfo != null && (att!.displayWage != null || isNoShowOrAbsent)) {
+      displayWage = att.displayWage ?? 0;
       statusLabel = wageInfo.label;
       statusColor = wageInfo.color;
     } else if (att?.checkInAt != null) {
       // [.6-P2] 지원서가 없으면 예정 일당을 계산할 근거가 없다.
       //   없는 금액을 지어내지 않고 모른다고 말한다.
-      displayWage = app == null ? 0 : _dailyWageOf(app);
+      displayWage = app == null ? null : CalendarHelper.expectedShiftWage(app);
       // [DEVICE-MISMATCH-FIX] 일했고 급여는 아직 확정 전이다 — 위 요약의
       //   `정산 중 N건`과 같은 이름으로 부른다(예전 `근무 완료`는 요약의
       //   `근무 완료`(확정 급여)와 같은 말이라 서로 다른 뜻이 섞였다).
-      statusLabel = app == null ? '정산 중 · 금액 확인 필요' : '정산 중';
+      // [AUD-3 M3] 금액 자리가 '금액 확인 필요' 를 말한다(예전: '0원' + 이 라벨에 '금액 확인 필요').
+      statusLabel = '정산 중';
       statusColor = AppColors.textSecondary; // 급여 미처리 → 중립 회색
     } else if (app != null &&
         AppStatus.confirmedStatuses.contains(app.status) &&
@@ -935,11 +961,11 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
       statusColor = AppColors.warningDark;
     } else if (app != null &&
         AppStatus.confirmedStatuses.contains(app.status)) {
-      displayWage = _dailyWageOf(app);
+      displayWage = CalendarHelper.expectedShiftWage(app);
       statusLabel = '근무 예정';
       statusColor = AppColors.brand;
     } else if (app != null) {
-      displayWage = _dailyWageOf(app);
+      displayWage = CalendarHelper.expectedShiftWage(app);
       statusLabel = '검토중';
       statusColor = AppColors.warning;
     } else {
@@ -1023,13 +1049,19 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      FormatHelper.formatWage(displayWage),
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
-                        letterSpacing: -0.3,
-                      ),
+                      displayWage == null ? '금액 확인 필요' : FormatHelper.formatWage(displayWage),
+                      style: displayWage == null
+                          ? TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textSecondary,
+                            )
+                          : TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textPrimary,
+                              letterSpacing: -0.3,
+                            ),
                     ),
                     SizedBox(height: 2 * s),
                     Text(

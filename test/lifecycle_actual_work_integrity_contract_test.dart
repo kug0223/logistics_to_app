@@ -150,18 +150,28 @@ void main() {
     });
 
     test('13 공고 삭제', () {
-      expect(cf, contains('const toDelReport = await srvLifecycleCancelBulk(toDelCandidates, {'));
-      expect(cf, contains('if (!toDelHandledIds.has(doc.id)) {'));
-      // 확정 계열만 판정 대상 — PENDING/INVITED는 약속이 아니다.
-      expect(cf, contains(
-          'const toDelCandidates = pageSnap.docs.filter((doc) =>'));
+      // [판정294 F294-DEL-01] 공고 삭제는 srvLifecycleCancelBulk(취소 선커밋) 대신 지원서별 한 거래(srvPostingCleanupAll)로
+      //   취소·열람권 회수·계약 무효를 같이 한다. 실근무 경계는 그 거래 안에서 지킨다 — 경계 판정이 모든 쓰기보다 앞이다.
+      final del = _flat(_codeOf(_sliceOf(cfRaw, 'export const callableDeleteTO =', 'export const callableCloseSlots =')));
+      expect(del, contains('const toDelOutcomes = await srvPostingCleanupAll(callerUid, toDelRefs, {'));
+      expect(del, contains('preserveActualWork: true,'));
+      final commit = _flat(_codeOf(_sliceOf(cfRaw, 'async function srvPostingCleanupCommit(', 'async function srvPostingCleanupAll(')));
+      // 확정 계열만 실근무 판정 대상 — PENDING/INVITED는 약속이 아니다.
+      expect(commit, contains('if (active && CONFIRMED_STATUSES.includes(st) && opts.preserveActualWork &&'));
+      expect(commit, contains('srvActualWorkReasonOf(w.data()) != null'));
+      expect(commit.indexOf('outcome: "preserved"'), greaterThan(0));
+      expect(commit.indexOf('outcome: "preserved"'), lessThan(commit.indexOf('tx.update(')),
+          reason: '보존 판정이 첫 쓰기보다 앞이어야 한다');
     });
 
     test('14 다섯 호출부가 같은 helper를 쓴다', () {
       // [ARCHIVE-CASCADE-PAGINATION] 비활성화의 세 호출(공고별·잔여 계약 대기·잔여 확정)이
       //   사업장 전체 페이지 루프 하나(srvRunBusinessArchiveCascade)로 합쳐졌다.
-      expect('srvLifecycleCancelBulk('.allMatches(cf).length, 5,
-          reason: '정의 1 + 탈퇴 1 + 비활성화 1 + 사업장삭제 1 + 공고삭제 1');
+      // [판정294 F294-DEL-01] 공고 삭제는 같은 경계를 srvPostingCleanupCommit(실근무 판정 · 같은 거래)으로 지킨다(13).
+      expect('srvLifecycleCancelBulk('.allMatches(cf).length, 4,
+          reason: '정의 1 + 탈퇴 1 + 비활성화 1 + 사업장삭제 1');
+      expect('srvPostingCleanupAll('.allMatches(cf).length, 3,
+          reason: '정의 1 + 공고삭제 1 + 슬롯삭제 1');
       expect('srvLifecycleCancelOne('.allMatches(cf).length, 2,
           reason: '정의 1 + bulk 내부 1');
     });
@@ -186,8 +196,16 @@ void main() {
     });
 
     test('18 공고 삭제: 보존 건은 알림·grant 회수도 하지 않는다', () {
-      expect(cf, contains(
-          'if (toDelReport.preserved.some((p) => p.id === doc.id)) continue;'));
+      // [판정294 F294-DEL-01] 보존은 거래 안에서 쓰기 0 으로 끝난다(열람권 회수·계약 무효보다 앞에서 return).
+      final commit = _flat(_codeOf(_sliceOf(cfRaw, 'async function srvPostingCleanupCommit(', 'async function srvPostingCleanupAll(')));
+      final keep = commit.indexOf('return {...base, outcome: "preserved" as const, data: fd};');
+      expect(keep, greaterThan(0));
+      expect(keep, lessThan(commit.indexOf('tx.update(gs.ref, {status: "revoked"')));
+      expect(keep, lessThan(commit.indexOf('tx.update(cs.ref, {status: "voided"')));
+      // 알림 대상은 실제 취소한 건뿐 — 보존은 삭제 재확인에서 빼는 집합에만 들어간다.
+      final del = _flat(_codeOf(_sliceOf(cfRaw, 'export const callableDeleteTO =', 'export const callableCloseSlots =')));
+      expect(del, contains('if (o.outcome === "preserved") preservedAppIds.add(o.id);'));
+      expect(del, contains('if (o.outcome === "canceled" && o.data && typeof o.data.uid === "string") {'));
     });
 
     test('19 보존 건수를 응답과 로그에 남긴다', () {

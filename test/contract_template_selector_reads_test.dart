@@ -204,7 +204,7 @@ void main() {
     expect(find.text('템플릿 불러오기 실패'), findsOneWidget);
     expect(findVisibleText('등록된 템플릿이 없습니다'), findsNothing);
     r.failBiz.clear();
-    await t.tap(find.text('다시 시도'));
+    await t.tap(findVisibleText('다시 시도'));
     await t.pumpAndSettle();
     expect(find.text('단기 기본'), findsOneWidget);
   });
@@ -278,7 +278,7 @@ void main() {
     // 두 번째 시도는 붙잡아 두고, 세 번째 시도 대신 두 번째의 결과가 마지막이어야 한다.
     r.failBiz.clear();
     r.byBiz['A'] = [_tpl('A', '단기 기본')];
-    await t.tap(find.text('다시 시도'));
+    await t.tap(findVisibleText('다시 시도'));
     await t.pumpAndSettle();
     expect(find.text('단기 기본'), findsOneWidget);
     expect(r.reads('A'), 2);

@@ -56,12 +56,20 @@ void main() {
   late String signedUrl;
   late String singleCheck;
   late String batchCheck;
+  late String authHelper;
 
   setUpAll(() {
     source = _source();
     signedUrl = _codeOf(_callableBody(source, 'callableGetIdCardSignedUrl'));
     singleCheck = _codeOf(_callableBody(source, 'callableCheckIdCardAccess'));
     batchCheck = _codeOf(_callableBody(source, 'callableCheckIdCardAccessBatch'));
+    // [server_299 §9 갱신] AUD-2 G-1a/b/c 로 세 callable 의 열람 권한 판정이 공용 helper
+    //   srvIdCardAuthorizedBusinesses 로 모였다(DS08B4·DS08B5 와 같은 원인). 판정 축(canManageWage ·
+    //   permissions 하위 · SubAdmin 배정 후보 · 미통과 사업장 제외)은 그대로이고 위치만 옮겨졌다 —
+    //   그래서 아래 셀은 "callable 이 helper 를 부른다" + "helper 가 그 축을 지킨다" 두 쪽으로 고정한다.
+    final h = source.indexOf('async function srvIdCardAuthorizedBusinesses(');
+    expect(h, isNot(-1), reason: '공용 열람 권한 helper 를 찾지 못함');
+    authHelper = _codeOf(source.substring(h, source.indexOf('\n}\n', h)));
   });
 
   // ───────────────────────────────────────────────────────────
@@ -69,7 +77,8 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('DS08A-01 SubAdmin + canManageWage → sentinel 조회 도달', () {
     test('단건 check가 canonical 권한 경로를 읽는다', () {
-      expect(singleCheck.contains(_canonicalRead), isTrue);
+      expect(singleCheck.contains('srvIdCardAuthorizedBusinesses(callerUid'), isTrue);
+      expect(authHelper.contains(_canonicalRead), isTrue);
     });
 
     test('단건 check에 top-level 오판 경로가 남아 있지 않다', () {
@@ -78,8 +87,9 @@ void main() {
     });
 
     test('단건 check가 SubAdmin 소속 목록에서 사업장을 모은다', () {
-      expect(singleCheck.contains('subAdminBusinessIds'), isTrue);
-      expect(singleCheck.contains('subAdminOf'), isTrue);
+      expect(singleCheck.contains('srvIdCardAuthorizedBusinesses(callerUid'), isTrue);
+      expect(authHelper.contains('subAdminBusinessIds'), isTrue);
+      expect(authHelper.contains('subAdminOf'), isTrue);
     });
 
     test('단건 check가 business sentinel을 조회한다', () {
@@ -87,8 +97,12 @@ void main() {
     });
 
     test('Signed URL 발급도 같은 권한 경로를 쓴다 — 기준점', () {
-      expect(signedUrl.contains(_canonicalRead), isTrue);
+      expect(signedUrl.contains('srvIdCardAuthorizedBusinesses(request.auth.uid'), isTrue);
       expect(signedUrl.contains(_topLevelRead), isFalse);
+      expect(authHelper.contains(_canonicalRead), isTrue);
+      expect(authHelper.contains('.canManageWage === true') &&
+          !authHelper.contains('m.data()?.canManageWage'), isTrue,
+          reason: 'top-level 오판 경로가 helper 에도 없다');
     });
   });
 
@@ -97,13 +111,15 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('DS08A-02 SubAdmin + canManageWage 없음 → 차단', () {
     test('단건 check는 권한 미통과 사업장을 건너뛴다', () {
-      expect(singleCheck.contains('$_canonicalRead !== true) continue'), isTrue,
+      // helper 는 권한 통과 사업장만 결과 집합에 넣고, 단건 check 는 그 집합만 sentinel 조회한다.
+      expect(authHelper.contains('$_canonicalRead === true) out.add(bid)'), isTrue,
           reason: '권한 없는 사업장은 sentinel 조회 자체를 하지 않아야 한다');
+      expect(singleCheck.contains('for (const bizId of checkAuthBiz)'), isTrue);
     });
 
     test('batch는 권한 통과 사업장만 조회 목록에 넣는다', () {
-      expect(batchCheck.contains('$_canonicalRead === true'), isTrue);
-      expect(batchCheck.contains('sentinelBizIds.push('), isTrue);
+      expect(authHelper.contains('$_canonicalRead === true) out.add(bid)'), isTrue);
+      expect(batchCheck.contains('const sentinelBizIds: string[] = [...batchAuthBiz];'), isTrue);
     });
   });
 
@@ -164,12 +180,15 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('DS08A-06 batch도 동일 permission contract', () {
     test('batch에 SubAdmin 분기가 존재한다', () {
-      expect(batchCheck.contains('subAdminBusinessIds'), isTrue);
-      expect(batchCheck.contains('subAdminOf'), isTrue);
+      expect(batchCheck.contains('srvIdCardAuthorizedBusinesses(callerUid'), isTrue,
+          reason: '단건과 같은 helper — SubAdmin 분기는 helper 안');
+      expect(authHelper.contains('subAdminBusinessIds'), isTrue);
+      expect(authHelper.contains('subAdminOf'), isTrue);
     });
 
     test('batch가 canonical 권한 경로를 읽는다', () {
-      expect(batchCheck.contains(_canonicalRead), isTrue);
+      expect(batchCheck.contains('srvIdCardAuthorizedBusinesses(callerUid'), isTrue);
+      expect(authHelper.contains(_canonicalRead), isTrue);
     });
 
     test('batch가 권한 통과 사업장의 sentinel을 조회한다', () {
@@ -190,15 +209,18 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('DS08A-07 BUSINESS_ADMIN 기존 동작 유지', () {
     test('세 callable 모두 users.businessId 단일 경로를 먼저 본다', () {
-      for (final body in [signedUrl, singleCheck, batchCheck]) {
-        expect(body.contains('callerDoc.data()?.businessId'), isTrue);
-      }
+      // [server_299 §9 갱신] AUD-2 G-1b — users.businessId 는 후보 힌트일 뿐 인가 근거가 아니다(정책 4).
+      //   helper 가 그 값을 후보에 넣고, 사업장 문서의 ownerId/adminIds 로 다시 확인한다.
+      expect(authHelper.contains('okId(callerData?.businessId)'), isTrue);
+      expect(authHelper.contains('bd.ownerId === callerUid'), isTrue);
+      expect(authHelper.contains('bd.adminIds'), isTrue);
     });
 
     test('BUSINESS_ADMIN sentinel 조회 형태가 유지된다', () {
-      expect(signedUrl.contains(r'`business:${callerBusinessId}`'), isTrue);
-      expect(singleCheck.contains(r'`business:${callerBusinessId}`'), isTrue);
-      expect(batchCheck.contains('sentinelBizIds.push(callerBusinessId)'), isTrue);
+      // 확인된 소속 사업장마다 business:{id} 열람권을 본다(세 callable 같은 꼴).
+      expect(signedUrl.contains(r'`business:${bizId}`'), isTrue);
+      expect(singleCheck.contains(r'`business:${bizId}`'), isTrue);
+      expect(batchCheck.contains(r'`business:${sentinelBizId}`'), isTrue);
     });
 
     test('SUPER_ADMIN 우회가 유지된다', () {

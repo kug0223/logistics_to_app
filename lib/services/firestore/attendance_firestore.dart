@@ -4,6 +4,18 @@
 // 출근/스케줄/퇴사 관리 (Attendance & Schedule Management)
 // ═══════════════════════════════════════════════════════════
 
+/// [PERF-L27] `loadHasWorkedMap` 의 판정식(원래 그 안에 있던 그대로) — 이미 받은 근태로 같은 판정을 낼 때 쓴다.
+///   조건: checkIn 이 있고 결근·노쇼가 아님 OR wageStatus 가 confirmed/transferred.
+Map<String, bool> attendanceHasWorkedMap(Iterable<AttendanceModel> atts) => {
+      for (final att in atts)
+        if ((att.checkIn != null &&
+                att.status != AttendanceModel.statusAbsent &&
+                att.status != AttendanceModel.statusNoShow) ||
+            att.isWageConfirmed ||
+            att.isWageTransferred)
+          att.userId: true
+    };
+
 extension AttendanceFirestore on FirestoreService {
   // ═══════════════════════════════════════════════════════════
   // 🕐 출근 관리 (Attendance Management)
@@ -95,6 +107,32 @@ extension AttendanceFirestore on FirestoreService {
     String? scheduledStartTime,
     AttendanceRules? attendanceRules,
   }) async {
+    final r = await checkOutWithResult(
+      attendanceId: attendanceId,
+      workDate: workDate,
+      latitude: latitude,
+      longitude: longitude,
+      method: method,
+      scheduledEndTime: scheduledEndTime,
+      scheduledStartTime: scheduledStartTime,
+      attendanceRules: attendanceRules,
+    );
+    return r.success;
+  }
+
+  /// [PERF-L40 · 2026-11-26] 퇴근 체크 — 서버 응답의 `isZeroWork` 를 함께 돌려준다.
+  ///   서버(callableCheckOut)는 `{success, isZeroWork}` 를 돌려주는데 예전에는 응답을 버리고
+  ///   목록을 다시 읽은 뒤에야 같은 값을 알았다. 응답에 값이 없으면(구 서버) null — 호출부가 다시 읽은 값으로 판단한다.
+  Future<({bool success, bool? isZeroWork})> checkOutWithResult({
+    required String attendanceId,
+    required DateTime workDate,
+    double? latitude,
+    double? longitude,
+    String method = 'gps',
+    String? scheduledEndTime,
+    String? scheduledStartTime,
+    AttendanceRules? attendanceRules,
+  }) async {
     NetworkChecker.instance.assertOnline('퇴근 체크를 하려면 인터넷 연결이 필요합니다.');
     GlobalLoadingController.show('퇴근 처리 중...');
     try {
@@ -119,7 +157,7 @@ extension AttendanceFirestore on FirestoreService {
         };
       }
 
-      await callable.call({
+      final res = await callable.call({
         'attendanceId': attendanceId,
         'workDateMs': workDate.millisecondsSinceEpoch,
         if (latitude != null) 'latitude': latitude,
@@ -131,7 +169,9 @@ extension AttendanceFirestore on FirestoreService {
       });
 
       debugPrint('✅ 퇴근 체크 완료 (CF)');
-      return true;
+      final data = res.data;
+      final zero = data is Map ? data['isZeroWork'] : null;
+      return (success: true, isZeroWork: zero is bool ? zero : null);
     } on FirebaseFunctionsException catch (e) {
       debugPrint('❌ 퇴근 체크 실패 (CF): ${e.code} ${e.message}');
       throw Exception(e.message ?? '퇴근 처리 중 오류가 발생했습니다.');
@@ -311,15 +351,7 @@ extension AttendanceFirestore on FirestoreService {
     try {
       final atts = await (attendances ??
           getAttendanceByDate(businessId: businessId, date: date));
-      return {
-        for (final att in atts)
-          if ((att.checkIn != null &&
-                  att.status != AttendanceModel.statusAbsent &&
-                  att.status != AttendanceModel.statusNoShow) ||
-              att.isWageConfirmed ||
-              att.isWageTransferred)
-            att.userId: true
-      };
+      return attendanceHasWorkedMap(atts);
     } catch (e) {
       debugPrint('⚠️ loadHasWorkedMap 실패 ($date): $e');
       rethrow; // 빈 맵 반환 시 "근무자 없음"으로 오인 → 확정취소 가드 오동작
@@ -429,16 +461,8 @@ extension AttendanceFirestore on FirestoreService {
           .httpsCallable('getMyMonthlyAttendances',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
       final result = await callable.call({'year': year, 'month': month});
-      final items = (result.data['items'] as List<dynamic>? ?? []);
-      final list = items
-          .whereType<Map>()
-          .map((e) {
-            final m = Map<String, dynamic>.from(e);
-            final id = m.remove('id') as String? ?? '';
-            return AttendanceModel.tryFromMap(m, id);
-          })
-          .whereType<AttendanceModel>()
-          .toList();
+      // [PERF-L9 · impl_15] 근로자 홈 묶음과 같은 해석 함수.
+      final list = _parseMyAttendanceItems(result.data['items'] as List?);
       // 출발한 뒤 무효화됐다면(출퇴근 등) 이 응답은 변경 전 값일 수 있다 — 캐시에 남기지 않는다.
       if ((_myAttendanceGeneration[userId] ?? 0) == generation) {
         _myAttendanceCache[cacheKey] = list;
@@ -778,6 +802,8 @@ extension AttendanceFirestore on FirestoreService {
       // 캐시 무효화: 관리자 기기에는 근무자의 "내 지원 목록" 캐시가 없으므로 no-op
       return true;
     } catch (e) {
+      // [impl_42] 요청-지원서 불일치·종류 오류 보류(SCR_RELATION_MISMATCH/SCR_TYPE_INVALID)는 false 로 접지 않는다 — 화면이 안내한다.
+      if (requestHeldMessageOf(e) != null) rethrow;
       if (e.toString().contains('이미 처리된 요청')) {
         debugPrint('⚠️ 이미 처리된 요청: $requestId');
       } else {
@@ -809,6 +835,8 @@ extension AttendanceFirestore on FirestoreService {
       debugPrint('✅ 스케줄 변경 요청 거절 완료 (CF): $requestId');
       return true;
     } catch (e) {
+      // [impl_42] 요청-지원서 불일치·종류 오류 보류(SCR_RELATION_MISMATCH/SCR_TYPE_INVALID)는 false 로 접지 않는다 — 화면이 안내한다.
+      if (requestHeldMessageOf(e) != null) rethrow;
       if (e.toString().contains('이미 처리된 요청')) {
         debugPrint('⚠️ 이미 처리된 요청: $requestId');
       } else {

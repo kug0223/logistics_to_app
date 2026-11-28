@@ -162,7 +162,9 @@ void main() {
       expect(code.contains('bool _postingsFailed'), isTrue);
       expect(code.contains('공고를 불러오지 못했어요'), isTrue);
       // 정상 빈 상태 문구까지 지우면 안 된다 — 둘은 다른 문장이다.
-      expect(code.contains('해당 날짜에 지원 가능한 공고가 없어요'), isTrue,
+      // [impl_33 핀 갱신] 정상 빈 상태 문구는 DU 문구 교정(0fa6948 · 2026-11-20)으로 '이 날짜에 표시할 일자리가 없어요' 가 됐다 —
+      //   실패 문구와 다른 문장이라는 계약은 그대로.
+      expect(code.contains("emptyNotice('이 날짜에 표시할 일자리가 없어요'"), isTrue,
           reason: '실제 empty 문구를 없애는 것은 이 Phase 의 목적이 아니다');
       expect(code.contains('else if (_postingsFailed)'), isTrue,
           reason: '실패 분기가 "없음" 분기보다 먼저 와야 한다');
@@ -176,8 +178,12 @@ void main() {
       expect(code.contains('공고를 불러오지 못했습니다'), isTrue);
       expect(code.contains('등록된 공고가 없습니다'), isTrue,
           reason: '실제 empty 문구는 유지된다');
-      expect(code.contains('_loadFailed = _displayList.isEmpty;'), isTrue,
-          reason: '이미 받아 둔 목록이 있으면 실패 화면으로 덮지 않는다');
+      // [impl_33 핀 갱신] DU210 C209-1(0fa6948)이 이 계약을 명시적으로 대체했다 — 첫 페이지를 못 읽으면 이전 목록은
+      //   현재 조건의 성공 결과가 아니므로 지우고 실패 화면으로 간다. 추가 페이지 실패는 받아 둔 목록을 그대로 둔다.
+      expect(code.contains('_displayList = []; _hasMoreData = false; _loadFailed = true;'), isTrue,
+          reason: '첫 페이지 실패는 이전 목록을 성공처럼 남기지 않는다');
+      expect(code.contains("setState(() => _isLoadingMore = false); ToastHelper.showError('추가 공고를 불러오지 못했습니다');"),
+          isTrue, reason: '추가 페이지 실패는 받아 둔 목록을 실패 화면으로 덮지 않는다');
     });
 
     test('PR-14 사업장 선택 — 조회 실패는 "사업장 0개"가 아니다', () {

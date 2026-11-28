@@ -42,7 +42,9 @@ class WorkerWageStatus {
         }
         return (label: '지급 예정', color: AppColors.brand);
       case AttendanceModel.wageCalculated:
-        return (label: '급여 계산 완료', color: AppColors.success);
+        // [HB3-VISIBILITY] 계산값은 관리자 확정 전이다(마감 취소로 돌아온 건 포함) —
+        //   근무자에게는 금액 없이 '정산 중'(홈·수입 요약 · 수입 상세 행과 같은 말 · 중립색).
+        return (label: '정산 중', color: AppColors.textSecondary);
       default:
         return null;
     }

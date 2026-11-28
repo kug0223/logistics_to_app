@@ -149,7 +149,7 @@ Future<void> _pumpForm(
 
 /// '다음' 을 눌러 한 단계 넘긴다. 눌러지지 않으면(검증 실패) false.
 Future<bool> _goNext(WidgetTester tester) async {
-  final next = find.text('다음');
+  final next = findVisibleText('다음');
   if (next.evaluate().isEmpty) return false;
   await tester.ensureVisible(next.first);
   await tester.pump();
@@ -193,7 +193,7 @@ void main() {
       expect(find.text('사업자등록증 이미지 업로드'), findsWidgets,
           reason: '2단계에 업로드 자리가 있어야 그 수정이 검증된 것이다');
       expect(await _goNext(tester), isTrue, reason: '2단계 → 3단계');
-      expect(find.text('저장하기'), findsWidgets, reason: '3단계(마지막)에 왔다');
+      expect(findVisibleText('저장하기'), findsWidgets, reason: '3단계(마지막)에 왔다');
       // 3단계에 근태·급여 기준 섹션이 있다.
       expect(find.text('출근 처리 규칙'), findsWidgets);
       expect(find.text('퇴근 처리 규칙'), findsWidgets);

@@ -107,6 +107,10 @@ class _AdminContractManagementScreenState
   bool _unsentLoadFailed = false;
   bool _isLoading = true;
   bool _fetchInProgress = false;
+
+  /// [impl_56 · AUD-4 H6] 읽는 중에 탭을 바꾸거나 새로고침을 요청하면 버리지 않고 끝난 뒤 한 번 더 읽는다.
+  bool _reloadPending = false;
+  bool _pendingNoCache = false;
   bool _isLoadingMore = false;
   bool _hasMore = false;
   bool _isVoidingContract = false;
@@ -339,7 +343,13 @@ class _AdminContractManagementScreenState
   }
 
   Future<void> _load({bool useCache = true}) async {
-    if (!mounted || _fetchInProgress) return;
+    if (!mounted) return;
+    if (_fetchInProgress) {
+      // 예전: 그냥 return — 새 탭 읽기를 버리고, 앞 탭 결과를 지금 탭에 그렸다('미발송 계약서 없음' 오표시).
+      _reloadPending = true;
+      _pendingNoCache = _pendingNoCache || !useCache;
+      return;
+    }
     final tabIdx = _tabCtrl.index;
 
     // 캐시 히트: 스피너 없이 즉시 표시
@@ -384,26 +394,34 @@ class _AdminContractManagementScreenState
           statusFilter: _currentFilter,
         );
         if (!mounted) return;
-        setState(() {
-          _items = result.items;
-          _lastDoc = result.lastDocId;
-          _hasMore = result.hasMore;
-        });
+        // 결과는 읽기를 시작한 탭의 캐시에만 넣는다. 그 사이 탭이 바뀌었으면 화면에 그리지 않는다(끝난 뒤 다시 읽기).
         _tabCache[tabIdx] = (
           items: List.from(result.items),
           lastDocId: result.lastDocId,
           hasMore: result.hasMore
         );
+        if (_tabCtrl.index != tabIdx) return;
+        setState(() {
+          _items = result.items;
+          _lastDoc = result.lastDocId;
+          _hasMore = result.hasMore;
+        });
       }
     } catch (e) {
       debugPrint('❌ 계약 목록 로드 실패: $e');
-      if (mounted) {
+      if (mounted && _tabCtrl.index == tabIdx) {
         ToastHelper.showError('계약서 목록을 불러오는데 실패했습니다.');
         setState(() => _listLoadFailed = true);
       }
     } finally {
       _fetchInProgress = false;
       if (mounted) setState(() => _isLoading = false);
+      if (mounted && _reloadPending) {
+        final noCache = _pendingNoCache;
+        _reloadPending = false;
+        _pendingNoCache = false;
+        _load(useCache: !noCache);
+      }
     }
   }
 
@@ -536,14 +554,20 @@ class _AdminContractManagementScreenState
     if (_isRetrying) return;
     setState(() => _isRetrying = true);
     try {
-      await _contractService.retryVoidFailedApps(c);
+      // [impl_42] 서버 1회 처리(callableRetryVoidFailedApplications) — 남은 것(kept)이 있으면 성공이라 말하지 않는다.
+      final result = await _contractService.retryVoidFailedApps(c);
       if (!mounted) return;
-      ToastHelper.showSuccess('지원서 취소 재처리가 완료되었습니다');
+      if (result.needsAttention) {
+        ToastHelper.showWarning(result.message());
+      } else {
+        ToastHelper.showSuccess(result.message());
+      }
       _invalidateAllCaches();
       _load(useCache: false);
     } catch (e) {
       if (!mounted) return;
-      ToastHelper.showError('재처리 실패: $e');
+      // [impl_42] 계약 미무효·권한·대상 초과 등을 각각 안내 — 예외 문자열 0.
+      ToastHelper.showError(retryVoidFailedErrorMessage(e));
       _invalidateAllCaches();
       _load(useCache: false);
     } finally {

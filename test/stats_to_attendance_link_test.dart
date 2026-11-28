@@ -17,6 +17,7 @@ import 'package:ALfit/screens/business_admin/admin_month_detail_screen.dart';
 import 'package:ALfit/screens/business_admin/admin_stats_screen.dart';
 import 'package:ALfit/screens/business_admin/stats_attendance_list_screen.dart';
 import 'package:ALfit/services/admin_stats_service.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 /// [STATS-TO-ATTENDANCE.27] 통계 숫자 → 그 숫자를 만든 **바로 그 근태 문서** → 기존 근태 화면.
 ///
@@ -364,7 +365,7 @@ void main() {
     await _pump(tester, _detailScreen(svc, []));
     await tester.tap(find.byKey(const ValueKey('att-stat-late')));
     await _settle(tester);
-    expect(find.textContaining('급여 확정'), findsOneWidget);
+    expect(findVisibleTextContaining('급여 확정'), findsOneWidget);
   });
 
   testWidgets('SA-11 연간 "미확인 N건" → 그해(월 없음) 확인 필요 근태만 · 정정 뒤 연간 조용히 갱신', (tester) async {
@@ -431,7 +432,7 @@ void main() {
     await layoutCase(tester, const Size(393, 851), 1.0);
     expect(tester.takeException(), isNull);
     expect(isTable(), isTrue);
-    final head = tester.widget<Text>(find.text('근무일').last);
+    final head = tester.widget<Text>(findVisibleText('근무일').last);
     expect(head.softWrap, isFalse, reason: "'근무 / 일' 로 음절이 갈리지 않는다");
   });
 
@@ -473,7 +474,7 @@ void main() {
     await _pump(tester, AdminStatsScreen(businessIds: const ['biz1'], service: svc),
         size: const Size(320, 800), textScale: 1.3);
     expect(tester.takeException(), isNull);
-    final v = tester.widget<Text>(find.text('확인 필요').first);
+    final v = tester.widget<Text>(findVisibleText('확인 필요').first);
     expect(v.maxLines, isNull);
     expect(v.overflow, isNot(TextOverflow.ellipsis));
     final att = tester.getTopLeft(find.byKey(const ValueKey('annual-unconfirmed-att')));

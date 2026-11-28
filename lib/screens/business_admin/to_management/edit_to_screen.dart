@@ -33,6 +33,7 @@ import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/common/app_page_scaffold.dart'; // PATCH-1 (ADMIN-DESIGN-5)
 import '../../common/notification_screen.dart';
 import '../../../widgets/common/notification_badge.dart';
+import '../../../utils/server_reject_codes.dart';
 
 /// [POSTING-V2-03G.1 TC2] 편집 화면이 지원 관계를 읽는 두 가지 방식.
 ///
@@ -220,6 +221,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       final slotsFuture = (!widget.isBatchMode && widget.slot == null && !widget.to.isContractType)
           ? _firestoreService.getSlots(widget.to.id)
           : null;
+      // [ROOT-FUTURE] 업무유형을 먼저 기다리는 사이 이 조회가 먼저 실패해도 '처리되지 않은 오류'(Crashlytics fatal)로
+      //   새지 않게 한다. 아래 await 는 그대로 같은 오류를 받는다(impl_6 §5-2 와 같은 규칙).
+      slotsFuture?.ignore();
 
       final workTypes = await _firestoreService
           .getBusinessWorkTypes(widget.to.businessId);
@@ -306,6 +310,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       ToastHelper.showError('필요 인원은 1명 이상이어야 합니다');
       return;
     }
+    // [impl_58 · server_296 A4] 서버 경계(정수 1–999)와 같게.
+    if (_workDetails.any((w) => w.requiredCount > kRequiredCountMax)) {
+      ToastHelper.showError(requiredCountInvalidMessage);
+      return;
+    }
 
 
     // [WAGE-GUARD] 임금 관련 필드가 실제로 변경됐을 때만 경고 표시
@@ -350,7 +359,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           'publishAt': null,  // null → CF가 FieldValue.delete() 처리
           'title': _titleController.text.trim(),
           'description': _descriptionController.text.trim(),
-          'workDetails': WorkDetailData.listToFirestore(_workDetails),
+          'workDetails': WorkDetailData.listToFirestore(_workDetailsForSave),
           'postingDurationDays': _postingDurationDays,
           'hoursBeforeStart': _hoursBeforeStart,
         };
@@ -431,7 +440,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         'title': _titleController.text.trim(),
         'description': _descriptionController.text.trim(),
         if (workDetailsChanged) ...{
-          'workDetails': WorkDetailData.listToFirestore(_workDetails),
+          'workDetails': WorkDetailData.listToFirestore(_workDetailsForSave),
           'totalRequired': totalRequired,
         },
         'hoursBeforeStart': _hoursBeforeStart,
@@ -500,12 +509,17 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
               _publishDaysBefore != (widget.to.publishDaysBefore ?? 1) ||
               _publishTime != (widget.to.publishTime ?? '14:00');
 
+          // [PERF-L53] 두 슬롯 갱신이 각자 슬롯 전체(완전 읽기)를 다시 읽었다 — 한 번만 읽어 둘에 넘긴다.
+          //   읽기 규칙(writer 쪽 완전 읽기 · 하나라도 못 읽으면 실패)과 두 쓰기의 내용·순서는 그대로다.
+          //   이 화면의 표시용 슬롯 읽기(부분 파싱 허용 계약)와는 다른 읽기다 — writer 모듈이 소유한다.
+          final slots = await _firestoreService.getSlotsForWrite(widget.to.id);
           if (publishSettingsChanged) {
             await _firestoreService.updateSlotsPublishSettings(
               toId: widget.to.id,
               publishMode: _publishMode,
               publishDaysBefore: _publishDaysBefore,
               publishTime: _publishTime,
+              preloadedSlots: slots,
             );
           }
 
@@ -518,6 +532,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             hoursBeforeStart: _hoursBeforeStart,
             fixedDeadline: widget.to.deadlineType == 'FIXED_TIME' ? _fixedDeadline : null,
             newWorkDetails: _workDetails,
+            preloadedSlots: slots,
           );
         } catch (e) {
           debugPrint('⚠️ 슬롯 동기화 실패 (TO는 저장됨): $e');
@@ -527,6 +542,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
       _firestoreService.clearCache(toId: widget.to.id);
 
+      // [impl_29 · Q27 · 판정292 C292-03] 공고 수정은 이미 커밋됐다(서버 editRevision = 보낸 값 + 1). 슬롯 동기화만 실패한
+      //   갈래가 이 번호를 채택하지 않아, 안내대로 '다시 저장' 하면 열 때 번호로 보내 STALE-EDIT 로 막혔다(다른 관리자 없이도).
+      //   공개 실패·바깥 실패 갈래와 같은 규칙: **내가 보낸 값 + 1** 만 채택한다(서버 최신값을 읽지 않는다 — 그 사이
+      //   다른 관리자가 고쳤으면 다음 저장은 여전히 충돌로 멈춘다). 입력은 화면에 그대로 남는다.
+      if (slotSyncFailed) _adoptCommittedRevision(sentEditRevision);
       if (!mounted) return;
       if (slotSyncFailed) {
         ToastHelper.showWarning('공고가 수정되었으나 슬롯 동기화에 실패했습니다. 다시 저장해 주세요.');
@@ -562,6 +582,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   bool _serverChanged = false;
 
   int get _expectedEditRevision => _serverEditRevision ?? widget.to.editRevision;
+
+  /// [impl_29 · J3 · 판정292 C292-04] 저장에 실을 공고 업무 — 같은 정체(업무·시작·끝)는 화면을 연 때의 상태를 잇고,
+  ///   시간·업무를 바꾸거나 새로 넣은 업무(서버에서 새 정체)는 마감·긴급 상태를 비운다(옛 상태 이월 0).
+  List<WorkDetailData> get _workDetailsForSave =>
+      WorkDetailData.withStatusFrom(_workDetails, widget.to.workDetails);
 
   /// [POSTING-AUTH-44] 수정 커밋 뒤 공개가 실패한 경우: 다음 저장의 기준을 **내 수정이 승인된 버전**으로 둔다.
   ///   callableUpdateTO 는 editRevision 이 보낸 값과 같을 때만 저장하고 그 값 + 1 을 쓴다(STALE-EDIT 계약,
@@ -619,7 +644,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       await callable.call({
         'toId': widget.to.id,
         'slotId': slot.id,
-        'workDetails': WorkDetailData.listToCFPayload(updatedWorkDetails),
+        // [impl_29 · J3] 같은 정체(업무·시작·끝)만 이 날짜의 현재 상태를 잇고, 시간·업무를 바꾼 새 정체는 마감·긴급을 비운다.
+        'workDetails': WorkDetailData.listToCFPayload(
+            WorkDetailData.withStatusFrom(updatedWorkDetails, slot.workDetails)),
         'applicationDeadlineMs': slotDeadline?.millisecondsSinceEpoch,
         'title': _slotTitleController.text.trim(),
         'visibleFromMs': visibleFrom?.millisecondsSinceEpoch,
@@ -1090,7 +1117,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
         batchPayload.add({
           'slotId': slot.id,
-          'workDetails': WorkDetailData.listToCFPayload(updatedWorkDetails),
+          // [impl_21 · Q25 · 2026-11-26] 편집 폼은 **첫 날짜**의 업무 사본에서 시작한다. 예전에는 그 사본의
+          //   마감·긴급 모집 상태까지 모든 날짜에 그대로 보내, 첫 날짜에서 마감한 업무가 다른 날짜에서도 마감되고
+          //   다른 날짜에서만 마감·긴급이던 업무는 그 상태가 지워졌다(서버는 받은 배열을 그대로 쓴다).
+          //   이제 날짜마다 **그 날짜 슬롯의 현재 업무**와 짝지어(같은 업무·시작·끝) 상태 필드만 그 날짜 것으로 둔다.
+          'workDetails': WorkDetailData.listToCFPayload(
+              WorkDetailData.withStatusFrom(updatedWorkDetails, slot.workDetails)),
           'applicationDeadlineMs': slotDeadline?.millisecondsSinceEpoch,
           'visibleFromMs': visibleFrom?.millisecondsSinceEpoch,
           'clearVisibleFrom': clearVisibleFrom,
@@ -1562,6 +1594,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   String? _cfErrorMessage(Object e) {
     // [POSTING-QUOTA-42] 한도·권한 거절을 '수정에 실패했습니다'로 뭉개지 않는다(재개·편집·공개 모두 서버가 판정).
     //   한도는 CF 예외로도, 서비스가 바꾼 Exception('MAX_ACTIVE_TO_LIMIT:N')으로도 온다 — 같은 말을 한다.
+    // [impl_58 · server_296 A3/A4/A6] 허용 밖 항목(TO_FIELD_NOT_ALLOWED) · 정원 · 날짜 거절 — 공고 수정 · 슬롯 단건/일괄 수정 공용.
+    //   서버 문구(필드 이름이 섞인 개발 문장)를 그대로 띄우지 않고 code 로 고른 안내를 쓴다.
+    if (postingInputRejectMessageOf(e) case final inputMsg?) return inputMsg;
     final raw = e.toString();
     if (raw.contains('MAX_ACTIVE_TO_LIMIT')) {
       final limitStr = raw.split(':').last.trim();

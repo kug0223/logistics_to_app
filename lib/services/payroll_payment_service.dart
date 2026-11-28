@@ -23,6 +23,7 @@ import '../models/core/payment_change_request_model.dart';
 import '../models/core/interim_settlement_request_model.dart';
 import '../utils/format_helper.dart';
 import '../utils/payroll_due_scope.dart';
+import '../utils/server_reject_codes.dart';
 
 /// [PAYROLL-BANNER-COMPLETENESS] 미이체 조회를 끝까지 하지 못했다 — "0건"도 "N건"도 아니다.
 class PayrollQueryIncomplete implements Exception {
@@ -180,7 +181,11 @@ class PayrollPaymentService {
 
   /// 일괄 이체 완료 처리 — callableMarkTransferredBatch(최대 200건/청크) 위임
   // 재시도 시: 이미 transferred된 건은 CF에서 멱등 처리(processed++ 후 skip)
-  // 알림은 첫 번째 청크에만 포함 (알림은 attendanceIds 순서와 무관)
+  // [impl_32 · 2026-11-27] 알림은 **청크마다 그 청크 근태의 것만** 싣는다.
+  //   예전에는 전체 알림을 첫 청크(성공할 때까지)에만 실었다. 서버는 ① 알림 200개 초과를 거래 전에 거절하고
+  //   ② 알림을 그 호출에서 실제 처리한 attendanceId 로만 거른다(index.ts callableMarkTransferredBatch).
+  //   그래서 200건 넘게 고르면 모든 청크가 거절돼 이체 0건이 됐고, 둘째 청크 이후 근태의 알림은 걸러져 발송 0이었다.
+  //   이제 각 청크가 자기 근태의 알림(≤ 200)만 보내고, 서버가 그 청크에서 처리한 건만 발송한다 — 문구·수신자·필드 그대로.
   /// [PAY-08] [반환값] CF 처리 결과 — skip 원인 구분 포함
   Future<MarkTransferResult> markTransferredBatch({
     required List<String> attendanceIds,
@@ -188,8 +193,7 @@ class PayrollPaymentService {
     String? transferNote,
     List<TransferNotificationInfo>? notificationInfos,
   }) async {
-    final allNotifications = notificationInfos
-        ?.map((n) => {
+    Map<String, Object> toPayload(TransferNotificationInfo n) => {
               'userId': n.workerUserId,
               // [PAYROLL-V3-NAME · O1] 모르는 이름은 보내지 않는다(단건 경로와 같은 규칙).
               if (n.workerName != null && n.workerName!.trim().isNotEmpty)
@@ -200,11 +204,10 @@ class PayrollPaymentService {
               'attendanceId': n.attendanceId,
               if (n.applicationId != null && n.applicationId!.isNotEmpty)
                 'applicationId': n.applicationId!,
-            })
-        .toList();
+            };
 
-    bool notificationsSent = false;
     final List<String> chunkErrors = [];
+    Object? firstChunkError; // [impl_59] 화면 안내용 — 첫 실패 예외(코드로 안내를 고른다 · 문자열을 띄우지 않는다)
     final List<String> allSkipped = [];             // 전체 skip attendanceId
     final List<String> allLockedBySettlement = [];  // [PAY-08] ISR lock으로 skip된 ID
     // [PREDEVICE-TRANSFER-TRUTH] 이미 이체돼 있던 건 — 새로 처리한 것이 아니다.
@@ -216,21 +219,18 @@ class PayrollPaymentService {
     int confirmedCount = 0;
     for (int i = 0; i < attendanceIds.length; i += 200) {
       final chunk = attendanceIds.skip(i).take(200).toList();
-      // [FIX] 알림 포함 여부를 await 이전에 결정·잠금:
-      // 이전 코드는 CF 실패 시 notificationsSent=false 유지 → 다음 청크가
-      // 전체 근로자에게 허위 이체완료 알림 발송하는 버그
-      // [BUG-FIX] null 체크만으로는 빈 배열([])도 통과 → 0건 알림 발송 버그
-      final bool sendNotifs = !notificationsSent && (allNotifications?.isNotEmpty ?? false);
+      // [impl_32] 이 청크 근태의 알림만 — 실패한 청크의 알림은 어디에도 실리지 않는다(허위 이체 완료 알림 0 · 예전 [FIX] 의 뜻 유지).
+      //   [BUG-FIX] 빈 목록이면 키 자체를 보내지 않는다(0건 알림 0 — 예전과 같다).
+      final chunkNotifs = notificationInfos == null
+          ? const <Map<String, Object>>[]
+          : notificationsForChunk(notificationInfos, chunk).map(toPayload).toList();
       try {
         final result = await _cf.httpsCallable('callableMarkTransferredBatch').call({
           'businessId': businessId,
           'attendanceIds': chunk,
           if (transferNote != null && transferNote.isNotEmpty) 'transferNote': transferNote,
-          if (sendNotifs) 'notifications': allNotifications,
+          if (chunkNotifs.isNotEmpty) 'notifications': chunkNotifs,
         });
-        // [BUG-FIX] notificationsSent = true를 await 성공 후로 이동
-        // await 이전에 설정하면 첫 청크 실패 시 이후 청크에서 알림을 전혀 발송하지 않음
-        if (sendNotifs) notificationsSent = true;
         // [PAY-08] CF 응답에서 skip 원인 구분 수집
         final data = result.data as Map<dynamic, dynamic>? ?? {};
         final skipped = (data['skipped'] as List?)?.cast<String>() ?? [];
@@ -255,6 +255,7 @@ class PayrollPaymentService {
             : e.toString();
         debugPrint('⚠️ [markTransferredBatch] 청크 ${i ~/ 200 + 1} 실패: $msg');
         chunkErrors.add('청크 ${i ~/ 200 + 1}: $msg');
+        firstChunkError ??= e;
       }
     }
     if (chunkErrors.isNotEmpty) {
@@ -263,6 +264,7 @@ class PayrollPaymentService {
       throw PartialBatchException(
         confirmedProcessedCount: confirmedCount,
         chunkErrors: chunkErrors,
+        firstError: firstChunkError,
       );
     }
     // [PAY-08] bank skip = allSkipped에서 locked 제외
@@ -274,6 +276,18 @@ class PayrollPaymentService {
       alreadyTransferred: allAlreadyTransferred,
       blockedReasons: allBlocked,
     );
+  }
+
+  /// [impl_32] 청크 [chunk] 의 근태에 해당하는 알림만(입력 순서 유지 · 같은 근태 알림이 여럿이면 첫 하나 — 중복 발송 0).
+  @visibleForTesting
+  static List<TransferNotificationInfo> notificationsForChunk(
+      List<TransferNotificationInfo> infos, List<String> chunk) {
+    final want = chunk.toSet();
+    final seen = <String>{};
+    return [
+      for (final n in infos)
+        if (want.contains(n.attendanceId) && seen.add(n.attendanceId)) n,
+    ];
   }
 
   /// 이체 취소 — transferred → confirmed (CF callableCancelTransfer 경유)
@@ -548,8 +562,11 @@ class PayrollPaymentService {
           .whereType<PaymentChangeRequestModel>()
           .toList();
     } catch (e) {
+      // [impl_24 · R8-P7.2 같은 꼴] 예전 `return []` — 조회 실패가 '지급방식 변경 요청이 없습니다'로 보여,
+      //   처리해야 할 요청이 화면에서 사라졌다(중간정산 목록은 이미 rethrow). 유일한 호출자(급여 지급 현황)는
+      //   실패를 '불러오지 못했습니다 · 다시 시도'로 그린다.
       debugPrint('❌ 변경 요청 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -730,7 +747,13 @@ class PayrollPaymentService {
 
   /// 관리자 직접 중간정산 — CF callableAdminDirectInterimSettlement 경유
   /// [Trust Boundary] attendance 이체 + 정산 문서 생성을 서버에서 원자적으로 처리
-  Future<void> adminDirectSettlement({
+  ///
+  /// [판정294 F294-MONEY-01] 서버는 이번 거래에서 **실제로 이체한 근태만** 정산한다.
+  ///   응답 `netAmount` = 그 근태의 실수령 합 · additive `requestedAmount`(서버 이름은 '세전'이지만 Σ finalWage =
+  ///   실수령 — AUD-3 M1 · 판정 대기) ·
+  ///   `transferredAttendanceIds` · `excluded{id:사유}`. 보낸 [netAmount] 는 새 서버가 쓰지 않는다
+  ///   (구서버 호환으로만 보낸다). 결과 해석은 [DirectSettlementResult.fromResponse].
+  Future<DirectSettlementResult> adminDirectSettlement({
     required String businessId,
     required String workerId,
     required String workerName,
@@ -743,7 +766,7 @@ class PayrollPaymentService {
       'callableAdminDirectInterimSettlement',
       options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
     );
-    await callable.call<Map<String, dynamic>>({
+    final res = await callable.call<Map<String, dynamic>>({
       'businessId':    businessId,
       'workerId':      workerId,
       'workerName':    workerName,
@@ -752,6 +775,8 @@ class PayrollPaymentService {
       'attendanceIds': attendanceIds,
       'netAmount':     netAmount,
     });
+    return DirectSettlementResult.fromResponse(res.data,
+        requestedCount: attendanceIds.length);
   }
 
   /// [PAY-08] APPROVED 중간정산 취소 — attendance lock 해제 + APPROVED → CANCELED
@@ -789,6 +814,156 @@ class PayrollPaymentService {
   }
 }
 
+// ─── 관리자 직접 중간정산 결과 ─────────────────────────────────────
+
+/// [판정294 F294-MONEY-01] 직접 정산 제외 사유 → 화면 말. 모르는 코드는 '기타'(개발 용어를 보이지 않는다).
+const Map<String, String> directSettlementExcludedReasonLabels = {
+  'ALREADY_TRANSFERRED': '이미 이체됨',
+  'SETTLEMENT_LOCKED': '정산 진행 중',
+  'NOT_CONFIRMED': '급여 미확정',
+  'NON_PAYABLE': '지급할 금액 없음',
+  'OTHER_WORKER': '다른 근무자 기록',
+  'OTHER_BUSINESS': '다른 사업장 기록',
+  'NOT_FOUND': '기록 없음',
+};
+
+/// [판정294 F294-MONEY-01] 관리자 직접 중간정산 응답.
+///
+///   새 서버 여부는 `transferredAttendanceIds` 가 문자열 목록인지로만 가른다. 구서버의 `netAmount` 는
+///   Σ finalWage(= 실수령) 이지만 **이미 이체된 근태까지 더해 부풀었을 수 있다**(F294-MONEY-01) — 이번 정산분으로
+///   보이면 틀린다. 새 필드가 없거나 모양이 틀리면 금액·제외를 unknown 으로 두고 표시하지 않는다(0원·제외 0건으로 읽지 않는다).
+///   [AUD-3 M1 정정] 예전 주석의 '구서버 netAmount = 세전 합'은 틀렸다(finalWage 는 실수령 · 세전은 wageDetail.totalAmount).
+@immutable
+class DirectSettlementResult {
+  /// 새 서버 분해 응답을 받았는가. false 면 아래 금액·목록은 서버가 말하지 않은 것(unknown)이다.
+  final bool hasServerBreakdown;
+
+  /// 이번에 실제로 이체한 근태의 실수령 합(새 서버만).
+  final int? netAmount;
+
+  /// 서버 `requestedAmount`(새 서버만 · 표시하지 않는다 — 감사·진단용). 서버 이름은 '세전'이지만 실제 값은
+  ///   Σ finalWage = 실수령이다(AUD-3 M1 · 서버 의미 판정 대기 — 세전으로 표시하지 말 것).
+  final int? requestedAmount;
+
+  final List<String> transferredIds;
+
+  /// 제외된 근태 id → 서버 사유 코드.
+  final Map<String, String> excluded;
+
+  /// 보낸 근태 수.
+  final int requestedCount;
+
+  const DirectSettlementResult({
+    required this.hasServerBreakdown,
+    required this.netAmount,
+    required this.requestedAmount,
+    required this.transferredIds,
+    required this.excluded,
+    required this.requestedCount,
+  });
+
+  factory DirectSettlementResult.fromResponse(Object? data,
+      {required int requestedCount}) {
+    final m = data is Map ? data : const {};
+    final rawIds = m['transferredAttendanceIds'];
+    final ok = rawIds is List && rawIds.every((e) => e is String);
+    if (!ok) {
+      return DirectSettlementResult(
+        hasServerBreakdown: false,
+        netAmount: null,
+        requestedAmount: null,
+        transferredIds: const [],
+        excluded: const {},
+        requestedCount: requestedCount,
+      );
+    }
+    int? asInt(Object? v) => v is num && v.isFinite ? v.round() : null;
+    final ex = <String, String>{};
+    final rawEx = m['excluded'];
+    if (rawEx is Map) {
+      rawEx.forEach((k, v) {
+        if (k is String && k.isNotEmpty) ex[k] = v is String ? v : '';
+      });
+    }
+    return DirectSettlementResult(
+      hasServerBreakdown: true,
+      netAmount: asInt(m['netAmount']),
+      requestedAmount: asInt(m['requestedAmount']),
+      transferredIds: List<String>.unmodifiable(rawIds.cast<String>()),
+      excluded: Map<String, String>.unmodifiable(ex),
+      requestedCount: requestedCount,
+    );
+  }
+
+  bool get hasExclusions => hasServerBreakdown && excluded.isNotEmpty;
+
+  /// 제외 사유 요약 — '이미 이체됨 2 · 정산 진행 중 1'. 사유 순서는 [directSettlementExcludedReasonLabels] 순.
+  String excludedSummary() {
+    final counts = <String, int>{};
+    for (final code in excluded.values) {
+      final label = directSettlementExcludedReasonLabels[code] ?? '기타';
+      counts[label] = (counts[label] ?? 0) + 1;
+    }
+    final order = [...directSettlementExcludedReasonLabels.values, '기타'];
+    return order
+        .where(counts.containsKey)
+        .map((l) => '$l ${counts[l]}')
+        .join(' · ');
+  }
+
+  /// 처리 뒤 한 번 띄우는 안내. 구서버 응답이면 예전 문구 그대로(금액을 단정하지 않는다).
+  String toastMessage() {
+    if (!hasServerBreakdown) return '중간정산이 처리되었습니다';
+    final n = transferredIds.length;
+    final amount = netAmount == null ? '' : ' · 실수령 ${FormatHelper.formatWage(netAmount!)}';
+    if (!hasExclusions) return '중간정산 $n건을 처리했어요$amount';
+    return '중간정산 $n건을 처리했어요$amount\n'
+        '${excluded.length}건은 제외됐어요(${excludedSummary()})';
+  }
+}
+
+// ─── 중간정산 이체 처리 거절 안내 ───────────────────────────────────
+
+/// [AUD-3 M4] 승인된 중간정산은 출근기록을 잠근다. 그 사이 근로자가 급여계좌를 바꾸면 처리 거래가
+///   '급여 계좌 스냅샷 확인이 필요합니다: {근태} ({사유})' 로 거절하는데, 지급 계좌 갱신은 잠긴 기록을 건너뛴다
+///   (`settlementLocked`). 그래서 길은 '승인 취소' → 지급 계좌 갱신 → 다시 승인뿐이다 — 그 길을 말한다.
+///   사유는 서버 `details.code`(새 서버 · `TransferBlockReason` 와 같은 값)를 먼저 쓰고, 없으면(구서버) 문구 끝 괄호의 사유 코드로 가른다.
+///   거절 자체(지급 보호)는 풀지 않는다 — 안내 문구만 고른다.
+const Set<String> interimProcessStaleSnapshotCodes = {'stalePaymentSnapshot', 'snapshotProvenanceUnknown'};
+const Set<String> interimProcessAccountBlockCodes = {'reviewRequired', 'legacyNoSnapshot', 'noAccountSnapshot'};
+
+const String interimProcessStaleSnapshotMessage =
+    '근로자가 승인 뒤 급여계좌를 변경해 이 중간정산을 처리할 수 없습니다.\n'
+    "'승인 취소' 후 지급 계좌를 최신으로 갱신하고 다시 승인해주세요. 급여 금액은 그대로 유지됩니다.";
+const String interimProcessAccountBlockMessage =
+    '급여계좌 확인이 필요해 이 중간정산을 처리할 수 없습니다.\n'
+    "'승인 취소' 후 급여계좌를 확인하고 다시 승인해주세요.";
+
+/// 처리 실패 안내 한 줄. 계좌 스냅샷 거절은 위 안내 · 그 밖의 서버 거절은 서버 문구 그대로
+///   (예: '승인 후 급여 금액이 변경되었습니다 … 다시 승인해 주세요') · 모르는 실패는 일반 문구(예외 문자열 0).
+String interimProcessErrorMessage(Object error) {
+  // [impl_58 · server_296 M2/A1] 근태 금액 형식 오류(WAGE_VALUE_INVALID · 승인·처리·직접 정산 공용) — 근태 id 가 섞인 서버 문구 대신
+  //   다음 할 일(급여 정정)을 말한다. 처리 0 은 그대로다.
+  if (wageValueInvalidMessageOf(error) case final wv?) return wv;
+  if (error is FirebaseFunctionsException) {
+    final msg = error.message ?? '';
+    if (error.code == 'failed-precondition') {
+      // [판정296 §2-7] 서버가 details.code(사유)를 싣는다 — 그 값을 먼저 쓴다. 없으면(구서버) 문구 끝 괄호의 사유로 돌아간다.
+      final details = error.details;
+      final structured = (details is Map && details['code'] is String) ? details['code'] as String : null;
+      final code = structured ?? RegExp(r'\(([A-Za-z]+)\)\s*$').firstMatch(msg.trim())?.group(1);
+      if (code != null && interimProcessStaleSnapshotCodes.contains(code)) {
+        return interimProcessStaleSnapshotMessage;
+      }
+      if (code != null && interimProcessAccountBlockCodes.contains(code)) {
+        return interimProcessAccountBlockMessage;
+      }
+    }
+    if (msg.isNotEmpty) return msg;
+  }
+  return '처리에 실패했습니다. 잠시 뒤 다시 시도해주세요.';
+}
+
 // ─── 이체 처리 결과 ───────────────────────────────────────────────
 
 /// [GAP-PAYROLL-BATCH-PARTIAL-FEEDBACK-01] 일괄 이체 부분 실패 예외
@@ -800,9 +975,13 @@ class PartialBatchException implements Exception {
   final int confirmedProcessedCount;
   final List<String> chunkErrors;
 
+  /// [impl_59] 첫 실패 청크의 예외 — 화면이 서버 코드·문구로 안내를 고른다([chunkErrors] 문자열은 기록용).
+  final Object? firstError;
+
   const PartialBatchException({
     required this.confirmedProcessedCount,
     required this.chunkErrors,
+    this.firstError,
   });
 
   @override

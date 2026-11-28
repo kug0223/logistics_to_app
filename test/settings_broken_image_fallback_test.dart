@@ -26,6 +26,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 /// 정상 1×1 PNG.
 const _kValidPng =
@@ -149,7 +150,7 @@ void main() {
           reason: 'Flutter 내부 예외 문구가 사용자에게 보인다');
       expect(shown.contains('Exception'), isFalse);
       // 카드 자체는 살아 있다 — 다시 등록할 수 있어야 한다.
-      expect(find.text('변경'), findsWidgets);
+      expect(findVisibleText('변경'), findsWidgets);
     });
 
     testWidgets('S-2 base64 가 아예 깨져도 화면을 잃지 않는다', (t) async {

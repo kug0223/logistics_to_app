@@ -351,9 +351,13 @@ void main() {
 
   group('DS08B3 범위 제한', () {
     test('신분증 권한 축이 canManageWage 그대로다', () {
+      // [AUD-2 G-1c · server_295/296] 권한 판정은 공통 helper(srvIdCardAuthorizedBusinesses)로 옮겼다 — 축(canManageWage)은 그대로.
       final signed = _codeOf(_callableBody(source, 'callableGetIdCardSignedUrl'));
-      expect(signed.contains('permissions?.canManageWage'), isTrue);
-      expect(signed.contains('canManageWorkers'), isFalse);
+      expect(signed.contains('srvIdCardAuthorizedBusinesses(request.auth.uid'), isTrue);
+      final a0 = source.indexOf('async function srvIdCardAuthorizedBusinesses(');
+      final authz = source.substring(a0, source.indexOf('async function srvIdCardGrantBusinessOf(', a0));
+      expect(authz.contains('m.data()?.permissions?.canManageWage === true'), isTrue);
+      expect(signed.contains('canManageWorkers') || authz.contains('canManageWorkers'), isFalse);
     });
 
     test('통장사본 권한 축이 canManageWage 그대로다', () {

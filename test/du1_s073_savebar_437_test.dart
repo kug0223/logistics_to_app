@@ -36,6 +36,7 @@ import 'package:ALfit/theme/role_theme.dart';
 import 'package:ALfit/utils/navigation_key.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake with MockPlatformInterfaceMixin implements FirebaseAppPlatform {
   @override
@@ -250,7 +251,7 @@ void main() {
         }
         final editTitle = find.text('근무 가능일 선택');
         final saveF = find.text('2일 저장');
-        final cancelF = find.text('취소');
+        final cancelF = findVisibleText('취소');
         must('수정 화면 · 저장 · 취소', editTitle.evaluate().length == 1 && saveF.evaluate().length == 1 && cancelF.evaluate().length == 1,
             '제목 ${editTitle.evaluate().length} 저장 ${saveF.evaluate().length} 취소 ${cancelF.evaluate().length}');
         await shot('1edit', 'edit-mode');

@@ -38,7 +38,12 @@ class WorkDetailManagementDialog {
   final VoidCallback onComplete;
   final VoidCallback? onLocalStatsChanged;
 
+  /// 일괄 처리 재진입 방지. [PERF-P12 · 2026-11-26] 예전에는 setState 없는 필드라 처리 중에도 버튼이
+  ///   그대로 눌릴 것처럼 보였다(진행 표시 0). 이제 처리 중이면 버튼에 진행 표시를 하고 닫기·재실행을 막는다.
   bool _isProcessing = false;
+
+  /// 다이얼로그가 떠 있을 때만 다시 그린다(닫힌 뒤 setState 금지).
+  void Function(bool busy) _setBusy = (_) {};
 
   WorkDetailManagementDialog({
     required this.context,
@@ -75,6 +80,11 @@ class WorkDetailManagementDialog {
       barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
+          // [PERF-P12] 처리 중 표시 — 이 다이얼로그가 아직 떠 있을 때만 다시 그린다.
+          _setBusy = (busy) {
+            _isProcessing = busy;
+            if (context.mounted) setDialogState(() {});
+          };
           // 선택된 상태 확인
           final firstSelected = selectedWorkDetails.isNotEmpty
               ? toItem.workDetails
@@ -144,7 +154,8 @@ class WorkDetailManagementDialog {
             ),
             actions: [
               StyledDialogButton.cancel(
-                onPressed: () => Navigator.pop(context),
+                // [PERF-P12] 처리 중에 닫으면 처리 뒤 닫기(pop)가 다른 화면을 닫는다 — 끝날 때까지 막는다.
+                onPressed: _isProcessing ? null : () => Navigator.pop(context),
               ),
               if (selectedWorkDetails.isNotEmpty && selectedStatus != null)
                 _buildActionButton(context, selectedStatus!, selectedWorkDetails),
@@ -407,14 +418,16 @@ class WorkDetailManagementDialog {
         return StyledDialogButton.primary(
           text: '${selectedWorks.length}개 마감',
           backgroundColor: AppColors.brand,
-          onPressed: () => _handleBulkClose(selectedWorks),
+          isLoading: _isProcessing,
+          onPressed: _isProcessing ? null : () => _handleBulkClose(selectedWorks),
         );
 
       case _WDS.closed:
         return StyledDialogButton.primary(
           text: '${selectedWorks.length}개 재오픈',
           backgroundColor: AppColors.brand,
-          onPressed: () => _handleBulkReopen(selectedWorks),
+          isLoading: _isProcessing,
+          onPressed: _isProcessing ? null : () => _handleBulkReopen(selectedWorks),
         );
 
       case _WDS.timeExpired:
@@ -468,7 +481,8 @@ class WorkDetailManagementDialog {
         return StyledDialogButton.primary(
           text: '긴급모집 종료',
           backgroundColor: AppColors.brand,
-          onPressed: () => _handleBulkStopEmergency(selectedWorks),
+          isLoading: _isProcessing,
+          onPressed: _isProcessing ? null : () => _handleBulkStopEmergency(selectedWorks),
         );
 
       default:
@@ -560,17 +574,20 @@ class WorkDetailManagementDialog {
         return;
       }
       final now = DateTime.now();
+      _setBusy(true); // [PERF-P12] 확인 뒤 서버 처리 동안 진행 표시
       try {
-        await Future.wait(works.map((work) => firestoreService.closeWorkDetail(
+        // [F291-C03] 같은 배열을 업무마다 따로 덮어쓰던 동시 체인 N개 → 한 트랜잭션 1회.
+        //   반영된 업무만 로컬에 반영하고, 못한 업무가 있으면 그렇게 말한다(예전: 결과 무시·전부 성공 표시).
+        final r = await firestoreService.closeWorkDetails(
           toId: toItem.to.id,
-          workDetailId: work.id,
+          workDetailIds: [for (final w in works) w.id],
           adminUID: adminUID,
           slotId: toItem.slot?.id,
-        )));
+        );
         if (!context.mounted) return;
 
-        // ⭐ 로컬 데이터 일괄 업데이트
-        for (final work in works) {
+        // ⭐ 로컬 데이터 일괄 업데이트 — 서버가 반영한 업무만
+        for (final work in works.where((w) => r.applied.contains(w.id))) {
           final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
           if (index != -1) {
             toItem.workDetails[index] = work.copyWith(
@@ -585,7 +602,14 @@ class WorkDetailManagementDialog {
         Navigator.pop(context);
         onLocalStatsChanged?.call();
         onComplete();
-        ToastHelper.showSuccess('${works.length}개 업무가 마감되었습니다');
+        if (r.failed.isEmpty) {
+          ToastHelper.showSuccess('${works.length}개 업무가 마감되었습니다');
+        } else if (r.applied.isEmpty) {
+          ToastHelper.showError('업무 마감에 실패했습니다. 새로고침 후 다시 시도해주세요');
+        } else {
+          ToastHelper.showError(
+              '일부 업무 마감에 실패했습니다 (${r.applied.length}개 마감 · ${r.failed.length}개 실패)');
+        }
       } catch (e) {
         debugPrint('❌ 업무 일괄 마감 실패: $e');
         if (context.mounted) {
@@ -597,7 +621,7 @@ class WorkDetailManagementDialog {
         }
       }
     } finally {
-      _isProcessing = false;
+      _setBusy(false);
     }
   }
 
@@ -625,17 +649,19 @@ class WorkDetailManagementDialog {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
         return;
       }
+      _setBusy(true); // [PERF-P12] 확인 뒤 서버 처리 동안 진행 표시
       try {
-        await Future.wait(works.map((work) => firestoreService.reopenWorkDetail(
+        // [F291-C03] 동시 체인 N개 → 한 트랜잭션 1회 · 반영된 업무만 로컬 반영.
+        final r = await firestoreService.reopenWorkDetails(
           toId: toItem.to.id,
-          workDetailId: work.id,
+          workDetailIds: [for (final w in works) w.id],
           adminUID: adminUID,
           slotId: toItem.slot?.id,
-        )));
+        );
         if (!context.mounted) return;
 
-        // ⭐ 로컬 데이터 일괄 업데이트 (clearClosedAt 사용)
-        for (final work in works) {
+        // ⭐ 로컬 데이터 일괄 업데이트 (clearClosedAt 사용) — 서버가 반영한 업무만
+        for (final work in works.where((w) => r.applied.contains(w.id))) {
           final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
           if (index != -1) {
             toItem.workDetails[index] = work.copyWith(clearClosedAt: true);
@@ -646,7 +672,14 @@ class WorkDetailManagementDialog {
         Navigator.pop(context);
         onLocalStatsChanged?.call();
         onComplete();
-        ToastHelper.showSuccess('${works.length}개 업무가 재오픈되었습니다');
+        if (r.failed.isEmpty) {
+          ToastHelper.showSuccess('${works.length}개 업무가 재오픈되었습니다');
+        } else if (r.applied.isEmpty) {
+          ToastHelper.showError('업무 재오픈에 실패했습니다. 새로고침 후 다시 시도해주세요');
+        } else {
+          ToastHelper.showError(
+              '일부 업무 재오픈에 실패했습니다 (${r.applied.length}개 재오픈 · ${r.failed.length}개 실패)');
+        }
       } catch (e) {
         debugPrint('❌ 업무 일괄 재오픈 실패: $e');
         if (context.mounted) ToastHelper.showError('일부 업무 재오픈에 실패했습니다');
@@ -658,7 +691,7 @@ class WorkDetailManagementDialog {
         }
       }
     } finally {
-      _isProcessing = false;
+      _setBusy(false);
     }
   }
 
@@ -687,16 +720,17 @@ class WorkDetailManagementDialog {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
         return;
       }
-      await Future.wait(works.map((work) => firestoreService.stopEmergencyRecruitment(
+      _setBusy(true); // [PERF-P12] 확인 뒤 서버 처리 동안 진행 표시
+      // [F291-C03 같은 뿌리] 긴급모집 종료도 같은 배열을 업무마다 따로 덮어썼다 → 한 트랜잭션 1회.
+      final r = await firestoreService.stopEmergencyRecruitments(
         toId: toItem.to.id,
-        workDetailId: work.id,
-        adminUID: adminUID,
+        workDetailIds: [for (final w in works) w.id],
         slotId: toItem.slot?.id,
-      )));
+      );
       if (!context.mounted) return;
 
-      // ⭐ 로컬 데이터 일괄 업데이트 (clearEmergency 사용)
-      for (final work in works) {
+      // ⭐ 로컬 데이터 일괄 업데이트 (clearEmergency 사용) — 서버가 반영한 업무만
+      for (final work in works.where((w) => r.applied.contains(w.id))) {
         final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
         if (index != -1) {
           toItem.workDetails[index] = work.copyWith(clearEmergency: true);
@@ -707,7 +741,14 @@ class WorkDetailManagementDialog {
       Navigator.pop(context);
       onLocalStatsChanged?.call();
       onComplete();
-      ToastHelper.showSuccess('${works.length}개 업무 긴급모집이 종료되었습니다');
+      if (r.failed.isEmpty) {
+        ToastHelper.showSuccess('${works.length}개 업무 긴급모집이 종료되었습니다');
+      } else if (r.applied.isEmpty) {
+        ToastHelper.showError('긴급모집 종료에 실패했습니다. 새로고침 후 다시 시도해주세요');
+      } else {
+        ToastHelper.showError(
+            '일부 긴급모집 종료에 실패했습니다 (${r.applied.length}개 종료 · ${r.failed.length}개 실패)');
+      }
     } catch (e) {
       debugPrint('❌ 업무 일괄 긴급모집 종료 실패: $e');
       if (context.mounted) ToastHelper.showError('일부 긴급모집 종료에 실패했습니다');
@@ -718,7 +759,7 @@ class WorkDetailManagementDialog {
         onComplete();
       }
     } finally {
-      _isProcessing = false;
+      _setBusy(false);
     }
   }
 }

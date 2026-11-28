@@ -98,6 +98,11 @@ ExpectedIdentifier expectedIdentifierFrom({
   if (birthDate == null || gender == null || gender.isEmpty) {
     return ExpectedIdentifier.none;
   }
+  // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정278 §4] '남성'/'여성' 이 아닌 값(예: 'unknown')을 여성 코드로
+  //   만들어내지 않는다. 예전에는 '남성' 이외의 모든 비빈 문자열이 여성(2/4)으로 갔다.
+  if (gender != '남성' && gender != '여성') {
+    return ExpectedIdentifier.none;
+  }
   final yy = (birthDate.year % 100).toString().padLeft(2, '0');
   final mm = birthDate.month.toString().padLeft(2, '0');
   final dd = birthDate.day.toString().padLeft(2, '0');

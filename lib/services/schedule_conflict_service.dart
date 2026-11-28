@@ -244,7 +244,11 @@ class ScheduleConflictService {
   }
 
   /// 내 약속 전체 — 상태 필터는 서버가 한다(uid 도 서버 검증).
-  Future<List<ApplicationModel>> _fetchCommitments() async {
+  Future<List<ApplicationModel>> _fetchCommitments() => fetchMyCommitments();
+
+  /// [L19] 같은 조회를 화면이 한 번 받아 여러 날짜 판정에 나눠 쓸 수 있게 공개한다
+  ///   (`commitmentsSource` 로 넘긴다). 조회 내용·인자는 그대로다.
+  static Future<List<ApplicationModel>> fetchMyCommitments() async {
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callableGetMyApplications',
             options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));

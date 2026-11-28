@@ -33,6 +33,7 @@ import 'package:ALfit/theme/role_theme.dart';
 import 'package:ALfit/utils/navigation_key.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake with MockPlatformInterfaceMixin implements FirebaseAppPlatform {
   @override
@@ -214,9 +215,20 @@ void main() {
       }
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
-      final day = today.add(const Duration(days: 7));
+      // [impl_57] 시한부 fixture 수리 — 예전: 오늘+7 고정이라 월말 주(11-24~)에는 다음 달로 넘어가 시험이 깨졌다.
+      //   셀이 묻는 것은 '같은 달 달력에서 미래 날짜를 고른다' 이므로, 같은 달 안에서 가장 먼 날(최대 +7)을 고른다.
+      //   그 달 마지막 날이면 같은 달 미래 날짜가 없다 → 이 셀은 건너뛴다(셀 재설계 대상 · 제품 코드 변경 0).
+      var dayOffset = 7;
+      while (dayOffset > 1 && today.add(Duration(days: dayOffset)).month != today.month) {
+        dayOffset--;
+      }
+      final day = today.add(Duration(days: dayOffset));
+      if (day.month != today.month) {
+        markTestSkipped('그 달 마지막 날 — 같은 달 미래 날짜 없음(월 이동 셀은 별도)');
+        return;
+      }
       out('${c.id} 실행 시각=$now tz=${now.timeZoneName}(${now.timeZoneOffset}) 선택일=${day.toIso8601String().substring(0, 10)} · NetworkChecker.isOnline=${NetworkChecker.instance.isOnline}');
-      expect(day.month == today.month, isTrue, reason: '오늘+7 이 같은 달(월 이동 없이) — 다르면 셀 재설계');
+      expect(day.month == today.month, isTrue, reason: '같은 달(월 이동 없이)에서 고른 미래 날짜');
       final deferred = <String>[];
       final results = <Object?>[];
       final key = GlobalKey();
@@ -376,7 +388,7 @@ void main() {
         }
         out('   $hint 피커 선택=${times[ctl.selectedItem]} (목표 $target)');
         expect(times[ctl.selectedItem], target, reason: '$hint 실제 스크롤 선택');
-        await t.tap(find.descendant(of: find.ancestor(of: picker, matching: find.byType(Column)).first, matching: find.text('확인')));
+        await t.tap(find.descendant(of: find.ancestor(of: picker, matching: find.byType(Column)).first, matching: findVisibleText('확인')));
         await frames(10);
       }
       await pickTime('시작 시간', '09:00');
@@ -423,14 +435,22 @@ void main() {
       // 바깥 목록을 **페이지 왼쪽 여백**에서 끈다 — 본문 중심이 여러 줄 입력칸이면 그 칸 안쪽 스크롤이 끌기를 먹는다(구현56 관측)
       Future<void> outerScrollTo(Finder f, double dy) async {
         for (var k = 0; k < 200; k++) {
+          var step = dy;
           if (f.evaluate().isNotEmpty) {
             final r = t.getRect(f.first);
             final vp = t.getRect(body);
             if (r.top >= vp.top - 0.5 && r.bottom <= vp.bottom + 0.5) break;
             if (r.height > vp.height && r.overlaps(vp)) break; // 화면보다 큰 대상(목록 배치 날짜)은 겹치면 도달
+            // [impl_58] 대상이 화면에 걸치면 남은 만큼만 끈다. 고정 보폭(160)은 '화면 높이 − 대상 높이 < 160' 이면
+            //   대상을 건너뛴다 — 360×780@1.0 에서 날짜 칸(525)·본문(649) 여유 124 → k=1 아래 23 넘침 → k=2 위 12 넘침 →
+            //   계속 내려가 지연 목록이 대상을 해제하고 끝까지 간 뒤 StateError(No element)였다(구현58 진단 로그).
+            if (r.overlaps(vp)) {
+              final need = r.bottom > vp.bottom + 0.5 ? -(r.bottom - vp.bottom) : (vp.top - r.top);
+              if (need.abs() < dy.abs()) step = need;
+            }
           }
           final vp = t.getRect(body);
-          await t.dragFrom(Offset(vp.left + 6, vp.center.dy), Offset(0, dy));
+          await t.dragFrom(Offset(vp.left + 6, vp.center.dy), Offset(0, step));
           await frames(1);
         }
         await frames(2);

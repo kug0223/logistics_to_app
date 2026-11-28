@@ -537,7 +537,14 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('DS08B4 범위 제한', () {
     test('권한 축이 canManageWage 그대로다', () {
-      expect(signedUrl.contains('permissions?.canManageWage'), isTrue);
+      // [AUD-2 G-1c · server_295/296] 소속·권한 판정을 공통 helper(srvIdCardAuthorizedBusinesses)로 옮겼다 —
+      //   URL 발급은 그 helper 로 '지금 소속' 사업장을 정하고, SubAdmin 은 그 안에서 members.canManageWage 로 본다.
+      //   예전 핀: URL 본문에 'permissions?.canManageWage' 직접 등장. 권한 축(급여 권한)은 그대로다.
+      expect(signedUrl.contains('srvIdCardAuthorizedBusinesses(request.auth.uid'), isTrue);
+      final authz = _between(source, 'async function srvIdCardAuthorizedBusinesses(',
+          'async function srvIdCardGrantBusinessOf(');
+      expect(authz.contains('m.data()?.permissions?.canManageWage === true'), isTrue);
+      expect(authz.contains('canManageWorkers'), isFalse);
       expect(signedUrl.contains('canManageWorkers'), isFalse);
       final bank = _codeOf(_callableBody(source, 'callableGetBankbookSignedUrl'));
       expect(bank.contains('permissions?.canManageWage'), isTrue);

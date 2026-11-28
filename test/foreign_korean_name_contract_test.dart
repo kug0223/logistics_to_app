@@ -42,7 +42,9 @@ String _cfBody(String fn, String name) {
 
 void main() {
   final fn = _read('functions/src/index.ts');
-  final finalizeCf = _codeOf(_cfBody(fn, 'callableFinalizeForeignIdentity'));
+  // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 옛 외국인 가입 finalize 는 닫혔다(판정278 §2 · LEGACY_SIGNUP_CLOSED). 이름 축을 서버가 받는
+  //   canonical writer 는 가입 후 등록 writer(callableRegisterForeignIdDocument)다 — 같은 계약을 그 본문에 고정한다.
+  final finalizeCf = _codeOf(_cfBody(fn, 'callableRegisterForeignIdDocument'));
   final screen = _read('lib/screens/auth/foreign_register_screen.dart');
   final screenCode = _codeOf(screen);
   final authService = _codeOf(_read('lib/services/auth_service.dart'));
@@ -82,9 +84,9 @@ void main() {
 
     test('FKN-21 기존 이름 검증 계약(trim + 100자)을 그대로 쓴다', () {
       final f = _flat(finalizeCf);
-      expect(f.contains('const srvTrimmedName = (v: unknown): string | null =>'), isTrue);
+      expect(f.contains('const trimmed = (v: unknown): string | null =>'), isTrue);
       expect(f.contains('return t.length > 0 ? t.slice(0, 100) : null;'), isTrue);
-      expect(f.contains('const koreanNameValue = srvTrimmedName(koreanNameRaw);'), isTrue);
+      expect(f.contains('const koreanNameValue = trimmed(koreanNameRaw);'), isTrue);
     });
 
     test('FKN-22 legalName 과 koreanName 은 서로 덮어쓰지 않는다', () {
@@ -99,7 +101,7 @@ void main() {
       expect(f.contains('const uid = request.auth.uid;'), isTrue);
       expect(f.contains('const userRef = db.collection("users").doc(uid);'), isTrue);
       // 요청 파라미터 목록에 uid/userId 가 없다.
-      final params = _flat(_sliceOf(finalizeCf, 'request.data as {', '};'));
+      final params = _flat(_sliceOf(finalizeCf, '(request.data ?? {}) as {', '};'));
       expect(params.contains('uid?'), isFalse);
       expect(params.contains('userId?'), isFalse);
     });
@@ -107,23 +109,25 @@ void main() {
 
   group('FKN-3 재개 경로 — 멱등 갈래도 프로필을 반영한다', () {
     test('FKN-30 멱등 갈래가 빈손으로 return 하지 않는다', () {
+      // 같은 서류 재제출(멱등) 갈래 — 이름·체류 프로필은 반영한다.
       final idem = _flat(_sliceOf(finalizeCf,
-          'if (existingUid === uid) {', 'return;'));
-      expect(idem.contains('tx.update(userRef, foreignProfilePatch)'), isTrue);
+          'if (ns === "foreign" && cur["foreignIdDocumentFingerprint"] === docFp) {', 'return;'));
+      expect(idem.contains('tx.update(userRef, profilePatch)'), isTrue);
     });
 
     test('FKN-31 두 갈래가 같은 패치를 쓴다', () {
       final f = _flat(finalizeCf);
       // 패치는 트랜잭션 밖에서 한 번만 만들어진다.
-      expect(f.contains('const foreignProfilePatch: Record<string, unknown> = {'), isTrue);
+      expect(f.contains('const profilePatch: Record<string, unknown> = {'), isTrue);
       // 신규 등록 갈래도 같은 변수를 편다.
-      expect(f.contains('...foreignProfilePatch,'), isTrue);
+      expect(f.contains('...profilePatch,'), isTrue);
     });
 
     test('FKN-32 멱등 갈래는 신원 파생 값을 다시 쓰지 않는다', () {
       final idem = _flat(_sliceOf(finalizeCf,
-          'if (existingUid === uid) {', 'return;'));
+          'if (ns === "foreign" && cur["foreignIdDocumentFingerprint"] === docFp) {', 'return;'));
       // fingerprint/birthDate/gender 는 이미 확정된 값이다 — 건드리지 않는다.
+      expect(idem.contains('foreignIdDocumentFingerprint:'), isFalse);
       expect(idem.contains('foreignIdentityFingerprint:'), isFalse);
       expect(idem.contains('birthDate:'), isFalse);
       expect(idem.contains('srvIdentityBasisPatch'), isFalse);

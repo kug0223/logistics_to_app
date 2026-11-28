@@ -11,6 +11,7 @@ import '../../services/firestore_service.dart';
 import '../../services/work_type_guide_resolver.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/expected_daily_wage.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/image_helper.dart';
 import '../../utils/toast_helper.dart';
@@ -39,7 +40,16 @@ class ScheduleDetailDialog extends StatefulWidget {
   /// 테스트 주입용. 생략하면 기존 FirestoreService 조회.
   final ScheduleDetailReads? reads;
 
-  const ScheduleDetailDialog({super.key, required this.application, this.reads});
+  /// [F294-WAGE-01 · C294-WAGE-D] 여는 쪽(일정 카드)이 이미 가진 근태로 판정한 예상 단계 여부.
+  ///   true 일 때만 급여 행을 하루 예상 계약(약속 시각·휴게 · null 휴게 = 확인 필요)으로 보인다. 기본 false = 기존 행.
+  final bool showExpectedWage;
+
+  const ScheduleDetailDialog({
+    super.key,
+    required this.application,
+    this.reads,
+    this.showExpectedWage = false,
+  });
 
   @override
   State<ScheduleDetailDialog> createState() => _ScheduleDetailDialogState();
@@ -84,10 +94,19 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
         postedAt: to?.storedCreatedAt,
       );
       final app = widget.application;
-      final nt = FormatHelper.calcNetWorkTime(
-        app.startTime, app.endTime,
-        breakMinutes: wd?.breakMinutes ?? 0,
-      );
+      // [F295-TIME-01] 예상 단계(showExpectedWage)에서는 시간 보조도 급여 행과 같은 기준 — 이 지원서의 시작·끝 +
+      //   약속 휴게(nullable · 공고 현재 휴게로 보충하지 않는다)를 helper netMinutesOf 로. 휴게 모름/무효 · 종료=시작이면
+      //   순시간을 숨긴다(시작~끝 시각은 그대로). 산정·확정 단계는 기존 계산 그대로.
+      final String nt;
+      if (widget.showExpectedWage) {
+        final net = ExpectedDailyWage.netMinutesOf(app.startTime, app.endTime, app.breakMinutes);
+        nt = net == null ? '' : FormatHelper.formatCompactHours(net);
+      } else {
+        nt = FormatHelper.calcNetWorkTime(
+          app.startTime, app.endTime,
+          breakMinutes: wd?.breakMinutes ?? 0,
+        );
+      }
 
       if (!mounted) return;
       setState(() {
@@ -103,6 +122,36 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
       setState(() => _isLoading = false);
       ToastHelper.showError('일정 정보를 불러오는데 실패했습니다.');
     }
+  }
+
+  Widget _wageRow(BuildContext context, ApplicationModel app) {
+    final e = widget.showExpectedWage
+        ? ExpectedDailyWage.forPromise(
+            wageType: app.wageType,
+            rate: app.wage,
+            startTime: app.startTime,
+            endTime: app.endTime,
+            breakMinutes: app.breakMinutes)
+        : null;
+    final line = e == null ? null : ExpectedWageText.combined(e);
+    if (line == null) {
+      final label = app.wageTypeLabel;
+      final amount = ExpectedWageText.rawWage(app.wage);
+      return Text(label.isNotEmpty ? '$amount / $label' : amount, style: _valueStyle(context));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(TextLayout.keepWords(line), semanticsLabel: line, style: _valueStyle(context)),
+        if (e!.isEstimate) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            ExpectedWageText.disclosure,
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+          ),
+        ],
+      ],
+    );
   }
 
   // WorkDetail 매칭: workType + startTime 우선, 레거시 폴백, 최종 ApplicationModel 복원
@@ -428,14 +477,9 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
         ),
 
         // 급여
-        _infoRow(
-          context,
-          '급여',
-          Text(
-            '${FormatHelper.formatNumber(app.wage)}원 / ${app.wageTypeLabel}',
-            style: _valueStyle(context),
-          ),
-        ),
+        // [F294-WAGE-01 · C294-WAGE-D] 예상 단계면 일정 카드와 같은 공통 계약 — 이 지원서의 약속 시각·휴게(null = 모름)로
+        //   하루 예상 + 시급(또는 확인 필요). 산정·확정 단계와 비시급은 기존 행(누락 0 은 '급여 확인 필요').
+        _infoRow(context, '급여', _wageRow(context, app)),
 
         // 정산 주기
         if (wd?.payScheduleTypeLabel.isNotEmpty == true)

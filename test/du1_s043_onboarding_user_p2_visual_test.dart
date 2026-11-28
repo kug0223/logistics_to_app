@@ -53,7 +53,7 @@ Future<({GlobalKey key, int Function() completes, List<String> overflows, String
   for (var i = 0; i < 12; i++) {
     await t.pump(const Duration(milliseconds: 100));
   }
-  final next = find.ancestor(of: find.text('다음'), matching: find.byType(GestureDetector)).first;
+  final next = find.ancestor(of: findVisibleText('다음'), matching: find.byType(GestureDetector)).first;
   await t.tapAt(t.getRect(next).center);
   // 400ms 이동 + 600ms scale + 300ms switcher
   for (var i = 0; i < 20; i++) {
@@ -65,7 +65,7 @@ Future<({GlobalKey key, int Function() completes, List<String> overflows, String
   expect((c1.page! - 1).abs() < 0.001 && completes == 0, isTrue, reason: 'page1 경유');
   // [후속83 §2.3] 구현82 에서는 page1 제목 1개가 로그 관측뿐이었다 — 단언으로 올린다
   expect(find.text('지원한 일자리의\n진행 상황을 한눈에'), findsOneWidget, reason: 'page1 제목');
-  final next2 = find.ancestor(of: find.text('다음'), matching: find.byType(GestureDetector)).first;
+  final next2 = find.ancestor(of: findVisibleText('다음'), matching: find.byType(GestureDetector)).first;
   await t.tapAt(t.getRect(next2).center);
   for (var i = 0; i < 20; i++) {
     await t.pump(const Duration(milliseconds: 100));
@@ -102,7 +102,7 @@ void main() {
     final rNext = t.getRect(next);
     // [후속83 §2.3] 실제 mq.viewInsets 도 기록(구현82 누락)
     final example = find.text('출퇴근 체크 예시');
-    final oldCta = find.text('출근하기');
+    final oldCta = findVisibleText('출근하기');
     final report = 'mq padding=${mq.padding} viewPadding=${mq.viewPadding} viewInsets=${mq.viewInsets} · '
         '예시행 \'출퇴근 체크 예시\'=${example.evaluate().length} ${example.evaluate().isEmpty ? '' : t.getRect(example)} · 구 \'출근하기\'=${oldCta.evaluate().length} · page=${page.page?.toStringAsFixed(3)} offset=${page.offset.toStringAsFixed(1)} · '
         'scrollables: $scrollInfo · 제목 ${title.evaluate().isEmpty ? '없음' : t.getRect(title)} · '

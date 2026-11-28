@@ -66,6 +66,27 @@ class AttendanceCheckScreen extends StatefulWidget {
     return start.subtract(Duration(minutes: early));
   }
 
+  /// [F291-C10 · 2026-11-26] 위치를 얻지 못한 이유별 안내. 예전 문구는 모든 실패를
+  ///   "가짜 GPS 앱을 사용 중이거나 위치 서비스에 문제" 로 말했다.
+  @visibleForTesting
+  static String fixFailureMessageFor(LocationFixFailure? failure) {
+    switch (failure) {
+      case LocationFixFailure.timeout:
+        return 'GPS 위치를 10초 안에 찾지 못했습니다.\n'
+            '창가나 바깥으로 이동해 다시 시도해주세요.';
+      case LocationFixFailure.mocked:
+        return '가짜 위치(모의 위치) 앱이 켜져 있어\n'
+            '출퇴근 위치로 쓸 수 없습니다. 앱을 끄고 다시 시도해주세요.';
+      case LocationFixFailure.permission:
+        return '위치 권한이 없거나 위치 서비스가 꺼져 있습니다.\n'
+            '설정에서 위치를 켜고 다시 시도해주세요.';
+      case LocationFixFailure.unavailable:
+      case null:
+        return 'GPS 위치를 가져올 수 없습니다.\n'
+            '위치 서비스 상태를 확인하고 다시 시도해주세요.';
+    }
+  }
+
   const AttendanceCheckScreen(
       {super.key, this.reads, this.clock, this.reconfirmResponder});
 
@@ -110,6 +131,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   /// [CONTRACT-BEFORE-CHECKIN] 이번 읽기의 내 계약 목록. null = 읽지 못함(또는 아직 안 읽음)
   ///   — 그때 출근 버튼은 닫힌다. 목록을 다시 읽을 때마다 함께 새로 받는다.
   List<EmploymentContractModel>? _contracts;
+
+  /// [PERF-L40 · F291-C09] [_contracts] 를 읽을 때의 오늘 근무 후보 id. 출근·퇴근 직후 계약 목록을 다시 받지 않는 것은
+  ///   후보가 **그때와 같을 때만**이다 — 새 근무가 끼면(그 계약 근거가 이 목록에 없을 수 있다) 기존처럼 새로 읽는다.
+  Set<String>? _contractsForWorkIds;
   bool _isLoading = false; // 초기값 false — initState에서 _loadTodayWorks() 첫 호출 시 재진입 방어에 걸리지 않도록
 
   /// [R7-P2-3 P23-E] 오늘 근무를 **읽지 못했다**.
@@ -119,8 +144,94 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   ///   사라진 뒤에는 **확정된 근무가 있는 사람이 없다고 믿는다** — 그날 출근을
   ///   놓치고 노쇼가 된다. 일정 탭은 이미 같은 구분을 한다(`_loadError`).
   Object? _loadError;
+
+  /// [AUD-4 H3 · 판정296] 내 지원서 조회는 200 건 상한(callableGetMyApplications limit 200 · 서버 정렬 없음)이다.
+  ///   상한에 닿았으면 오늘 근무가 빠졌을 수 있다 — '오늘 확정된 근무가 없습니다' 로 단정하지 않는다(홈 C287-01 과 같은 판정).
+  static const int _kApplicationsReadLimit = 200;
+  bool _appsMaybePartial = false;
   bool _isProcessing = false;
   bool _isReconfirming = false;
+
+  /// [PERF-P12 · 2026-11-26] 출근·퇴근 중 지금 어느 단계인지 — 버튼 글자로 보여 준다.
+  ///   예전에는 시간 확인·사업장 읽기 동안 버튼 스피너만 돌아 멈춘 것처럼 보였다.
+  String? _stage;
+
+  /// [PERF-L40 · 2026-11-26] 화면을 비우지 않는 다시 읽기가 진행 중이다(출근·퇴근 직후).
+  bool _isQuietRefreshing = false;
+
+  /// [PERF-L39 · 2026-11-26] 오늘 근무 사업장 문서를 목록 읽기와 함께 **기다리지 않고** 미리 받아 둔다.
+  ///   출근·퇴근을 누르면 이 결과를 쓴다(오래됐거나 실패·없음이면 그때 새로 읽는다).
+  final Map<String, ({DateTime at, Future<BusinessModel?> future})>
+      _businessPrefetch = {};
+  final Map<String, ({DateTime at, BusinessModel business})> _businessResolved =
+      {};
+  static const Duration _businessPrefetchMaxAge = Duration(minutes: 5);
+
+  /// [PERF-L38 · 판정291 B1] 출근 전 기기 시간 확인용 **서버 시각 표본** — 오늘 출근할 근무가 있을 때 목록을 읽으며
+  ///   미리 받아 둔다(누른 뒤 getServerTime 왕복 1 을 줄인다). 쓰는 조건(하나라도 아니면 누를 때 예전 확인을 그대로 한다):
+  ///   · 같은 계정(uid) · 이 화면 수명 안 · 앱이 한 번도 화면을 떠나지 않았다(떠나면 버린다 — 시계 설정은 앱을 떠나야 바뀐다)
+  ///   · 표본을 받은 지 [_timeSampleMaxAge] 안
+  ///   · **서버 시각 + 그 뒤 흐른 시간(monotonic)** 과 지금 기기 시각의 차이가 기존 허용차(5분) 안 — 그 사이 기기 시계를
+  ///     바꿨으면 여기서 걸러져 예전 확인으로 간다.
+  ///   표본 실패(네트워크·형식)는 '정상' 근거가 아니다(null → 예전 확인 · 그 확인의 '확인 불가 = 허용' 정책은 바꾸지 않는다).
+  ///   이 표본으로 '비정상' 판정은 하지 않는다 — 막는 판정은 언제나 누를 때의 서버 확인이다. 서버 시각 기록·근무일 판정은 서버 그대로.
+  Future<({int serverMs, Stopwatch since})?>? _timeSample;
+  String? _timeSampleUid;
+  Stopwatch? _timeSampleAsked;
+  static const Duration _timeSampleMaxAge = Duration(minutes: 2);
+  AppLifecycleListener? _lifecycle;
+
+  void _discardTimeSample() {
+    _timeSample = null;
+    _timeSampleUid = null;
+    _timeSampleAsked = null;
+  }
+
+  void _prefetchServerTime(String uid, List<ApplicationModel> works,
+      Map<String, AttendanceModel?> attendance) {
+    final sample = _reads.serverTimeMs;
+    if (sample == null) return;
+    // 출근할 근무가 없으면 묻지 않는다(퇴근·리컨펌은 시간 확인을 쓰지 않는다).
+    if (!works.any((w) => !(attendance[w.id]?.hasCheckedIn ?? false))) return;
+    final asked = _timeSampleAsked;
+    if (_timeSample != null &&
+        _timeSampleUid == uid &&
+        asked != null &&
+        asked.elapsed < _timeSampleMaxAge) {
+      return; // 받는 중이거나 아직 쓸 수 있다
+    }
+    _timeSampleUid = uid;
+    _timeSampleAsked = Stopwatch()..start();
+    _timeSample = sample().then<({int serverMs, Stopwatch since})?>(
+        (ms) => ms == null ? null : (serverMs: ms, since: Stopwatch()..start()),
+        onError: (Object e) {
+      debugPrint('⚠️ [L38] 서버 시각 미리 받기 실패: $e');
+      return null;
+    });
+  }
+
+  /// 누를 때의 기기 시간 확인 — 미리 받은 표본이 위 조건을 모두 맞으면 그것으로 '정상' 을 확인하고, 아니면 예전 확인.
+  ///   받는 중이면 같은 요청을 기다린다(중복 getServerTime 0).
+  Future<bool> _deviceTimeValidForTap(String uid) async {
+    final pending = _timeSampleUid == uid ? _timeSample : null;
+    if (pending != null) {
+      final s = await pending;
+      if (s != null &&
+          mounted &&
+          identical(pending, _timeSample) && // 기다리는 사이 앱을 떠나 버려지지 않았다
+          s.since.elapsed <= _timeSampleMaxAge &&
+          DeviceIntegrityService.withinAllowedDiff(
+              s.serverMs + s.since.elapsedMilliseconds, _now().millisecondsSinceEpoch)) {
+        return true;
+      }
+    }
+    return DeviceIntegrityService().isDeviceTimeValid();
+  }
+
+  void _setStage(String? stage) {
+    if (!mounted || _stage == stage) return;
+    setState(() => _stage = stage);
+  }
 
   /// [SIM-CHECKIN-EARLY] 아직 열리지 않은 출근 버튼을 그 시각에 다시 그린다.
   Timer? _opensAtTimer;
@@ -133,6 +244,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   void dispose() {
     _opensAtTimer?.cancel();
     _shiftEndTimer?.cancel();
+    _lifecycle?.dispose();
     super.dispose();
   }
 
@@ -162,6 +274,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   @override
   void initState() {
     super.initState();
+    // [PERF-L38] 앱이 화면을 떠나면(백그라운드·잠금·다른 앱) 미리 받은 서버 시각 표본을 버린다.
+    _lifecycle = AppLifecycleListener(onStateChange: (s) {
+      if (s != AppLifecycleState.resumed) _discardTimeSample();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _loadTodayWorks();
@@ -170,11 +286,26 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
 
   /// 오늘 확정된 근무 조회
   // finally 블록 없음 — 정상 경로(149행)와 catch(160행) 양쪽에서 _isLoading=false 처리되어 실질 고착 없음
-  Future<void> _loadTodayWorks() async {
+  ///
+  /// [PERF-L40 · 2026-11-26] [quiet] — 출근·퇴근 직후처럼 **이미 보이는 목록을 비우지 않고** 다시 읽는다
+  ///   (본문 전체를 로딩 화면으로 바꾸지 않는다). [keepContracts] — 이번 행동이 계약을 바꾸지 않을 때
+  ///   이미 읽어 둔 계약 목록을 그대로 쓴다(없으면 기존처럼 새로 읽는다).
+  Future<void> _loadTodayWorks({bool quiet = false, bool keepContracts = false}) async {
     if (!mounted) return;
-    if (_isLoading) return; // [M-2] pull-to-refresh + 체크인 완료 후 자동 재조회 동시 재진입 방어
-    setState(() => _isLoading = true);
+    if (_isLoading || _isQuietRefreshing) return; // [M-2] pull-to-refresh + 체크인 완료 후 자동 재조회 동시 재진입 방어
+    if (quiet) {
+      _isQuietRefreshing = true;
+    } else {
+      setState(() => _isLoading = true);
+    }
+    try {
+      await _loadTodayWorksBody(keepContracts: keepContracts);
+    } finally {
+      if (quiet) _isQuietRefreshing = false;
+    }
+  }
 
+  Future<void> _loadTodayWorksBody({required bool keepContracts}) async {
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final uid = userProvider.currentUser?.uid;
@@ -238,14 +369,25 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       final tempMap = <String, AttendanceModel?>{};
       // [CONTRACT-BEFORE-CHECKIN] 출근 gate 근거. 실패는 목록 실패로 키우지 않고 null(=모름)로 둔다
       //   — 퇴근·리컨펌은 계약과 무관하게 계속 보여야 한다. 모름이면 출근 버튼만 닫힌다.
+      final workIds = {for (final w in todayWorks) w.id};
+      final prevIds = _contractsForWorkIds;
+      final keptContracts = (keepContracts &&
+              prevIds != null &&
+              prevIds.length == workIds.length &&
+              prevIds.containsAll(workIds))
+          ? _contracts
+          : null;
       final contractsFuture = todayWorks.isEmpty
           ? Future<List<EmploymentContractModel>?>.value(null)
-          : _reads.myContracts(uid).then<List<EmploymentContractModel>?>(
+          : keptContracts != null
+              ? Future<List<EmploymentContractModel>?>.value(keptContracts)
+              : _reads.myContracts(uid).then<List<EmploymentContractModel>?>(
               (v) => v,
               onError: (Object e) {
                 debugPrint('❌ 출근 화면 계약 조회 실패: $e');
                 return null;
               });
+      _prefetchBusinesses(todayWorks);
       await Future.wait(
         todayWorks.map((work) async {
           final attendance = await _reads.todayAttendance(
@@ -289,11 +431,17 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
           _attendanceMap.clear();       // stale 키 제거
           _attendanceMap.addAll(tempMap);
           _contracts = contracts;
+          _contractsForWorkIds = contracts == null ? null : workIds;
           _todayWorks = visibleWorks;
           _upcomingReconfirmWorks = upcomingReconfirm;
           _isLoading = false;
           _loadError = null;
+          // [서버296 H3 · impl_60] 새 서버는 상한에서 잘려도 진행 중 관계(확정 포함)를 덧붙이고 `activeIncluded` 로 알린다 —
+          //   그 표식이 있으면 오늘 확정 근무는 빠지지 않았다(경고 불필요). 표식이 없으면(구서버) 기존 방어 그대로.
+          _appsMaybePartial = allApplications.length >= _kApplicationsReadLimit &&
+              !(_reads.myApplicationsLiveComplete?.call(uid) ?? false);
         });
+        _prefetchServerTime(uid, visibleWorks, tempMap); // [PERF-L38]
       }
 
       debugPrint('✅ 오늘 근무: ${visibleWorks.length}개 (전체 후보: ${todayWorks.length}개)');
@@ -319,8 +467,20 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
     if (uid == null) { setState(() => _isProcessing = false); return; }
 
     try {
+      _setStage('시간 확인 중…');
+      // [PERF-L39] 사업장을 이미 알고 위치 권한도 이미 있으면 위치 측정을 **지금** 시작한다 —
+      //   시간 확인·사업장 확인과 겹친다. 권한이 없으면 시작하지 않는다(고지 → OS 권한 → 측정 순서 유지).
+      //   수동 방식·닫힌 사업장처럼 위치가 필요 없는 근무에는 시작하지 않는다. 판정은 그대로 아래에서 한다.
+      final knownBusiness = _freshResolvedBusiness(work.businessId);
+      final earlyFix = (knownBusiness != null &&
+              _needsLocation(knownBusiness.attendanceType) &&
+              !AttendanceCheckScreen.closedForNewCheckIn(
+                  knownBusiness, work, FormatHelper.toKstDate(_now())))
+          ? _startFixIfPermitted()
+          : null;
       // 0. 기기 시간 변조 감지 (서버 시각과 5분 이상 차이 시 차단)
-      final timeValid = await DeviceIntegrityService().isDeviceTimeValid();
+      //   [PERF-L38] 미리 받은 서버 시각 표본이 조건을 맞으면 왕복 없이 확인(아니면 예전과 같은 서버 확인).
+      final timeValid = await _deviceTimeValidForTap(uid);
       if (!timeValid) {
         if (mounted) {
           await DialogHelper.showError(
@@ -332,12 +492,14 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         return;
       }
 
-      // 1. 사업장 정보 로드 (attendanceType 확인)
-      final business = await _firestoreService.getBusinessById(work.businessId);
+      // 1. 사업장 정보 로드 (attendanceType 확인) — [PERF-L39] 목록을 읽을 때 받아 둔 문서가 있으면 그것을 쓴다.
+      final business = await _businessFor(work.businessId);
       if (business == null) {
         if (mounted) await DialogHelper.showError(context, message: '사업장 정보를 찾을 수 없습니다.');
         return;
       }
+      // 같은 사업장 문서로 시작한 측정만 쓴다 — 그 사이 새로 읽은 문서면 아래 기존 순서로 다시 잰다.
+      final fix = identical(business, knownBusiness) ? await earlyFix : null;
 
       // [BUSINESS-ARCHIVE] 위치 확인 전에 막는다 — 닫힌 사업장에서 GPS 를 요구하지 않는다.
       if (AttendanceCheckScreen.closedForNewCheckIn(
@@ -353,6 +515,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       }
 
       final type = business.attendanceType; // 'gps' | 'beacon' | 'both' | 'manual'
+      _setStage('위치 확인 중…');
 
       // 2. 방식별 검증
       String usedMethod = type;
@@ -372,7 +535,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
 
       if (type == 'gps') {
         // ── GPS 전용 ───────────────────────────────────────────
-        final ok = await _verifyByGPS(business, loadingMsg: 'GPS 확인 중...');
+        final ok = await _verifyByGPS(business, loadingMsg: 'GPS 확인 중...', earlyFix: fix?.fix);
         if (ok == null) return; // 권한 거부 등
         if (!ok.$1) return;    // 범위 밖
         lat = ok.$2; lng = ok.$3;
@@ -381,7 +544,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       } else if (type == 'beacon') {
         // ── 비콘 전용 ─────────────────────────────────────────
         // [LOCATION-GATE] 비콘 스캔 후 GPS도 획득 — server GPS 거리 검증에 사용
-        final ok = await _verifyByBeacon(business);
+        final ok = await _verifyByBeacon(business, earlyFix: fix?.fix);
         if (!ok.$1 || !mounted) return;
         lat = ok.$2; lng = ok.$3;
         usedMethod = 'beacon';
@@ -389,7 +552,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       } else {
         // ── GPS + 비콘 병행 (both) ─────────────────────────────
         // GPS를 먼저 시도
-        final gpsResult = await _verifyByGPS(business, silent: true);
+        final gpsResult = await _verifyByGPS(business, silent: true, earlyFix: fix?.fix);
 
         if (gpsResult != null && gpsResult.$1) {
           // GPS 성공
@@ -397,9 +560,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
           usedMethod = 'gps';
         } else {
           // GPS 실패 또는 권한 없음 → 비콘 폴백
-          // Toast를 먼저 표시하고 잠시 후 비콘 스캔 (로딩 다이얼로그와 겹침 방지)
+          // [PERF-L39] 예전에는 안내 뒤 600ms 를 그냥 기다렸다(로딩 창과 겹침 방지) — 기다리지 않고 바로 스캔한다.
           if (mounted) ToastHelper.showInfo('GPS 확인 불가 — 비콘으로 재시도합니다.');
-          await Future.delayed(const Duration(milliseconds: 600));
           if (!mounted) return;
           // [LOCATION-GATE] 비콘 폴백도 GPS 좌표 획득 필수
           final beaconOk = await _verifyByBeacon(business);
@@ -419,6 +581,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       final attendanceWorkDate = work.isLongTermApplication
           ? FormatHelper.toKstDate(_now())
           : work.workDate;
+      _setStage('출근 기록 중…');
       final attendanceId = await _firestoreService.checkIn(
         applicationId: work.id,
         userId: uid,
@@ -438,7 +601,9 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         ToastHelper.showSuccess('출근이 완료되었습니다!');
         AnalyticsService.logCheckIn(method: usedMethod);
         if (!mounted) return;
-        await _loadTodayWorks();
+        // [PERF-L40] 화면을 비우지 않고 다시 읽는다 · 출근은 계약을 바꾸지 않으므로 계약 목록은 다시 받지 않는다.
+        _setStage(null);
+        await _loadTodayWorks(quiet: true, keepContracts: true);
         if (!mounted) return;
         _showRoundingFeedback(work.id, isCheckIn: true);
       }
@@ -451,12 +616,17 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         );
       }
       // [BUG-M1 수정 2026-07-27] 에러 후에도 재조회 — 배치 선처리(NO_SHOW 등)로 상태가 바뀐 경우 UI 동기화
-      if (mounted) await _loadTodayWorks();
+      //   [PERF-L40] 화면은 비우지 않는다. 거절 이유가 계약일 수 있으므로 계약 목록은 새로 받는다.
+      if (mounted) await _loadTodayWorks(quiet: true);
     } finally {
       if (mounted) {
-        setState(() => _isProcessing = false);
+        setState(() {
+          _isProcessing = false;
+          _stage = null;
+        });
       } else {
         _isProcessing = false; // mounted 아닐 때도 잠금 해제
+        _stage = null;
       }
     }
   }
@@ -492,7 +662,11 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
     BusinessModel business, {
     String loadingMsg = 'GPS 확인 중...',
     bool silent = false,
+    // [PERF-L39] 이미 권한을 확인하고 시작해 둔 측정. 있으면 고지·권한 확인을 건너뛴다
+    //   (권한이 이미 있으면 고지 창도 원래 뜨지 않는다) — 없으면 아래 기존 순서 그대로.
+    Future<LocationFix>? earlyFix,
   }) async {
+    if (earlyFix == null) {
     // [RELEASE-CORRECTION-PRIVACY-INLINE-DISCLOSURE]
     //   OS 권한 팝업이 뜨기 **직전에** 위치를 왜·언제 쓰는지 먼저 말한다.
     //   이미 허용했거나 silent 폴백 분기면 뜨지 않는다 — 매번 묻지 않는다.
@@ -541,6 +715,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       }
       return null;
     }
+    }
 
     bool loadingDialogShown = false;
     NavigatorState? loadingNav;
@@ -549,19 +724,24 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       DialogHelper.showLoading(context, message: loadingMsg);
       loadingDialogShown = true;
     }
-    final position = await LocationHelper.getCurrentPosition().whenComplete(() {
+    // [PERF-L39] 바로 위에서 권한을 확인했다 — 측정 안에서 같은 확인을 다시 하지 않는다.
+    final fixResult = await (earlyFix ??
+            LocationHelper.getCurrentPositionFix(permissionChecked: true))
+        .whenComplete(() {
       if (loadingDialogShown && loadingNav != null &&
           loadingNav.mounted && loadingNav.canPop()) {
         loadingNav.pop();
       }
     });
+    final position = fixResult.position;
 
     if (position == null) {
-      // LocationHelper.getCurrentPosition이 null 반환 = GPS 실패 또는 Mock GPS 감지
+      // [F291-C10] 실패 이유별로 안내한다 — 시간 초과·권한/서비스·측정 실패를 가짜 GPS 로 묶어 말하지 않는다.
+      //   가짜 위치는 그대로 거부한다(이유만 정확히 말한다).
       if (!silent && mounted) {
         await DialogHelper.showError(
           context,
-          message: 'GPS 위치를 가져올 수 없습니다.\n가짜 GPS 앱을 사용 중이거나 위치 서비스에 문제가 있습니다.',
+          message: _fixFailureMessage(fixResult.failure),
         );
       }
       return null;
@@ -618,7 +798,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   /// 반환: (verified, lat, lng)
   /// [LOCATION-GATE] 비콘 스캔 성공 후 GPS 좌표도 필수 획득 — server GPS radius 검증에 사용
   /// bare beacon(GPS 좌표 없음) 원격 체크인 차단 목적
-  Future<(bool, double?, double?)> _verifyByBeacon(BusinessModel business) async {
+  Future<(bool, double?, double?)> _verifyByBeacon(
+    BusinessModel business, {
+    Future<LocationFix>? earlyFix,
+  }) async {
     final uuid = business.beaconUUID;
     if (uuid == null || uuid.isEmpty) {
       if (mounted) {
@@ -630,6 +813,11 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       }
       return (false, null, null);
     }
+
+    // [PERF-L39] 위치 권한이 이미 있으면 GPS 측정을 비콘 스캔과 **동시에** 시작한다(예전: 스캔이 끝난 뒤 측정).
+    //   권한이 없으면 시작하지 않고 스캔 뒤 기존 순서(권한 요청 포함)로 잰다.
+    final Future<LocationFix>? parallelFix =
+        earlyFix ?? (await _startFixIfPermitted())?.fix;
 
     // [FIX-HIGH] getBusinessById 이후 unmount 가능 — mounted 체크 후 Navigator.of(context) 호출
     if (!mounted) return (false, null, null);
@@ -680,7 +868,9 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
     // GPS가 없으면 server에서 위치 검증 불가 → 체크인 차단
     if (!mounted) return (false, null, null);
     DialogHelper.showLoading(context, message: 'GPS 확인 중...');
-    final gpsPosition = await LocationHelper.getCurrentPosition();
+    final gpsFix =
+        await (parallelFix ?? LocationHelper.getCurrentPositionFix());
+    final gpsPosition = gpsFix.position;
     if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
       Navigator.of(context, rootNavigator: true).pop();
     }
@@ -688,11 +878,16 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
 
     if (gpsPosition == null) {
       if (mounted) {
+        // [F291-C10] 가짜 위치·시간 초과는 그 이유를 말한다. 그 밖(권한·서비스·측정 실패)은 기존 안내.
+        final failure = gpsFix.failure;
         await DialogHelper.showError(
           context,
           title: 'GPS 필요',
-          message: '비콘 출근 시 GPS 위치도 확인이 필요합니다.\n'
-              'GPS를 활성화하고 다시 시도해주세요.',
+          message: (failure == LocationFixFailure.mocked ||
+                  failure == LocationFixFailure.timeout)
+              ? _fixFailureMessage(failure)
+              : '비콘 출근 시 GPS 위치도 확인이 필요합니다.\n'
+                  'GPS를 활성화하고 다시 시도해주세요.',
         );
       }
       return (false, null, null);
@@ -714,7 +909,9 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         confirmText: '퇴근',
       );
       if (!confirmed || !mounted) return;
-      final business = await _firestoreService.getBusinessById(work.businessId);
+      _setStage('위치 확인 중…');
+      // [PERF-L39] 목록을 읽을 때 받아 둔 사업장 문서가 있으면 그것을 쓴다.
+      final business = await _businessFor(work.businessId);
       if (business == null) {
         if (mounted) await DialogHelper.showError(context, message: '사업장 정보를 찾을 수 없습니다.');
         return;
@@ -748,8 +945,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
           lat = gpsResult.$2; lng = gpsResult.$3;
           usedMethod = 'gps';
         } else {
+          // [PERF-L39] 고정 600ms 대기 없이 바로 비콘 스캔으로 간다.
           if (mounted) ToastHelper.showInfo('GPS 확인 불가 — 비콘으로 재시도합니다.');
-          await Future.delayed(const Duration(milliseconds: 600));
           if (!mounted) return;
           // [LOCATION-GATE] 비콘 폴백도 GPS 좌표 획득 필수
           final beaconOk = await _verifyByBeacon(business);
@@ -770,7 +967,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
 
       // endTime < startTime 검증은 _firestoreService.checkOut() 내부에만 있음.
       //           클라이언트에서는 사전 차단 없이 서비스 계층의 에러 응답에만 의존.
-      final success = await _firestoreService.checkOut(
+      _setStage('퇴근 기록 중…');
+      final result = await _firestoreService.checkOutWithResult(
         attendanceId: attendance.id,
         workDate: attendance.workDate,
         latitude: lat,
@@ -781,11 +979,17 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         attendanceRules: business.attendanceRules,
       );
 
-      if (success && mounted) {
+      if (result.success && mounted) {
         final uid = context.read<UserProvider>().currentUser?.uid;
         if (uid != null) _firestoreService.invalidateMyAttendanceCache(uid);
         AnalyticsService.logCheckOut(method: usedMethod);
-        await _loadTodayWorks();
+        // [PERF-L40] 화면을 비우지 않고 다시 읽는다 · 퇴근은 계약을 바꾸지 않으므로 계약 목록은 다시 받지 않는다.
+        _setStage(null);
+        final refresh = _loadTodayWorks(quiet: true, keepContracts: true);
+        // [PERF-L40] 인정 0분 여부는 서버 응답으로 바로 안다 — 다시 읽기를 기다리지 않고 안내한다.
+        //   응답에 값이 없으면(구 서버) 기존처럼 다시 읽은 기록으로 판단한다.
+        final zeroFromServer = result.isZeroWork;
+        if (zeroFromServer == null) await refresh;
         if (!mounted) return;
 
         // [R7-ATTENDANCE-SHORT-SHIFT-BOUNDARY.2] 두 사실을 구분해 말한다.
@@ -799,7 +1003,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         //
         //   근로자 잘못이 아니므로 그렇게 읽히는 문구를 쓰지 않는다.
         final att = _attendanceMap[work.id];
-        if (att?.isZeroWork == true) {
+        if (zeroFromServer ?? (att?.isZeroWork == true)) {
           await DialogHelper.showAlert(
             context,
             title: '퇴근 시각은 기록됐어요',
@@ -812,6 +1016,9 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
           );
         } else {
           ToastHelper.showSuccess('퇴근이 완료되었습니다!');
+          // 반올림 안내는 다시 읽은 기록으로 한다.
+          await refresh;
+          if (!mounted) return;
           _showRoundingFeedback(work.id, isCheckIn: false);
         }
       }
@@ -823,10 +1030,79 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
           message: e.toString().replaceAll('Exception: ', ''),
         );
       }
+      // [AUD-5 ②-4] 출근 실패와 같이 오류 뒤에도 다시 읽는다 — 응답만 늦고 서버는 퇴근을 기록했으면 '퇴근하기' 버튼이
+      //   그대로 남아 다시 눌러도 '이미 퇴근' 오류만 반복됐다. 거절 이유가 계약일 수 있으므로 출근 실패처럼 계약도 새로 받는다.
+      if (mounted) await _loadTodayWorks(quiet: true);
     } finally {
-      if (mounted) setState(() => _isProcessing = false);
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _stage = null;
+        });
+      } else {
+        _isProcessing = false;
+        _stage = null;
+      }
     }
   }
+
+  // ── [PERF-L39 · 2026-11-26] 사업장 미리 읽기 · 위치 측정 미리 시작 ─────────────
+
+  /// 오늘 근무 사업장 문서를 기다리지 않고 받아 둔다. 실패는 여기서 삼키고 누를 때 새로 읽는다.
+  void _prefetchBusinesses(Iterable<ApplicationModel> works) {
+    final read = _reads.businessById;
+    if (read == null) return;
+    final ids = works.map((w) => w.businessId).where((id) => id.isNotEmpty).toSet();
+    for (final id in ids) {
+      final at = DateTime.now();
+      final future = read(id);
+      _businessPrefetch[id] = (at: at, future: future);
+      future.then((b) {
+        if (b != null && identical(_businessPrefetch[id]?.future, future)) {
+          _businessResolved[id] = (at: at, business: b);
+        }
+      }, onError: (Object e) {
+        debugPrint('⚠️ 출근 화면 사업장 미리 읽기 실패($id): $e');
+      });
+    }
+  }
+
+  /// 미리 받은 사업장 문서(아직 신선한 것)만 — 없으면 null.
+  BusinessModel? _freshResolvedBusiness(String businessId) {
+    final r = _businessResolved[businessId];
+    if (r == null) return null;
+    if (DateTime.now().difference(r.at) >= _businessPrefetchMaxAge) return null;
+    return r.business;
+  }
+
+  /// 누를 때 쓸 사업장 문서 — 미리 받은 것이 신선하면 그것, 아니면(오래됨·실패·없음) 지금 새로 읽는다.
+  Future<BusinessModel?> _businessFor(String businessId) async {
+    final p = _businessPrefetch[businessId];
+    if (p != null && DateTime.now().difference(p.at) < _businessPrefetchMaxAge) {
+      try {
+        final b = await p.future;
+        if (b != null) return b;
+      } catch (_) {
+        // 미리 읽기 실패 — 아래에서 새로 읽는다.
+      }
+    }
+    return _firestoreService.getBusinessById(businessId);
+  }
+
+  static bool _needsLocation(String attendanceType) =>
+      attendanceType == 'gps' || attendanceType == 'beacon' || attendanceType == 'both';
+
+  /// 위치 권한·위치 서비스가 **이미** 켜져 있을 때만 측정을 시작한다(요청 팝업 없음).
+  ///   아니면 null — 호출부는 기존 순서(고지 → OS 권한 → 측정)로 간다.
+  Future<({Future<LocationFix> fix})?> _startFixIfPermitted() async {
+    final r = await LocationHelper.checkAndRequestPermissionDetailed(
+        requestIfNeeded: false);
+    if (r != LocationCheckResult.ok) return null;
+    return (fix: LocationHelper.getCurrentPositionFix(permissionChecked: true));
+  }
+
+  String _fixFailureMessage(LocationFixFailure? failure) =>
+      AttendanceCheckScreen.fixFailureMessageFor(failure);
 
   /// 리컨펌 응답 처리 — confirmed: 출근 확인, declined: 취소 후 목록 갱신
   Future<void> _respondToReconfirm(ApplicationModel work, String response) async {
@@ -870,7 +1146,9 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         child: _isLoading
             ? const LoadingWidget(message: '근무 정보를 불러오는 중...')
             : (_todayWorks.isEmpty && _upcomingReconfirmWorks.isEmpty)
-                ? (_loadError != null ? _buildErrorState() : _buildEmptyState())
+                ? (_loadError != null
+                    ? _buildErrorState()
+                    : (_appsMaybePartial ? _buildPartialState() : _buildEmptyState()))
                 : RefreshIndicator(
                     onRefresh: _loadTodayWorks,
                     child: ListView.builder(
@@ -900,6 +1178,22 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       iconColor: AppColors.grey500,
       title: '근무 정보를 불러오지 못했습니다',
       subtitle: '확정된 근무가 없다는 뜻이 아닙니다.\n잠시 후 다시 시도해주세요.',
+      action: TextButton.icon(
+        onPressed: _isLoading ? null : _loadTodayWorks,
+        icon: const Icon(Icons.refresh, size: 18),
+        label: const Text('다시 시도'),
+      ),
+    );
+  }
+
+  /// [AUD-4 H3] 지원서를 상한까지만 읽어 오늘 근무가 빠졌을 수 있는 상태 — '없음' 과 구분한다.
+  Widget _buildPartialState() {
+    return AppEmptyState(
+      icon: Icons.manage_search_outlined,
+      iconColor: AppColors.grey500,
+      title: '오늘 근무를 모두 확인하지 못했어요',
+      subtitle: '지원 내역이 많아 일부만 불러왔어요.'
+          '\n확정된 근무가 없다는 뜻이 아니에요. 다시 시도해 주세요.',
       action: TextButton.icon(
         onPressed: _isLoading ? null : _loadTodayWorks,
         icon: const Icon(Icons.refresh, size: 18),
@@ -962,6 +1256,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       icon: Icons.login,
       expand: true,
       isLoading: _isProcessing,
+      loadingText: _stage,
       onPressed:
           (notYetOpen || !gate.allowsCheckIn) ? null : () async => _checkIn(work),
     );
@@ -1080,11 +1375,16 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
                   role: 'worker',
                 ),
               ),
-            ).then((_) async {
+            ).then((result) async {
               // 서명 결과는 화면이 다시 읽은 계약 문서로만 판단한다(돌아온 값·캐시를 믿지 않는다).
               if (!mounted) return;
-              await userProvider.refreshPendingContracts();
-              if (!mounted) return;
+              // [PERF-L41] 서명이 끝났으면(서명 화면이 갱신된 계약을 돌려줌) 서명 화면이 이미 미서명 목록을
+              //   새로 읽고 돌아왔다 — 같은 조회를 한 번 더 하지 않는다. 그 밖(뒤로 나옴 등)은 예전처럼 읽는다.
+              //   출근 판정 근거(계약 목록)는 아래 다시 읽기가 언제나 새로 받는다.
+              if (result is! EmploymentContractModel) {
+                await userProvider.refreshPendingContracts();
+                if (!mounted) return;
+              }
               await _loadTodayWorks();
             }),
             icon: const Icon(Icons.description_outlined, size: 18),
@@ -1231,6 +1531,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
                 //   글자·아이콘·위 `출근 완료` 상자로 구별되고, 확인 단계는 그대로다.
                 backgroundColor: AppColors.brand,
                 isLoading: _isProcessing,
+                loadingText: _stage,
                 onPressed: () async => _checkOut(work, attendance!),
               )
             else

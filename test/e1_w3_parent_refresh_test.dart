@@ -309,7 +309,7 @@ Future<void> _openWorkDialog(WidgetTester t) async {
 
 /// 업무별 창 → 인력 초대 → 직접 초대 → 발송(응답 유실) → 확인 실패 상태.
 Future<void> _sendAmbiguous(WidgetTester t) async {
-  await t.tap(find.textContaining('근무 초대').first);
+  await t.tap(findVisibleTextContaining('근무 초대').first);
   await _settle(t);
   await t.tap(find.text('직접 초대'));
   await _settle(t);
@@ -334,7 +334,7 @@ Future<void> _closeInviteDialog(WidgetTester t, _Close how) async {
 
 Future<void> _closeWorkDialog(WidgetTester t, _Close how) async {
   if (how == _Close.button) {
-    await t.tap(find.text('닫기').last);
+    await t.tap(findVisibleText('닫기').last);
   } else {
     await t.binding.handlePopRoute();
   }

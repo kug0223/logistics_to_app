@@ -241,7 +241,16 @@ void main() {
       // [POSTING-AUTH-45] `posting_partial_revoke.dart` 도 같은 종류다 — details.code 가
       //   PERMISSION_REVOKED_MIDWAY 인지 code 로만 가르는 판정 1개(소비자: 공고 카드 2곳·공고 삭제 서비스 1곳).
       //   메시지를 변환하지 않는다.
-      const allowed = {'applicant_load_outcome.dart', 'e1_debug_fault.dart', 'approve_review_error_message.dart', 'posting_partial_revoke.dart'};
+      // [impl_59 · 조정자 지시] 이 울타리는 POSTING-V2-03E.1(b8ae7f5) §6 의 **범위 울타리**다 — 그 Phase 가
+      //   재오픈 실패 수리 중에 공용 error mapper 를 추출하지 않았음을 고정했다(주석 원문 '이번 Phase 범위보다 크다').
+      //   제품 금지 결정이 아니다. 아래 두 파일은 뒤 판정이 요구한 **서버 거절 code 표**다:
+      //   · `request_relation_error.dart`(impl_42 · 서버296 보안 묶음) — SCR/PCR 관계 불일치 details.code 2종 판정 + 기본 문구.
+      //   · `server_reject_codes.dart`(impl_58/59 · server_296–298) — details.code 별 안내 · 입력 경계(서버와 같은 값) ·
+      //     확정 취소 결과(ConfirmCancelResult) · 관리자 처리 실패 기본 안내 1개(adminActionErrorMessage: code → 오프라인 →
+      //     보여도 되는 서버 문구 → 자리별 fallback · 원시 예외 0). 서버 문구를 다른 문장으로 '변환'하는 범용 틀은 아니다.
+      //   그 밖에 새로 생기면 여전히 걸린다.
+      const allowed = {'applicant_load_outcome.dart', 'e1_debug_fault.dart', 'approve_review_error_message.dart', 'posting_partial_revoke.dart',
+        'request_relation_error.dart', 'server_reject_codes.dart'};
       final offenders = Directory('lib/utils')
           .listSync()
           .whereType<File>()

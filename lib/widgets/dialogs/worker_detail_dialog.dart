@@ -39,6 +39,7 @@ import '../../services/applicant_document_review_service.dart';
 import '../../services/tax_identity_review_service.dart';
 import '../../services/worker_payroll_account_service.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import '../../utils/server_reject_codes.dart';
 
 /// [UI-3] 상세 머리줄의 성별·나이 조각. 저장 계약('남성'·'여성')이 아닌 성별 값은
 ///   추정하지 않고 뺀다. 나이는 생년월일로 계산된 1세 이상만 쓴다(판정 정책은 그대로).
@@ -151,6 +152,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   // [ADMIN-DOC-REVIEW-UX] 조회 실패(모름) — 아직 안 읽은 것과 구분한다.
   bool _docReviewFailed = false;
 
+  /// [impl_27b · L48 같은 꼴] 서류 검토 상태 읽기 차례 — 늦게 끝난 옛 판정이 새 판정을 덮지 않게(승인 열림의 근거다).
+  int _docReviewGen = 0;
+
   // [ADMIN-APPROVAL-PERMISSION] 입력은 확정 권한·서류 조회·신분 확인뿐이다.
   //   부가 조회(_auxLoading)는 확정 조건이 아니라 넣지 않는다.
   ApprovalGate _approvalGateWith(PermissionCheck permission) => approvalGateOf(
@@ -169,6 +173,17 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   }
 
   ApprovalGate get _approvalGate => _approvalGateWith(_confirmPermission());
+
+  /// [impl_58] 리뷰 작성·확인 권한 — rules monthly_reviews(ADMIN_TO_USER create · get)와 같은 축:
+  ///   소유자·관리자 허용, 서브관리자는 canManageWorkers. 네 상태 — 모름·오류를 허용으로 접지 않는다.
+  PermissionCheck _reviewPermission({bool listen = false}) {
+    final bizId = widget.businessId;
+    if (bizId == null || bizId.isEmpty) return PermissionCheck.unknown;
+    return Provider.of<UserProvider>(context, listen: listen)
+        .checkForBusiness(bizId, (p) => p.canManageWorkers);
+  }
+
+  static const String _noReviewPermissionText = '리뷰는 인력 관리 권한이 있어야 작성·확인할 수 있어요';
   bool? _hasAttendance;  // 출퇴근 기록 여부 (null=로딩중, true=있음, false=없음)
   bool? _hasWrittenReview;     // 리뷰 작성 여부 (null=미확인)
   EmploymentContractModel? _contract;
@@ -238,7 +253,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             : Future.value(null),
 
         // 5: 리뷰 작성 여부 (확정자 + businessId 있을 때)
-        (widget.isConfirmed && app != null && widget.businessId != null)
+        //    [impl_58] 권한 없는 서브관리자는 rules 가 읽기를 막아 '미작성'으로 보였다 — 확인된 거부면 읽지 않는다.
+        (widget.isConfirmed && app != null && widget.businessId != null &&
+                _reviewPermission() != PermissionCheck.denied)
             ? _checkReviewWritten(app)
             : Future.value(null),
 
@@ -293,6 +310,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       if (mounted) setState(() => _docReviewFailed = true);
       return;
     }
+    final gen = ++_docReviewGen;
     if (mounted) {
       setState(() {
         _docReviewLoading = true;
@@ -302,14 +320,14 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     try {
       final r = await ApplicantDocumentReviewService.instance
           .load(applicationId: app.id, businessId: bizId);
-      if (!mounted) return;
+      if (!mounted || gen != _docReviewGen) return;
       setState(() {
         _docReview = r;
         _docReviewLoading = false;
       });
     } catch (e) {
       debugPrint('[R1.2] 서류 검토 상태 로드 실패: $e');
-      if (!mounted) return;
+      if (!mounted || gen != _docReviewGen) return;
       // 실패를 '서류 없음'으로 바꾸지 않는다 — null로 두고 화면이 그렇게 말한다.
       // [ADMIN-DOC-REVIEW-UX] 이전 성공값도 버린다 — 낡은 판정으로 승인을 열지 않는다.
       setState(() {
@@ -2330,15 +2348,24 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           if (isConfirmed && widget.application != null && widget.businessId != null) ...[
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             Expanded(
-              child: _buildDialogButton(
-                label: _hasWrittenReview == true ? '리뷰 확인' : '리뷰 작성',
-                icon: _hasWrittenReview == true
-                    ? Icons.rate_review
-                    : Icons.rate_review_outlined,
-                bgColor: primary.withValues(alpha: 0.08),
-                textColor: primary,
-                onTap: _openReviewDialog,
-              ),
+              // [impl_58] 확인된 권한 거부면 작성 입구 대신 '권한 없음'(누르면 이유) — rules 가 저장을 거절하는 길로 보내지 않는다.
+              child: _reviewPermission(listen: true) == PermissionCheck.denied
+                  ? _buildDialogButton(
+                      label: '리뷰 권한 없음',
+                      icon: Icons.lock_outline,
+                      bgColor: AppColors.grey100,
+                      textColor: AppColors.grey500,
+                      onTap: () => ToastHelper.showInfo(_noReviewPermissionText),
+                    )
+                  : _buildDialogButton(
+                      label: _hasWrittenReview == true ? '리뷰 확인' : '리뷰 작성',
+                      icon: _hasWrittenReview == true
+                          ? Icons.rate_review
+                          : Icons.rate_review_outlined,
+                      bgColor: primary.withValues(alpha: 0.08),
+                      textColor: primary,
+                      onTap: _openReviewDialog,
+                    ),
             ),
           ],
 
@@ -2593,7 +2620,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       debugPrint('❌ 상태 업데이트 실패: $e');
       if (mounted) {
         setState(() => _isLoading = false);
-        ToastHelper.showError('$actionText 처리 중 오류가 발생했습니다');
+        // [impl_58 · server_297] 겹침 확인 미완료(OVERLAP_CHECK_INCOMPLETE · 확정 0)는 다시 시도하라고 말한다.
+        ToastHelper.showError(overlapCheckIncompleteMessageOf(e) ?? '$actionText 처리 중 오류가 발생했습니다');
       }
     }
   }
@@ -2743,19 +2771,22 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     }
 
     try {
-      final success = await _firestoreService.cancelConfirmedApplication(
+      // [impl_59] 결과판 — 예전: 서비스가 사유 토스트를 띄운 뒤 false, 여기서 '확정 취소 처리 중 오류가 발생했습니다'가 그 사유를 덮었다.
+      final cancel = await _firestoreService.cancelConfirmedApplicationWithResult(
         widget.application!.id,
         applyNoShowPenalty: false,
         canceledBy: adminUID,
         cancelReason: cancelReason,
       );
 
-      if (mounted && success) {
+      if (mounted && cancel.success) {
         Navigator.pop(context, true);
         ToastHelper.showSuccess('확정이 취소되었습니다');
         widget.onStatusChanged?.call();
-      } else if (mounted && !success) {
-        ToastHelper.showError('확정 취소 처리 중 오류가 발생했습니다');
+      } else if (mounted && !cancel.success) {
+        // 결과 모름이면 부모 목록이 서버 상태를 다시 읽게 한다(취소됐을 수도 있다). 창은 그대로 둔다.
+        if (cancel.outcomeUnknown) widget.onStatusChanged?.call();
+        ToastHelper.showError(cancel.message);
       }
     } catch (e) {
       debugPrint('❌ 확정 취소 실패: $e');
@@ -3004,6 +3035,20 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     if (_auxLoading || _isLoading) return;
     final app = widget.application;
     if (app == null || widget.businessId == null) return;
+    // [impl_58] 실행 시점 재확인 — 권한이 확인되지 않으면 작성 폼을 열지 않는다(저장은 rules 가 거절한다).
+    switch (_reviewPermission()) {
+      case PermissionCheck.allowed:
+        break;
+      case PermissionCheck.denied:
+        ToastHelper.showInfo(_noReviewPermissionText);
+        return;
+      case PermissionCheck.unknown:
+        ToastHelper.showInfo('리뷰 권한을 확인하고 있어요. 잠시만 기다려 주세요.');
+        return;
+      case PermissionCheck.error:
+        ToastHelper.showWarning('리뷰 권한을 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.');
+        return;
+    }
 
     final reviewer = context.read<UserProvider>().currentUser;
     if (reviewer == null) return;

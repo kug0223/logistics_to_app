@@ -10,6 +10,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 String _read(String p) => File(p).readAsStringSync().replaceAll('\r\n', '\n');
 
+/// [L57 r7] `prefix` 로 시작하는 호출이 그대로(`);`) 또는 꼬리 인자 하나(`tail` · 기본 `, 식별자`)를 더 붙여 끝나는가.
+bool _callWithOptionalTail(String src, String prefix, {String tail = r', \w+'}) =>
+    RegExp('${RegExp.escape(prefix)}(?:$tail)?\\);').hasMatch(src);
+
 void main() {
   final cf = _read('functions/src/index.ts');
   String fnBody(String sig) {
@@ -21,8 +25,12 @@ void main() {
   group('WI-1 서버 — 근무에 업무유형 id', () {
     test('WI-11 다섯 writer 가 모두 같은 helper 로 id 를 남긴다', () {
       expect('await srvBindWorkTypeIds('.allMatches(cf).length, 5);
-      expect(cf, contains('await srvBindWorkTypeIds(businessId, toWorkDetailsCreate as Record<string, unknown>[], [], role === "SUPER_ADMIN");'));
-      expect(cf, contains('await srvBindWorkTypeIds(businessId, normalizedFlexWDs, [], role === "SUPER_ADMIN");'));
+      // [L57 r7] 같은 요청의 업무유형 목록(catalog)을 마지막 인자로 넘길 수 있다 — 지키려던 것은
+      //   "생성 writer 두 곳이 같은 helper 로 id 를 남긴다" 이므로 인자 유무 둘 다 받는다(그 밖의 모양은 실패).
+      expect(_callWithOptionalTail(cf,
+          'await srvBindWorkTypeIds(businessId, toWorkDetailsCreate as Record<string, unknown>[], [], role === "SUPER_ADMIN"'), isTrue);
+      expect(_callWithOptionalTail(cf,
+          'await srvBindWorkTypeIds(businessId, normalizedFlexWDs, [], role === "SUPER_ADMIN"'), isTrue);
     });
     test('WI-12 기존 근무의 id 는 저장본 그대로 · 새 근무만 검증(이름 일치·활성) · 모호하면 찍지 않는다', () {
       final b = fnBody('async function srvBindWorkTypeIds(');
@@ -34,7 +42,10 @@ void main() {
 
   group('WI-2 D4 — 기존 공고 공개는 업무유형 목록으로 막지 않는다', () {
     test('WI-21 생성만 활성 업무유형을 본다', () {
-      expect(cf, contains('await assertBusinessPostingReady(businessId, bizAuthSnap.data());'));
+      // [L57 r7] 생성은 준비 판정에 같은 요청의 업무유형 목록을 넘길 수 있다(`{workTypeCatalog: …}`) — 활성 업무유형을
+      //   보는 것은 그대로(existingPosting 없음). 인자 유무 둘 다 받는다.
+      expect(_callWithOptionalTail(cf, 'await assertBusinessPostingReady(businessId, bizAuthSnap.data()',
+          tail: r', \{workTypeCatalog: \w+\}'), isTrue);
       expect(cf, contains('await assertBusinessPostingReady(businessId, authBizDataPub, {existingPosting: true});'));
       expect(cf, contains('await assertBusinessPostingReady(businessId, authBizDataUpdate, {existingPosting: true});'));
       expect(cf, contains('bizId, freshBizSnaps[bi].data(), txReadinessReader(tx), {existingPosting: true}'));
@@ -80,7 +91,11 @@ void main() {
         final r = _read(p);
         final i = r.indexOf('match /workTypes/{workTypeId} {');
         final b = r.substring(i, r.indexOf('\n      }\n', i));
-        expect(b, contains(".affectedKeys().hasAny(['businessId', 'name', 'icon', 'color', 'backgroundColor']);"));
+        // [판정281 갱신] 서버 fence: 쓰기 규칙 바깥에 `callerNotDeleting() && (` 감싸기만 붙었다 — 안쪽 조건 단언은 그대로.
+        // 본 rules 는 바깥 fence 의 닫는 괄호 하나만 더 붙는다. 후보 rules 파일(rules_candidates)은 fence 이전 원문 그대로.
+        expect(b, contains(p == 'firestore.rules'
+            ? ".affectedKeys().hasAny(['businessId', 'name', 'icon', 'color', 'backgroundColor']));"
+            : ".affectedKeys().hasAny(['businessId', 'name', 'icon', 'color', 'backgroundColor']);"));
         expect(b, contains('allow delete: if false;'));
       });
     }

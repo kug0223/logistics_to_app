@@ -7,6 +7,9 @@ import 'theme/app_colors.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
+import 'providers/user_snapshot_prefetch.dart';
+import 'services/app_check_ready.dart';
 import 'services/app_version_service.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -21,22 +24,27 @@ import 'providers/notification_provider.dart';
 import 'providers/network_provider.dart';
 import 'providers/badge_provider.dart';
 import 'models/core/user_model.dart';
-import 'screens/auth/login_screen.dart';
+import 'screens/auth/auth_start_screen.dart';
+import 'services/auth/kakao_auth_service.dart';
 import 'screens/user/user_root_screen.dart';
 import 'screens/super_admin/super_admin_home_screen.dart';
 import 'screens/business_admin/business_admin_shell.dart';
 import 'screens/common/splash_screen.dart';
 import 'screens/common/forced_update_screen.dart';
 import 'screens/common/onboarding_screen.dart';
+import 'screens/common/deletion_reauth_screen.dart';
 import 'utils/wage_calculator.dart';
 import 'services/fcm_service.dart';
 import 'services/insurance_rate_service.dart';
 import 'services/analytics_service.dart';
 import 'utils/app_navigator_observer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'utils/prefs_preload.dart';
+import 'utils/perf_log.dart';
 import 'widgets/common/network_banner.dart';
 import 'utils/tour_helper.dart';
 import 'utils/navigation_key.dart';
+import 'utils/sensitive_cache_cleanup.dart';
 import 'widgets/inputs/home_region_picker_sheet.dart';
 import 'models/core/user_region.dart';
 import 'services/firestore_service.dart';
@@ -54,11 +62,17 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 }
 
 void main() async {
+  // [PERF] t0 — 꺼진 빌드(기본)에서는 아무것도 하지 않는다(utils/perf_log.dart).
+  PerfLog.start();
   // preserve()는 ensureInitialized() 직후 가장 먼저 호출해야 함
   // Firebase.initializeApp() 동안에도 네이티브 스플래시를 유지시켜
   // SplashScreen 위젯이 준비된 후 remove()를 호출할 때까지 대기
   final binding = WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(widgetsBinding: binding);
+
+  // [PERF-P3] 로컬 저장소를 Firebase 초기화와 **겹쳐서** 미리 연다(기다리지 않는다).
+  //   AuthWrapper 가 uid 확정 뒤 온보딩 여부를 같은 프레임에 읽어, 흰 스피너 프레임을 없앤다.
+  unawaited(PrefsPreload.start());
 
   // 세로 모드 고정 — 가로 회전 레이아웃 깨짐 방지
   await SystemChrome.setPreferredOrientations([
@@ -79,6 +93,7 @@ void main() async {
     );
 
     // Remote Config 초기화 (버전 체크용)
+    PerfLog.mark('main.firebase.done');
     await AppVersionService.init();
 
     // Firebase App Check — API 키 무단 사용 방지
@@ -99,13 +114,29 @@ void main() async {
     // 토큰 미리 발급 (실패해도 앱 시작 차단 안 함)
     // 앱 시작 시 여러 CF가 동시에 호출되면 각각이 토큰을 요청하면서
     // SDK 내부 "Too many attempts" 에러 방지 — 캐시에 미리 저장
-    await FirebaseAppCheck.instance.getToken().catchError((_) => null);
+    // [PERF-L12] runApp 은 이 토큰을 기다리지 않는다. 첫 토큰 받기는 한 번만 출발하고(공유 future),
+    //   앱 시작 직후의 첫 Firebase 요청들(사용자 문서 · 미리 읽기 · 최저시급/보험료율 · 로그인)이
+    //   `AppCheckReady.wait()` 로 그 같은 future 에 합류한 뒤 나간다 — "Too many attempts" 방어는 그대로.
+    unawaited(AppCheckReady.start(() => FirebaseAppCheck.instance.getToken())
+        .whenComplete(() => PerfLog.mark('main.appcheck.done')));
 
     // Firestore 캐시 설정 (서버 우선)
     FirebaseFirestore.instance.settings = const Settings(
       persistenceEnabled: true,
       cacheSizeBytes: 100 * 1024 * 1024, // 100MB 상한 (무제한 → 저장공간 보호)
     );
+
+    // (Firestore settings 는 첫 사용 전에만 바꿀 수 있다 — 그래서 settings 바로 뒤다.)
+    // [PERF-L1 안전판 · 판정289 §3] 복원된 세션이 있으면 사용자 문서 **읽기만** 버전 판정과 겹쳐 출발시킨다.
+    //   부수효과 0(구독·FCM·쓰기·callable 없음). 판정 뒤 UserProvider 가 uid·시효를 보고 1회 소비하고,
+    //   기존 세대 검사·계정 판정을 그대로 지난다. 실패하면 소비자가 평소처럼 다시 읽는다.
+    final restoredUid = FirebaseAuth.instance.currentUser?.uid;
+    if (restoredUid != null) {
+      // [PERF-L12] 첫 토큰에 합류한 뒤 읽는다(토큰 요청을 겹치지 않게).
+      UserSnapshotPrefetch.start(restoredUid,
+          (uid) => AppCheckReady.wait().then((_) => AuthService().getUserData(uid)));
+      PerfLog.mark('main.userPrefetch.start');
+    }
 
     // Crashlytics: 웹 미지원 — 모바일/데스크톱에서만 활성화
     if (!kIsWeb) {
@@ -123,6 +154,10 @@ void main() async {
       return _AppErrorWidget(details: details);
     };
 
+    // [AUD-10 M2 · impl_70] 이전 실행이 남긴 플러그인 공유 사본(cache/share_plus · cache/share) 정리 —
+    //   첫 화면과 겹치지 않게 늦게 한 번(기다리지 않는다 · 실패 무시).
+    SensitiveCacheCleanup.onAppStart();
+
     debugPrint('✅ Firebase 초기화 완료');
   } catch (e) {
     // Firebase 초기화 실패 시에도 앱을 계속 실행한다.
@@ -130,9 +165,15 @@ void main() async {
     // SplashScreen → AuthWrapper가 로딩 상태를 표시하므로 사용자 UX는 유지된다.
     debugPrint('❌ Firebase 초기화 에러: $e');
   }
+  // [ALFIT-AUTH-KAKAO-ONBOARDING.1] 카카오 SDK — 네이티브 앱 키(dart-define)가 있을 때만 초기화. 없으면 '준비 중'.
+  KakaoAuthService.install();
+
   // 최저시급·보험료율 캐시 로드 (병렬, 실패해도 로컬 백업 사용)
-  WageCalculator.loadMinimumWages();
-  InsuranceRateService.loadRates();
+  // [PERF-L12] 예전에는 main 이 App Check 첫 토큰을 기다린 뒤라 이미 토큰이 있었다 — 같은 순서를 지킨다.
+  unawaited(AppCheckReady.wait().then((_) {
+    WageCalculator.loadMinimumWages();
+    InsuranceRateService.loadRates();
+  }));
 
   // 🔔 FCM에 Navigator Key 전달
   FCMService().setNavigatorKey(navigatorKey);
@@ -174,7 +215,9 @@ void main() async {
     );
   });
 
+  PerfLog.mark('main.runApp');
   runApp(const MyApp());
+  PerfLog.watchFrames();
 }
 
 class MyApp extends StatelessWidget {
@@ -298,7 +341,37 @@ class _AuthWrapperState extends State<AuthWrapper> {
         isSubAdmin: p.currentUser?.isSubAdmin ?? false,
         isAdminMode: p.isAdminMode,
       ),
-      builder: (context, _, __) {
+      // [PERF-L4] 라우팅 판정은 그대로 `_routeFor` 가 하고, 결과를 스플래시 이어받기로 감싼다.
+      builder: (context, _, __) => _withSplashHandoff(_routeFor(context)),
+    );
+  }
+
+  /// [PERF-L4] 첫 인증 확인 동안 스플래시(같은 배경)를 보였는가 — 다음 실제 화면이 한 번 페이드로 이어받는다.
+  bool _splashHandoffArmed = false;
+
+  /// [PERF] 라우팅 표식 — 화면 종류가 바뀔 때만 한 줄(매 build 출력 0).
+  String? _perfLastRoute;
+
+  /// [PERF-L4] 스플래시 → 첫 실제 화면을 **한 번의 페이드**로 잇는다.
+  ///   예전: 스플래시(그라데이션) → 그라데이션 스피너 → 흰 스피너 → 홈 뼈대가 끊겨 바뀌었다.
+  ///   흰 스피너는 P3 로 없앴고, 남은 '그라데이션 → 홈 뼈대' 끊김을 여기서 잇는다.
+  ///   새 최소 대기는 없다 — 실제 화면은 즉시 만들어지고 읽기·입력도 바로 시작한다.
+  ///   페이드는 첫 인증 확인 스플래시가 실제로 보였을 때 한 번뿐이고, 이후 화면 전환은 예전처럼 즉시다.
+  Widget _withSplashHandoff(Widget routed) {
+    if (PerfLog.enabled) {
+      final kind = routed.runtimeType.toString();
+      if (kind != _perfLastRoute) {
+        _perfLastRoute = kind;
+        PerfLog.mark('auth.route', () => {'to': kind});
+      }
+    }
+    if (routed is SplashLoadingScreen) return routed;
+    final fadeIn = _splashHandoffArmed;
+    _splashHandoffArmed = false;
+    return SplashHandoff(fadeIn: fadeIn, child: routed);
+  }
+
+  Widget _routeFor(BuildContext context) {
         final userProvider = context.read<UserProvider>();
         if (kDebugMode) {
           debugPrint('\n====== AuthWrapper 빌드 시작 ======');
@@ -316,6 +389,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         // (LoginScreen 언마운트 → mounted=false → toast 미표시 방지)
         if (userProvider.isLoading && _isOnboardingCompleted == null && !_seenNotLoading) {
           if (kDebugMode) debugPrint('⏳ 로딩 중...');
+          _splashHandoffArmed = true;
           return const SplashLoadingScreen();
         }
 
@@ -333,7 +407,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
         // 🚫 로그인 안됨 (로딩 중이 아닌 경우에만 — 일시적 isLoading=true로 인한 오탐 방지)
         if (!userProvider.isLoggedIn && !userProvider.isLoading) {
-          if (kDebugMode) debugPrint('🚫 로그인되지 않음 → LoginScreen');
+          if (kDebugMode) debugPrint('🚫 로그인되지 않음 → AuthStartScreen');
           // 로그아웃 시 온보딩 상태·가드·배너 리셋 (다음 로그인 때 다시 체크)
           if (_isOnboardingCompleted != null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -350,15 +424,16 @@ class _AuthWrapperState extends State<AuthWrapper> {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) context.read<ThemeProvider>().reset();
           });
-          return const LoginScreen();
+          // [ALFIT-AUTH-KAKAO-ONBOARDING.1] 시작 화면 = 카카오로 시작하기(주) · 아이디로 로그인(보조 → LoginScreen).
+          return const AuthStartScreen();
         }
 
         // ✅ 로그인 됨 - 권한별 화면 분기
         final user = userProvider.currentUser;
         
         if (user == null) {
-          if (kDebugMode) debugPrint('⚠️ currentUser가 null → LoginScreen');
-          return const LoginScreen();
+          if (kDebugMode) debugPrint('⚠️ currentUser가 null → AuthStartScreen');
+          return const AuthStartScreen();
         }
 
         // ✅ 테마 설정 (빌드 완료 후 안전하게 — context 캡처 없이 provider 직접 참조)
@@ -381,6 +456,16 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
         // 🆕 온보딩 체크
         if (kDebugMode) debugPrint('📚 _isOnboardingCompleted = $_isOnboardingCompleted');
+        // [PERF-P3] main 이 미리 연 저장소가 있으면 **이 프레임에** 판정한다 — uid 가 정해진
+        //   지금(위 user != null) 그 uid 의 키를 읽는다. 기다릴 것이 없으니 흰 스피너도 없다.
+        //   build 안 대입이지만 이 build 가 곧바로 그 값을 쓰고, 로그아웃 분기의 기존 리셋(null)은 그대로다.
+        if (_isOnboardingCompleted == null && !_checkingOnboarding) {
+          final prefs = PrefsPreload.instanceOrNull;
+          if (prefs != null) {
+            _isOnboardingCompleted =
+                prefs.getBool('onboarding_completed_${user.uid}') ?? false;
+          }
+        }
         if (_isOnboardingCompleted == null) {
           // 로그아웃 후 재로그인 시 SharedPreferences 재확인
           // _checkingOnboarding 가드: notifyListeners() 중복 발화 시 중복 스케줄 방지
@@ -389,9 +474,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
               if (mounted) _checkOnboarding();
             });
           }
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
+          // [PERF-P3] 저장소가 아직 열리지 않은 예외 경로 — 흰 스피너 대신 스플래시와 같은 배경.
+          return const SplashLoadingScreen();
         }
 
         if (_isOnboardingCompleted == false && !user.isSuperAdmin) {
@@ -414,12 +498,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
               return const BusinessAdminShell();
             
             case UserRole.USER:
-              // REG-2F: homeRegion 미설정 → 복구 화면 (기존 가입자 또는 STEP 3 미완료)
-              // homeRegion은 가입 필수 조건 — 설정 없이 HOME 우회 불가
-              if (user.homeRegion == null) {
-                debugPrint('🔄 USER homeRegion 없음 → 복구 화면 (강제)');
-                return const _HomeRegionRecoveryScreen();
-              }
+              // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 대표 결정 2026-11-25] 지역 설정 gate 를 없앴다 —
+              //   지역이 없어도 홈으로 간다. 홈 상단 「시작 준비」 카드의 첫 줄이 '일할 지역 고르기'이고,
+              //   그 줄이 아래 지역 설정 화면(_HomeRegionRecoveryScreen · pushed)을 연다. 일자리 목록은
+              //   지역이 없으면 전체 지역을 보여 준다(일자리 탭은 원래 지역 필터 기본값 없음 · 홈 추천은 STATE 0).
               // [PD-01] 하위관리자 + 관리자 모드 저장 상태 → Shell로 복원
               if (user.isSubAdmin && userProvider.isAdminMode) {
                 debugPrint('🎯 USER(SubAdmin 관리자 모드) → BusinessAdminShell으로 이동');
@@ -502,8 +584,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
             ),
           );
         }
-      },
-    );
   }
 }
 
@@ -543,6 +623,20 @@ class _DeletionRecoveryScreenState extends State<_DeletionRecoveryScreen> {
   bool _busy = false;
   String? _message;
 
+  // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정280 B280-02] 재확인 방식 — 서버 reauthMethod 가 권위다.
+  //   비밀번호가 없는 계정(Auth 이메일 없음 = custom token 카카오 계정)에는 처음부터 비밀번호를 묻지 않는다.
+  //   서버가 'kakao_kg' 라고 하면 KG 재확인 화면으로, 'password' 면 아래 기존 비밀번호 재개 그대로.
+  bool _kakaoKg = AuthService().currentUser?.email == null;
+
+  @override
+  void initState() {
+    super.initState();
+    AuthService().getDeletionReauthMethod().then((m) {
+      if (!mounted || m == null) return;
+      setState(() => _kakaoKg = m == 'kakao_kg');
+    });
+  }
+
   @override
   void dispose() {
     _pwCtrl.dispose();
@@ -580,6 +674,14 @@ class _DeletionRecoveryScreenState extends State<_DeletionRecoveryScreen> {
   Widget build(BuildContext context) {
     final unknown = context.select<UserProvider, bool>(
         (p) => p.deletionRecovery == DeletionRecoveryState.unknown);
+    if (_kakaoKg) {
+      // 같은 삭제 파이프라인을 KG 증명 뒤에 재개한다(users 문서 없음 · 차단+탈퇴중 포함).
+      return DeletionReauthScreen(
+        intent: DeletionReauthIntent.resume,
+        onDone: () => context.read<UserProvider>().signOut(),
+        onSignOut: () => context.read<UserProvider>().signOut(),
+      );
+    }
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -649,8 +751,17 @@ class _DeletionRecoveryScreenState extends State<_DeletionRecoveryScreen> {
   }
 }
 
+/// [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 대표 결정 2026-11-25] 홈 「시작 준비」 카드의 '일할 지역 고르기' 입구.
+///   예전 AuthWrapper 강제 지역 화면을 **누르면 열리는 화면**으로 재사용한다(뒤로 가기 가능 · 저장하면 닫힘).
+Future<void> openHomeRegionSetup(BuildContext context) => Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _HomeRegionRecoveryScreen(pushed: true)),
+    );
+
 class _HomeRegionRecoveryScreen extends StatefulWidget {
-  const _HomeRegionRecoveryScreen();
+  const _HomeRegionRecoveryScreen({this.pushed = false});
+
+  /// 홈에서 열었다(뒤로 가기 · 저장 뒤 닫기 · 로그아웃 줄 없음).
+  final bool pushed;
 
   @override
   State<_HomeRegionRecoveryScreen> createState() => _HomeRegionRecoveryScreenState();
@@ -710,6 +821,8 @@ class _HomeRegionRecoveryScreenState extends State<_HomeRegionRecoveryScreen> {
         if (!mounted) return;
         // refreshCurrentUser → UserProvider notifyListeners → Selector 변화 → AuthWrapper 리빌드
         await up.refreshCurrentUser();
+        // 홈에서 열었으면 저장 뒤 닫는다(홈 카드의 지역 줄이 완료로 바뀐다).
+        if (widget.pushed && mounted) Navigator.of(context).maybePop();
       }
     } catch (e) {
       if (mounted) ToastHelper.showError('저장에 실패했습니다. 다시 시도해주세요.');
@@ -744,6 +857,13 @@ class _HomeRegionRecoveryScreenState extends State<_HomeRegionRecoveryScreen> {
     return Scaffold(
       // 앱 공통 화면 바탕(이전 grey50 #FAFAFA).
       backgroundColor: AppColors.background,
+      appBar: widget.pushed
+          ? AppBar(
+              backgroundColor: AppColors.background,
+              foregroundColor: AppColors.textPrimary,
+              elevation: 0,
+            )
+          : null,
       body: SafeArea(
         // [E1-CORRECTION-1] 로그아웃 줄이 늘어난 만큼, 작은 화면·큰 배율에서
         //   주 CTA 나 로그아웃이 잘리지 않도록 스크롤을 허용한다.
@@ -870,8 +990,8 @@ class _HomeRegionRecoveryScreenState extends State<_HomeRegionRecoveryScreen> {
                           child: CircularProgressIndicator(
                               strokeWidth: 2, color: Colors.white))
                       // [DU424] 큰 글자에서 '시작하 / 기'로 끊기지 않게 낱말 단위 줄바꿈(문구 · 화면 읽기 원문 그대로).
-                      : Text(TextLayout.keepWords('저장하고 시작하기'),
-                          semanticsLabel: '저장하고 시작하기',
+                      : Text(TextLayout.keepWords(widget.pushed ? '저장하기' : '저장하고 시작하기'),
+                          semanticsLabel: widget.pushed ? '저장하기' : '저장하고 시작하기',
                           textAlign: TextAlign.center,
                           style: const TextStyle(
                               fontSize: 16, fontWeight: FontWeight.w600)),
@@ -882,8 +1002,8 @@ class _HomeRegionRecoveryScreenState extends State<_HomeRegionRecoveryScreen> {
               // [E1-CORRECTION-1] 다만 **계정을 끝낼 길**은 있어야 한다.
               //   건너뛰기가 아니라 로그아웃이다 — 지역을 저장하지 않으면
               //   이 화면으로 다시 돌아온다. 주 CTA 아래 보조 행동으로 둔다.
-              const SizedBox(height: 12),
-              TextButton(
+              if (!widget.pushed) const SizedBox(height: 12),
+              if (!widget.pushed) TextButton(
                 onPressed: (_isLoading || _isSigningOut) ? null : _signOut,
                 style: TextButton.styleFrom(
                   foregroundColor: AppColors.textSecondary,

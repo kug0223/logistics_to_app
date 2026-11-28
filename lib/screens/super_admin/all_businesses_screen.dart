@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 //   열·행동·현재 선택 접근성은 좁은 폭 렌더로 따로 확인한다.
 import 'package:provider/provider.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/user_provider.dart';
 import '../../models/core/business_model.dart';
@@ -21,6 +20,9 @@ import '../../utils/text_layout.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../utils/loading_state_mixin.dart';
+import '../../utils/action_guard.dart';
+import '../../utils/keep_content_refresh.dart';
+import '../../widgets/common/keep_content_body.dart';
 
 /// ✅ 모든 사업장 조회·관리 화면 (최고관리자 전용)
 class AllBusinessesScreen extends StatefulWidget {
@@ -31,7 +33,7 @@ class AllBusinessesScreen extends StatefulWidget {
 }
 
 class _AllBusinessesScreenState extends State<AllBusinessesScreen>
-    with LoadingStateMixin {
+    with LoadingStateMixin, KeepContentRefreshMixin {
   final _listCF = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
       .httpsCallable('callableGetAllBusinesses',
           options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
@@ -76,8 +78,11 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
   int _loadSeq = 0;
 
   Future<void> _loadAllBusinesses() async {
+    // [L48 · impl_28] 처리 뒤 다시 읽기는 목록을 유지한다(잠금 + 얇은 진행 표시 · KeepContentRefreshMixin) — 첫 읽기·실패 화면만 전체 로딩 · 늦은 옛 응답 착지 0.
+    //   실패하면 이전 목록을 그대로 둔다(예전 의미) — 그래서 실패 뒤에도 유지 대상이다.
     final seq = ++_loadSeq;
-    setLoading(true);
+    final t = beginContentLoad(canKeep: true);
+    if (!t.keep) setLoading(true);
     try {
       // [SA-01-CF] 슈퍼어드민 businesses list → callableGetAllBusinesses (Admin SDK, rate limiting 강제)
       final cfResult = await _listCF.call<Map<String, dynamic>>({});
@@ -128,14 +133,18 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
       });
 
       if (!mounted || seq != _loadSeq) return;
+      if (!isCurrentContentLoad(t.gen)) return; // [impl_28] 공용 차례 번호(위 _loadSeq 와 같은 뜻 · 7 화면 같은 꼴)
       setState(() => _businesses = result);
       setLoading(false);
+      finishContentLoad(t.gen, shown: true);
     } catch (e) {
       if (!mounted || seq != _loadSeq) return;
+      if (!isCurrentContentLoad(t.gen)) return; // [impl_28] 공용 차례 번호(위 _loadSeq 와 같은 뜻 · 7 화면 같은 꼴)
       debugPrint('⚠️ 사업장 목록 불러오기 실패: $e');
       // 이전 목록은 그대로 둔다(0건으로 바꾸지 않는다). 예외 원문 대신 다시 시도를 권한다.
       ToastHelper.showError('사업장 목록을 불러오지 못했습니다. 새로고침으로 다시 시도해 주세요.');
       setLoading(false);
+      finishContentLoad(t.gen, shown: true); // 이전 목록이 그대로 보인다
     }
   }
 
@@ -154,7 +163,12 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
 
   // ── 관리 액션 ──────────────────────────────────────────────────
 
-  Future<void> _deactivateBusiness(_BusinessWithOwner item) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_deactivateBusinessLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _deactivateBusiness(_BusinessWithOwner item) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('allBusinesses._isProcessing', this), () => _deactivateBusinessLocked(item));
+
+  Future<void> _deactivateBusinessLocked(_BusinessWithOwner item) async {
     if (_isProcessing) return;
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
@@ -199,7 +213,12 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     }
   }
 
-  Future<void> _approveBusiness(_BusinessWithOwner item) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_approveBusinessLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _approveBusiness(_BusinessWithOwner item) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('allBusinesses._isProcessing', this), () => _approveBusinessLocked(item));
+
+  Future<void> _approveBusinessLocked(_BusinessWithOwner item) async {
     if (_isProcessing) return;
     // [REG-2] 사업자등록증이 전혀 없는 경우 warning confirm (CF 서버 차단 아님 — SUPER_ADMIN 재량 허용)
     // 1순위: business.businessLicenseImageUrl (신규), 2순위: ownerLicenseUrl (legacy)
@@ -257,7 +276,12 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     }
   }
 
-  Future<void> _reactivateBusiness(_BusinessWithOwner item) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_reactivateBusinessLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _reactivateBusiness(_BusinessWithOwner item) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('allBusinesses._isProcessing', this), () => _reactivateBusinessLocked(item));
+
+  Future<void> _reactivateBusinessLocked(_BusinessWithOwner item) async {
     if (_isProcessing) return;
     final confirmed = await DialogHelper.showConfirm(
       context,
@@ -317,7 +341,9 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
           onPressed: _loadAllBusinesses,
         ),
       ],
-      body: isLoading
+      body: KeepContentBody(
+        refreshing: refreshingKeep,
+        child: isLoading
           ? const LoadingWidget(message: '사업장 목록을 불러오는 중...')
           : _businesses.isEmpty
               ? _buildEmptyState()
@@ -327,6 +353,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
                     Expanded(child: _buildBusinessList(filtered)),
                   ],
                 ),
+      ),
     );
   }
 
@@ -695,13 +722,18 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
         child: Stack(
           children: [
             InteractiveViewer(
-              child: CachedNetworkImage(
-                imageUrl: url,
+              // [AUD-10 M3 · impl_70] 사업자등록증(대표자 개인정보 포함)은 디스크 캐시에 남기지 않는다 —
+              //   신분증·통장사본 뷰어(ImageHelper noCache)와 같은 계약. 예전 CachedNetworkImage 는 Signed URL
+              //   이미지를 기본 디스크 캐시에 최대 30일 남겼다. Image.network = 메모리 캐시만.
+              child: Image.network(
+                url,
                 fit: BoxFit.contain,
-                placeholder: (_, __) => const Center(
-                  child: CircularProgressIndicator(color: Colors.white),
-                ),
-                errorWidget: (_, __, ___) => const Center(
+                loadingBuilder: (_, child, progress) => progress == null
+                    ? child
+                    : const Center(
+                        child: CircularProgressIndicator(color: Colors.white),
+                      ),
+                errorBuilder: (_, __, ___) => const Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [

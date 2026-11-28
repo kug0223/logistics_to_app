@@ -1267,7 +1267,7 @@ function sameExceptTo(before, label) {
   });
 
   console.log('\n[S] 원문 순서·소비처');
-  await cell('MW-S01', '초대 수락 tx 순서 — CONFIRMED 반환 < INVITED 검사 < 기한 재확인 < 최저임금 재판정 < 시작 가드 < 첫 쓰기 · 호출 1', () => {
+  await cell('MW-S01', '초대 수락 tx 순서 — CONFIRMED 반환 < INVITED 검사 < 기한 재확인 < 최저임금 재판정 < 시작 가드 < 첫 쓰기 · 호출 3(SERVER-MERGE-1)', () => {
     const acc = bodyOf('callableAcceptTOInvitation');
     const t0 = acc.indexOf('const fresh = await tx.get(appRef);');
     assert.ok(t0 > 0 && acc.indexOf('const fresh = await tx.get(appRef);', t0 + 1) < 0, '수락 tx 시작 표지 1');
@@ -1277,7 +1277,10 @@ function sameExceptTo(before, label) {
       at0('// [INVITE-START-GUARD]'), firstWriteAfter(acc, t0)];
     for (let k = 1; k < a.length; k++) assert.ok(a[k - 1] < a[k], a.join(','));
     assert.strictEqual(acc.split('srvAssertAppPromiseMinWageInTx52(').length - 1, 1);
-    assert.strictEqual(SRC.split('srvAssertAppPromiseMinWageInTx52(').length - 1, 2, '선언 1 + 호출 1(승인·확정 호출 자리 0)');
+    // [SERVER-MERGE-1 2026-11-25] DEV .75 배포판의 승인(APPROVE)·확정(CONFIRM) 호출 자리를 A 로 병합 → 선언 1 + 호출 3.
+    assert.strictEqual(SRC.split('srvAssertAppPromiseMinWageInTx52(').length - 1, 4, '선언 1 + 호출 3(초대 수락·승인·확정)');
+    assert.strictEqual(bodyOf('callableApproveApplicationForReview').split('srvAssertAppPromiseMinWageInTx52(tx, freshData, "APPROVE")').length - 1, 1);
+    assert.strictEqual(bodyOf('callableConfirmApplication').split('srvAssertAppPromiseMinWageInTx52(tx, fd, "CONFIRM")').length - 1, 1);
   });
   await cell('MW-S02', '지원 tx 순서 — freeze < 지원서 재확인 < 사업장 종료 < 삭제 공고 재확인 < 마감·정원 재확인 < 첫 쓰기', () => {
     const ap = bodyOf('callableApplyToTO');
@@ -1319,7 +1322,8 @@ function sameExceptTo(before, label) {
   });
   await cell('MW-S07', '[OBS] 위반 수집 helper 의 형태 기본값 "hourly" — 유일 호출(초대 수락)은 형태 없으면 먼저 반환(도달 0)', () => {
     assert.ok(SRC.includes('wageType: String(w.wageType ?? "hourly")'));
-    assert.strictEqual(SRC.split('srvMinWageSlotViolations52(').length - 1, 2, '선언 1 + 호출 1');
+    // [SERVER-MERGE-1] 공고 쪽 호출(공개 · 재오픈 · 바뀐 업무 helper) 3 추가 → 선언 1 + 호출 4.
+    assert.strictEqual(SRC.split('srvMinWageSlotViolations52(').length - 1, 5, '선언 1 + 호출 4');
     assert.ok(SRC.includes('if (w.wage === undefined || w.wage === null || !w.wageType) return;'));
   });
 

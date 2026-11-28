@@ -24,6 +24,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/users_create_rule.dart';
+
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('$p 를 찾지 못함');
@@ -243,8 +245,8 @@ void main() {
 
     test('rules가 통장사본 경로 필드를 클라이언트에서 막는다', () {
       expect(rules, contains("'bankbookImagePath', 'bankbookImageUrl',"));
-      expect(rules,
-          contains("request.resource.data.get('bankbookImagePath', null) == null"));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정278 C278-3] users create 가 전면 거부(if false)가 됐다 — 같은 결론(주입 불가)을 더 강하게 확인한다. 다시 열리면 옛 null 조건을 요구한다(support/users_create_rule.dart).
+      expect(usersCreateDeniesField(rules, 'bankbookImagePath'), isTrue);
     });
 
     test('rules가 문서 상태 필드도 막는다', () {

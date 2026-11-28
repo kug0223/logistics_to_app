@@ -19,6 +19,7 @@ import 'package:ALfit/theme/role_theme.dart';
 import 'package:ALfit/utils/text_layout.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 Future<void> _loadFonts() async {
   Future<ByteData> b(String p) => File(p).readAsBytes().then((x) => ByteData.view(x.buffer));
@@ -223,7 +224,7 @@ void main() {
           await shot('2tips', 'tips-visible');
 
           // 창 닫기 — 열린 창의 표시 키(TooltipService._pendingKeys)가 다음 사례 창을 막지 않게(DU433 시험과 같은 단계).
-          final okF = inD(find.text('확인', skipOffstage: false));
+          final okF = inD(findVisibleText('확인', skipOffstage: false));
           must('확인 1', okF.evaluate().length == 1, '개수 ${okF.evaluate().length}');
           await t.ensureVisible(okF);
           await t.pump(const Duration(milliseconds: 300));

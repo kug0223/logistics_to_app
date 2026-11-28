@@ -12,6 +12,7 @@ import 'package:ALfit/screens/common/onboarding_screen.dart';
 import 'package:ALfit/theme/role_theme.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 void main() {
   testWidgets('S043-A1-N 관리자 온보딩 둘째 페이지 392×851@1.0 — 공개 다음 1회 · 전체·receiver·scroll', (t) async {
@@ -50,7 +51,7 @@ void main() {
     }
     final c0 = t.widget<PageView>(find.byType(PageView)).controller!;
     expect((c0.page! - 0).abs() < 0.001 && completes == 0, isTrue, reason: 'page0 출발');
-    final next0 = find.ancestor(of: find.text('다음'), matching: find.byType(GestureDetector)).first;
+    final next0 = find.ancestor(of: findVisibleText('다음'), matching: find.byType(GestureDetector)).first;
     await t.tapAt(t.getRect(next0).center);
     for (var i = 0; i < 20; i++) {
       await t.pump(const Duration(milliseconds: 100));
@@ -77,7 +78,7 @@ void main() {
     final f1 = find.byWidgetPredicate((w) => w is Text && w.semanticsLabel == '지원 — 아직 약속이 아니에요');
     final f2 = find.byWidgetPredicate((w) => w is Text && w.semanticsLabel == '확정 — 계약·일정·급여로 이어져요');
     final skip = find.widgetWithText(TextButton, '건너뛰기');
-    final next = find.ancestor(of: find.text('다음'), matching: find.byType(GestureDetector)).first;
+    final next = find.ancestor(of: findVisibleText('다음'), matching: find.byType(GestureDetector)).first;
     final rSkip = t.getRect(skip);
     final rNext = t.getRect(next);
     // r1: semanticsLabel 이 붙은 Text 는 렌더 루트가 RenderSemanticsAnnotations 라 RenderParagraph 캐스트가 실패했다 — 안쪽 RichText 에서 꺼낸다

@@ -8,6 +8,7 @@ import '../../main.dart' show AuthWrapper;
 import '../../utils/dialog_helper.dart';
 import '../../utils/navigation_key.dart';
 import '../../services/app_version_service.dart';
+import '../../utils/perf_log.dart';
 import 'forced_update_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -36,6 +37,7 @@ class _SplashScreenState extends State<SplashScreen>
     // main()의 FlutterNativeSplash.preserve()와 쌍을 이루며,
     // 두 화면이 동일한 파란 배경이므로 시각적 점프 없이 자연스럽게 전환됨
     FlutterNativeSplash.remove();
+    PerfLog.mark('splash.init');
 
     _entryController = AnimationController(
       duration: const Duration(milliseconds: 500),
@@ -107,6 +109,7 @@ class _SplashScreenState extends State<SplashScreen>
       );
     }
 
+    PerfLog.mark('splash.gate', () => {'status': result.status.name, 'cache': result.fromCache});
     if (!mounted || seq != _gateSeq) return;
 
     // 애니메이션이 아직이면 조금 기다렸다 보낸다(시각적 점프 방지).
@@ -182,6 +185,7 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   void _navigateToHome() {
+    PerfLog.mark('splash.navigate');
     Navigator.pushReplacement(
       context,
       PageRouteBuilder(
@@ -247,26 +251,105 @@ class SplashLoadingScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Scaffold(
-      body: _SplashBody(
-        child: Column(
-          children: [
-            Spacer(flex: 5),
-            _SplashLogo(),
-            SizedBox(height: 20),
-            _SplashTagline(),
-            Spacer(flex: 4),
-            SizedBox(
-              width: 22,
-              height: 22,
-              child: CircularProgressIndicator(
-                color: Color(0x99FFFFFF),
-                strokeWidth: 2,
-              ),
-            ),
-            SizedBox(height: 48),
-          ],
+      body: _SplashBody(child: _SplashLoadingColumn()),
+    );
+  }
+}
+
+/// [PERF-L4] SplashLoadingScreen 의 내용 — 스플래시 이어받기 배경과 같은 것을 쓴다.
+class _SplashLoadingColumn extends StatelessWidget {
+  const _SplashLoadingColumn();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      children: [
+        Spacer(flex: 5),
+        _SplashLogo(),
+        SizedBox(height: 20),
+        _SplashTagline(),
+        Spacer(flex: 4),
+        SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(
+            color: Color(0x99FFFFFF),
+            strokeWidth: 2,
+          ),
         ),
-      ),
+        SizedBox(height: 48),
+      ],
+    );
+  }
+}
+
+/// [PERF-L4] 스플래시(같은 배경) → 첫 실제 화면을 **한 번의 페이드**로 잇는다.
+///
+///   AuthWrapper 가 첫 인증 확인 동안 [SplashLoadingScreen] 을 보였다면, 다음 실제 화면을
+///   `fadeIn: true` 로 감싼다. 실제 화면은 **즉시** 만들어진다(읽기·입력 바로 시작 · 새 최소 대기 0).
+///   페이드 동안만 그 밑에 같은 스플래시 배경을 깔아 둔다 — Scaffold 가 아니다(스낵바·`find.byType(Scaffold)` 영향 0).
+///   길이는 스플래시 → AuthWrapper 전환과 같은 250ms 다(스플래시 최소 시간은 바꾸지 않았다).
+///   `fadeIn` 은 처음 만들어질 때만 본다 — 같은 자리의 화면 교체(로그인 → 홈 등)는 예전처럼 즉시다.
+///   자식 구조는 페이드 전후 같다(키 고정) — 배경을 걷어도 실제 화면 State 는 유지된다.
+class SplashHandoff extends StatefulWidget {
+  const SplashHandoff({super.key, required this.fadeIn, required this.child});
+
+  final bool fadeIn;
+  final Widget child;
+
+  @override
+  State<SplashHandoff> createState() => _SplashHandoffState();
+}
+
+class _SplashHandoffState extends State<SplashHandoff>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _fade;
+  bool _backdrop = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fade = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+      value: 1.0,
+    );
+    if (widget.fadeIn) {
+      _backdrop = true;
+      _fade.addStatusListener(_onStatus);
+      _fade.forward(from: 0.0);
+    }
+  }
+
+  void _onStatus(AnimationStatus s) {
+    if (s == AnimationStatus.completed && mounted && _backdrop) {
+      setState(() => _backdrop = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _fade.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (_backdrop)
+          const Material(
+            key: ValueKey('splash-handoff-backdrop'),
+            type: MaterialType.transparency,
+            child: _SplashBody(child: _SplashLoadingColumn()),
+          ),
+        FadeTransition(
+          key: const ValueKey('splash-handoff-child'),
+          opacity: _fade,
+          child: widget.child,
+        ),
+      ],
     );
   }
 }

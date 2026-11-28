@@ -527,7 +527,7 @@ void main() {
           size: const Size(320, 760), textScale: 2.0);
       expect(t.takeException(), isNull);
       // 지원 버튼이 트리에 있고 눌릴 수 있다.
-      final cta = find.textContaining('지원');
+      final cta = findVisibleTextContaining('지원');
       expect(cta, findsWidgets, reason: '지원 CTA 가 없다');
     });
 
@@ -681,7 +681,7 @@ void main() {
       await t.tap(cta);
       await _settle(t, rounds: 30);
       expect(findVisibleText('동의하고 초대 수락'), findsOneWidget);
-      await t.tap(find.text('취소'));
+      await t.tap(findVisibleText('취소'));
       await _settle(t, rounds: 10);
       expect(findVisibleText('동의하고 초대 수락'), findsNothing, reason: '취소가 확인창을 닫지 못했다');
       expect(find.text('수락하기'), findsOneWidget, reason: '목록 화면은 그대로 있어야 한다');

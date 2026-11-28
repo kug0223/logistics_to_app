@@ -102,6 +102,8 @@ const fakeDb = {
       set: (r, d) => pend.push(() => { WRITES.push({op: 'tx.set', path: r.path}); STORE.set(r.path, d); }),
       update: (r, d) => pend.push(() => { WRITES.push({op: 'tx.update', path: r.path}); }),
       delete: (r) => pend.push(() => { WRITES.push({op: 'tx.delete', path: r.path}); }),
+      // [L56 r4] 사업주 서명 거래가 근로자 알림 작업(notification_jobs)을 같은 거래에서 create 한다.
+      create: (r, d) => pend.push(() => { WRITES.push({op: 'tx.create', path: r.path}); STORE.set(r.path, d); }),
     };
     const out = await fn(tx);
     pend.forEach((w) => w());    // 커밋은 콜백이 성공했을 때만

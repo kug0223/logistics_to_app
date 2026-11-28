@@ -41,6 +41,7 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 
 // Providers
 import '../../../providers/user_provider.dart';
+import '../../../utils/server_reject_codes.dart';
 
 /// 급여 확정 다이얼로그
 class WageConfirmDialog extends StatefulWidget {
@@ -793,6 +794,18 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
     final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
 
+    // ── payScheduleType 일괄 프리패치 (병렬) ──────────────────
+      //   [PERF-L50 · 2026-11-26] 8일차 확인과 서로 독립이다 — 예전에는 8일차 확인·경고 뒤에 차례로 읽었다.
+      //   서버는 이 값을 지원서·계약서 다음의 보조값으로만 쓴다. 각 조회는 실패를 스스로 삼킨다(null).
+      final payScheduleCache = <String, (String?, int?)>{};
+      final payScheduleFetch = Future.wait(_pendingSelectedIds.map((appId) async {
+        final app = widget.workers.where((w) => w.id == appId).firstOrNull;
+        if (app == null || app.toId == null) return;
+        final detail = WorkDetailHelper.resolve(app, widget.workDetailTimeMap);
+        if (detail != null && detail['payScheduleType'] != null) return;
+        payScheduleCache[appId] = await _fetchPayScheduleType(app);
+      }));
+
     // ── 8일 소급 사전 체크 (병렬) ──────────────────────────────
       final day8AppIds = _pendingSelectedIds.where((id) {
         final w = _calculatedWages[id];
@@ -839,14 +852,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
 
       // ── payScheduleType 일괄 프리패치 (병렬) ──────────────────
-      final payScheduleCache = <String, (String?, int?)>{};
-      await Future.wait(_pendingSelectedIds.map((appId) async {
-        final app = widget.workers.where((w) => w.id == appId).firstOrNull;
-        if (app == null || app.toId == null) return;
-        final detail = WorkDetailHelper.resolve(app, widget.workDetailTimeMap);
-        if (detail != null && detail['payScheduleType'] != null) return;
-        payScheduleCache[appId] = await _fetchPayScheduleType(app);
-      }));
+      //   [PERF-L50] 위 8일차 확인이 시작될 때 함께 출발했다 — 여기서는 끝나기만 기다린다.
+      await payScheduleFetch;
 
       // ── CF 확정 병렬 실행 ─────────────────────────────────────
       final changedRows = <({String name, WageDetailModel before, WageDetailModel after})>[];
@@ -1073,23 +1080,49 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     return (null, null);
   }
 
+  // ── [PERF-L50 · 2026-11-26] 8일차 판정용 월 원장 — 한 번의 확인에서 한 번만 ─────────
+  //   근무일수와 이전 세전 합계는 **같은 입력**(근무자·사업장·달)의 같은 조회
+  //   (callableGetAdminAttendances yearMonth+userId)였는데 차례로 두 번 불렀다. 한 응답으로 둘 다 계산한다.
+  //   판정291 §L50: 같은 입력·계산의 조회만 공유한다 — 다이얼로그를 열 때 미리 받아 두는 캐시는 두지 않는다.
+  //   확정 금액은 서버가 트랜잭션 안에서 다시 계산한다 — 여기 값은 미리보기·경고용이다.
+  Future<List<dynamic>> _day8MonthItems(
+          String userId, String businessId, String yearMonth) =>
+      TaxDeductionService.fetchMonthAttendanceItems(
+        userId: userId,
+        businessId: businessId,
+        yearMonth: yearMonth,
+      );
+
   /// daily_auto_8 타입 근무자의 당일 순서(N번째 근무일)를 확인해 소급 계산 적용
   Future<WageDetailModel> _checkAndApplyRetroactive(
     AttendanceModel attendance,
     WageDetailModel wage,
   ) async {
     final yearMonth = _toYearMonth(attendance.workDate);
-    final prevDays = await TaxDeductionService.getMonthlyWorkDays(
-      userId: attendance.userId,
-      businessId: attendance.businessId,
-      yearMonth: yearMonth,
-      excludeAttendanceId: attendance.id,
-    );
+    // [PERF-L50] 근무일수·이전 세전 합계를 한 번 받은 원장으로 계산한다.
+    //   실패 의미는 예전 그대로 — 근무일수를 못 읽으면 0(소급 미적용), 합계 계산이 깨지면 확정 실패.
+    List<dynamic>? monthItems;
+    int prevDays;
+    try {
+      monthItems = await _day8MonthItems(
+          attendance.userId, attendance.businessId, yearMonth);
+      prevDays = TaxDeductionService.monthlyWorkDaysFromItems(monthItems,
+          excludeAttendanceId: attendance.id);
+    } catch (e) {
+      debugPrint('⚠️ 월별 근무일수 CF 조회 실패: $e');
+      prevDays = 0;
+    }
 
     if (prevDays + 1 == 8) {
       // 8일째: 1~7일 소급 공제
-      final prevGrossTotal = await _getPrevGrossTotal(
-          attendance.userId, attendance.businessId, yearMonth, attendance.id);
+      final int prevGrossTotal;
+      try {
+        prevGrossTotal =
+            TaxDeductionService.prevGrossTotalFromItems(monthItems!, attendance.id);
+      } catch (e) {
+        debugPrint('⚠️ 이전 세전 총액 계산 실패: $e');
+        rethrow; // 0으로 폴백하면 소급 계산이 오계산됨 — 상위에서 급여 계산 실패로 처리
+      }
       return TaxDeductionService.applyDay8Retroactive(
         day8Base: wage,
         prevGrossTotal: prevGrossTotal,
@@ -1122,41 +1155,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     return wage; // 1~7일: 그대로 (고용보험만 공제)
   }
 
-  /// 이전 근무일 세전 총액 합계 조회 (8일 소급 계산용)
-  /// [CF 이전 2026-07-13] callableGetAdminAttendances (yearMonth + userId)
-  Future<int> _getPrevGrossTotal(
-    String userId,
-    String businessId,
-    String yearMonth,
-    String excludeId,
-  ) async {
-    try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetAdminAttendances',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final result = await callable.call<Map<String, dynamic>>({
-        'businessId': businessId,
-        'yearMonth': yearMonth,
-        'userId': userId,
-      });
-      int total = 0;
-      for (final raw in (result.data['items'] as List? ?? [])) {
-        final m = raw as Map? ?? {};
-        if ((m['id'] as String?) == excludeId) continue;
-        // NO_SHOW 레코드 제외 (소급 기준 금액 부풀림 방지)
-        if ((m['status'] as String?) == 'NO_SHOW') continue;
-        final ws = m['wageStatus'] as String?;
-        if (ws == 'calculated' || ws == 'confirmed' || ws == 'transferred') {
-          final wageDetail = m['wageDetail'] as Map?;
-          total += (wageDetail?['totalAmount'] as num?)?.toInt() ?? 0;
-        }
-      }
-      return total;
-    } catch (e) {
-      debugPrint('⚠️ 이전 세전 총액 조회 실패: $e');
-      rethrow; // 0으로 폴백하면 소급 계산이 오계산됨 — 상위에서 급여 계산 실패로 처리
-    }
-  }
+  // [PERF-L50] 이전 근무일 세전 총액 합계는 TaxDeductionService.prevGrossTotalFromItems 로 옮겼다
+  //   (근무일수와 같은 원장 응답으로 계산 — 같은 조회를 두 번 부르지 않는다).
 
   // ═══════════════════════════════════════════════════════════
   // 8일차 소급 경고 다이얼로그
@@ -1650,6 +1650,12 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         //   이 창의 값을 믿지 않는다 — 명세를 다시 누르면 저장본을 읽어 연다(.82 F2).
         if (mounted) setState(() => _serverDiffers[app.id] = (preview: wage.effectiveNetWage, server: base.effectiveNetWage));
         if (mounted) ToastHelper.showWarning(TextLayout.keepWords('저장하지 않았습니다. 그 사이 이 급여가 바뀌었을 수 있어요. 명세를 다시 열어 최신 내용을 확인해 주세요'));
+        return;
+      }
+      // [impl_58 · server_296 M2] 약속 유형·단가·기본금 누락(WAGE_FIELD_MISSING) · 시급/일급 변경(WAGE_TYPE_CHANGED) ·
+      //   금액 형식(WAGE_VALUE_INVALID) — 저장 0. 서버 문구(필드 이름이 섞인 문장) 대신 무엇이 막혔는지 말한다.
+      if (wageUpdateRejectMessageOf(e) case final wageMsg?) {
+        if (mounted) ToastHelper.showError(TextLayout.keepWords(wageMsg));
         return;
       }
       if (mounted) {

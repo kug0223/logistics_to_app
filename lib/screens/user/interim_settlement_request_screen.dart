@@ -44,7 +44,6 @@ class InterimSettlementRequestScreen extends StatefulWidget {
 class _InterimSettlementRequestScreenState
     extends State<InterimSettlementRequestScreen> {
   // ─── 포맷터 캐싱 ─────────────────────────────────────────────
-  static final _timeFmt = DateFormat('HH:mm');
 
   final FirestoreService _firestoreService = FirestoreService();
   late final InterimSettlementReads _reads =
@@ -97,7 +96,9 @@ class _InterimSettlementRequestScreenState
     setState(() { _isLoading = true; _selectedIds.clear(); });
 
     try {
-      final now = DateTime.now();
+      // [AUD-4 H12 · 판정296] 조회 연·월은 KST 달력월 — 기기 성분이면 비-KST 기기에서 매월 1일 KST 00–09시에
+      //   이번 달을 조회하지 않았다(원장은 서버가 KST 로 자른다 · 홈 R7-P2-1 과 같은 기준).
+      final now = FormatHelper.toKstDate(DateTime.now());
       // 최근 _monthsToLoad개월 병렬 조회
       final futures = <Future<List<AttendanceModel>>>[];
       for (var i = 0; i < _monthsToLoad; i++) {
@@ -427,7 +428,8 @@ class _InterimSettlementRequestScreenState
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      DateFormat('MM.dd (E)', 'ko').format(att.workDate),
+                      // [AUD-4 H12] 근무일은 KST 날짜(저장값 = KST 자정 instant · 기기 성분이면 D-1).
+                      DateFormat('MM.dd (E)', 'ko').format(FormatHelper.toKstDate(att.workDate)),
                       style: ResponsiveHelper.bodyStyle(context).copyWith(
                         fontWeight: FontWeight.w600,
                         // [DU257] 급여 없는 줄 grey400(1.8) → textTertiary
@@ -480,9 +482,10 @@ class _InterimSettlementRequestScreenState
 
   String _formatTimeRange(DateTime? checkIn, DateTime? checkOut) {
     if (checkIn != null && checkOut != null) {
-      return '${_timeFmt.format(checkIn)} ~ ${_timeFmt.format(checkOut)}';
+      // [AUD-4 H12] 출퇴근 시각은 KST(기기 시간대로 찍으면 9시간 어긋난다).
+      return '${FormatHelper.formatTime(checkIn)} ~ ${FormatHelper.formatTime(checkOut)}';
     } else if (checkIn != null) {
-      return '출근 ${_timeFmt.format(checkIn)}';
+      return '출근 ${FormatHelper.formatTime(checkIn)}';
     }
     return '';
   }

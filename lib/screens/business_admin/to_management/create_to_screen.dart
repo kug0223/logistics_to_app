@@ -43,6 +43,8 @@ import '../../../widgets/common/loading_widget.dart';
 import '../../common/settings_screen.dart';
 import '../../common/notification_screen.dart';
 import '../../../widgets/common/notification_badge.dart';
+import '../../../widgets/common/app_empty_state.dart';
+import '../../../utils/server_reject_codes.dart';
 
 class AdminCreateTOScreen extends StatefulWidget {
   /// [HOTFIX HOME.POSTING.ENTRY.1-R1] caller context 상속용 optional 파라미터.
@@ -100,6 +102,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   // 사전조건 상태 — 3가지 모두 충족돼야 공고 등록 가능
   bool _businessApproved = false;
+
+  /// [impl_55 · AUD-4 H4] 사업장 조회 자체가 실패했다 — '사업장 없음/승인 필요'가 아니다.
+  bool _businessLoadFailed = false;
   bool _workTypesReady = false;
   bool _contractTemplatesReady = false;
   bool _formUnlocked = false;        // 한번 true가 되면 항상 폼 표시 (일방향 래치)
@@ -252,12 +257,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       if (userProvider.isSubAdmin) {
         final bizIds = userProvider.currentUser?.subAdminBusinessIds ?? [];
         membershipBusinesses = bizIds.isNotEmpty
-            ? await _firestoreService.getBusinessesByIds(bizIds)
+            ? await _firestoreService.getBusinessesByIdsOrThrow(bizIds)
             : [];
       } else {
         final managedIds = userProvider.currentUser?.managedBusinessIds ?? [];
         membershipBusinesses =
-            await _firestoreService.getBusinessesByIds(managedIds);
+            await _firestoreService.getBusinessesByIdsOrThrow(managedIds);
       }
 
       // [POSTING-V2-02G.1] 공고를 만들 수 있는 사업장만 선택 대상이다.
@@ -344,33 +349,21 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           //
           //   같은 파일 안에서도 다른 자리(`hasLicenseForBusiness`)는 이미
           //   공용 resolver 를 쓰고 있었다. 술어를 한 벌로 합친다.
-          final bool licenseReady =
-              await BusinessPostingReadiness.hasLicenseForBusiness(biz);
-
-          // [P4.4C-SEAL-02] 고용주 날인 — 이 사업장 owner 의 것.
-          bool employerSeal = false;
-          if (biz.ownerId.isNotEmpty) {
-            try {
-              final ownerSnap = await FirebaseFirestore.instance
-                  .collection('users')
-                  .doc(biz.ownerId)
-                  .get();
-              employerSeal =
-                  (ownerSnap.data()?['sealBase64'] as String?)?.isNotEmpty ==
-                      true;
-            } catch (_) {
-              // 못 읽었으면 준비됨으로 올리지 않는다 — 서버가 최종 gate 다.
-            }
-          }
-
+          // [PERF-L53] 네 사전 읽기(등록증 · 날인 · 업무 · 템플릿)는 서로의 결과를 쓰지 않는다 — **함께** 보낸다
+          //   (예전엔 등록증 → 날인 → 업무∥템플릿 3 왕복). 실패 의미는 그대로: 등록증·업무·템플릿 실패는
+          //   예전처럼 바깥으로 던지고, 날인 실패는 예전처럼 '준비 안 됨'(false)이다.
           final res = await Future.wait([
+            BusinessPostingReadiness.hasLicenseForBusiness(biz),
+            _employerSealOf(biz.ownerId),
             _firestoreService.getBusinessWorkTypes(biz.id),
             _contractTemplateService.getTemplates(biz.id),
           ]);
+          final bool licenseReady = res[0] as bool;
+          final bool employerSeal = res[1] as bool;
           return (
             business: biz,
-            workTypes: res[0] as List<BusinessWorkTypeModel>,
-            templates: res[1] as List<ContractTemplateModel>,
+            workTypes: res[2] as List<BusinessWorkTypeModel>,
+            templates: res[3] as List<ContractTemplateModel>,
             licenseReady: licenseReady,
             employerSeal: employerSeal,
           );
@@ -427,7 +420,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       }
     } catch (e) {
       debugPrint('❌ 사업장 로드 실패: $e');
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() { _isLoading = false; _businessLoadFailed = true; });
       if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
     }
   }
@@ -467,6 +460,19 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     await _reCheckPrerequisites();
   }
 
+  /// [P4.4C-SEAL-02] 사업장 owner 의 고용주 날인이 있는가. 못 읽었으면 false — 준비됨으로 올리지 않는다(서버가 최종 gate).
+  ///   [PERF-L53] 두 사전 점검 경로가 같은 규칙을 쓰도록 하나로 뺐다(예전 두 곳의 인라인 그대로).
+  Future<bool> _employerSealOf(String ownerId) async {
+    if (ownerId.isEmpty) return false;
+    try {
+      final ownerSnap =
+          await FirebaseFirestore.instance.collection('users').doc(ownerId).get();
+      return (ownerSnap.data()?['sealBase64'] as String?)?.isNotEmpty == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// 사전조건 화면에서 "다시 확인" 또는 준비 화면 복귀 시 재체크
   Future<void> _reCheckPrerequisites() async {
     if (_isLoading) return;
@@ -485,33 +491,20 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       //   확정된 **뒤에** 고를 템플릿이 0개인 dead-end 를 만난다.
       //   바로 위 주석이 경고하던 상황인데, legacy 분류 축만 막혀 있고
       //   사업장 축은 열려 있었다.
+      // [PERF-L53] 업무 · 템플릿 · 등록증 · 날인을 **함께** 읽는다(예전 3 왕복 → 1). 실패 의미는 그대로다.
+      // [5D.2A] license: 선택된 사업장의 canonical OR ownerId legacy — 호출자 uid 아님
+      // [P4.4C-SEAL-02] 고용주 날인 — 선택 사업장 owner 의 것.
       final results = await Future.wait([
         _firestoreService.getBusinessWorkTypes(_selectedBusiness!.id),
         _contractTemplateService.getTemplates(_selectedBusiness!.id),
+        BusinessPostingReadiness.hasLicenseForBusiness(_selectedBusiness!),
+        _employerSealOf(_selectedBusiness!.ownerId),
       ]);
       if (!mounted) return;
       final workTypes = results[0] as List<BusinessWorkTypeModel>;
       final selectedTemplates = results[1] as List<ContractTemplateModel>;
-      // [5D.2A] license: 선택된 사업장의 canonical OR ownerId legacy — 호출자 uid 아님
-      final bool hasLicense = await BusinessPostingReadiness
-          .hasLicenseForBusiness(_selectedBusiness!);
-      if (!mounted) return;
-      // [P4.4C-SEAL-02] 고용주 날인 — 선택 사업장 owner 의 것.
-      bool employerSeal = false;
-      final selOwnerId = _selectedBusiness!.ownerId;
-      if (selOwnerId.isNotEmpty) {
-        try {
-          final ownerSnap = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(selOwnerId)
-              .get();
-          employerSeal =
-              (ownerSnap.data()?['sealBase64'] as String?)?.isNotEmpty == true;
-        } catch (_) {
-          // 못 읽었으면 준비됨으로 올리지 않는다 — 서버가 최종 gate 다.
-        }
-      }
-      if (!mounted) return;
+      final bool hasLicense = results[2] as bool;
+      final bool employerSeal = results[3] as bool;
       setState(() {
         _businessWorkTypes = workTypes;
         _workTypesReady = workTypes.isNotEmpty;
@@ -1166,6 +1159,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         ToastHelper.showError('날짜를 선택해주세요');
         return;
       }
+      // [impl_58 · server_296 A6] 서버 상한(한 번에 366일)과 같은 경계.
+      if (_selectedDates.length > kPostingDatesMaxPerRequest) {
+        _scrollToSection(_dateSectionKey);
+        ToastHelper.showError(tooManyDatesMessage);
+        return;
+      }
       // 과거 날짜 포함 여부 경고 — _someSlotExpired 조건과 독립적으로 항상 표시
       final hasPastDate = _selectedDates.any((d) => d.isBefore(todayOnly));
       if (hasPastDate && !_allSlotsExpired) {
@@ -1259,8 +1258,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return;
     }
 
-    if (_workDetails.any((w) => (w.requiredCount ?? 0) > 10000)) {
-      ToastHelper.showError('필요 인원은 10,000명 이하여야 합니다');
+    // [impl_58 · server_296 A4] 서버 경계(정수 1–999)와 같게 — 예전 10,000 상한은 서버가 거절하는 값을 통과시켰다.
+    if (_workDetails.any((w) => (w.requiredCount ?? 0) > kRequiredCountMax)) {
+      ToastHelper.showError(requiredCountInvalidMessage);
       return;
     }
 
@@ -1419,6 +1419,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           final parts = msg.split(':');
           final limitStr = parts.length >= 2 ? parts.last.trim() : '4';
           ToastHelper.showError('진행중인 공고가 최대 $limitStr개입니다.\n기존 공고를 마감 후 새 공고를 등록해주세요.');
+        } else if (postingInputRejectMessageOf(e) case final inputMsg?) {
+          // [impl_58 · server_296 A3/A4/A6] 허용 밖 항목 · 정원 · 날짜 거절은 무엇을 고칠지 말한다(서버 code 로만 판정).
+          ToastHelper.showError(inputMsg);
         } else if (PostingNotReady.parse(e) case final notReady?) {
           // [P4.4C-ERR-01] 서버가 어느 축에서 막았는지 코드로 내려준다.
           //   예전에는 `e.message` 를 그대로 띄웠다 — 이제 접두어가 붙어
@@ -1685,7 +1688,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   ///   Home 이 아직 계산하지 않았으면 숫자를 지어내지 않는다.
   String _pendingSetupSentence() {
     final snap = FirstPostingReadinessStore.current.value;
-    final r = snap.isResolved ? snap.value : null;
+    // [PERF-L16 근본 수정] 다시 세는 동안에도 아는 값으로 말한다(공용 판단 `displayValue`).
+    final r = snap.displayValue;
     if (r == null || r.allReady) {
       return '준비 상태를 확인한 뒤 공고를 등록할 수 있습니다.';
     }
@@ -1694,6 +1698,25 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   }
 
   Widget _buildPrerequisiteScreen() {
+    if (_businessLoadFailed) {
+      return AppPageScaffold(
+        title: '공고 등록',
+        actions: [_buildNotificationAction()],
+        body: AppEmptyState(
+          key: const ValueKey('create-to-business-load-failed'),
+          icon: Icons.error_outline,
+          title: '사업장 정보를 불러오지 못했어요',
+          subtitle: '잠시 뒤 다시 시도해 주세요.',
+          action: TextButton(
+            onPressed: () {
+              setState(() => _businessLoadFailed = false);
+              _loadMyBusinesses();
+            },
+            child: const Text('다시 시도'),
+          ),
+        ),
+      );
+    }
     final theme = Theme.of(context);
     return AppPageScaffold(
       title: '공고 등록',

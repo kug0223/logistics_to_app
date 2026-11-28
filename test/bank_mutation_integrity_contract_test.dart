@@ -14,6 +14,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/users_create_rule.dart';
+
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('$p 를 찾지 못함');
@@ -258,10 +260,12 @@ void main() {
 
   // ── RL. Firestore Rules ─────────────────────────────────────────
   group('RL — canonical state 는 client 직접 쓰기로 바뀌지 않는다', () {
+    // [판정281 갱신] users 본인 update 는 fence 예외형 `(callerNotDeleting() || <로그인 시각·FCM 토큰만>) && (` — 안쪽 조건 단언은 그대로.
     final superBlock = _sliceOf(rules,
-        '허용(OR)이므로 순서가 보안에는 영향 없음', 'allow update: if isLoggedIn()');
+        '허용(OR)이므로 순서가 보안에는 영향 없음', 'allow update: if (callerNotDeleting() ||');
+    // [판정281 갱신] users 본인 update 는 fence 예외형 `(callerNotDeleting() || <로그인 시각·FCM 토큰만>) && (` — 안쪽 조건 단언은 그대로.
     final ownerBlock = _sliceOf(rules,
-        'allow update: if isLoggedIn() &&', 'allow delete:');
+        'allow update: if (callerNotDeleting() ||', 'allow delete:');
     final createBlock = _sliceOf(rules, 'allow create:', 'allow delete:');
 
     test('17 §13 — SUPER_ADMIN client update 도 막는다', () {
@@ -286,7 +290,9 @@ void main() {
         'bankbookDocumentState', 'idCardDocumentState',
         'bankbookSelfCheck', 'idCardSelfCheck',
       ]) {
-        expect(createBlock, contains("request.resource.data.get('$f', null) == null"),
+        // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정278 C278-3] users create 가 전면 거부(if false)가 됐다 — 같은 결론(주입 불가)을 더 강하게 확인한다. 다시 열리면 옛 null 조건을 요구한다(support/users_create_rule.dart).
+        expect(createBlock.contains("request.resource.data.get('$f', null) == null") ||
+                usersCreateDeniesField(rules, f), isTrue,
             reason: 'CREATE 차단에 $f');
       }
     });

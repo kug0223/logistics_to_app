@@ -49,6 +49,12 @@ class WageDetailDialog extends StatefulWidget {
   ///   호출부가 이미 아는 이름을 넘긴다 — 없으면 예전처럼 '이름 없음'.
   final String? fallbackName;
 
+  /// [L35 · 탭 분석 §3-5] 근로자·사업장 이름을 **열고 나서** 채운다(선택).
+  ///   주면 다이얼로그를 바로 띄우고 이름 자리는 읽는 동안 '…' · 명세서 보기 버튼은 읽은 뒤 활성.
+  ///   금액·근무 정보는 이미 가진 근태(wageDetail)로 그리므로 기다리지 않는다. 안 주면 예전과 같다.
+  final Future<UserModel?>? userLoader;
+  final Future<String?>? businessNameLoader;
+
   const WageDetailDialog({
     super.key,
     required this.app,
@@ -64,6 +70,8 @@ class WageDetailDialog extends StatefulWidget {
     this.effStart,
     this.effEnd,
     this.fallbackName,
+    this.userLoader,
+    this.businessNameLoader,
   });
 
   static Future<WageDialogResult?> show({
@@ -81,6 +89,8 @@ class WageDetailDialog extends StatefulWidget {
     String? effStart,
     String? effEnd,
     String? fallbackName,
+    Future<UserModel?>? userLoader,
+    Future<String?>? businessNameLoader,
   }) {
     return showDialog<WageDialogResult>(
       context: context,
@@ -99,6 +109,8 @@ class WageDetailDialog extends StatefulWidget {
         effStart: effStart,
         effEnd: effEnd,
         fallbackName: fallbackName,
+        userLoader: userLoader,
+        businessNameLoader: businessNameLoader,
       ),
     );
   }
@@ -125,6 +137,36 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     _deductionController.text =
         widget.wage.deductionAmount > 0 ? widget.wage.deductionAmount.toString() : '';
     _memoController.text = widget.wage.memo ?? '';
+    _user = widget.user;
+    _businessName = widget.businessName;
+    if (widget.userLoader != null || widget.businessNameLoader != null) {
+      _contextPending = true;
+      _loadContext();
+    }
+  }
+
+  // [L35] 열고 나서 채우는 이름 — 실패하면 예전과 같은 기본 표기(이름 없음 · 사업장 생략).
+  UserModel? _user;
+  String? _businessName;
+  bool _contextPending = false;
+
+  Future<void> _loadContext() async {
+    try {
+      final results = await Future.wait<Object?>([
+        widget.userLoader ?? Future<UserModel?>.value(widget.user),
+        widget.businessNameLoader ?? Future<String?>.value(widget.businessName),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _user = results[0] as UserModel?;
+        _businessName = results[1] as String?;
+        _contextPending = false;
+      });
+    } catch (e) {
+      debugPrint('⚠️ 급여 명세 이름 조회 실패(금액은 그대로): $e');
+      if (!mounted) return;
+      setState(() => _contextPending = false);
+    }
   }
 
   @override
@@ -410,7 +452,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   Future<void> _onAction(String action) async {
     if (_isActing) return; // 중복 탭 방지
     _updateWage();
-    final userName = widget.user?.name ?? '근무자';
+    final userName = _user?.name ?? '근무자';
     final hasDeductions = _wage.taxDeductionType != InsuranceRateModel.typeNone &&
         _wage.totalInsuranceDeduction > 0;
     final grossText = FormatHelper.formatWage(_wage.totalAmount);
@@ -487,8 +529,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
       MaterialPageRoute(
         builder: (_) => PayslipViewScreen(
           attendance: widget.attendance,
-          worker: widget.user,
-          workerNameOverride: widget.user?.name ?? '근무자',
+          worker: _user,
+          workerNameOverride: _user?.name ?? '근무자',
         ),
       ),
     );
@@ -553,8 +595,10 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final name = widget.user?.name ??
-        ((widget.fallbackName?.isNotEmpty ?? false) ? widget.fallbackName! : '이름 없음');
+    final name = _user?.name ??
+        (_contextPending
+            ? '…'
+            : ((widget.fallbackName?.isNotEmpty ?? false) ? widget.fallbackName! : '이름 없음'));
 
 
     // [FC-07 FIX] DialogFocusSafeArea — deactivate()에서 unfocus하여
@@ -700,8 +744,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   /// B. compact 메타 텍스트 (사업장·업무유형·임금유형·이체일 한 줄)
   Widget _buildMetaRow(BuildContext context) {
     final parts = <String>[];
-    if (widget.businessName != null && widget.businessName!.isNotEmpty) {
-      parts.add(widget.businessName!);
+    if (_businessName != null && _businessName!.isNotEmpty) {
+      parts.add(_businessName!);
     }
     parts.add(widget.app.selectedWorkType);
     if (widget.shiftType != null) parts.add(widget.shiftType!);
@@ -1613,7 +1657,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             // 임금명세서 보기 버튼 (wageDetail 있을 때만)
             if (widget.attendance.wageDetail != null)
               OutlinedButton.icon(
-                onPressed: () => _openPayslip(context),
+                onPressed: _contextPending ? null : () => _openPayslip(context),
                 icon: const Icon(Icons.receipt_long_outlined),
                 label: const Text('임금명세서 보기'),
                 style: OutlinedButton.styleFrom(

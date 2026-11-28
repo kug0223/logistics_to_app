@@ -184,8 +184,9 @@ void main() {
     test('18 source가 가입 경로와 구분된다 (§15)', () {
       expect(cf, contains(
           'const TAX_ID_SOURCE_FOREIGN_RECOVERY = "FOREIGN_RECOVERY";'));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 옛 가입 source 상수는 finalize 와 함께 사라졌다. 새 가입 후 등록 source 가 복구와 구분된다.
       expect(cf, contains(
-          'const TAX_ID_SOURCE_FOREIGN_SIGNUP = "FOREIGN_SIGNUP";'));
+          'const TAX_ID_SOURCE_FOREIGN_DOCUMENT = "FOREIGN_ID_DOCUMENT";'));
     });
   });
 
@@ -205,7 +206,10 @@ void main() {
           'export const callableGetTaxIdentityStatus',
           'export const callableGetTaxIdentityNumber')));
       expect(st, contains('foreignRecoveryAvailable:'));
-      expect(st, contains(r'enabled && !!(u.data() ?? {})["foreignIdentityFingerprint"]'));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 옛 계정은 가입 지문, 새 계정은 등록증 서류 지문이 있을 때만 대상이다(근거 없는 계정은 false).
+      expect(st, contains('enabled && !!(skIsNewCohortUser(u.data()) ?'));
+      expect(st, contains(r'(u.data() ?? {})["foreignIdDocumentFingerprint"]'));
+      expect(st, contains(r'(u.data() ?? {})["foreignIdentityFingerprint"]'));
       // 이미 등록된 사람에게는 false다.
       expect(st, contains('foreignRecoveryAvailable: false'));
     });

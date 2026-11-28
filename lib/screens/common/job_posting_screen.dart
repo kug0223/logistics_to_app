@@ -31,11 +31,14 @@ import '../../utils/format_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/image_helper.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/action_guard.dart';
 
 // Widgets
 import '../../widgets/common/attendance_rule_guide_view.dart';
 import '../../widgets/common/common_widgets.dart';
 import '../../utils/text_layout.dart';
+import '../../utils/worker_reject_messages.dart';
+import '../../utils/expected_daily_wage.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/keep_words_text.dart';
 // WorkTypeIcon import removed — 업무카드 placeholder 아이콘 제거 (spec 요구)
@@ -118,6 +121,10 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   UserProvider? _userProvider;
 
   bool _isLoading = true;
+
+  /// [L33 · 탭 분석 §3-7] seed(목록이 넘긴 공고)로 화면을 먼저 그렸고, 슬롯·내 지원·업무 안내가 아직 확정되지 않았다.
+  ///   이 동안 날짜·업무·내 지원 일정 영역은 자리표시이고 지원 버튼은 비활성이다(판정 근거는 여전히 재조회 값).
+  bool _detailsPending = false;
   TOModel? _to;
   BusinessModel? _business;
   List<WorkDetailModel> _workDetails = [];
@@ -560,7 +567,20 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         ? context.read<UserProvider>().currentUser?.uid
         : null;
     if (_applicantUid != null) _startTaxPrefetch();
-    setState(() => _isLoading = true);
+    // [L33] seed 가 있으면(내 지원·초대 진입 제외) 전체 스피너 대신 바로 그린다.
+    //   초대·내 지원 상세는 약속 판정이 재조회 값에 묶여 있어 예전처럼 다 읽은 뒤 그린다.
+    final progressive = widget.to != null && widget.myApplication == null;
+    setState(() {
+      if (progressive) {
+        _to = widget.to;
+        _workDetails = widget.workDetails ?? [];
+        _business = widget.business;
+        _isLoading = false;
+        _detailsPending = true;
+      } else {
+        _isLoading = true;
+      }
+    });
     try {
       if (widget.to != null) {
         _to = widget.to;
@@ -586,6 +606,15 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         }
       }
       if (_business == null && _to != null) {
+        // [L33] 업무 안내(catalog)는 사업장 id 만 있으면 된다 — 사업장 문서를 기다리지 않고 함께 출발한다.
+        //   쓰는 조건(사업장이 있을 때만)·실패 처리(안내만 없음)는 그대로다.
+        final catalogBizId = _to!.businessId;
+        final catalogF = _reads.workTypeCatalog(catalogBizId)
+            .then<WorkTypeCatalog?>((c) => c)
+            .catchError((Object e) {
+          debugPrint('⚠️ 업무유형 로드 실패: $e');
+          return null;
+        });
         await Future.wait([
           _reads.businessById(_to!.businessId)
               .then((biz) { _business = biz; }),
@@ -594,8 +623,16 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
             _reads.myApplications(_applicantUid!)
                 .then((apps) { _myApplications = apps; })
                 .catchError(_onMyApplicationsFailed),
+          catalogF,
         ]);
-        if (_business != null) await _loadWorkTypes();
+        if (_business != null) {
+          if (_business!.id == catalogBizId) {
+            final c = await catalogF;
+            if (c != null) _workTypeCatalog = c;
+          } else {
+            await _loadWorkTypes();
+          }
+        }
       } else {
         await Future.wait([
           if (_to != null && _to!.isFlexType) _loadSlots(),
@@ -610,7 +647,12 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       debugPrint('❌ 데이터 로드 실패: $e');
       if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다');
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _detailsPending = false;
+        });
+      }
     }
   }
 
@@ -846,7 +888,10 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                           //   지우지는 않는다. 접힌 보조 영역으로 내리고
                           //   "현재 모집 정보"라고 이름 붙여 decision truth가
                           //   아님을 분명히 한다.
-                          if (!_isInvitationDetail) ...[
+                          // [L33] 슬롯·내 지원을 아직 모르면 날짜·업무 영역은 자리표시(‘날짜 없음’으로 말하지 않는다).
+                          if (_detailsPending)
+                            _buildDetailsPendingPlaceholder(context)
+                          else if (!_isInvitationDetail) ...[
                             // [POSTING-V2-03C.1] 불러오기 실패가 '날짜 없음'과
                             //   같은 화면이 되지 않도록 먼저 가른다.
                             if (_to!.isFlexType && _slotLoadError)
@@ -860,6 +905,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                             _buildCurrentRecruitingDisclosure(context),
                           // 내 지원 일정 — 단기/장기 공통, 업무 목록 바로 아래
                           // [CP05] 화면 좌우 gutter 로 맞춘다(위젯 내용·조건 그대로).
+                          if (!_detailsPending)
                           Padding(
                             padding: EdgeInsets.fromLTRB(
                                 _gutter(context), ConceptSpace.infoGroupGap, _gutter(context), 0),
@@ -894,6 +940,14 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       // 공고를 못 읽은 초대는 위 fallback이 자체 CTA를 갖는다.
       bottomNavigationBar:
           _isLoading || _to == null ? null : _buildBottomBar(context),
+    );
+  }
+
+  /// [L33] seed 로 먼저 그린 동안의 날짜·업무 자리표시.
+  Widget _buildDetailsPendingPlaceholder(BuildContext context) {
+    return const SizedBox(
+      height: 160,
+      child: LoadingWidget(message: '근무 일정을 불러오는 중...'),
     );
   }
 
@@ -1846,11 +1900,34 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     final netText = _netTimeKorean(work);
     // [CP05] 정밀 §6·§8 conceptValue — 출처가 확정된 **이 업무의** 요율만 크게(30/700 brand, 단위 16/700).
     //   새 예상 총액·공제/수당 계산 0. 숫자·단위는 기존 formattedWage 문자열을 표시만 둘로 나눈다(의미 이름은 원문).
-    final wageText = work.formattedWage;
+    // [F293-WAGE-01] 시급 업무는 하루 예상 금액이 주금액(크게) · 시급은 보조. 지급 시기(익일 등)와 환산 기준(하루)을 섞지 않는다.
+    final expected = ExpectedDailyWage.forWorkDetail(work);
+    // [F294-WAGE-01 · C294-WAGE-A/C] 큰 금액 자리에는 **확정된 금액만** — 하루 예상 또는 알려진 비시급 유형의 유효 원시 금액.
+    //   시급 계산 불가 → '예상 금액 확인 필요'(유효 시급만 보조) · 유형 모름/누락 단가 → '급여 확인 필요'. 모델 0 을 '0원' 으로 말하지 않는다.
+    final String? wageAmountText = expected.isEstimate
+        ? FormatHelper.formatWage(expected.amount!)
+        : (!expected.isHourly && !expected.typeUnknown && work.wage > 0)
+            ? work.formattedWage
+            : null;
+    final wageStatusText = wageAmountText != null
+        ? null
+        : (expected.isHourly ? ExpectedWageText.needsCheck : ExpectedWageText.wageUnknown);
+    final wageText = wageAmountText ?? '';
     final wageHasUnit = wageText.endsWith('원');
     final wageNumber = wageHasUnit ? wageText.substring(0, wageText.length - 1) : wageText;
     final sched = work.payScheduleTypeLabel;
-    final wageLabel = sched.isNotEmpty ? '${work.wageTypeLabel} · $sched' : work.wageTypeLabel;
+    // 유형 모름 = 모델 기본 '시급' 으로 부르지 않는다.
+    final typeLabel = expected.typeUnknown ? '급여' : work.wageTypeLabel;
+    final wageLabel = expected.isEstimate
+        ? '하루 예상'
+        : (sched.isNotEmpty ? '$typeLabel · $sched' : typeLabel);
+    // 보조 줄: 시급 원값(+ 지급 시기) · 계산 불가면 유효 시급만.
+    final expectedSub = !expected.isHourly
+        ? null
+        : expected.isEstimate
+            ? [ExpectedWageText.rate(expected)!, ExpectedWageText.shortNote, if (sched.isNotEmpty) '지급 $sched']
+                .join(' · ')
+            : ExpectedWageText.rate(expected);
 
     return Container(
       margin: const EdgeInsets.only(bottom: ConceptSpace.cardGap),
@@ -2014,12 +2091,29 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                   Text.rich(
                     TextSpan(children: [
                       // 숫자 안에서 줄을 바꾸지 않는다(낱말 묶음) — 좁으면 숫자와 단위 사이에서만 내려간다.
-                      TextSpan(text: TextLayout.keepWords(wageNumber), style: ConceptText.detailRate()),
-                      if (wageHasUnit)
-                        TextSpan(text: '원', style: ConceptText.detailRateUnit()),
+                      if (wageStatusText != null)
+                        TextSpan(
+                          text: TextLayout.keepWords(wageStatusText),
+                          style: ConceptText.detailRateUnit().copyWith(color: AppColors.textSecondary),
+                        )
+                      else ...[
+                        TextSpan(text: TextLayout.keepWords(wageNumber), style: ConceptText.detailRate()),
+                        if (wageHasUnit)
+                          TextSpan(text: '원', style: ConceptText.detailRateUnit()),
+                      ],
                     ]),
-                    semanticsLabel: '${work.wageTypeLabel} ${work.formattedWage}',
+                    semanticsLabel: expected.isEstimate
+                        ? '하루 예상 ${FormatHelper.formatWage(expected.amount!)}'
+                        : wageStatusText ?? '$typeLabel ${work.formattedWage}',
                   ),
+                  if (expectedSub != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      TextLayout.keepWords(expectedSub),
+                      semanticsLabel: expectedSub,
+                      style: ConceptText.meta().copyWith(color: AppColors.textSecondary),
+                    ),
+                  ],
                   // 세금 공제 — 낮은 우선순위 (보조 정보)
                   if (work.taxDeductionType != InsuranceRateModel.typeNone) ...[
                     const SizedBox(height: 4),
@@ -2653,7 +2747,11 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     // 서류 미완료 차단 여부 — 신분증·통장 관련만 바텀시트로 안내
     final bool isDocumentBlock = !isClosed && !_isApplyable && _isDocumentBlocked;
 
-    if (isClosed) {
+    if (_detailsPending) {
+      // [L33] 슬롯·내 지원을 확정하기 전에는 지원할 수 없다.
+      buttonText = '불러오는 중이에요';
+      isDisabled = true;
+    } else if (isClosed) {
       // [INVITE-CAPACITY] 인원이 찬 것은 공고가 끝난 것이 아니다(취소가 나오면 다시 열린다).
       // [CP05] Q6 버튼·상태 — 해요체로 통일(같은 바의 `모집 인원이 찼어요`와 같은 말투).
       buttonText = _closedByCapacityOnly ? '모집 인원이 찼어요' : '마감된 공고예요';
@@ -2912,15 +3010,12 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   /// 순 근무시간을 한국어 형식으로 반환 (예: "8시간", "7시간 30분")
   String _netTimeKorean(WorkDetailModel work) {
     try {
-      int toMins(String t) {
-        final p = t.split(':');
-        return int.parse(p[0]) * 60 + int.parse(p[1]);
-      }
-      int s = toMins(work.startTime);
-      int e = toMins(work.endTime);
-      if (e <= s) e += 1440;
-      final net = (e - s - work.breakMinutes).clamp(0, 1440);
-      if (net <= 0) return '';
+      // [F293-WAGE-01] 하루 예상 금액과 **같은 분 계산** — 종료 < 시작만 다음날 · 종료 = 시작은 24시간으로 만들지 않는다 ·
+      //   원문에 시각이 없던 자료(기본 09–18)는 말하지 않는다. 예전에는 종료 = 시작을 24시간으로 셌다.
+      final net = work.scheduleFromSource
+          ? ExpectedDailyWage.netMinutesOf(work.startTime, work.endTime, work.breakMinutes)
+          : null;
+      if (net == null || net <= 0) return '';
       final h = net ~/ 60;
       final m = net % 60;
       if (m == 0) return '$h시간';
@@ -3077,14 +3172,28 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                       context,
                       '급여',
                       () {
-                        final base =
-                            '${work.wageTypeLabel} ${work.formattedWage}';
+                        // [F293-WAGE-01] 시급 업무는 하루 예상(주) + 시급(보조) · 지급 시기는 '지급' 으로 구분.
+                        final e = ExpectedDailyWage.forWorkDetail(work);
+                        final line = ExpectedWageText.combined(e);
+                        // [C294-WAGE-C] 알려진 비시급 유형만 여기로 온다 — 누락 단가는 '급여 확인 필요'.
+                        final base = line ?? '${work.wageTypeLabel} ${ExpectedWageText.rawWage(work.wage)}';
                         final sched = work.payScheduleTypeLabel;
-                        return sched.isNotEmpty ? '$base  ·  $sched' : base;
+                        return sched.isNotEmpty
+                            ? '$base  ·  ${line != null ? '지급 ' : ''}$sched'
+                            : base;
                       }(),
                       // [DU577b] 업무 상세 시트 급여 값 = brand(판정170 §5 · BL-04) — 값 문장 · 정산 방식 표기 그대로.
                       valueColor: AppColors.brand,
                     ),
+                    // [F293-WAGE-01] 하루 예상 금액의 계산 범위 고지(정본 문구 그대로).
+                    if (ExpectedDailyWage.forWorkDetail(work).isEstimate) ...[
+                      SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                      Text(
+                        ExpectedWageText.disclosure,
+                        style: ResponsiveHelper.smallStyle(context)
+                            .copyWith(color: AppColors.textSecondary),
+                      ),
+                    ],
                     if (work.payScheduleDetail.isNotEmpty) ...[
                       SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                       Text(
@@ -3255,9 +3364,14 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
   /// 선택된 업무 확인 시트 표시 후 지원 실행
   Future<void> _showConfirmAndApply() async {
-    if (_isLoading || _isApplying) return;
+    if (_isLoading || _detailsPending || _isApplying) return;
     if (_to == null) return;
-
+    // [PERF-P12 · 판정291 §4] 첫 await(세무 축 조회) **전에** 잠그고 처리 중으로 표시한다.
+    //   예전에는 그 조회가 끝날 때까지 `_isApplying` 이 false 라 스피너도 중복 탭 잠금도 없었다(콜드 수 초).
+    //   모든 끝(전제조건 화면에서 물러남·선택 없음·시트 닫힘·오류)에서 아래 finally 가 푼다.
+    //   (판정 계약 GETSLOTS-05-d·COMPLETE-08-e: 지원 동작 안의 게이트를 이 함수 본문에 둔다 — 따로 떼지 않는다.)
+    setState(() => _isApplying = true);
+    try {
     // 전제조건 확인
     final user = context.read<UserProvider>().currentUser;
     if (user == null) return;
@@ -3361,6 +3475,10 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       }
       if (result?.hasChanges == true && mounted) Navigator.pop(context, true);
     } finally {
+      if (mounted) setState(() => _isApplying = false);
+    }
+    } finally {
+      // [PERF-P12] 전제조건에서 물러남·선택 없음·시트 닫힘 등 모든 끝에서 잠금을 푼다.
       if (mounted) setState(() => _isApplying = false);
     }
   }
@@ -3648,7 +3766,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                 Expanded(
                   child: OutlinedButton(
                     onPressed: (_isAcceptingInvite || _isDecliningInvite)
-                        ? null : _declineInviteFromDetail,
+                        ? null : _declineInviteFromDetailTap,
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppColors.grey600,
                       side: const BorderSide(color: AppColors.grey300),
@@ -3671,7 +3789,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
             SizedBox(height: ResponsiveHelper.spacing(context, 10)),
             // [DU575] 일반 취소 진입 = 중립 textSecondary 밑줄 글(판정139 §4 544-11 · 내 지원 '취소' 진입과 같다) — errorDark 는 최종 취소 확인에만.
             GestureDetector(
-              onTap: _isCancellingApplication ? null : _cancelApplicationFromDetail,
+              onTap: _isCancellingApplication ? null : _cancelApplicationFromDetailTap,
               child: Text(
                 _isCancellingApplication ? '취소 처리 중...' : '지원 취소하기',
                 style: TextStyle(
@@ -3793,7 +3911,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
               Expanded(
                 child: OutlinedButton(
                   onPressed: (_isAcceptingInvite || _isDecliningInvite)
-                      ? null : _declineInviteFromDetail,
+                      ? null : _declineInviteFromDetailTap,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.grey600,
                     side: const BorderSide(color: AppColors.grey300),
@@ -3848,6 +3966,15 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   }
 
   // ── 내 지원 액션 핸들러 ───────────────────────────────────────────────────
+
+  /// [I9 · impl_18] 확인 창이 먼저 떠도 터치 차단막은 **다음 프레임**에 덮인다 — 같은 프레임의 두 번째 탭이
+  ///   창을 하나 더 띄우고 처리까지 한 번 더 갈 수 있다. 첫 await 전에 같은 화면·같은 잠금 묶음을 잠근다.
+  Future<void> _cancelApplicationFromDetailTap() => ActionGuard.runVoid(
+      ActionGuard.ownerKey('jobPosting._isCancellingApplication', this),
+      () => _cancelApplicationFromDetail());
+  Future<void> _declineInviteFromDetailTap() => ActionGuard.runVoid(
+      ActionGuard.ownerKey('jobPosting._isDecliningInvite', this),
+      () => _declineInviteFromDetail());
 
   Future<void> _cancelApplicationFromDetail() async {
     if (_isCancellingApplication) return;
@@ -3914,6 +4041,10 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
   Future<void> _acceptInviteFromDetail() async {
     if (_isAcceptingInvite) return;
+    // [PERF-P12 · 판정291 §4] 첫 await(세무 축 조회) 전에 잠그고 처리 중으로 표시한다(예전: 확인창 뒤에야 잠금).
+    //   (판정 계약 34: 수락 **동작** 안에서 meetsApplyPrerequisites 를 지난다 — 그래서 본문을 이 함수 안에 둔다.)
+    setState(() => _isAcceptingInvite = true);
+    try {
     final app = widget.myApplication!;
 
     // [CROSS-DOMAIN-R5.3B.1] 이 화면의 수락은 R5.2 이후 **항상 실패**하고 있었다.
@@ -3928,7 +4059,9 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     final user = context.read<UserProvider>().currentUser;
     if (user == null) { ToastHelper.showError('로그인이 필요합니다.'); return; }
     final isFlex = _to?.isFlexType ?? true;
-    final acceptTax = await TaxIdentityService.loadStatus();
+    // [PERF-L44] 상세를 여는 동안 미리 출발한 같은 조회를 쓴다(60초 안·성공일 때만 — 아니면 지금 다시 읽는다).
+    //   판정은 그대로 — 최종 판단은 callableAcceptTOInvitation 이다.
+    final acceptTax = await _takeTaxStatus();
     if (!mounted) return;
     if (!meetsApplyPrerequisites(user,
         isFlexType: isFlex, taxStatus: acceptTax)) {
@@ -3994,10 +4127,15 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       ToastHelper.showSuccess('수락했어요. 근무가 확정됐어요.');
       Navigator.pop(context, true);
     } on FirebaseFunctionsException catch (e) {
-      if (mounted) ToastHelper.showError(e.message ?? '수락하지 못했어요.');
+      // [impl_63] OVERLAP_CHECK_INCOMPLETE — 겹침 확인을 끝내지 못해 수락하지 않았다(확정 0) · 다시 시도 안내.
+      if (mounted) ToastHelper.showError(inviteAcceptRejectMessageOf(e) ?? e.message ?? '수락하지 못했어요.');
     } catch (e) {
       if (mounted) ToastHelper.showError('수락하지 못했어요.');
     } finally {
+      if (mounted) setState(() => _isAcceptingInvite = false);
+    }
+    } finally {
+      // [PERF-P12] 확인창에서 물러남·전제조건 미충족 등 모든 끝에서 잠금을 푼다.
       if (mounted) setState(() => _isAcceptingInvite = false);
     }
   }

@@ -118,7 +118,9 @@ void main() {
     test('배지 조건과 초기 필터 조건이 같은 값을 본다', () {
       final rows = _dartBody(home, '_makeActionRows(BuildContext context');
       // 배지: (approval?.overdueCount ?? 0) > 0
-      expect(rows.contains("badge: (approval?.overdueCount ?? 0) > 0"), isTrue);
+      // [impl_26 · DU_concept_CP04 정밀 사양(2026-11-12) · 코드 [CP04] 표지] 배지 문자열 필드(badge:)가 할 일 행 보조줄 `_TaskSub(…, tone: urgent)` 로 바뀌었다.
+      //   뜻(같은 조건이 긴급 표시와 overdue 착지를 함께 정한다)은 그대로 — 아래 개수 2 단언도 그대로다.
+      expect(rows.contains("if ((approval?.overdueCount ?? 0) > 0) _TaskSub('긴급 \${approval!.overdueCount}건', tone: _SubTone.urgent)"), isTrue);
       expect(
         "(approval?.overdueCount ?? 0) > 0".allMatches(rows).length,
         2,
@@ -375,7 +377,8 @@ void main() {
       final rows = _dartBody(home, '_makeActionRows(BuildContext context');
       for (final label in [
         '퇴사 요청', '지원 검토', '마감 필요', '급여 변경 요청', '중간정산 요청',
-        '스케줄 변경 요청', '계약 미발송', '계약 확인 필요', '이체 대기',
+        // [impl_26 · UX Master §150 「앱 전체 문구 정본과 두 홈 표현」(2026-11-11) · 대표 홈 정본 보충 표 · DU 0fa6948] `스케줄 변경 요청` → `일정 변경 요청`.
+        '일정 변경 요청', '계약 미발송', '계약 확인 필요', '이체 대기',
       ]) {
         expect(rows.contains("label: '$label'"), isTrue);
       }

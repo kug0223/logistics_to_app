@@ -301,7 +301,9 @@ void main() {
       final off = cf.substring(cf.indexOf('되돌림 skip — 이 근무가 trigger 소유자로'));
       final block = off.substring(0, off.indexOf('if (userUpdates) {'));
       expect(block.contains('if (nsLedgerKey) delete newLedger[nsLedgerKey];'), isTrue);
-      expect(block.contains('userUpdates = srvLedgerUserUpdates(userData, newLedger);'), isTrue);
+      // [서버 병합 2026-11-26 갱신] 원장 helper 가 배포판 3-인자(add/add-at-event/remove)로 교체됐다(merge_report_1 §2.1).
+      //   의도 그대로 — 그 건을 지운 원장에서 다시 파생한다 · 제거 경로이므로 모드 "remove" 까지 고정한다.
+      expect(block.contains('userUpdates = srvLedgerUserUpdates(userData, newLedger, "remove");'), isTrue);
       expect(RegExp(r'recentNoShowCount\s*-\s*1|currentNoShowCount\s*-\s*1').hasMatch(block), isFalse,
           reason: '저장 카운터에서 1을 빼지 않는다');
     });

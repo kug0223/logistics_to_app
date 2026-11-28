@@ -7,6 +7,7 @@ import '../../../models/core/schedule_change_request_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
+import '../../../utils/request_relation_error.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/loading_state_mixin.dart';
@@ -25,7 +26,12 @@ class ScheduleRequestManagementDialog extends StatefulWidget {
     super.key,
     required this.businessId,
     required this.onChanged,
+    this.debugReloadHook,
   });
+
+  /// [impl_27a] 시험 전용 — 처리 뒤 다시 읽기를 시험이 직접 부르게 넘긴다. 운영은 null.
+  @visibleForTesting
+  final void Function(Future<void> Function() reload)? debugReloadHook;
 
   @override
   State<ScheduleRequestManagementDialog> createState() =>
@@ -42,14 +48,40 @@ class _ScheduleRequestManagementDialogState
   int _pendingCount = 0;
   String _selectedFilter = 'PENDING';
 
+  /// [impl_27a · L48 같은 꼴] 읽기 차례 — 마지막에 시작한 읽기만 목록에 앉는다(늦게 끝난 옛 읽기가 처리 뒤 새 목록을 덮지 않게).
+  int _loadGen = 0;
+
+  /// [impl_27a] 한 번이라도 목록을 앉혔는가 — 그 뒤의 다시 읽기(처리 뒤·당겨서 새로고침)는 목록을 지우지 않고
+  ///   얇은 진행 표시 + 누르기 잠금으로 보인다. 첫 읽기는 예전처럼 로딩 화면이다.
+  bool _hasLoadedOnce = false;
+
+  /// [impl_27a] 진행 중인 읽기 수 — 겹친 읽기에서 먼저 끝난 옛 읽기가 로딩(잠금)을 내리지 않게.
+  int _loadsInFlight = 0;
+
+  @override
+  void setLoading(bool val) {
+    if (val) {
+      _loadsInFlight++;
+    } else {
+      if (_loadsInFlight > 0) _loadsInFlight--;
+      if (_loadsInFlight > 0) return;
+    }
+    super.setLoading(val);
+  }
+
+  bool get _reloadingKeepRows => isLoading && _hasLoadedOnce;
+
   @override
   void initState() {
     super.initState();
+    widget.debugReloadHook?.call(() => _loadRequests());
     _loadRequests();
   }
 
   /// 요청 목록 로드
-  Future<void> _loadRequests() => runWithLoading(() async {
+  Future<void> _loadRequests() {
+    final gen = ++_loadGen;
+    return runWithLoading(() async {
     final allRequests = await _firestoreService.getAllScheduleChangeRequests(
       widget.businessId,
     );
@@ -73,14 +105,16 @@ class _ScheduleRequestManagementDialogState
       );
     }).toList();
 
-    if (mounted) {
+    if (mounted && gen == _loadGen) { // 더 늦게 시작한 읽기가 있으면 앉지 않는다
       setState(() {
         _allRequests = results;
         _pendingCount = results.where((r) => r.request.isPending).length;
         _applyFilter();
+        _hasLoadedOnce = true;
       });
     }
   }, errorTag: '요청 목록 로드', errorMessage: '요청 목록을 불러올 수 없습니다');
+  }
 
   /// 필터 적용
   void _applyFilter() {
@@ -107,8 +141,13 @@ class _ScheduleRequestManagementDialogState
           onClose: () => Navigator.pop(context),
         ),
         _buildFilterTabs(),
+        // [impl_27a] 처리 뒤 다시 읽는 중 — 목록은 그대로, 얇은 진행 표시 + 누르기 잠금.
+        if (_reloadingKeepRows)
+          const LinearProgressIndicator(key: ValueKey('schedule-request-refresh-after-mutation'), minHeight: 2),
         Expanded(
-          child: isLoading
+          child: AbsorbPointer(
+            absorbing: _reloadingKeepRows,
+            child: isLoading && !_hasLoadedOnce
               ? const LoadingWidget(message: '요청 목록을 불러오는 중...')
               : _filteredRequests.isEmpty
                   ? _buildEmptyState()
@@ -122,6 +161,7 @@ class _ScheduleRequestManagementDialogState
                         },
                       ),
                     ),
+          ),
         ),
       ],
     );
@@ -624,7 +664,13 @@ class _ScheduleRequestManagementDialogState
     } catch (e) {
       debugPrint('❌ 승인 실패: $e');
       if (mounted) {
-        ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
+        // [impl_42] 요청-지원서 불일치 보류는 일반 오류가 아니다 — 무엇이 남았는지 말한다.
+        final held = requestHeldMessageOf(e);
+        if (held != null) {
+          ToastHelper.showWarning(held);
+        } else {
+          ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
+        }
       }
     }
   }
@@ -685,7 +731,12 @@ class _ScheduleRequestManagementDialogState
     } catch (e) {
       debugPrint('❌ 거절 실패: $e');
       if (mounted) {
-        ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
+        final held = requestHeldMessageOf(e);
+        if (held != null) {
+          ToastHelper.showWarning(held);
+        } else {
+          ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
+        }
       }
     }
   }

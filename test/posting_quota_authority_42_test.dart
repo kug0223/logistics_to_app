@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/users_create_rule.dart';
+
 // ═══════════════════════════════════════════════════════════════
 // [POSTING-QUOTA-42] 공고 한도·서브관리자 권한 — 소스 계약
 //
@@ -50,9 +52,12 @@ void main() {
     });
 
     test('PQ-1b 가입(create) 문서는 maxActiveTOs 를 null 로만 가진다', () {
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] users create 전면 거부(판정278 C278-3) — 가입 문서에 maxActiveTOs 를 심을 수 없다(더 강함).
+      //   다시 열리면 옛 null 조건을 요구한다.
       expect(
-          rules.contains(
-              "request.resource.data.get('maxActiveTOs', null) == null &&"),
+          usersCreateClosed(rules) ||
+              rules.contains(
+                  "request.resource.data.get('maxActiveTOs', null) == null &&"),
           true);
     });
   });

@@ -781,13 +781,20 @@ void main() {
 
     test('close semantics 무변경', () {
       final close = _codeOf(_callableBody(fn, 'callableCloseSlots'));
+      // [판정295/296 F295-CLOSE-01 · server_296] 닫기 쓰기에 이 닫기 사건 token(closeCleanupToken)이 붙었고, 대기 정리는
+      //   callable·매시 공용 helper(srvCloseSlotsCleanupFlow → srvCloseSlotCleanupOne)로 옮겼다. 예전 핀은 이 본문에
+      //   '{…closedBy: callerUid}' 와 PENDING 질의가 직접 있다고 봤다. 의미(수동 닫기 · PENDING 만 거절 · relation guard 없음)는 같다.
       expect(
         close.contains('{isManualClosed: true, status: "closed", '
-            'closedAt: now, closedBy: callerUid}'),
+            'closedAt: now, closedBy: callerUid, closeCleanupToken: token}'),
         isTrue,
       );
-      // 마감은 여전히 PENDING만 거절한다
-      expect(close.contains('.where("status", "==", "PENDING")'), isTrue);
+      expect(close.contains('srvCloseSlotsCleanupFlow('), isTrue);
+      // 마감은 여전히 PENDING만 거절한다 — 질의와 같은 거래 재확인(freshCheck) 둘 다 PENDING
+      final one = _codeOf(_fnBody(fn, 'srvCloseSlotCleanupOne'));
+      expect(one.contains('.where("status", "==", "PENDING")'), isTrue);
+      expect(one.contains('freshCheck: (f) => f.exists && f.get("status") === "PENDING"'), isTrue);
+      expect(one.contains('"CONFIRMED"'), isFalse);
       expect(close.contains('assertNoSlotRelations'), isFalse,
           reason: '마감에까지 relation guard가 붙었다');
     });

@@ -67,7 +67,8 @@ extension IdCardFirestore on FirestoreService {
       return requestId;
     } catch (e) {
       debugPrint('❌ [createIdCardAccessRequest] 실패: $e');
-      ToastHelper.showError('요청 실패');
+      // [impl_58 · server_296 A12] 보낸 근무 정보가 이 근무자·사업장·확정과 맞지 않으면(APPLICATION_MISMATCH) 그 사실을 말한다.
+      ToastHelper.showError(idCardRequestRejectMessageOf(e) ?? '요청 실패');
       return null;
     }
   }
@@ -200,16 +201,7 @@ extension IdCardFirestore on FirestoreService {
           .httpsCallable('callableGetMyIdCardRequests',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
       final result = await callable.call<Map<String, dynamic>>({'status': 'pending'});
-      return ((result.data['requests'] as List? ?? [])
-          .whereType<Map>()
-          .map((m) {
-            final raw = _cfHydrate(Map<String, dynamic>.from(m));
-            final id = raw.remove('id') as String? ?? '';
-            return IdCardAccessRequestModel.tryFromMap(raw, id);
-          })
-          .whereType<IdCardAccessRequestModel>()
-          .toList()
-        ..sort((a, b) => b.requestedAt.compareTo(a.requestedAt)));
+      return _parseMyIdCardRequests(result.data); // [PERF-L9 · impl_15] 근로자 홈 묶음과 같은 해석 함수
     } catch (e) {
       // [PREDEVICE-WORKER-ERROR-NOT-ZERO] 실패를 빈 목록으로 바꾸지 않는다.
       //   빈 목록이면 홈의 신분증 열람 요청 카드가 조용히 사라진다 — 요청이

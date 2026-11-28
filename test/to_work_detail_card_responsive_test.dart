@@ -19,6 +19,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ALfit/screens/business_admin/to_management/widgets/to_work_detail_card.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 /// 실제 화면에서 카드가 받는 가로 제약을 흉내낸다 — 화면 좌우 거터 16.
 const double kGutter = 16;
@@ -122,7 +123,7 @@ void main() {
         _expectWithinViewport(tester, timeText, '시작~종료 시각');
 
         // 실근무 — breakMinutes 60 이므로 표시되어야 한다.
-        final netText = find.textContaining('실근무');
+        final netText = findVisibleTextContaining('실근무');
         expect(netText, findsOneWidget,
             reason: '실근무 표기가 사라졌다 — 공간 부족으로 숨기지 않는다');
         _expectWithinViewport(tester, netText, '실근무');
@@ -153,7 +154,7 @@ void main() {
     );
 
     final netWidget =
-        tester.widget<Text>(find.textContaining('실근무'));
+        tester.widget<Text>(findVisibleTextContaining('실근무'));
     expect(
       netWidget.overflow,
       isNot(TextOverflow.ellipsis),

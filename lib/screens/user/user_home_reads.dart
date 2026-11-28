@@ -32,6 +32,7 @@ class UserHomeReads {
     required this.documentCorrections,
     required this.myContracts,
     this.legalReadiness,
+    this.homeBundle,
   });
 
   /// [CONTRACT-DISPATCH-B4] 오늘 근무 CTA 가 출퇴근 화면과 **같은 계약 판정**을 쓰도록 —
@@ -41,6 +42,15 @@ class UserHomeReads {
   /// [DU1 VQ] 약관 할 일 카드의 읽기. null 이면 카드가 기존 기본 reader(LegalConsentReads)를 쓴다 — production 은 넘기지 않는다.
   ///   LOCAL 렌더(전후 비교)에서 같은 약관 상태를 고정하려고 둔다.
   final Future<LegalReadiness> Function()? legalReadiness;
+
+  /// [PERF-L9 · impl_15] 홈 1라운드 묶음(`callableGetWorkerHomeBundle`). null(시험 대역 · 옛 구성) = 기존 개별 호출.
+  ///   production 은 [FirestoreService.getWorkerHomeBundle] — 구서버면 그 안에서 개별 호출로 폴백한다.
+  final Future<WorkerHomeBundle> Function({
+    required String uid,
+    required String generation,
+    required List<({int year, int month})> months,
+    bool includeLegal,
+  })? homeBundle;
 
   final Future<List<ApplicationModel>> Function(String uid) myApplications;
 
@@ -95,6 +105,7 @@ class UserHomeReads {
       // 같은 정적 호출을 그대로 쓴다 — uid·시점·캐시 계약을 바꾸지 않는다.
       documentCorrections: PayrollCorrectionService.loadMine,
       myContracts: (uid) => ContractService().getByWorker(uid),
+      homeBundle: svc.getWorkerHomeBundle, // [PERF-L9 · impl_15]
     );
   }
 }

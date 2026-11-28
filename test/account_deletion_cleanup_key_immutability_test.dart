@@ -94,9 +94,23 @@ void main() {
       //   함께 들어갔다(그 둘도 CF 전용이다). 지키려던 것은 **`uid` 가 그
       //   목록에 있고 분기보다 앞이라는 것**이므로 목록이 길어진 사실만
       //   반영한다 — 한 글자도 바꾸지 않은 계약이다.
-      expectKeysImmutable('match /applications/{applicationId}',
-          "['uid', 'attendancePolicySnapshot', "
-              "'attendancePolicyAcknowledgement']");
+      // [BL284-01 · 판정288 → L57 r5] 같은 목록에 퇴사 집계 파생 필드(resignRetroRequest ·
+      //   resignAutoApproveAt — CF 전용)가 더 붙어 닫는 `])` 까지 고정한 원문이 깨졌다(제품 회귀 아님 ·
+      //   불변 키가 늘어 더 엄격). 목록 구간을 잘라 **필수 키가 그 안에 있고 분기보다 앞**인지 본다.
+      final c = _updateClause(rules, 'match /applications/{applicationId}');
+      final start = c.indexOf("$_immutableConjunct['uid', ");
+      expect(start, greaterThanOrEqualTo(0),
+          reason: 'applications update 에 uid 불변 조건이 없다');
+      final end = c.indexOf('])', start);
+      expect(end, greaterThan(start));
+      final list = c.substring(start, end);
+      for (final k in ['uid', 'attendancePolicySnapshot',
+        'attendancePolicyAcknowledgement']) {
+        expect(list, contains("'$k'"), reason: '$k 가 불변 목록에서 빠졌다');
+      }
+      expect(c, contains('isSuperAdmin()'));
+      expect(end, lessThan(c.indexOf('isSuperAdmin()')),
+          reason: '불변 조건이 isSuperAdmin() 뒤에 있으면 역할로 우회된다');
     });
 
     test('CK-SRC-06 attendance.userId', () {

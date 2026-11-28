@@ -34,6 +34,8 @@ import '../../widgets/inputs/home_region_picker_sheet.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/auth/provider_account_card.dart';
+import '../../utils/action_guard.dart';
 
 /// 프로필 관리 화면 (MY 2Depth)
 ///
@@ -106,7 +108,12 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   /// 흐름:
   ///   확인 다이얼로그 → PassVerificationService.authenticate(purpose: 'reauth')
   ///   → CF finalizePassReauth(passToken) → UserProvider 갱신 → 성공 토스트
-  Future<void> _handlePassReVerify(UserModel user) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_handlePassReVerifyLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _handlePassReVerify(UserModel user) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('profileEdit._isReVerifying', this), () => _handlePassReVerifyLocked(user));
+
+  Future<void> _handlePassReVerifyLocked(UserModel user) async {
     // 확인 다이얼로그
     final confirmed = await showDialog<bool>(
       context: context,
@@ -162,12 +169,14 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
   // ── 프로필 사진 ──────────────────────────────────────────────────
 
-  Future<void> _showPhotoPicker() async {
-    // 공통 Image Picker BottomSheet 사용 — 개별 구현 금지
-    final source = await ImageHelper.showImageSourceBottomSheet(context);
-    if (source == null || !mounted) return;
-    await _uploadPhoto(source);
-  }
+  // [impl_23] 기기 사진 고르기 단일 실행(`ImageHelper.exclusive`) — 출처 시트가 뜨기 전 연타의 두 번째 탭은
+  //   시트·피커를 다시 열지 않는다(진행 중이면 아무것도 하지 않음 = 취소와 같다). 올리기까지 한 흐름으로 묶는다.
+  Future<void> _showPhotoPicker() => ImageHelper.exclusive<void>(() async {
+        // 공통 Image Picker BottomSheet 사용 — 개별 구현 금지
+        final source = await ImageHelper.showImageSourceBottomSheet(context);
+        if (source == null || !mounted) return;
+        await _uploadPhoto(source);
+      });
 
   Future<void> _uploadPhoto(ImageSource source) async {
     final user = context.read<UserProvider>().currentUser;
@@ -465,7 +474,8 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
               // ── 보안 ────────────────────────────────────────────────
               _buildSectionLabel('보안', Icons.security_outlined),
               const SizedBox(height: 8),
-              _buildSecurityCard(),
+              // [ALFIT-AUTH-KAKAO-ONBOARDING.1] 카카오 계정은 비밀번호가 없다 — 로그인 수단 · 다른 역할 추가 칸.
+              user.isProviderAccount ? ProviderAccountCard(user: user) : _buildSecurityCard(),
             ],
           ),
         ),
@@ -713,7 +723,12 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   /// [user.passVerifiedAt] 가 있는 내국인 계정(PASS 인증 완료)에만 재인증 링크 노출.
   /// 외국인 계정은 passVerifiedAt == null → 재인증 링크 숨김.
   Widget _buildLockedNote({required UserModel user}) {
-    final canReauth = user.passVerifiedAt != null;
+    // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정280 C280-01] PASS 재인증(finalizePassReauth · verifyPassAuth reauth)은
+    //   서버에서 닫혔다 — 새 카카오 계정·옛 아이디 계정 모두 이 링크로 막힌 길에 가지 않게 숨긴다.
+    //   (정보 변경이 필요하면 고객센터 — 새 프로필 인증 기능은 이번 범위 밖)
+    final canReauth = PassVerificationService.closedLegacyPurposes.contains('reauth')
+        ? false
+        : user.passVerifiedAt != null && !user.isProviderAccount;
     return Padding(
       padding: EdgeInsets.only(
         top: ResponsiveHelper.spacing(context, 8),

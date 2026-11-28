@@ -157,9 +157,13 @@ void main() {
     test('CAP-6 정원을 몰라도 지원자 명단은 살아 있다', () {
       final code = _flat(_codeOf(_read(dayDlg)));
       // 정원 조회 실패는 다이얼로그 전체를 오류로 만들지 않는다.
-      expect(code.contains('_loadWorkDetailCapacitiesOrThrow(allApps)'), isTrue);
-      expect(code.contains('_capacityUnknown = true; return {};'), isTrue,
+      // [impl_25 · L48 핀 갱신] 읽기 도중 화면 상태를 직접 고치지 않고 이번 읽기의 모음(acc)에 세운 뒤 커밋 때
+      //   `_capacityUnknown = acc.capacityUnknown` 으로 옮긴다(겹친 읽기의 오염 방지). 의도(실패 삼킴 + UNKNOWN)는 같다.
+      expect(code.contains('_loadWorkDetailCapacitiesOrThrow(allApps, acc)'), isTrue);
+      expect(code.contains('acc.capacityUnknown = true; return {};'), isTrue,
           reason: '실패를 삼키되 UNKNOWN 을 세운다 — 명단은 유지된다');
+      expect(code.contains('_capacityUnknown = acc.capacityUnknown;'), isTrue,
+          reason: '모은 UNKNOWN 을 커밋 때 화면 상태로 옮긴다');
     });
 
     test('CAP-7 slot canonical 값을 받으면 다시 "안다"가 된다', () {

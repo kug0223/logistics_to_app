@@ -11,6 +11,7 @@ import '../../models/core/application_model.dart';
 import '../../models/core/business_model.dart' show AttendanceRules;
 import '../../utils/attendance_policy_disclosure.dart';
 import '../../utils/text_layout.dart';
+import '../../utils/worker_reject_messages.dart';
 import '../../models/core/attendance_model.dart';
 import '../../models/core/employment_contract_model.dart';
 import '../../models/core/monthly_review_model.dart';
@@ -25,6 +26,7 @@ import '../../screens/common/job_posting_screen.dart';
 import '../../services/contract_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/monthly_review_service.dart';
+import '../../services/tax_identity_service.dart' show TaxIdentityStatus;
 import '../../widgets/dialogs/business_review_dialog.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/common/attendance_rule_guide_view.dart';
@@ -35,11 +37,13 @@ import '../../widgets/common/keep_words_text.dart';
 import '../../widgets/common/adaptive_action_row.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/action_guard.dart';
 import '../../widgets/dialogs/apply/document_access_consent.dart';
 import 'apply_prerequisites_screen.dart';
 import '../../utils/period_revision_disclosure.dart';
 import '../../widgets/user/period_revision_notice_card.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/expected_daily_wage.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/light_app_bar_style.dart';
 import '../../theme/app_text_styles.dart';
@@ -127,7 +131,14 @@ class MyApplicationsScreen extends StatefulWidget {
   State<MyApplicationsScreen> createState() => _MyApplicationsScreenState();
 }
 
-class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
+class _MyApplicationsScreenState extends State<MyApplicationsScreen>
+    with AutomaticKeepAliveClientMixin {
+  // [L21 · 탭 분석 §2-1] 일자리 탭의 '내 지원'(TabBarView 안 · onBack 있음)으로 들어 있을 때는 탭을 오가도 상태를 버리지 않는다.
+  //   예전에는 탭을 바꿀 때마다 화면이 버려져 돌아오면 첫 로드(목록·공고·계약·후기·근태)를 처음부터 다시 했다.
+  //   새로고침·재시도·다시 지원 뒤 갱신은 그대로 다시 읽는다. 단독 화면(route)에는 영향이 없다.
+  @override
+  bool get wantKeepAlive => widget.onBack != null;
+
   DateTime _now() => (widget.clock ?? DateTime.now)();
   /// [R5.3E.2] 나에게 온 진행 중인 근무 변경 제안.
   List<ConfirmedReassignmentProposal> _reassignProposals = const [];
@@ -202,6 +213,61 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   static const int _maxAutoLoad = 5;
   static const int _pageSize    = 20;
 
+  // ── [PERF-L18 같은 패턴 · 판정291 §1] 고른 묶음이 비면 다음 페이지를 이어 읽는 자동 연쇄의 예산 ─────
+  //   예전에는 페이지 상한(5)만 있었고, 상한에 닿으면 `_hasMore = false` 로 **끝이라고 단정**해
+  //   '이 묶음에 해당하는 지원이 없다'를 말했다(서버는 끝이라고 하지 않았다). 이제 페이지·시간 두 상한 중
+  //   먼저 닿으면 자동 요청만 멈추고 hasMore 는 서버 값 그대로 — 목록 끝에서 "여기까지 확인했어요 · 더 찾아보기".
+  static const Duration _maxAutoLoadElapsed = Duration(seconds: 8);
+  DateTime? _autoLoadStartedAt;
+  bool _autoLoadStopped = false;
+
+  void _resetAutoLoad() {
+    _autoLoadCount = 0;
+    _autoLoadStartedAt = null;
+    _autoLoadStopped = false;
+  }
+
+  /// 사용자가 고른 "더 찾아보기" — 같은 묶음·커서의 다음 페이지를 새 예산으로.
+  void _loadMoreByUser() {
+    setState(_resetAutoLoad);
+    _loadMore();
+  }
+
+  /// 당겨서 새로고침·다시 시도 — 공고 정보까지 새로 읽는다(변경 뒤 자동 재조회는 공고 캐시를 둔다).
+  Future<void> _refreshByUser() => _loadApplications(refreshTOs: true);
+
+  // ── [PERF-L44 · 판정291 §4] 초대 수락의 세무 축 미리 읽기(공고 상세 `_takeTaxStatus` 와 같은 규칙) ─────
+  //   목록에 초대가 있으면 목록을 받은 직후 출발시킨다. 60초 안·성공일 때만 쓰고 아니면 누를 때 다시 읽는다.
+  //   판정은 그대로 — 최종 판단은 callableAcceptTOInvitation 이다.
+  static const Duration _taxPrefetchMaxAge = Duration(seconds: 60);
+  Future<TaxIdentityStatus>? _taxPrefetch;
+  DateTime? _taxPrefetchAt;
+
+  void _maybePrefetchTax() {
+    if (_taxPrefetch != null) return;
+    final hasInvite =
+        _applications.any((e) => e.application.status == AppStatus.invited);
+    if (!hasInvite) return;
+    _taxPrefetchAt = _now();
+    _taxPrefetch = _reads
+        .taxStatus()
+        .catchError((Object _) => const TaxIdentityStatus.unknown());
+  }
+
+  Future<TaxIdentityStatus> _takeTaxStatus() async {
+    final pending = _taxPrefetch;
+    final at = _taxPrefetchAt;
+    _taxPrefetch = null;
+    _taxPrefetchAt = null;
+    if (pending != null &&
+        at != null &&
+        _now().difference(at) < _taxPrefetchMaxAge) {
+      final status = await pending;
+      if (!status.loadFailed) return status;
+    }
+    return _reads.taxStatus();
+  }
+
   // ─── 진행 중 action 상태 ──────────────────────────────────────────────────
   final Set<String> _cancellingIds        = {};
   final Set<String> _acceptingIds         = {};
@@ -251,13 +317,21 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   // 데이터 로딩 — 기존 로직 그대로 유지
   // ═══════════════════════════════════════════════════════════════════════════
 
-  Future<void> _loadApplications() async {
+  /// [refreshTOs] — 사용자가 직접 새로고침했다(공고 정보도 새로 읽는다).
+  Future<void> _loadApplications({bool refreshTOs = false}) async {
     if (!mounted) return;
     if (_fetchInProgress) return;
     _fetchInProgress = true;
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
     if (uid == null) {
+      // [AUD-5 ①-2] 잠금을 켠 채 돌아가면 스켈레톤이 끝나지 않고 새로고침 · 다시 시도도 영구히 막혔다(finally 를 거치지 않음).
+      //   잠금을 풀고 실패 본문(다시 시도)으로 간다 — 다시 로그인한 뒤 다시 시도하면 읽는다.
+      _fetchInProgress = false;
       ToastHelper.showError('로그인이 필요합니다.');
+      setState(() {
+        _isLoading = false;
+        _loadFailed = _applications.isEmpty;
+      });
       return;
     }
 
@@ -269,7 +343,24 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
             contractsLoaded: _contractsLoaded, contractsFailed: _contractsFailed, attFailed: _attendanceFailed,
             toCache: Map.of(_toCache), toFailed: Set.of(_toLoadFailedIds), reviewKeys: Map.of(_reviewKeyCache),
             attMonths: Set.of(_attendanceMonths), attByApp: Map.of(_attendanceByApp));
+    // [PERF-L46 · 판정291 §3] 받은 목록이 있으면 **비우지 않고**(뼈대·깜빡임 0) 다시 읽어 성공하면 바꾼다(SWR).
+    //   공고 정보 캐시는 둔다(사용자 새로고침이면 비운다). 근태는 다시 읽는다(달 표시만 비운다 — 보이는 값은 성공 때 바뀐다).
+    //   실패는 위 DU554 그대로 — 직전 목록 + 안내. 최초·이전 0건·이전 실패는 예전 경로(뼈대 → 결과/실패 본문)다.
+    final swr = prev != null;
+    if (swr) {
+      setState(() {
+        _resetAutoLoad();
+        _moreFailed = false;
+        _stale      = false;
+        if (refreshTOs) _toCache.clear();
+        _reviewKeyCache.clear();
+        _attendanceMonths.clear();
+      });
+      // 이 회차의 근태 실패만 남게 한다(화면에는 성공·실패 때 함께 반영된다).
+      _attendanceFailed = false;
+    } else {
     setState(() {
+      _resetAutoLoad();
       _isLoading = true;
       _applications  = [];
       _lastDocId     = null;
@@ -290,6 +381,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       _attendanceByApp.clear();
       _attendanceFailed = false;
     });
+    }
 
     try {
       unawaited(_reads.autoExpirePending(uid).catchError((e) {
@@ -300,23 +392,27 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         uid: uid, pageSize: _pageSize,
       );
       final items      = page['items'] as List<ApplicationModel>;
-      final appWithTOs = await _attachTOInfo(items);
+      // [L21] 계약·후기·근태는 지원서 필드만 본다(공고 불필요) — 공고 읽기(R2)와 **동시에** 출발한다.
+      //   예전에는 공고를 다 읽은 뒤에야 출발해 한 왕복이 더 걸렸다. 실패 처리·판정은 그대로다.
+      final bare = _withoutTO(items);
 
       final initResults = await Future.wait([
+        _attachTOInfo(items),
         // 계약 조회가 실패해도 지원 목록 자체는 유효하다 — 전체를 ERROR 로
         // 만들지 않는다. 대신 실패했다는 사실을 남겨 "계약 없음"과 구분한다.
-        _loadContracts(uid, appWithTOs).catchError((e) {
+        _loadContracts(uid, bare).catchError((e) {
           debugPrint('⚠️ 계약 조회 실패 (목록은 유지): $e');
           _contractsFailed = true;
           return <String, EmploymentContractModel>{};
         }),
-        _loadWrittenReviews(uid, appWithTOs).catchError((_) => <String, MonthlyReviewModel?>{}),
+        _loadWrittenReviews(uid, bare).catchError((_) => <String, MonthlyReviewModel?>{}),
         // [E1-MYA] 근태는 목록과 **같은 왕복**에 합류한다. 실패해도 목록은
         //   그대로 그리고, 실패했다는 사실만 남겨 완료 단정을 막는다.
-        _loadAttendances(uid, appWithTOs),
+        _loadAttendances(uid, bare),
       ]);
-      final contractMap = initResults[0] as Map<String, EmploymentContractModel>;
-      final reviewMap   = initResults[1] as Map<String, MonthlyReviewModel?>;
+      final appWithTOs  = initResults[0] as List<_ApplicationWithTO>;
+      final contractMap = initResults[1] as Map<String, EmploymentContractModel>;
+      final reviewMap   = initResults[2] as Map<String, MonthlyReviewModel?>;
 
       if (mounted) {
         setState(() {
@@ -328,6 +424,15 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           _isLoading     = false;
           _loadFailed    = false;
           _cachedFiltered = null;
+        });
+        _maybePrefetchTax(); // [PERF-L44]
+        // [발견·수정] 처음 연 묶음(예: 홈 초대 배너 → '초대')이 첫 페이지에 없으면 화면이 빈 채 멈췄다 —
+        //   이어읽기는 묶음을 바꿀 때·다음 페이지 뒤에만 걸렸고, 빈 목록에서는 스크롤도 생기지 않는다.
+        //   묶음 전환과 같은 방식으로 이어 읽는다(자동 예산 안 · 서버 hasMore 그대로).
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _filteredApplications.isEmpty && _hasMore && !_isLoadingMore) {
+            _loadMore();
+          }
         });
         // [CROSS-DOMAIN-R5.1G.1] 지목된 지원서가 있으면 지금 읽은 데이터로 연다.
         unawaited(_focusRequestedApplication());
@@ -480,24 +585,26 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         uid: uid, pageSize: _pageSize, startAfterDocId: _lastDocId,
       );
       final items      = page['items'] as List<ApplicationModel>;
-      final appWithTOs = await _attachTOInfo(items);
+      final bare       = _withoutTO(items); // [L21] 공고 읽기와 동시 출발
       final moreResults = await Future.wait([
+        _attachTOInfo(items),
         // [R8-P7.3] 계약 조회 실패가 다음 페이지 전체를 날리지 않게 한다.
         //   실패 사실만 남기고 목록은 이어 붙인다.
         _contractsLoaded
             ? Future.value(<String, EmploymentContractModel>{})
-            : _loadContracts(uid, appWithTOs).catchError((e) {
+            : _loadContracts(uid, bare).catchError((e) {
                 debugPrint('⚠️ 계약 조회 실패 (목록은 유지): $e');
                 _contractsFailed = true;
                 return <String, EmploymentContractModel>{};
               }),
-        _loadWrittenReviews(uid, appWithTOs),
+        _loadWrittenReviews(uid, bare),
         // [E1-MYA] 다음 페이지의 지난 근무도 근태를 보고 말해야 한다.
         //   이미 읽은 달은 건너뛰므로 보통 추가 왕복이 없다.
-        _loadAttendances(uid, appWithTOs),
+        _loadAttendances(uid, bare),
       ]);
-      final newContracts = moreResults[0] as Map<String, EmploymentContractModel>;
-      final newReviews   = moreResults[1] as Map<String, MonthlyReviewModel?>;
+      final appWithTOs   = moreResults[0] as List<_ApplicationWithTO>;
+      final newContracts = moreResults[1] as Map<String, EmploymentContractModel>;
+      final newReviews   = moreResults[2] as Map<String, MonthlyReviewModel?>;
 
       if (mounted) {
         setState(() {
@@ -510,16 +617,21 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           _cachedFiltered = null;
         });
         final filtered = _filteredApplications;
-        if (filtered.isEmpty && _hasMore && !_isLoadingMore &&
-            _autoLoadCount < _maxAutoLoad) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted && _filteredApplications.isEmpty && _hasMore && !_isLoadingMore) {
-              _autoLoadCount++;
-              _loadMore();
-            }
-          });
-        } else if (filtered.isEmpty && _hasMore && _autoLoadCount >= _maxAutoLoad) {
-          setState(() => _hasMore = false);
+        if (filtered.isEmpty && _hasMore && !_isLoadingMore) {
+          // [PERF-L18 같은 패턴] 페이지·시간 두 상한 안에서만 자동으로 잇는다. 닿으면 멈추기만 한다 —
+          //   hasMore 를 false 로 바꿔 '없다'고 단정하지 않는다(서버가 끝이라고 한 때만 끝).
+          final started = _autoLoadStartedAt ??= _now();
+          if (_autoLoadCount < _maxAutoLoad &&
+              _now().difference(started) < _maxAutoLoadElapsed) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && _filteredApplications.isEmpty && _hasMore && !_isLoadingMore) {
+                _autoLoadCount++;
+                _loadMore();
+              }
+            });
+          } else {
+            setState(() => _autoLoadStopped = true);
+          }
         }
       }
     } catch (e) {
@@ -536,6 +648,10 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       }
     }
   }
+
+  /// [L21] 공고 없이 지원서만 — 계약·후기·근태 읽기는 `application` 필드만 쓴다.
+  List<_ApplicationWithTO> _withoutTO(List<ApplicationModel> apps) =>
+      [for (final a in apps) _ApplicationWithTO(application: a)];
 
   Future<List<_ApplicationWithTO>> _attachTOInfo(List<ApplicationModel> apps) async {
     final toIds = apps.map((a) => a.toId).whereType<String>().toSet().toList();
@@ -612,8 +728,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     }
     if (months.isEmpty) return;
 
-    for (final entry in months.entries) {
-      if (_attendanceMonths.contains(entry.key)) continue;
+    // [L21] 달마다 따로 기다리지 않고 **동시에** 읽는다(예전: 달 수만큼 직렬 왕복).
+    //   달마다 결과·실패 처리는 그대로 — 한 달이라도 실패하면 `_attendanceFailed`.
+    await Future.wait(months.entries
+        .where((entry) => !_attendanceMonths.contains(entry.key))
+        .map((entry) async {
       try {
         final list = await _reads.monthlyAttendances(
           userId: uid, year: entry.value.year, month: entry.value.month,
@@ -628,7 +747,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         debugPrint('⚠️ 근태 조회 실패(${entry.key}): $e');
         _attendanceFailed = true;
       }
-    }
+    }));
   }
 
   /// [E1-MYA] 그 지원서의 근태. 못 읽었으면 **null 이 아니라 UNKNOWN** 이므로
@@ -788,6 +907,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // [L21] AutomaticKeepAliveClientMixin
     final isEmbedded = widget.onBack != null;
 
     // 로딩 완료 + 전체 지원 0건 → 필터 숨김 (CASE A)
@@ -861,7 +981,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               if (_selectedGroupIdx == i) return;
               setState(() {
                 _selectedGroupIdx = i;
-                _autoLoadCount    = 0;
+                _resetAutoLoad(); // [PERF-L18 같은 패턴] 새 묶음 = 새 예산
                 _cachedFiltered   = null;
               });
               WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -916,7 +1036,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     }
 
     return RefreshIndicator(
-      onRefresh: _loadApplications,
+      onRefresh: _refreshByUser,
       color: AppColors.brand,
       child: ListView.builder(
         controller: _scrollController,
@@ -932,7 +1052,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 // [DU553] 다음 페이지를 못 읽었으면 빈 칸 대신 목록 끝 안내 + 그 페이지 다시 시도(받은 목록은 위에 그대로).
                 : _moreFailed
                     ? _buildLoadMoreErrorRow()
-                    : const SizedBox.shrink();
+                    : (_autoLoadStopped && filtered.isEmpty)
+                        ? _buildAutoLoadStoppedRow()
+                        : const SizedBox.shrink();
           }
           return _buildApplicationCard(filtered[index]);
         },
@@ -946,7 +1068,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   //   당겨 새로고침은 보조로 그대로 둔다(내용이 짧아도 끌 수 있는 스크롤).
   Widget _buildLoadErrorState() {
     return RefreshIndicator(
-      onRefresh: _loadApplications,
+      onRefresh: _refreshByUser,
       color: AppColors.brand,
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -956,7 +1078,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
             iconColor: AppColors.error,
             title: '지원 내역을 불러오지 못했어요',
             action: TextButton(
-              onPressed: _loadApplications,
+              onPressed: _refreshByUser,
               // [DU610b] '다시 시도' = 조작 16/700(판정149 :47 ⑦ retry16 · 같은 화면 카드 조작 글과 같은 역할) — 누를 때 동작 그대로.
               child: Text('다시 시도', style: AppTextStyles.roleAction()),
             ),
@@ -990,6 +1112,27 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     );
   }
 
+  // ─── [PERF-L18 같은 패턴] 자동 이어읽기 예산이 다 됐다 — 끝이 아니다 ───────────────────
+  //   목록 끝 실패 행(DU553)과 같은 배치·글 위계. "없다"·"0건"이라고 하지 않는다.
+  Widget _buildAutoLoadStoppedRow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        children: [
+          KeepWordsText(
+            '여기까지 확인했어요 · 더 찾아볼 수 있어요',
+            textAlign: TextAlign.center,
+            style: AppTextStyles.roleBody(color: AppColors.textSecondary),
+          ),
+          TextButton(
+            onPressed: _loadMoreByUser,
+            child: Text('더 찾아보기', style: AppTextStyles.roleAction()),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ─── [DU554] 다시 읽기 실패 — 이전에 받은 목록 위 안내 ───────────────────────────
   //   글 · 면 · 아이콘 · 적응 행(좁으면 버튼 아래) = 고정근무자 관리 재조회 실패 띠(DU543). '다시 시도' = 같은 읽기(_loadApplications) —
   //   누르면 읽는 동안 안내가 내려가 버튼이 빠진다(중복 탭 방지). 칩 아래 고정 자리라 필터 빈 문구 위에도 그대로 보인다.
@@ -1010,7 +1153,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 style: AppTextStyles.roleBody(color: AppColors.warningDark)),
           ),
         ]),
-        actions: [TextButton(onPressed: _loadApplications, child: Text('다시 시도', style: AppTextStyles.roleAction()))],
+        actions: [TextButton(onPressed: _refreshByUser, child: Text('다시 시도', style: AppTextStyles.roleAction()))],
       ),
     );
   }
@@ -1023,7 +1166,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   Widget _buildNoApplicationEmptyState() {
     return RefreshIndicator(
-      onRefresh: _loadApplications,
+      onRefresh: _refreshByUser,
       color: AppColors.brand,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -1106,7 +1249,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         : Icons.search_off_outlined;
 
     return RefreshIndicator(
-      onRefresh: _loadApplications,
+      onRefresh: _refreshByUser,
       color: AppColors.brand,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -1398,10 +1541,22 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   // ─── 급여 행 ──────────────────────────────────────────────────────────────────
 
+  /// [F293-WAGE-01] 지원 약속(금액·유형·휴게) + 이 카드가 보여 주는 지원서 시각으로 하루 예상 한 줄. 시급이 아니면 null.
+  ///   약속 휴게 null 은 모름 → '예상 금액 확인 필요'(임의 0 금지).
+  static String? _expectedLine(ApplicationModel a) =>
+      ExpectedWageText.combined(ExpectedDailyWage.forPromise(
+          wageType: a.wageType,
+          rate: a.wage,
+          startTime: a.startTime,
+          endTime: a.endTime,
+          breakMinutes: a.breakMinutes));
+
   Widget _buildWageRow(ApplicationModel app) {
-    final wageLabel = app.wageTypeLabel.isNotEmpty
-        ? '${app.wageTypeLabel} ${app.formattedWage}'
-        : app.formattedWage;
+    final wageLabel = _expectedLine(app) ??
+        // [C294-WAGE-C] 누락 단가(모델 0)는 '급여 확인 필요'(큰 '0원' 금지).
+        (app.wageTypeLabel.isNotEmpty
+            ? '${app.wageTypeLabel} ${ExpectedWageText.rawWage(app.wage)}'
+            : ExpectedWageText.rawWage(app.wage));
     // [DU556] 목록 급여 18/1.3/700/0(음수 자간 없음) — 색은 이 화면 급여 강조 brand 그대로(판정 필요 · R-6 textPrimary 대안).
     return Text(wageLabel, style: AppTextStyles.roleListValue().copyWith(color: AppColors.brand));
   }
@@ -1450,7 +1605,18 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 ),
                 child: Center(
                   widthFactor: 1,
-                  child: Text('취소', style: AppTextStyles.roleAction(color: _cancellingIds.contains(app.id) ? AppColors.grey400 : AppColors.textSecondary)),
+                  // [PERF-P12] 처리 중에는 글자만 흐려지던 것을 진행 표시와 함께 보인다(누른 뒤 무반응 0 · 다시 누르기 잠금은 그대로).
+                  child: _cancellingIds.contains(app.id)
+                      ? Row(mainAxisSize: MainAxisSize.min, children: [
+                          const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.grey400),
+                          ),
+                          const SizedBox(width: 6),
+                          Text('취소 중', style: AppTextStyles.roleAction(color: AppColors.grey400)),
+                        ])
+                      : Text('취소', style: AppTextStyles.roleAction(color: AppColors.textSecondary)),
                 ),
               ),
             ),
@@ -1822,7 +1988,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               if (app.hasIndividualCompensation) ...[
                 const SizedBox(height: 2),
                 KeepWordsText(
-                  '${app.formattedWage} · 회원님께 제안된 급여입니다',
+                  '${_expectedLine(app) ?? ExpectedWageText.rawWage(app.wage)} · 회원님께 제안된 급여입니다',
                   style: AppTextStyles.roleBody(color: AppColors.brand),
                 ),
               ],
@@ -2228,10 +2394,14 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     await _loadApplications();
   }
 
+  /// [impl_27b · L48 같은 꼴] 변경 제안 읽기 차례 — 늦게 끝난 옛 목록이 응답 뒤 새 목록을 덮지 않게.
+  int _proposalsGen = 0;
+
   Future<void> _loadReassignProposals() async {
+    final gen = ++_proposalsGen;
     try {
       final list = await ConfirmedReassignmentService.instance.myProposals();
-      if (!mounted) return;
+      if (!mounted || gen != _proposalsGen) return;
       setState(() => _reassignProposals = list);
     } catch (e) {
       // 못 읽은 것을 "제안 없음"으로 바꾸지 않는다 — 직전 목록을 유지한다.
@@ -2427,7 +2597,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           Text('${FormatHelper.formatDateKorean(day)} · ${app.selectedWorkType}',
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
           const SizedBox(height: 2),
-          Text('${app.startTime} ~ ${app.endTime} · ${app.formattedWage}',
+          Text('${app.startTime} ~ ${app.endTime} · ${_expectedLine(app) ?? ExpectedWageText.rawWage(app.wage)}',
               style: const TextStyle(fontSize: 13, color: AppColors.grey700)),
         ],
       ),
@@ -2646,7 +2816,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     if (user == null) return;
     // [PII-B4-R1.4 §39] 지원·수락 모든 진입점이 같은 축을 본다.
     // [R7-PREDEVICE-DISCLOSURE-RENDER.1] 읽기 경계 경유 — 판정은 그대로다.
-    final acceptTax = await _reads.taxStatus();
+    //   [PERF-L44] 목록을 받을 때 미리 출발한 같은 조회를 쓴다(60초 안·성공일 때만).
+    final acceptTax = await _takeTaxStatus();
     if (!mounted) return;
     if (!meetsApplyPrerequisites(user,
         isFlexType: isFlex, taxStatus: acceptTax)) {
@@ -2709,8 +2880,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                   offerApp.sourceWorkType ?? '기존 업무',
               timeText: sourceApp == null ? null :
                   '${sourceApp.startTime} ~ ${sourceApp.endTime}',
-              wageText: sourceApp?.formattedWage,
-              wageTypeText: sourceApp?.wageTypeLabel,
+              // [C294-WAGE-C] 누락 단가는 '급여 확인 필요'.
+              wageText: sourceApp == null ? null : (_expectedLine(sourceApp) ?? ExpectedWageText.rawWage(sourceApp.wage)),
+              wageTypeText: sourceApp == null || _expectedLine(sourceApp) != null ? null : sourceApp.wageTypeLabel,
               muted: true,
             ),
             const SizedBox(height: 6),
@@ -2723,8 +2895,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                   : '제안받은 업무',
               workType: offerApp.selectedWorkType,
               timeText: '${offerApp.startTime} ~ ${offerApp.endTime}',
-              wageText: offerApp.formattedWage,
-              wageTypeText: offerApp.wageTypeLabel,
+              wageText: _expectedLine(offerApp) ?? ExpectedWageText.rawWage(offerApp.wage),
+              wageTypeText: _expectedLine(offerApp) != null ? null : offerApp.wageTypeLabel,
               muted: false,
             ),
             const SizedBox(height: 12),
@@ -2801,7 +2973,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       //   목록을 다시 읽어 카드가 그 상태(동의 필요·확인 대기 등)로
       //   바뀌게 한다 — 근로자가 다음에 무엇을 해야 하는지가 카드에 보인다.
       // [MW-52] 서버 문장이 길다(최저임금 미달 초대 안내) — 기기에서 '요/청해'로 낱말 가운데가 끊겼다.
-      ToastHelper.showError(TextLayout.keepWords(e.message ?? '수락하지 못했어요.'));
+      // [impl_63] OVERLAP_CHECK_INCOMPLETE — 겹침 확인을 끝내지 못해 수락하지 않았다(확정 0) · 다시 시도 안내.
+      ToastHelper.showError(TextLayout.keepWords(inviteAcceptRejectMessageOf(e) ?? e.message ?? '수락하지 못했어요.'));
       final details = e.details;
       if (details is Map && details['inviteAcceptReadiness'] != null) {
         _loadApplications();
@@ -2811,7 +2984,14 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     }
   }
 
-  Future<void> _declineInvite(String applicationId) async {
+  /// [I9 · impl_18] 확인 창이 먼저 떠도 터치 차단막은 **다음 프레임**에 덮인다 — 같은 프레임의 두 번째 탭이
+  ///   창을 하나 더 띄우고 처리까지 한 번 더 갈 수 있다. 첫 await 전에 같은 화면·같은 잠금 묶음을 잠근다.
+  Future<void> _declineInvite(String applicationId) => ActionGuard.runVoid(
+      // [impl_20] 항목 단위 — 같은 초대의 연타만 막고, 다른 초대의 거절은 서로 막지 않는다(Set 잠금과 같은 단위).
+      ActionGuard.ownerKey('myApplications._decliningIds#$applicationId', this),
+      () => _declineInviteLocked(applicationId));
+
+  Future<void> _declineInviteLocked(String applicationId) async {
     if (_decliningIds.contains(applicationId)) return;
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
     if (uid == null) { ToastHelper.showError('로그인이 필요합니다.'); return; }

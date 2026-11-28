@@ -15,6 +15,7 @@ import '../../../theme/app_colors.dart';
 import '../../../widgets/common/common_widgets.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../utils/e1_debug_fault.dart';
+import '../../../utils/expected_daily_wage.dart';
 
 /// 근로자 초대 다이얼로그
 ///
@@ -1061,14 +1062,15 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                                 overflow: TextOverflow.ellipsis,
                               ),
                               SizedBox(height: 2 * s),
+                              // [F293-WAGE-01 · 판정293 §8] 초대 = 제안 자체의 시간·조건(이 업무)으로 계산한다 — 시급 업무는
+                              //   '하루 예상 N원 · 시급 N원' + '예상·세전', 계산할 수 없으면 '시급 N원 · 예상 금액 확인 필요'(0원 금지).
+                              //   금액은 사실이라 말줄임하지 않는다 — 좁으면 구분점(·) 옆에서 줄을 바꾼다(조각 안은 붙임 공백).
                               Text(
                                 '${wd.startTime} ~ ${wd.endTime}'
-                                '  ·  ${wd.wageTypeLabel} '
-                                '${FormatHelper.formatWage(wd.wage)}',
+                                '  ·  ${inviteWorkWageLine(wd)}',
+                                key: ValueKey('invite-wd-wage-${wd.wdId}'),
                                 style: ResponsiveHelper.tinyStyle(context,
                                     color: AppColors.grey500),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                               ),
                             ],
                           ),
@@ -1265,4 +1267,15 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
       ],
     );
   }
+}
+
+/// [F293-WAGE-01] 초대 업무 선택 줄의 급여 — 공용 helper(제안 업무 자체 · `forWorkDetail`)와 공용 문구(시험이 직접 부른다).
+///   시급이 아니면 예전 '일급 N원' 그대로.
+String inviteWorkWageLine(WorkDetailData wd) {
+  final e = ExpectedDailyWage.forWorkDetail(wd);
+  final c = ExpectedWageText.combined(e);
+  // [F294-WAGE-01 · C294-WAGE-C] 알려진 비시급(일급·월급)은 예전 '일급 N원' — 단가 누락(0 이하)은 '0원' 대신 '급여 확인 필요'.
+  if (c == null) return '${wd.wageTypeLabel} ${ExpectedWageText.rawWage(wd.wage)}';
+  final glued = c.split(' · ').map((piece) => piece.replaceAll(' ', ' ')).join(' · ');
+  return e.isEstimate ? '$glued ${ExpectedWageText.shortNote}' : glued;
 }

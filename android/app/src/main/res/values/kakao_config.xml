@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  [ALFIT-AUTH-KAKAO-ONBOARDING.1] 카카오 로그인 리다이렉트 scheme = "kakao" + 네이티브 앱 키(공개 성격 · 대표 제공 2026-11-25).
+  같은 키가 lib/config/kakao_config.dart(Dart SDK 초기화)에도 있다 — 바꿀 때는 두 곳을 함께 바꾼다.
+  build.gradle.kts(manifestPlaceholders)는 수정 금지 파일이라 문자열 리소스로 둔다.
+-->
+<resources>
+    <string name="kakao_scheme" translatable="false">kakao80bb150bba02cd243ead3c8d4a04b18a</string>
+</resources>

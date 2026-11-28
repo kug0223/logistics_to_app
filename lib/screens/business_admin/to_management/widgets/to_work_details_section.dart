@@ -3,6 +3,7 @@ import '../../../../models/work_detail_input.dart';
 import '../../../../models/core/work_detail_model.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/text_layout.dart';
+import '../../../../utils/expected_daily_wage.dart';
 import 'to_section_container.dart';
 import 'to_work_detail_card.dart';
 import '../../../../theme/app_colors.dart';
@@ -123,6 +124,16 @@ class TOWorkDetailsSection extends StatelessWidget {
           if (!_isEmpty) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             _buildWorkDetailCards(context),
+            // [F293-WAGE-01] 시급 업무가 하나라도 있으면 카드의 '하루 예상' 금액이 무엇인지 한 번 말한다(고지 정본 그대로).
+            if (_hasHourlyWork) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+              Text(
+                TextLayout.keepWords(ExpectedWageText.disclosure),
+                key: const ValueKey('to-work-expected-wage-disclosure'),
+                semanticsLabel: ExpectedWageText.disclosure,
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+              ),
+            ],
           ],
         ],
       ),
@@ -225,6 +236,12 @@ class TOWorkDetailsSection extends StatelessWidget {
       ),
     );
   }
+
+  /// [F293-WAGE-01] 카드에 '하루 예상' 금액이 나오는 업무(시급)가 있는가 — 고지 문장 위치.
+  bool get _hasHourlyWork =>
+      (workDetailInputs?.any((d) => d.wageType == 'hourly') ?? false) ||
+      (workDetailModels?.any((w) => w.wageType == 'hourly') ?? false) ||
+      (workDetailData?.any((w) => w.wageType == 'hourly') ?? false);
 
   Widget _buildWorkDetailCards(BuildContext context) {
     // WorkDetailInput 리스트 (create 모드)

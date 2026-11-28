@@ -20,6 +20,7 @@ import '../../../models/core/business_model.dart';
 import '../../../models/core/work_detail_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/schedule_conflict_service.dart';
+import '../../../services/tax_identity_service.dart';
 
 class ApplyWorkReads {
   const ApplyWorkReads({
@@ -29,7 +30,13 @@ class ApplyWorkReads {
     required this.myApplicationsForTOFresh,
     required this.businessForPolicy,
     this.confirmedForConflictCheck,
+    this.taxStatus,
   });
+
+  /// ⑦ [PERF-L44] 세무 축(지원 문턱) — 시트를 여는 동안 **미리** 읽는다. 읽기다.
+  ///   선택 인자다. 주지 않은 주입처(시험 대역)는 미리 읽지 않고, 누를 때 화면이 예전처럼 직접 읽는다.
+  ///   production 기본값(아래 of)은 그 서비스 메서드 그대로다.
+  final Future<TaxIdentityStatus> Function()? taxStatus;
 
   /// ① 이 TO 에 대한 **내** 지원서. key = toId + uid.
   final Future<List<ApplicationModel>> Function({
@@ -90,6 +97,7 @@ class ApplyWorkReads {
       myApplicationsForTOFresh: svc.getMyApplicationsForTOFresh,
       businessForPolicy: svc.getBusinessById,
       confirmedForConflictCheck: svc.getMyConfirmedApplicationsForConflictCheck,
+      taxStatus: TaxIdentityService.loadStatus,
     );
   }
 }

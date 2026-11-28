@@ -45,6 +45,7 @@ import 'package:ALfit/theme/role_theme.dart';
 import 'package:ALfit/utils/format_helper.dart';
 import 'package:ALfit/widgets/dialogs/apply/document_access_consent.dart';
 import 'package:ALfit/widgets/user/invitation_promise_card.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake
     with MockPlatformInterfaceMixin
@@ -295,7 +296,7 @@ void main() {
         expect(txt.overflow, isNot(TextOverflow.ellipsis));
         final rp = t.renderObject<RenderParagraph>(time.first);
         expect(rp.didExceedMaxLines, isFalse, reason: '잘린 줄이 없다');
-        final reject = find.text('거절');
+        final reject = findVisibleText('거절');
         expect(reject, findsWidgets);
         await t.ensureVisible(reject.first);
         await t.pump();

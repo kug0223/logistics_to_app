@@ -154,10 +154,20 @@ void main() {
       expect(list, contains('business.operationStatusLabel'));
       expect(list.contains("business.isApproved ? '승인됨' : '승인대기'"), isFalse);
       final home = _read('lib/screens/business_admin/business_admin_home_screen.dart');
-      final d = home.indexOf('STATE D');
-      final b = home.indexOf("'사업장이 승인 완료되면 이용하실 수 있어요.'");
-      expect(d, greaterThan(0));
-      expect(d, lessThan(b), reason: '종료 판정이 승인 대기 판정보다 먼저여야 한다');
+      // [impl_21 · 2026-11-27] 예전 단언은 승인 대기 안내 **문구**('사업장이 승인 완료되면 이용하실 수 있어요.')로
+      //   위치를 찾았다. 문구가 '사업장이 승인되면 이용할 수 있어요' 로 다듬어진 뒤 indexOf = -1 이 되어
+      //   제품 순서(STATE D → STATE B)는 그대로인데 실패했다(시험 낡음). 문구가 아니라 **판정 분기**를 본다:
+      //   진입 가드·배너 두 곳 모두 '전부 종료'(STATE D) 분기가 '승인 대기'(STATE B) 분기보다 먼저다.
+      List<int> at(String needle) =>
+          RegExp(RegExp.escape(needle)).allMatches(home).map((m) => m.start).toList();
+      final d = at('if (!_hasApprovedBusiness! && _allBusinessesClosed) {');
+      final b = at('// STATE B: 사업장 승인 대기');
+      expect(d.length, 2, reason: '진입 가드 · 배너');
+      expect(b.length, 2, reason: '진입 가드 · 배너');
+      for (var i = 0; i < 2; i++) {
+        expect(d[i], lessThan(b[i]), reason: '종료 판정이 승인 대기 판정보다 먼저여야 한다(${i == 0 ? '진입 가드' : '배너'})');
+        if (i == 0) expect(b[0], lessThan(d[1]), reason: '두 쌍이 섞이지 않는다');
+      }
       expect(home, contains('_allBusinessesClosed'));
     });
   });
@@ -195,7 +205,9 @@ void main() {
       expect('srvLifecycleCancelBulk(srvNotStartedOnly(docs), {'.allMatches(run).length, 1);
       expect(run, contains('for (const st of ["CONTRACT_PENDING", "CONFIRMED"]) {'));
       // 다른 lifecycle writer(사업장 삭제·공고 삭제·탈퇴)가 쓰는 helper 시그니처는 그대로다.
-      expect(cf, contains('  allowedStatuses: string[] = CONFIRMED_STATUSES\n): Promise<SrvLifecycleCancelReport>'
+      // [server_296 K-1c·P3·C1] 뒤에 **기본값 있는 확장 인자(ext = {})** 하나만 더했다 — 기존 2·3 인자 호출은 같은 동작.
+      expect(cf, contains('  allowedStatuses: string[] = CONFIRMED_STATUSES,\n  ext: SrvLifecycleCancelExt = {},\n'
+              '): Promise<SrvLifecycleCancelReport>'
           .replaceAll('\n', cf.contains('\r\n') ? '\r\n' : '\n')));
     });
     test('PO-32 시작 판정은 KST 날짜 정규화 + 근무일 모르면 보존', () {

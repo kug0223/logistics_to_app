@@ -596,7 +596,7 @@ void main() {
 
       // 다시 시도 → 권한을 먼저 다시 읽는다(구독 회복) → 그 다음 목록.
       up.onAccessRefresh = () => up.watchError.clear();
-      await t.tap(find.text('다시 시도'));
+      await t.tap(findVisibleText('다시 시도'));
       await _settle(t, 30);
       s = _texts(t);
       expect(up.accessRefreshes, 1);

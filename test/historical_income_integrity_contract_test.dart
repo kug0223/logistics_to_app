@@ -239,7 +239,18 @@ void main() {
 
     test('6b 금액·상태는 근태 스냅샷에서 온다', () {
       final f = _fnOf(screen, 'Widget _buildWorkRecord(', 2600);
-      expect(f.contains('att.finalWage'), isTrue);
+      // [HB3-VISIBILITY 2026-11-25] 금액은 여전히 근태 스냅샷(finalWage)이지만,
+      //   근무자에게는 확정·이체 완료일 때만 보이는 displayWage 로 읽는다(마감 취소 건 숨김).
+      expect(f.contains('att.displayWage'), isTrue);
+      expect(f.contains('att.finalWage'), isFalse,
+          reason: '확정 조건 없이 finalWage 를 직접 그리면 마감 취소된 금액이 보인다');
+      final model = _codeOf(
+          File('lib/models/core/attendance_model.dart').readAsStringSync());
+      expect(
+          model.contains(
+              'int? get displayWage =>\n      (isWageConfirmed || isWageTransferred) ? finalWage : null;'),
+          isTrue,
+          reason: 'displayWage = 근태 스냅샷 finalWage · 확정·이체 완료만');
       // [SIM-WORKER-WAGE-VIEW] 상태 판정은 급여 상세와 한 벌(WorkerWageStatus)로
       //   옮겼다 — 그 판정도 근태 스냅샷(wageStatus)을 읽는다.
       expect(f.contains('WorkerWageStatus.of(att)'), isTrue);

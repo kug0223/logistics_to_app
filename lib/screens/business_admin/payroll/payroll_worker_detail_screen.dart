@@ -26,6 +26,7 @@ import '../../../widgets/common/loading_widget.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/person_label.dart';
 import '../../../utils/text_layout.dart';
+import '../../../utils/server_reject_codes.dart';
 
 class PayrollWorkerDetailScreen extends StatefulWidget {
   final String businessId;
@@ -67,6 +68,13 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   bool _isSettling = false;
   List<AttendanceModel> _records = [];
   String? _loadError;
+
+  /// [impl_27a · L48 같은 꼴] 원장 읽기 차례 — 마지막에 시작한 읽기만 앉는다(늦게 끝난 옛 읽기가 처리 뒤 새 원장을 덮지 않게).
+  int _recordsGen = 0;
+
+  /// [impl_27a] 정상 원장을 보이는 중의 다시 읽기(처리 뒤·새로고침) — 원장을 지우지 않고 얇은 진행 표시 + 누르기 잠금.
+  ///   금액·건수는 서버에서 다시 읽은 원장만 앉힌다.
+  bool _keepRowsWhileLoading = false;
 
   @override
   void initState() {
@@ -116,7 +124,10 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   }
 
   Future<void> _loadRecords() async {
-    if (mounted) setState(() { _isLoading = true; _loadError = null; });
+    final gen = ++_recordsGen;
+    // 겹친 다시 읽기(앞 읽기가 아직 명단 유지 중)도 명단을 유지한다.
+    final keep = _keepRowsWhileLoading || (!_isLoading && _loadError == null);
+    if (mounted) setState(() { _isLoading = true; _loadError = null; _keepRowsWhileLoading = keep; });
     try {
       // [TZ-FIX] KST 월 경계 정규화 — device-local timezone 독립적
       // attendance.workDate는 KST 자정을 UTC로 저장하므로 query boundary도 동일 기준 필요.
@@ -163,12 +174,14 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
           return (a.checkInAt ?? a.workDate).compareTo(b.checkInAt ?? b.workDate);
         });
 
-      if (mounted) {
+      if (mounted && gen == _recordsGen) {
         _computeTotals(records);
-        setState(() { _records = records; _isLoading = false; });
+        setState(() { _records = records; _isLoading = false; _keepRowsWhileLoading = false; });
       }
     } catch (e) {
-      if (mounted) setState(() { _loadError = e.toString(); _isLoading = false; });
+      if (mounted && gen == _recordsGen) {
+        setState(() { _loadError = e.toString(); _isLoading = false; _keepRowsWhileLoading = false; });
+      }
     }
   }
 
@@ -229,6 +242,8 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
         ),
         if (_records.isNotEmpty)
           PopupMenuButton<String>(
+            // [impl_27a] 다시 읽는 중에는 처리 전 원장으로 중간정산을 열지 않는다.
+            enabled: !_keepRowsWhileLoading,
             icon: const Icon(Icons.more_vert),
             onSelected: (v) {
               if (v == 'interim') _showInterimSettlementDialog(context);
@@ -247,8 +262,14 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
       ],
       body: Column(
         children: [
-          if (!_isLoading && _loadError == null) _buildSummaryHeader(context, theme),
-          Expanded(child: _buildBody(context, theme)),
+          if (_keepRowsWhileLoading)
+            const LinearProgressIndicator(
+                key: ValueKey('payroll-worker-refresh-after-mutation'), minHeight: 2),
+          if ((!_isLoading || _keepRowsWhileLoading) && _loadError == null)
+            _buildSummaryHeader(context, theme),
+          Expanded(
+              child: AbsorbPointer(
+                  absorbing: _keepRowsWhileLoading, child: _buildBody(context, theme))),
         ],
       ),
     );
@@ -436,7 +457,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   }
 
   Widget _buildBody(BuildContext context, ThemeData theme) {
-    if (_isLoading) return const LoadingWidget();
+    if (_isLoading && !_keepRowsWhileLoading) return const LoadingWidget();
     if (_loadError != null) {
       return AppEmptyState(
         icon: Icons.error_outline,
@@ -681,7 +702,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
       // [CF-MIGRATION 2026-08-10] 클라이언트 직접 쓰기 → CF 경유로 전환
       // attendance 이체 + 정산 문서 생성을 서버에서 원자적으로 처리
       final svc = PayrollPaymentService();
-      await svc.adminDirectSettlement(
+      final result = await svc.adminDirectSettlement(
         businessId:    widget.businessId,
         workerId:      widget.workerId,
         workerName:    widget.workerName,
@@ -693,10 +714,25 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
 
       // [D-003] async gap 후 mounted 체크
       if (!mounted) return;
-      ToastHelper.showSuccess('중간정산이 처리되었습니다');
+      // [판정294 F294-MONEY-01] 서버가 실제로 정산한 건수·실수령 합과 제외 사유를 그대로 알린다 —
+      //   화면에서 고른 건수·금액(위 확인창의 예상치)을 결과로 단정하지 않는다. 제외가 있으면 경고 톤.
+      if (result.hasExclusions) {
+        ToastHelper.showWarning(result.toastMessage());
+      } else {
+        ToastHelper.showSuccess(result.toastMessage());
+      }
       await _loadRecords();
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리에 실패했습니다: $e');
+      // [판정294] 서버 거절 안내(예: '이체 가능한 출근기록이 없습니다 …', 계좌 확인 필요)를 그대로 쓴다 —
+      //   예외 객체 문자열(개발 용어)을 붙이지 않는다.
+      if (mounted) {
+        // [impl_58 · server_296 M2/A1] 근태 금액 형식 오류(WAGE_VALUE_INVALID)는 다음 할 일(급여 정정)을 말한다.
+        final msg = wageValueInvalidMessageOf(e) ??
+            ((e is FirebaseFunctionsException && (e.message?.isNotEmpty ?? false))
+                ? e.message!
+                : '처리에 실패했습니다. 잠시 뒤 다시 시도해 주세요.');
+        ToastHelper.showError(msg);
+      }
       // [WARN-PAY-01] 이체 성공 + 상태 업데이트 실패 시 화면 갱신 — 재시도 시 zombie PENDING 방지
       if (mounted) await _loadRecords();
     } finally {
@@ -829,7 +865,7 @@ class _PayslipIssueSheetState extends State<_PayslipIssueSheet> {
 
     setState(() => _isGenerating = true);
     try {
-      final bytes = await PayslipPdfBuilder.buildAggregated(data);
+      final bytes = await PayslipPdfBuilder.buildAggregated(data, offMain: true); // [PERF impl_19] 생성은 별도 isolate
       final filename = _issueType == PayslipIssueType.weekly
           ? '$_fileNamePrefix${widget.month}월$_selectedWeekNo주차_임금명세서.pdf'
           : '$_fileNamePrefix${widget.year}년${widget.month}월_임금명세서.pdf';

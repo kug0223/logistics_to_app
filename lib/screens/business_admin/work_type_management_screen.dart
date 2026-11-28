@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -44,6 +46,13 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
   List<BusinessWorkTypeModel> _workTypes = [];
   bool _isLoading = true;
   bool _fetchInProgress = false;
+
+  /// [impl_27b · L48 같은 꼴] 읽는 중에 들어온 다시 읽기 요청(처리 뒤) — 버리지 않고 끝난 뒤 한 번 더 읽는다.
+  ///   예전에는 진행 중이면 그냥 return 해, 처리 **전에** 출발한 조회가 앉아 방금 바꾼 업무가 옛 모습으로 남았다.
+  bool _reloadAgain = false;
+
+  /// [impl_27b] 목록을 한 번이라도 앉혔는가 — 그 뒤의 다시 읽기는 목록을 지우지 않고 얇은 진행 표시 + 누르기 잠금.
+  bool _hasLoadedOnce = false;
   bool _isReordering = false;
   bool _isDeleting = false;
 
@@ -57,7 +66,10 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
   }
 
   Future<void> _loadWorkTypes() async {
-    if (_fetchInProgress) return;
+    if (_fetchInProgress) {
+      _reloadAgain = true; // [impl_27b] 진행 중인 조회는 이 요청보다 먼저 출발했다 — 끝난 뒤 한 번 더
+      return;
+    }
     _fetchInProgress = true;
     if (!_isLoading) setState(() => _isLoading = true);
     try {
@@ -65,14 +77,25 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
           await _firestoreService.getBusinessWorkTypes(widget.businessId);
       if (!mounted) return;
       _fetchInProgress = false;
+      if (_reloadAgain) {
+        _reloadAgain = false;
+        unawaited(_loadWorkTypes()); // 옛 결과는 앉히지 않는다(로딩 유지)
+        return;
+      }
       setState(() {
         _workTypes = workTypes;
         _isLoading = false;
+        _hasLoadedOnce = true;
       });
     } catch (e) {
       debugPrint('❌ 업무 유형 로드 실패: $e');
       if (!mounted) return;
       _fetchInProgress = false;
+      if (_reloadAgain) {
+        _reloadAgain = false;
+        unawaited(_loadWorkTypes());
+        return;
+      }
       setState(() => _isLoading = false);
       ToastHelper.showError('업무를 불러올 수 없습니다');
     }
@@ -296,11 +319,21 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
           ),
         ),
       ],
-      body: _isLoading
+      body: _isLoading && !_hasLoadedOnce
           ? const LoadingWidget(message: '업무 유형을 불러오는 중...')
-          : _workTypes.isEmpty
-              ? _buildEmptyState(canEdit: canEdit)
-              : _buildWorkTypeList(canEdit: canEdit),
+          // [impl_27b] 다시 읽는 중 — 목록은 그대로, 얇은 진행 표시 + 누르기 잠금.
+          : Column(children: [
+              if (_isLoading)
+                const LinearProgressIndicator(key: ValueKey('work-type-refresh-after-mutation'), minHeight: 2),
+              Expanded(
+                child: AbsorbPointer(
+                  absorbing: _isLoading,
+                  child: _workTypes.isEmpty
+                      ? _buildEmptyState(canEdit: canEdit)
+                      : _buildWorkTypeList(canEdit: canEdit),
+                ),
+              ),
+            ]),
     );
   }
 

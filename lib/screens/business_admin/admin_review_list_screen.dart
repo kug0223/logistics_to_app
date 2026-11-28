@@ -40,6 +40,7 @@ import '../../utils/business_picker_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/text_layout.dart';
 import '../common/notification_screen.dart';
+import '../../utils/action_guard.dart';
 
 enum _DividerMarker { expired }
 
@@ -187,7 +188,12 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     super.dispose();
   }
 
-  Future<void> _showReplyDialog(MonthlyReviewModel review) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_showReplyDialogLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _showReplyDialog(MonthlyReviewModel review) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('adminReviewList._isProcessing', this), () => _showReplyDialogLocked(review));
+
+  Future<void> _showReplyDialogLocked(MonthlyReviewModel review) async {
     if (_isProcessing) return;
     // [FC-ADM-01 OWNERSHIP FIX] _ReviewReplyDialog(StatefulWidget)이 ctrl을
     // 직접 소유하고 State.dispose()에서 해제한다.

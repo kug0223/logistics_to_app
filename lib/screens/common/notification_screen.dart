@@ -2123,10 +2123,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
       final fsService = FirestoreService();
       List<BusinessModel> businesses;
       if (up.isSubAdmin && up.effectiveBusinessId != null) {
-        final biz = await fsService.getBusinessById(up.effectiveBusinessId!);
+        // [impl_55 · AUD-4 H4] OrThrow — 조회 실패는 아래 catch('데이터를 불러오는데 실패했습니다')로
+        final biz = await fsService.getBusinessByIdOrThrow(up.effectiveBusinessId!);
         businesses = biz != null ? [biz] : [];
       } else {
-        businesses = await fsService.getMyBusiness(uid);
+        businesses = await fsService.getMyBusinessOrThrow(uid);
       }
 
       if (nav.canPop()) nav.pop();

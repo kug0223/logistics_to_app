@@ -32,6 +32,7 @@ import 'package:ALfit/screens/business_admin/dialogs/wage_confirm_dialog.dart';
 import 'package:ALfit/screens/business_admin/to_management/widgets/to_date_selector.dart';
 import 'package:ALfit/screens/user/income_detail_reads.dart';
 import 'package:ALfit/screens/user/income_detail_screen.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 // ── Firebase core 가짜 — 실제 읽기·쓰기 없음 ──────────────────────
 class _FakeApp extends Fake
@@ -574,7 +575,7 @@ void main() {
             reason: '${w.toInt()}dp 배율 $s 에서 넘쳤다: ${col.hits}');
 
         // 휴게시간은 임금 산정 근거다 — 공간 부족으로 숨기지 않는다.
-        expect(find.textContaining('휴게'), findsWidgets,
+        expect(findVisibleTextContaining('휴게'), findsWidgets,
             reason: '휴게 관련 문구가 사라졌다');
         expect(find.textContaining('계약 1.5h 공제 예정'), findsOneWidget,
             reason: '계약 휴게 공제 예정 안내가 사라졌다 — 가장 긴 문구다');

@@ -339,7 +339,7 @@ Future<void> _openWorkDialog(WidgetTester t) async {
 }
 
 Future<void> _openSheet(WidgetTester t) async {
-  await t.tap(find.textContaining('근무 초대').first);
+  await t.tap(findVisibleTextContaining('근무 초대').first);
   await _settle(t);
   await t.tap(find.text('근무 가능 인력'));
   await _settle(t, 40);
@@ -361,7 +361,7 @@ Future<void> _closeSheet(WidgetTester t) async {
 }
 
 Future<void> _closeWorkDialog(WidgetTester t) async {
-  await t.tap(find.text('닫기').last);
+  await t.tap(findVisibleText('닫기').last);
   await _settle(t, 30);
   expect(find.byType(WorkApplicantsDialog), findsNothing);
 }
@@ -437,7 +437,7 @@ void main() {
       expect(findVisibleText('다시 확인'), findsOneWidget);
       expect(find.widgetWithText(OutlinedButton, '근무 제안'), findsNothing,
           reason: 'unknown 에서 재발송 버튼이 열렸다(STOP 조건)');
-      await t.tap(find.text('다시 확인'));
+      await t.tap(findVisibleText('다시 확인'));
       await _settle(t, 30);
       expect(server.inviteCalls, 1, reason: '다시 확인이 재발송을 했다');
       await _closeSheet(t);

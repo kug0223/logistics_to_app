@@ -530,17 +530,17 @@ typedef _Next = ({String sub, String date, String detail, String? need});
 /// [DU585b] 처리할 일 행(화면 순서 · `_makeActionRows` 의 제목 · 설명 · 보조줄 · 알약 그대로) — 받는 자리 = 의미 이름 `제목, 설명[, 보조줄], 열기` 인 Semantics 하나.
 List<_Task> _tasksOf(String id) => id == 'NORM'
     ? const [
-        (sub: 'kr1', title: '퇴사 요청', desc: '퇴사 요청 1건을 검토해 주세요', subs: ['수동 검토 1건', '빠른 검토 필요 1건'], pill: '1'),
-        (sub: 'kr2', title: '지원 검토', desc: '대기 중인 지원 3건을 확인해 주세요', subs: ['긴급 1건'], pill: '3'),
-        (sub: 'kr3', title: '일정 변경 요청', desc: '근로자의 일정 변경 요청 2건이 있어요', subs: <String>[], pill: '2'),
-        (sub: 'kr4', title: '계약 미발송', desc: '발송이 필요한 계약 1건이 있어요', subs: <String>[], pill: '1'),
-        (sub: 'kr5', title: '마감 필요', desc: '사업장별 미마감 근무일 합계 4일이에요', subs: ['가장 오래된 날 2026.11.03'], pill: '4일'),
+        (sub: 'kr1', title: '퇴사 요청', desc: '퇴사 요청을 검토해 주세요', subs: ['수동 검토 1건', '빠른 검토 필요 1건'], pill: '1건'),
+        (sub: 'kr2', title: '지원 검토', desc: '대기 중인 지원을 확인해 주세요', subs: ['긴급 1건'], pill: '3건'),
+        (sub: 'kr3', title: '일정 변경 요청', desc: '근로자의 일정 변경 요청이 있어요', subs: <String>[], pill: '2건'),
+        (sub: 'kr4', title: '계약 미발송', desc: '발송이 필요한 계약이 있어요', subs: <String>[], pill: '1건'),
+        (sub: 'kr5', title: '마감 필요', desc: '사업장별 미마감 근무일 합계', subs: ['가장 오래된 날 2026.11.03'], pill: '4일'),
       ]
     : const [
-        (sub: 'kr1', title: '이체 대기', desc: '이체 확인이 필요한 급여 3건이 있어요', subs: ['연체 1건', '지급일 확인 필요 1건'], pill: '3'),
-        (sub: 'kr2', title: '중간정산 요청', desc: '대기 중인 중간정산 요청 1건이 있어요', subs: <String>[], pill: '1'),
-        (sub: 'kr3', title: '급여 변경 요청', desc: '지급방식 변경 요청 1건을 확인해 주세요', subs: <String>[], pill: '1'),
-        (sub: 'kr4', title: '계약 확인 필요', desc: '연장·종료를 정할 계약 3건을 확인해 주세요', subs: ['만료 후 미결정 1건'], pill: '3'),
+        (sub: 'kr1', title: '이체 대기', desc: '이체 확인이 필요한 급여가 있어요', subs: ['연체 1건', '지급일 확인 필요 1건'], pill: '3건'),
+        (sub: 'kr2', title: '중간정산 요청', desc: '대기 중인 중간정산 요청이 있어요', subs: <String>[], pill: '1건'),
+        (sub: 'kr3', title: '급여 변경 요청', desc: '지급방식 변경 요청을 확인해 주세요', subs: <String>[], pill: '1건'),
+        (sub: 'kr4', title: '계약 확인 필요', desc: '연장·종료를 정할 계약을 확인해 주세요', subs: ['만료 후 미결정 1건'], pill: '3건'),
       ];
 
 /// [DU585b] 다가오는 근무 행(부족 먼저 · 날짜순 — `_buildFutureStaffing` 정렬 그대로) — 찾는 글 = 상태 줄(사례 안에서 하나뿐인 문구).
@@ -963,7 +963,7 @@ _RowObs _rowMiss(int n, {bool vis = false, bool hit = false, bool m48 = false, S
 
 /// 처리할 일 행 [k] 의 받는 자리 — 의미 이름이 정확히 `제목, 설명[, 보조줄], 열기` 인 단추 Semantics(행 콜백 · 의미 이름 · 읽기 순서 그대로의 증거).
 Finder _taskSem(_Task k) => find.byWidgetPredicate(
-    (w) => w is Semantics && w.properties.button == true && w.properties.label == [k.title, k.desc, ...k.subs, '열기'].join(', '),
+    (w) => w is Semantics && w.properties.button == true && w.properties.label == [k.title, k.pill, k.desc, ...k.subs, '열기'].join(', '), // [판정283 A안 갱신 2026-11-26] 설명은 총수를 되풀이하지 않고 알약 = 총수+단위 · 의미 이름 = 제목, 알약, 설명[, 보조줄], 열기 · 놓인 자리 pl 은 이제 알약(제목 묶음)이라 옛 'side/below' 뜻과 다르다(이 opt-in 하네스 재실행 시 재정의 필요)
     skipOffstage: false);
 
 /// [DU585b] 처리할 일 행 하나 — 받는 자리를 ensureVisible 로 넣고 같은 받는 자리를 잰다(A1). 놓인 자리 pl = 알약 글 윗변이 본문 글 아랫변 아래면 below.

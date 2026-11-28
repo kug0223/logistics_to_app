@@ -6,6 +6,7 @@ import '../../../../widgets/common/tax_deduction_badge.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/format_helper.dart';
 import '../../../../utils/labor_standards.dart';
+import '../../../../utils/expected_daily_wage.dart';
 import '../../../../widgets/work_type_icon.dart';
 import '../../../../theme/app_colors.dart';
 
@@ -36,6 +37,10 @@ class TOWorkDetailCard extends StatelessWidget {
   // 세금 공제 타입
   final String taxDeductionType;
 
+  /// [F293-WAGE-01] 하루 예상 금액 — 공용 helper(`ExpectedDailyWage`) 결과. null 이면 이 카드의 폼 값으로 계산한다.
+  ///   저장된 업무(fromData/fromModel)는 원문 여부(시각·유형)를 아는 `forWorkDetail` 로 넘긴다.
+  final ExpectedDailyWage? expected;
+
   // 콜백
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
@@ -58,6 +63,7 @@ class TOWorkDetailCard extends StatelessWidget {
     this.canDelete = true,
     this.payScheduleLabel = '',
     this.taxDeductionType = InsuranceRateModel.typeNone,
+    this.expected,
     this.onEdit,
     this.onDelete,
   });
@@ -104,9 +110,12 @@ class TOWorkDetailCard extends StatelessWidget {
       startTime: work.startTime,
       endTime: work.endTime,
       wageType: work.wageType,
+      // [F293-WAGE-01] 실근무 표시 · 하루 예상 계산이 같은 휴게를 쓴다(예전 이 경로만 휴게를 빠뜨려 0 으로 보였다).
+      breakMinutes: work.breakMinutes,
       currentCount: work.currentCount,
       canDelete: work.currentCount == 0,
       taxDeductionType: work.taxDeductionType,
+      expected: ExpectedDailyWage.forWorkDetail(work),
       onEdit: onEdit,
       onDelete: onDelete,
     );
@@ -134,6 +143,7 @@ class TOWorkDetailCard extends StatelessWidget {
       payScheduleLabel: _computeLabel(
           work.payScheduleType, work.payScheduleDay, work.payScheduleTime),
       canDelete: true,
+      expected: ExpectedDailyWage.forWorkDetail(work),
       onEdit: onEdit,
       onDelete: onDelete,
     );
@@ -179,10 +189,23 @@ class TOWorkDetailCard extends StatelessWidget {
     }
   }
 
-  String get _formattedWage => FormatHelper.formatNumber(wage);
+  /// [F293-WAGE-01] 폼 값(등록 · 수정 미리보기) 그대로 — 시급 · 시각 · 등록된 무급 휴게. 시급 원금 · 유형은 바꾸지 않는다.
+  ExpectedDailyWage get _expected =>
+      expected ??
+      ExpectedDailyWage.compute(
+        wageType: wageType,
+        rate: wage,
+        startTime: startTime,
+        endTime: endTime,
+        breakMinutes: breakMinutes,
+      );
 
-  String get _netWorkTimeStr =>
-      FormatHelper.calcNetWorkTime(startTime, endTime, breakMinutes: breakMinutes);
+  // [F293-WAGE-01 · 판정293 §8] 실근무 표시는 하루 예상 계산과 같은 분 계산이다 — 종료 = 시작을 24시간으로 말하지 않고
+  //   (예전 calcNetWorkTime 은 +1,440), 휴게가 체류 이상이면 비운다. 숫자 서식(8h · 7.5h)은 그대로.
+  String get _netWorkTimeStr {
+    final net = ExpectedDailyWage.netMinutesOf(startTime, endTime, breakMinutes);
+    return net == null ? '' : FormatHelper.formatCompactHours(net);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -329,15 +352,46 @@ class TOWorkDetailCard extends StatelessWidget {
             ),
             child: Row(
               children: [
-                // 급여 stat
+                // 급여 stat — [F293-WAGE-01] 시급 업무는 '하루 예상 N원' 주표시 + '시급 N원' 보조 · 짧은 말 '예상·세전'.
+                //   계산할 수 없으면 '예상 금액 확인 필요'(0원 금지). 일급 · 월급은 예전 그대로.
                 Expanded(
-                  child: _StatBadge(
-                    icon: Icons.payments_outlined,
-                    label: _wageTypeLabel,
-                    value: '$_formattedWage원',
-                    color: _wageColor(context),
-                    bgColor: _wageBgColor(context),
-                  ),
+                  child: Builder(builder: (context) {
+                    final e = _expected;
+                    // [F294-WAGE-01 · C294-WAGE-A] 유형을 모르면 '급여 확인 필요' 를 예상 금액처럼 보이지 않는다 —
+                    //   라벨 '급여'(모델 기본 '시급' 아님) · '예상·세전' 짧은 말 0 · 시급 보조 0.
+                    if (e.typeUnknown) {
+                      return _StatBadge(
+                        key: const ValueKey('to-work-wage-unknown'),
+                        icon: Icons.payments_outlined,
+                        label: '급여',
+                        value: ExpectedWageText.wageUnknown,
+                        wrapValue: true,
+                        color: _wageColor(context),
+                        bgColor: _wageBgColor(context),
+                      );
+                    }
+                    final daily = ExpectedWageText.daily(e);
+                    if (daily == null) {
+                      // [F294-WAGE-01 · C294-WAGE-C] 알려진 비시급 단가 누락(0 이하)은 '0원' 대신 '급여 확인 필요'.
+                      return _StatBadge(
+                        icon: Icons.payments_outlined,
+                        label: _wageTypeLabel,
+                        value: ExpectedWageText.rawWage(wage),
+                        wrapValue: true,
+                        color: _wageColor(context),
+                        bgColor: _wageBgColor(context),
+                      );
+                    }
+                    return _StatBadge(
+                      key: const ValueKey('to-work-expected-wage'),
+                      icon: Icons.payments_outlined,
+                      label: ExpectedWageText.shortNote,
+                      value: daily,
+                      sub: ExpectedWageText.rate(e),
+                      color: _wageColor(context),
+                      bgColor: _wageBgColor(context),
+                    );
+                  }),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 10)),
                 // 인원 stat
@@ -431,12 +485,21 @@ class _StatBadge extends StatelessWidget {
   final Color color;
   final Color bgColor;
 
+  /// [F293-WAGE-01] 보조 줄(예: '시급 11,000원'). 있으면 금액은 말줄임 없이 줄바꿈한다(금액은 사실이라 자르지 않는다).
+  final String? sub;
+
+  /// [F294-WAGE-01] 급여 값(원시 단가 · '급여 확인 필요')은 보조 줄이 없어도 말줄임 없이 줄바꿈한다 — 같은 이유(사실·안내는 자르지 않는다).
+  final bool wrapValue;
+
   const _StatBadge({
+    super.key,
     required this.icon,
     required this.label,
     required this.value,
     required this.color,
     required this.bgColor,
+    this.sub,
+    this.wrapValue = false,
   });
 
   @override
@@ -468,8 +531,13 @@ class _StatBadge extends StatelessWidget {
                     fontWeight: FontWeight.bold,
                     color: color,
                   ),
-                  overflow: TextOverflow.ellipsis,
+                  overflow: (sub == null && !wrapValue) ? TextOverflow.ellipsis : null,
                 ),
+                if (sub != null)
+                  Text(
+                    sub!,
+                    style: ResponsiveHelper.tinyStyle(context).copyWith(color: AppColors.grey600),
+                  ),
               ],
             ),
           ),

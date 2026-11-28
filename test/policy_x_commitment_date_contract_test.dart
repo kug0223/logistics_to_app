@@ -136,7 +136,8 @@ void main() {
           .allMatches(block)
           .length;
       expect(queries, 1, reason: '상태별 병렬 쿼리 하나의 템플릿만 있다');
-      expect(block.contains('.limit(200)'), isTrue);
+      // [server_297 · H3 같은 꼴] 한 페이지(limit 200) → 같은 질의를 200씩 끝까지(srvQueryAllDocs) — 질의 템플릿 수는 그대로 1.
+      expect(block.contains('.where("status", "==", s), 200, 5000)'), isTrue);
     });
 
     test('PXD-23 시간 겹침 판정은 손대지 않았다', () {
@@ -354,8 +355,9 @@ void main() {
     });
 
     test('PXD-76 좌석 엔진이 후보 문서를 그대로 넘긴다 (후보 쪽 override 반영)', () {
+      // [server_297 · H3 같은 꼴] 겹침 조회를 같은 거래에서 끝까지 읽도록(페이지 반복) 본문이 길어져 창만 3000 → 4500.
       final collect = _after(
-          fn, 'async function srvCollectSeatCommitOverlap(', 3000);
+          fn, 'async function srvCollectSeatCommitOverlap(', 4500);
       expect(collect.contains('other, fd, startDateMs'), isTrue,
           reason: '후보의 추가근무·휴무도 판정에 들어가야 한다');
       // 후보 분류도 canonical 함수로 — 예전 `applicationType` 조건은 없다.

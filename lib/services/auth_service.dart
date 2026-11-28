@@ -9,6 +9,7 @@ import '../utils/toast_helper.dart';
 import '../utils/encryption_helper.dart';
 import 'fcm_service.dart';
 import 'firestore_service.dart';
+import 'auth/login_gate.dart';
 
 /// [C안 F-01-3] 외국인 가입 중 약관 동의 CF 기록 실패 → 재로그인 시 복구 흐름
 /// Auth 세션을 유지한 채 throw — signOut 없이 복구 화면으로 라우팅한다.
@@ -50,6 +51,12 @@ enum DeletionRecoveryState {
   /// 판정 자체를 못 했다(네트워크·권한·알 수 없음).
   unknown,
 }
+
+/// [판정280 B280-02] 카카오 계정이 비밀번호 탈퇴 경로로 들어왔을 때(KG 재확인으로 보낸다).
+const String kKakaoDeletionNeedsKgMessage = '카카오로 가입한 계정은 휴대폰 본인확인으로 탈퇴해요.';
+
+/// [판정280 B280-02] 삭제 재확인 증명(10분)이 없거나 지났다.
+const String kDeletionReauthExpiredMessage = '본인확인 후 시간이 지났어요. 본인확인을 다시 하고 탈퇴를 이어가 주세요.';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -234,7 +241,65 @@ class AuthService {
     }
   }
 
+  /// [ALFIT-AUTH-KAKAO-ONBOARDING.1 · §2.1/§2.5] 서버가 발급한 custom token 으로 로그인한다(카카오 등).
+  ///
+  ///   토큰은 claims 가 없다. 로그인 뒤 users 문서를 읽어 아이디 로그인과 **같은 판정**
+  ///   ([LoginGate] — AS:113-158 과 1:1)을 한다. 차단·거절·기간 제한이면 세션을 끊고 문장으로 throw,
+  ///   옛 가입 미완료는 [IncompleteRegistrationException], 탈퇴 진행 중은 세션 유지 + 그대로 반환
+  ///   (`_loadUserData` 가 삭제 재개로 보낸다), 문서가 없으면 삭제 재개 여부를 서버에 묻는다(signIn 과 같다).
+  Future<UserModel?> signInWithCustomToken(String customToken) async {
+    try {
+      final result = await _auth.signInWithCustomToken(customToken);
+      final uid = result.user?.uid;
+      if (uid == null) return null;
+      final doc = await _firestore.collection('users').doc(uid).get();
+      if (!doc.exists) {
+        final recovery = await getDeletionRecoveryState();
+        if (recovery != DeletionRecoveryState.none) {
+          throw const DeletionRecoveryRequiredException();
+        }
+        // 서버가 문서를 만든 뒤에만 토큰을 준다(§2.5 전제). 문서가 없으면 고아 세션 — 정리하고 알린다.
+        await _auth.signOut();
+        throw Exception('가입 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.');
+      }
+      final data = doc.data()!;
+      final verdict = LoginGate.fromMap(data);
+      if (verdict.signsOut) {
+        await _auth.signOut();
+        throw Exception(verdict.message ?? '로그인할 수 없는 계정 상태예요.');
+      }
+      if (verdict.kind == LoginGateKind.incompleteLegacy) {
+        throw const IncompleteRegistrationException(message: '가입 절차를 이어서 완료해주세요.');
+      }
+      if (verdict.allowed) {
+        await _firestore.collection('users').doc(uid).update({
+          'lastLoginAt': FieldValue.serverTimestamp(),
+        });
+      }
+      return UserModel.fromMap(data, uid);
+    } on FirebaseAuthException catch (e) {
+      debugPrint('❌ [signInWithCustomToken] ${e.code}');
+      throw Exception(e.code == 'network-request-failed'
+          ? '네트워크 연결을 확인해주세요.'
+          : '로그인하지 못했어요. 다시 시도해 주세요.');
+    } on FirebaseException catch (e) {
+      debugPrint('❌ [signInWithCustomToken] FirebaseException: ${e.code}');
+      throw Exception(e.code == 'unavailable'
+          ? '네트워크 연결을 확인해주세요.'
+          : '로그인 중 오류가 발생했습니다.');
+    }
+  }
+
+  /// [ALFIT-AUTH-KAKAO-ONBOARDING.1 · §2.9] 외부 로그인 수단(카카오 SDK) 로그아웃 훅.
+  ///   `KakaoAuthService.install()` 이 설정한다. 실패해도 Firebase 로그아웃을 막지 않는다.
+  static Future<void> Function()? providerSignOutHook;
+
+  /// [판정280 B280-02] 외부 로그인 수단 앱 연결 해제 훅(카카오 unlink). 서버 Final 이 'ALLOWED' 일 때만 부른다.
+  static Future<void> Function()? providerUnlinkHook;
+
   // ⭐ 개선된 회원가입 - 주민번호 기반 + 서류 업로드 + 통장정보
+  //   [ALFIT-AUTH-KAKAO-ONBOARDING.1 · B277-03] 새 신규 가입 진입에서는 쓰지 않는다 — 서버 rules 가
+  //   users create 를 막는다(R-2). 예외/QA 화면(RegisterScreen)이 부르면 서버 거절을 받는다.
   Future<UserModel?> signUp({
     required String username,
     required String password,
@@ -403,6 +468,11 @@ class AuthService {
       fs.invalidateGlobalTOLimitCache();
       if (uid != null) fs.invalidateAdminTOLimitCache(uid);
       await _auth.signOut();
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1] 카카오 SDK 토큰도 정리한다(best-effort · 연결은 유지).
+      final hook = providerSignOutHook;
+      if (hook != null) {
+        try { await hook(); } catch (e) { debugPrint('⚠️ 외부 로그인 로그아웃 실패(무시): $e'); }
+      }
       if (showToast) ToastHelper.showInfo('로그아웃되었습니다.');
     } catch (e) {
       throw Exception('로그아웃 중 오류가 발생했습니다.');
@@ -490,7 +560,13 @@ class AuthService {
   Future<String?> deleteAccountWithPassword(String password) async {
     try {
       final user = _auth.currentUser;
-      if (user == null || user.email == null) return '로그인이 필요합니다';
+      if (user == null) return '로그인이 필요합니다';
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · §2.9 · B277-06 · 판정280 B280-02] 카카오(custom token) 계정은
+      //   비밀번호가 없다. 비밀번호 재인증으로 흉내 내지 않고, 작업·UID 에 묶인 KG 재확인 화면
+      //   (DeletionReauthScreen → deleteAccountAfterKgProof)으로 보낸다.
+      if (user.email == null) {
+        return kKakaoDeletionNeedsKgMessage;
+      }
 
       // 1. 재인증
       final credential = EmailAuthProvider.credential(
@@ -498,6 +574,82 @@ class AuthService {
         password: password,
       );
       await user.reauthenticateWithCredential(credential);
+
+      // 2~. 같은 삭제 파이프라인(PreData → Applications → Final) — KG 재확인 경로와 공유한다.
+      return await _runDeletionPipeline();
+    } on FirebaseAuthException catch (e) {
+      switch (e.code) {
+        case 'wrong-password':
+        case 'invalid-credential':
+          return '비밀번호가 일치하지 않습니다';
+        case 'too-many-requests':
+          return '시도 횟수를 초과했습니다. 잠시 후 다시 시도해주세요';
+        default:
+          return '계정 삭제에 실패했습니다 (${e.code})';
+      }
+    } catch (e) {
+      debugPrint('❌ 계정 삭제 실패: $e');
+      return '계정 삭제 중 오류가 발생했습니다';
+    }
+  }
+
+  /// [판정280 B280-02] 카카오 계정 탈퇴 — KG 재확인(서버 `deletionReauthProofs/{uid}` 10분) **뒤에만** 부른다.
+  ///
+  ///   비밀번호 경로와 **같은** 삭제 파이프라인(`_runDeletionPipeline`)을 쓴다 — 새 삭제 구현 0.
+  ///   증명이 없거나 지났으면 서버가 `DELETION_REAUTH_REQUIRED` 로 PreData 를 거절한다(auth_time 만으로 통과 0).
+  ///   users 문서가 이미 없는 삭제 재개(S3)도 같은 길이다 — 이 함수는 users 문서를 읽지 않는다.
+  Future<String?> deleteAccountAfterKgProof() async {
+    final user = _auth.currentUser;
+    if (user == null) return '로그인이 필요합니다';
+    if (user.email != null) {
+      // 비밀번호 계정은 기존 재인증 경로를 쓴다(서버 reauthMethod 'password').
+      return '이 계정은 비밀번호로 본인확인을 해요.';
+    }
+    return _runDeletionPipeline();
+  }
+
+  /// [판정281 C281-01] 이번 파이프라인 실행에서 BEGIN(PreData)이 성공했는가.
+  bool _deletionBegun = false;
+
+  /// 삭제 파이프라인 — 재확인(비밀번호 또는 KG)을 마친 호출자만 부른다.
+  ///
+  ///   [판정281 C281-01] 실패로 끝나면 앱의 삭제 복구 gate 를 서버 사실과 맞춘다:
+  ///   BEGIN(PreData) 이 성공한 뒤의 실패(정리 실패 · Final 미완료 · 증명 만료 · 응답 불명)는 서버가 이미
+  ///   deleting 이므로 곧바로 복구 상태로, BEGIN 전/응답 불명 실패는 서버 복구 상태를 물어 결정한다.
+  ///   복구 상태가 되면 UserProvider 가 일반 화면을 모두 걷어내고 삭제 재개 화면만 남긴다(뒤로 일반 화면 0).
+  ///   BEGIN 전 실패이고 서버도 삭제중이 아니면(none) 일반 화면 복귀를 그대로 둔다.
+  Future<String?> _runDeletionPipeline() async {
+    _deletionBegun = false;
+    final err = await _runDeletionPipelineSteps();
+    if (err != null) await syncDeletionGateAfterFailure(begun: _deletionBegun);
+    return err;
+  }
+
+  /// [판정281 C281-01] 실패 뒤 복구 gate 판정 — BEGIN 이 됐으면 required, 아니면 서버에 묻는다(unknown 은 그대로 unknown).
+  static Future<DeletionRecoveryState> deletionGateAfterFailure({
+    required bool begun,
+    required Future<DeletionRecoveryState> Function() query,
+  }) async {
+    if (begun) return DeletionRecoveryState.required;
+    return query();
+  }
+
+  /// [판정281 C281-01] 판정 결과가 none 이 아니면 앱 gate(UserProvider)를 복구 상태로 바꾼다.
+  static Future<void> syncDeletionGateAfterFailure({
+    required bool begun,
+    Future<DeletionRecoveryState> Function()? query,
+  }) async {
+    final s = await deletionGateAfterFailure(
+        begun: begun, query: query ?? () => AuthService().getDeletionRecoveryState());
+    if (s != DeletionRecoveryState.none) deletionRecoveryHook?.call(s);
+  }
+
+  /// [판정281 C281-01] 삭제가 시작된 뒤 실패를 앱 gate 에 알리는 훅 — UserProvider.initialize 가 설치한다.
+  static void Function(DeletionRecoveryState state)? deletionRecoveryHook;
+
+  /// 삭제 파이프라인 단계(PreData → Applications → Final). 내용·순서는 예전 deleteAccountWithPassword 그대로.
+  Future<String?> _runDeletionPipelineSteps() async {
+    try {
 
       // [BUG-수정] A-M-1: FCM 토큰을 Firestore users 문서 삭제 전에 제거
       // 삭제 후 clearToken() 호출 시 users 문서가 없어 update() 오류 발생하던 문제 수정
@@ -534,11 +686,16 @@ class AuthService {
         //   않는다. 사용자는 같은 흐름을 다시 시도하면 되고, freeze 는
         //   멱등이므로 재시도가 안전하다.
         debugPrint('⚠️ 계정 삭제: BEGIN(PreData) 실패 [${e.code}] — 중단');
+        // [판정280 B280-02] 카카오 계정의 본인확인 증명(10분)이 없거나 지났다 — 다시 본인확인하게 한다.
+        if (isDeletionReauthRequired(e)) return kDeletionReauthExpiredMessage;
         return '탈퇴 처리를 시작할 수 없습니다. 잠시 후 다시 시도해 주세요.';
       } catch (e) {
         debugPrint('⚠️ 계정 삭제: BEGIN(PreData) 실패 — 중단: $e');
         return '탈퇴 처리를 시작할 수 없습니다. 잠시 후 다시 시도해 주세요.';
       }
+
+      // [판정281 C281-01] 여기까지 왔으면 서버가 BEGIN(tombstone + accountStatus:deleting)을 commit 했다.
+      _deletionBegun = true;
 
       // 3-pre4. applications 활성 상태 → CANCELED + attendance scheduled → absent
       // [CF-MIGRATED 2026-07-15] callableDeleteAccountApplications CF 이전
@@ -579,6 +736,8 @@ class AuthService {
       final deleteFinalCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableDeleteAccountFinal',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 300)));
+      // [판정280 B280-02 · server_api_1 §5A] 카카오 연결 해제 범위 — 서버가 Final 성공 응답으로 알려 준다.
+      String? providerUnlink;
       try {
         final finalResult = await deleteFinalCallable.call<Map<String, dynamic>>({});
 
@@ -600,6 +759,8 @@ class AuthService {
           // [§69] "탈퇴 완료"로 읽힐 문구를 쓰지 않는다.
           return '탈퇴가 완료되지 않았습니다. 데이터 정리를 마치려면 다시 시도해 주세요.';
         }
+        final pu = finalData['providerUnlink'];
+        providerUnlink = pu is String ? pu : null;
       } on FirebaseFunctionsException catch (e) {
         // [BUG-AUTH FIX] 응답 유실(deadline-exceeded/unavailable): 서버에서 Auth 계정 삭제가
         //   완료됐을 가능성 → 로컬 세션 강제 정리 (permission-denied 루프 / 유효 JWT 방치 방지)
@@ -610,23 +771,50 @@ class AuthService {
         rethrow;
       }
 
+      // [판정280 B280-02] 'ALLOWED' 일 때만 카카오 앱 연결을 끊는다(best-effort). 'KEEP_OTHER_ROLE' 이면
+      //   같은 카카오로 다른 역할 계정이 살아 있으므로 끊지 않는다(끊으면 그 계정의 카카오 로그인이 막힌다).
+      if (providerUnlink == 'ALLOWED') {
+        final unlink = providerUnlinkHook;
+        if (unlink != null) {
+          try { await unlink(); } catch (e) { debugPrint('⚠️ 카카오 연결 해제 실패(무시): $e'); }
+        }
+      }
+
       // CF에서 Firebase Auth 계정 삭제 완료 → 로컬 세션 정리
       await _auth.signOut();
 
       return null; // 성공
-    } on FirebaseAuthException catch (e) {
-      switch (e.code) {
-        case 'wrong-password':
-        case 'invalid-credential':
-          return '비밀번호가 일치하지 않습니다';
-        case 'too-many-requests':
-          return '시도 횟수를 초과했습니다. 잠시 후 다시 시도해주세요';
-        default:
-          return '계정 삭제에 실패했습니다 (${e.code})';
-      }
+    } on FirebaseFunctionsException catch (e) {
+      if (isDeletionReauthRequired(e)) return kDeletionReauthExpiredMessage;
+      debugPrint('❌ 계정 삭제 실패: ${e.code}');
+      return '계정 삭제 중 오류가 발생했습니다';
     } catch (e) {
       debugPrint('❌ 계정 삭제 실패: $e');
       return '계정 삭제 중 오류가 발생했습니다';
+    }
+  }
+
+  /// 서버가 '최근 본인확인 증명 없음/만료' 로 거절했는가(server_api_1 §5).
+  static bool isDeletionReauthRequired(Object e) {
+    if (e is! FirebaseFunctionsException) return false;
+    final d = e.details;
+    return d is Map && d['reason'] == 'DELETION_REAUTH_REQUIRED';
+  }
+
+  /// [판정280 B280-02] 서버의 삭제 재확인 방식 — 'password' | 'kakao_kg' | null(모름).
+  ///   모르면(읽기 실패 · 옛 서버) 호출자가 Auth 정보로 보수적으로 고른다 — 비밀번호 없는 계정에
+  ///   비밀번호를 묻지 않는다.
+  Future<String?> getDeletionReauthMethod() async {
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetAccountDeletionRecoveryState',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      final res = await callable.call<Map<String, dynamic>>({});
+      final m = (res.data as Map?)?['reauthMethod'];
+      return (m == 'password' || m == 'kakao_kg') ? m as String : null;
+    } catch (e) {
+      debugPrint('⚠️ 삭제 재확인 방식 확인 실패: $e');
+      return null;
     }
   }
   /// ⭐ 비밀번호 변경
@@ -1035,18 +1223,36 @@ class AuthService {
       final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableFindUsername')
           .call({'name': name, 'phone': phone});
-      final raw = (result.data as Map)['accounts'];
-      if (raw == null) return [];
-      final accounts = (raw as List).whereType<Map>().map((a) => {
-        'username': (a['username'] as String?) ?? '',
-        'role':     (a['role']     as String?) ?? '',
-      }).where((a) => a['username']!.isNotEmpty).toList();
-      return accounts;
+      return parseFindUsernameResponse(result.data);
     } catch (e) {
       debugPrint('❌ 아이디 찾기 실패: $e');
       ToastHelper.showError('아이디 찾기 중 오류가 발생했습니다.');
       return [];
     }
+  }
+
+  /// [AUTH-FIX §4 · 판정280 C280-02] 아이디 찾기 응답 판독.
+  ///   아이디 계정은 `{username, role}`. 카카오로 가입한 계정은 아이디가 없어 서버가 `providerAccounts`
+  ///   (`[{provider:'kakao', role}]`)로 따로 준다 — `{username:'', role, provider:'kakao'}` 행으로 합쳐 돌려준다.
+  ///   예전에는 providerAccounts 를 버려 정상 카카오 회원에게 '일치하는 계정 없음' 을 보였다.
+  static List<Map<String, String>> parseFindUsernameResponse(Object? data) {
+    if (data is! Map) return [];
+    final out = <Map<String, String>>[];
+    final raw = data['accounts'];
+    if (raw is List) {
+      out.addAll(raw.whereType<Map>().map((a) => {
+            'username': (a['username'] as String?) ?? '',
+            'role': (a['role'] as String?) ?? '',
+          }).where((a) => a['username']!.isNotEmpty));
+    }
+    final prov = data['providerAccounts'];
+    if (prov is List) {
+      for (final p in prov.whereType<Map>()) {
+        if (p['provider'] != 'kakao') continue;
+        out.add({'username': '', 'role': (p['role'] as String?) ?? '', 'provider': 'kakao'});
+      }
+    }
+    return out;
   }
 
   // [AUTH-FIX §2] 외국인 USER 비밀번호 찾기 1단계: username → OTP 발송

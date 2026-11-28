@@ -305,7 +305,7 @@ void main() {
     ));
 
     // 열기
-    await tester.tap(find.text('명단 보기'));
+    await tester.tap(findVisibleText('명단 보기'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
     expect(texts(tester), contains('지원·근무 현황'));
@@ -315,11 +315,11 @@ void main() {
     final navigator = tester.state<NavigatorState>(find.byType(Navigator));
     navigator.pop();
     await tester.pumpAndSettle();
-    expect(find.text('명단 보기'), findsOneWidget);
+    expect(findVisibleText('명단 보기'), findsOneWidget);
     expect(texts(tester), isNot(contains('지원·근무 현황')));
 
     // 다시 열기 — 같은 값이 다시 나온다
-    await tester.tap(find.text('명단 보기'));
+    await tester.tap(findVisibleText('명단 보기'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
     expect(texts(tester), contains('지원·근무 현황'));

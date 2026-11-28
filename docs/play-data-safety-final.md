@@ -46,6 +46,7 @@
 | `firebase_app_check` | ^0.3.2+2 | YES | Google | `main.dart` Play Integrity / DeviceCheck |
 | `firebase_remote_config` | ^5.4.0 | YES | Google | `tax_identity_service.dart` |
 | `iamport_flutter` (PortOne / KG이니시스) | ^0.10.21 | YES | PortOne → KG이니시스 | `pass_verification_service.dart` |
+| `kakao_flutter_sdk_user` (카카오 로그인) | 1.10.0 | YES (로그인 시) | Kakao → 우리 서버 | `lib/services/auth/` 카카오 로그인 — 카카오 access token 을 서버(`callableAuthKakao`)가 검증해 카카오 회원번호만 계정 연결에 사용. **[ALFIT-AUTH-KAKAO-ONBOARDING.1 · PENDING]** 동의항목·개인정보 처리방침 문구는 카카오 앱 설정·법무 HOLD 확정 뒤 이 표와 아래 선언 표를 다시 맞춘다 |
 | `geolocator` | ^13.0.2 | YES (출퇴근 시) | 우리 서버 | `location_helper.dart` → `callableCheckIn` |
 | `google_mlkit_text_recognition` | ^0.15.0 | **NO** | — | `InputImage.fromFilePath` — 기기 내 처리, 네트워크 호출 없음 |
 | `flutter_blue_plus` | ^1.35.5 | **NO** | — | `beacon_helper.dart` — 근접 판정만, 서버 쓰기 없음 |

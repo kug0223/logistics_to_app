@@ -62,7 +62,8 @@ void main() {
       expect(r.allReady, isTrue);
 
       expect(
-        _jobsRoot().contains(': WorkforceListView(targetToId: _targetToId)'),
+        // [impl_57 · DU231 F4] WorkforceListView(targetToId: …) → 큰 글자에서 요약을 목록 머리 카드로 넘기는 summaryHeader 추가
+        _jobsRoot().contains(': WorkforceListView(\n                            targetToId: _targetToId,'),
         isTrue,
         reason: '준비가 끝나면 운영 목록을 그대로 그린다',
       );
@@ -88,7 +89,9 @@ void main() {
       // §25 — UNKNOWN 은 SETUP_REQUIRED 가 아니다.
       expect(FirstPostingReadinessStore.current.value.status,
           FirstPostingReadinessStatus.idle);
-      expect(_jobsRoot().contains('final unknown = !snap.isResolved;'), isTrue,
+      // [PERF-L16] 표시 판단은 공용 `displayValue`(resolved 또는 다시 세는 중의 이전 값) — 값이 없으면 여전히 '모름'이다.
+      expect(_jobsRoot().contains('final r = snap.displayValue;'), isTrue);
+      expect(_jobsRoot().contains('final unknown = r == null;'), isTrue,
           reason: 'null 을 미완료로 읽으면 준비된 관리자에게 거짓을 말한다');
     });
 
@@ -100,10 +103,11 @@ void main() {
       final src = _jobsRoot();
       expect(
           src.contains(
-              'Widget _buildHeader(BuildContext context, double s, bool setupRequired)'),
+              // [impl_57 · DU231 F4] 같은 빌더 context 인자 + 선택 인자 infoInHeader
+              'Widget _buildHeader(BuildContext context, double s, bool setupRequired, {bool infoInHeader = true})'),
           isTrue,
           reason: '호출하는 빌더의 context 를 받아야 select 가 성립한다');
-      expect(src.contains('_buildHeader(ctx, s, setupRequired || unknown)'), isTrue,
+      expect(src.contains('_buildHeader(ctx, s, setupRequired || unknown, infoInHeader: !infoScrolls)'), isTrue,
           reason: 'State 의 context 를 넘기면 같은 assert 로 다시 죽는다');
     });
 
@@ -118,9 +122,10 @@ void main() {
   group('[R7-P4.4E.2] CreateTO license parity', () {
     test('LICENSE-PARITY-01 CreateTO 가 license 를 다시 판정하지 않는다', () {
       final src = _createTO();
+      // [PERF-L53 · impl_11] 사업장별 사전 점검은 등록증·날인·업무·템플릿을 `Future.wait` 로 함께 보낸다 —
+      //   `await` 가 호출 바로 앞에 붙지 않아도 같은 공용 resolver 한 벌이다.
       expect(
-        src.contains(
-            'await BusinessPostingReadiness.hasLicenseForBusiness(biz)'),
+        src.contains('BusinessPostingReadiness.hasLicenseForBusiness(biz)'),
         isTrue,
         reason: '공용 resolver 한 벌만 쓴다',
       );
@@ -357,11 +362,14 @@ void main() {
     test('BROADCAST-06 모름은 준비 완료처럼 보이지 않는다', () {
       final src = _jobsRoot();
       // 헤더의 + 는 setup 뿐 아니라 unknown 에서도 사라진다.
-      expect(src.contains('_buildHeader(ctx, s, setupRequired || unknown)'),
+      // [impl_57 · DU231 F4] 같은 호출 + infoInHeader 선택 인자
+      expect(src.contains('_buildHeader(ctx, s, setupRequired || unknown, infoInHeader: !infoScrolls)'),
           isTrue);
       // 본문도 운영 목록이 아니다.
       expect(src.contains('? _JobsReadinessUnknownView('), isTrue);
-      expect(src.contains('final unknown = !snap.isResolved;'), isTrue);
+      // [impl_57 · PERF-L16] 모름 = 표시할 판정값이 없음(첫 판정 전·실패·이전 값 없는 loading). 이전 값이 있는 다시 읽기는 목록 유지.
+      expect(src.contains('final r = snap.displayValue;'), isTrue);
+      expect(src.contains('final unknown = r == null;'), isTrue);
     });
 
     test('BROADCAST-06b 세는 중과 못 셌다를 구분한다', () {

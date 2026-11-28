@@ -44,6 +44,8 @@ class SlotBatchSelectDialog extends StatefulWidget {
   final String confirmLabel;
   final bool openOnly;            // true면 마감되지 않은 슬롯만 표시
   final bool closedAndReopenable; // true면 수동마감 + 날짜 미경과 슬롯만 표시
+  /// [F295-CLOSE-01 · impl_41] true 면 종료(status closed)된 슬롯만 — '종료한 날짜 다시 정리'(지난 날짜 포함).
+  final bool closedOnly;
 
   /// [POSTING-V2-03M.1] 해석하지 못한 슬롯을 복구 항목으로 노출할지.
   ///
@@ -60,8 +62,15 @@ class SlotBatchSelectDialog extends StatefulWidget {
     required this.confirmLabel,
     this.openOnly = false,
     this.closedAndReopenable = false,
+    this.closedOnly = false,
     this.includeMalformed = false,
+    this.seedSlots,
   });
+
+  /// [PERF-L27] 여는 쪽이 이미 들고 있는 슬롯(공고 목록 FLEX preload). 있으면 **바로 그 목록을 그리고**
+  ///   서버 조회(`getSlotCandidates`)로 다시 확인한다. 확인이 끝날 때까지 실행 버튼은 잠근다 —
+  ///   선택은 언제나 서버가 방금 준 목록 기준이다(확인 뒤 사라진 날짜는 선택에서 빠진다).
+  final List<SlotModel>? seedSlots;
 
   static Future<SlotBatchSelection?> show({
     required BuildContext context,
@@ -71,7 +80,9 @@ class SlotBatchSelectDialog extends StatefulWidget {
     required String confirmLabel,
     bool openOnly = false,
     bool closedAndReopenable = false,
+    bool closedOnly = false,
     bool includeMalformed = false,
+    List<SlotModel>? seedSlots,
   }) {
     return showDialog<SlotBatchSelection>(
       context: context,
@@ -83,7 +94,9 @@ class SlotBatchSelectDialog extends StatefulWidget {
         confirmLabel: confirmLabel,
         openOnly: openOnly,
         closedAndReopenable: closedAndReopenable,
+        closedOnly: closedOnly,
         includeMalformed: includeMalformed,
+        seedSlots: seedSlots,
       ),
     );
   }
@@ -105,10 +118,38 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
   ///   보여주면 관리자는 날짜가 정말 없다고 믿는다. ERROR != EMPTY.
   bool _loadError = false;
 
+  /// [PERF-L27] 미리 받은 슬롯으로 그린 상태에서 서버 확인 중이다(실행 버튼 잠금).
+  bool _verifying = false;
+
   @override
   void initState() {
     super.initState();
+    final seed = widget.seedSlots;
+    final seeded = seed == null ? const <SlotModel>[] : _filtered(seed);
+    // 미리 받은 것 중 고를 것이 없으면 '날짜 없음' 을 먼저 말하지 않는다 — 서버 확인을 기다린다.
+    if (seeded.isNotEmpty) {
+      _slots = seeded;
+      _isLoading = false;
+      _verifying = true;
+    }
     _loadSlots();
+  }
+
+  /// 정렬 + 경로별 필터(예전 `_loadSlots` 안의 규칙 그대로).
+  List<SlotModel> _filtered(List<SlotModel> source) {
+    final slots = [...source]..sort((a, b) => a.date.compareTo(b.date));
+    final today = FormatHelper.toKstDate(DateTime.now());
+    if (widget.closedOnly) return slots.where((s) => s.isClosed).toList();
+    return widget.closedAndReopenable
+        ? slots.where((s) {
+            if (!s.isManualClosed || FormatHelper.toKstDate(s.date).isBefore(today)) return false;
+            if (s.workDetails.isNotEmpty &&
+                s.workDetails.every((d) => d.isTimeExpired)) { return false; }
+            return true;
+          }).toList()
+        : widget.openOnly
+            ? slots.where((s) => !s.isEffectivelyClosed).toList()
+            : slots;
   }
 
   Future<void> _loadSlots() async {
@@ -117,23 +158,9 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
       //   문서를 함께 받는다 — 추가 조회 없음.
       final result =
           await widget.firestoreService.getSlotCandidates(widget.to.id);
-      final slots = [...result.slots]
-        ..sort((a, b) => a.date.compareTo(b.date));
-
-      final now = DateTime.now();
-      final today = FormatHelper.toKstDate(now);
 
       if (!mounted) return;
-      final filtered = widget.closedAndReopenable
-          ? slots.where((s) {
-              if (!s.isManualClosed || FormatHelper.toKstDate(s.date).isBefore(today)) return false;
-              if (s.workDetails.isNotEmpty &&
-                  s.workDetails.every((d) => d.isTimeExpired)) { return false; }
-              return true;
-            }).toList()
-          : widget.openOnly
-              ? slots.where((s) => !s.isEffectivelyClosed).toList()
-              : slots;
+      final filtered = _filtered(result.slots);
 
       setState(() {
         _slots = filtered;
@@ -142,6 +169,10 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
         _malformedIds = result.malformedIds;
         _isLoading = false;
         _loadError = false;
+        // [PERF-L27] 서버 확인 뒤 남지 않은 날짜는 선택에서 뺀다 · 실행 잠금을 푼다.
+        final valid = {...filtered.map((s) => s.id), ...result.malformedIds};
+        _selectedIds.removeWhere((id) => !valid.contains(id));
+        _verifying = false;
       });
     } catch (e) {
       debugPrint('❌ 슬롯 로드 실패: $e');
@@ -151,6 +182,8 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
           _malformedIds = const [];
           _isLoading = false;
           _loadError = true;
+          _verifying = false;
+          _selectedIds.clear();
         });
         ToastHelper.showError('날짜 목록을 불러오는데 실패했습니다.');
       }
@@ -191,7 +224,7 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
         ),
         StyledDialogButton.primary(
           text: '${widget.confirmLabel} (${_selectedIds.length}개)',
-          onPressed: _selectedIds.isEmpty
+          onPressed: (_selectedIds.isEmpty || _verifying)
               ? null
               : () {
                   final selected = _slots
@@ -311,6 +344,12 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
           // 슬롯 목록
+          // [PERF-L27] 미리 받은 목록을 보이는 동안 — 최신 날짜를 확인하고 있음을 알린다(실행 버튼 잠금).
+          if (_verifying)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: LinearProgressIndicator(minHeight: 2),
+            ),
           ..._slots.map((slot) => _buildSlotTile(slot)),
 
           // [POSTING-V2-03M.1] 해석하지 못한 슬롯 — 목록에서 지우지 않는다.

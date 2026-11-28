@@ -149,9 +149,9 @@ void main() {
     await _settleish(tester);
 
     // 헤더·하단 버튼은 로딩 분기 **밖**이라 그려진다 — 껍데기는 살아있다.
-    expect(find.text('지원하기'), findsOneWidget);
+    expect(findVisibleText('지원하기'), findsOneWidget);
     expect(findVisibleText('강남 물류센터'), findsOneWidget);
-    expect(find.text('닫기'), findsOneWidget);
+    expect(findVisibleText('닫기'), findsOneWidget);
 
     // 본문은 로딩에 머문다. `widget.workDetails` 에 업무를 1건 넘겼는데도
     // '업무 선택' 섹션과 업무 카드가 없다 → 자료 누락이 아니라 **도달 차단**이다.

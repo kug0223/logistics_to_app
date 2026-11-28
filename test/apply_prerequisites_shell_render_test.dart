@@ -126,7 +126,7 @@ void main() {
     expect(find.byType(AppPageScaffold), findsOneWidget);
     expect(find.byType(GradientScaffold), findsNothing,
         reason: '이 화면은 flat shell 로 전환됐다');
-    expect(find.text('지원하기'), findsWidgets, reason: '헤더 제목이 남아 있어야 한다');
+    expect(findVisibleText('지원하기'), findsWidgets, reason: '헤더 제목이 남아 있어야 한다');
     expect(findVisibleText('지원 전 준비사항'), findsOneWidget, reason: '본문이 그대로여야 한다');
   });
 
@@ -149,7 +149,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     // '지원하기' 는 헤더 제목과 CTA 라벨 둘 다 — CTA 버튼이 존재하는지 본다.
-    expect(find.text('다시 확인'), findsOneWidget, reason: '버튼 줄이 그려져야 한다');
+    expect(findVisibleText('다시 확인'), findsOneWidget, reason: '버튼 줄이 그려져야 한다');
     // CTA 는 헤더 제목과 같은 문구라 **버튼 줄의 존재**로 확인한다.
     expect(find.byIcon(Icons.send_outlined), findsOneWidget);
   });

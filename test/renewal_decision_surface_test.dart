@@ -315,7 +315,9 @@ void main() {
     test('06-b 늦은 건수를 따로 말한다', () {
       expect(home.contains('expiredCount > 0'), true);
       // [R7-P1-4 H1] 단위는 건이다 — 서버가 세는 것은 갱신 결정 대상 장기 관계다.
-      expect(home.contains("'\$totalDecisions건 · 만료 \$expiredCount'"), true);
+      // [impl_57 · 홈 A안] 알약 '$totalDecisions건 · 만료 $expiredCount' → 보조줄 '만료 후 미결정 $expiredCount건'(총수는 기본 알약 N건)
+      expect(home.contains("_TaskSub('만료 후 미결정 \$expiredCount건', tone: _SubTone.urgent)"), true);
+      expect(home.contains('count: totalDecisions,'), true);
     });
 
     test('06-c 서버가 만료 건수를 따로 보낸다', () {

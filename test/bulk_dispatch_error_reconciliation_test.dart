@@ -159,11 +159,18 @@ void main() {
       final cf = _slice(fn, 'export const callableFinalizeEmployerSignature',
           '// ── voidContractAtomicLifecycle');
       final afterTx = _slice(cf, '_mark("tx");', 'return {');
-      expect(afterTx, contains('} catch (notifErr) {'),
-          reason: '알림 실패가 서명 실패로 전파되면 분류 전제가 깨진다');
+      // [L56 r4] 두 모양 중 하나: ① 예전 — 커밋 뒤 알림을 try/catch 로 감싸 던지지 않는다 ·
+      //   ② 지금 — 알림은 서명 거래 안 direct 작업이고 커밋 뒤에는 알림 쓰기 자체가 없다(실패가 서명으로 번질 길이 없다).
+      // [판정292] 정확히 하나: 작업 경로면 커밋 뒤 알림 쓰기·try/catch 가 **없어야** 하고(이중 발송 0), 예전 경로면 작업이 없어야 한다.
+      final berJobs = 'tx.create(signJobRef, srvNotificationJobDoc("direct", {'.allMatches(cf).length;
+      final berAfterDirect = RegExp(r'srvPersistNotification(WithId)?\(').hasMatch(afterTx);
+      final viaJob = berJobs == 2 && !berAfterDirect;
+      final viaOld = berJobs == 0 && afterTx.contains('} catch (notifErr) {');
+      expect(viaJob || viaOld, isTrue,
+          reason: '알림 실패가 서명 실패로 전파되면 분류 전제가 깨진다(또는 작업·직접 호출이 섞였다)');
       expect(afterTx.contains('throw '), isFalse,
           reason: '커밋 뒤에 서버가 던지면 "정상 반환 = 커밋"이 성립하지 않는다');
-      expect(_flat(afterTx), contains('알림 실패는 계약서 저장 성공에 영향 없음'));
+      if (!viaJob) expect(_flat(afterTx), contains('알림 실패는 계약서 저장 성공에 영향 없음'));
     });
   });
 

@@ -21,7 +21,15 @@ class RoleTheme {
   // 통합 테마 (모든 역할 공통)
   // ═══════════════════════════════════════════════════════════
 
-  static ThemeData get _unifiedTheme {
+  /// [PERF-L13] 통합 테마는 **한 번만** 만든다. 예전에는 getter 가 부를 때마다 `ThemeData(...)` 와
+  ///   `ColorScheme.fromSeed`(색 계산)를 새로 만들었고, ThemeProvider.setRole/reset 와 MaterialApp
+  ///   rebuild 마다 다시 계산됐다. 입력이 전부 상수(AppColors·고정 값)라 결과가 같다 — 같은 객체를 돌려준다.
+  ///   (같은 객체이므로 ThemeProvider 는 바뀐 것이 없으면 알리지 않을 수 있다.)
+  static final ThemeData _unifiedThemeCached = _buildUnifiedTheme();
+
+  static ThemeData get _unifiedTheme => _unifiedThemeCached;
+
+  static ThemeData _buildUnifiedTheme() {
     // [DU1] 공통 기준 v1 — 의미색 정본은 AppColors. 흰 헤더·낮은 경계, 평면 주 버튼, 반경 12, 번들 NotoSansKR.
     //   AppBar 를 흰 배경으로 바꿨다: 이전에는 테마가 파란 배경이라 흰 배경 화면이 LightAppBarStyle 로
     //   제목·아이콘 색을 덮어야 했다(그 보호 코드는 그대로 둔다 — 같은 값이 된다).

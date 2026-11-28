@@ -1,4 +1,6 @@
-﻿import 'package:flutter/foundation.dart';
+﻿import 'dart:async' show TimeoutException;
+
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:math' show cos, sqrt, asin;
 
@@ -11,6 +13,34 @@ enum LocationCheckResult {
   permissionDenied, // 앱 권한 거부
   permissionDeniedForever, // 영구 거부
   error,
+}
+
+/// [F291-C10 · 2026-11-26] 현재 위치를 **왜** 얻지 못했는지.
+///
+///   예전에는 시간 초과·권한/서비스·측정 실패·가짜 GPS 를 모두 null 하나로 돌려줬고, 화면은 그 null 을
+///   "가짜 GPS 앱을 사용 중이거나 위치 서비스에 문제" 로 안내했다 — 실내에서 10초 안에 못 잡은 사람도
+///   위조를 의심받는 문구를 봤다. 판정(가짜 GPS 거부 · 서버 반경 검증)은 그대로이고 **이유만** 나눈다.
+enum LocationFixFailure {
+  /// 위치 권한이 없거나 위치 서비스가 꺼져 있다.
+  permission,
+
+  /// 정해진 시간(10초) 안에 위치를 잡지 못했다.
+  timeout,
+
+  /// 가짜 위치(Mock Location)로 측정됐다 — 출근 위치로 쓰지 않는다.
+  mocked,
+
+  /// 그 밖의 측정 실패.
+  unavailable,
+}
+
+/// 위치 측정 결과 — [position] 이 있으면 성공, 없으면 [failure] 가 이유다.
+class LocationFix {
+  const LocationFix.ok(Position this.position) : failure = null;
+  const LocationFix.failed(LocationFixFailure this.failure) : position = null;
+
+  final Position? position;
+  final LocationFixFailure? failure;
 }
 
 class LocationHelper {
@@ -91,12 +121,21 @@ class LocationHelper {
   }
 
   /// 현재 위치 가져오기
-  static Future<Position?> getCurrentPosition() async {
+  ///
+  /// [PERF-L39 · 2026-11-26] [permissionChecked] — 호출부가 **바로 앞에서** 권한·위치 서비스를
+  ///   이미 확인했으면 같은 확인을 한 번 더 하지 않는다(요청 팝업도 띄우지 않는다).
+  ///   측정 설정(정확도 high·10초)과 가짜 GPS 차단은 그대로다.
+  static Future<Position?> getCurrentPosition({bool permissionChecked = false}) async =>
+      (await getCurrentPositionFix(permissionChecked: permissionChecked)).position;
+
+  /// [F291-C10] 현재 위치 + 실패 이유. 측정 설정·가짜 GPS 거부는 [getCurrentPosition] 과 같다.
+  static Future<LocationFix> getCurrentPositionFix({bool permissionChecked = false}) async {
     try {
       // 권한 확인
-      final hasPermission = await checkAndRequestPermission();
+      final hasPermission =
+          permissionChecked || await checkAndRequestPermission();
       if (!hasPermission) {
-        return null;
+        return const LocationFix.failed(LocationFixFailure.permission);
       }
 
       // 현재 위치 가져오기
@@ -110,14 +149,25 @@ class LocationHelper {
       // 가짜 GPS 앱(Mock Location) 감지 — 위치 스푸핑 차단
       if (position.isMocked) {
         if (kDebugMode) debugPrint('⚠️ Mock GPS 감지됨 — 위치 위조 시도');
-        return null;
+        return const LocationFix.failed(LocationFixFailure.mocked);
       }
       if (kDebugMode) debugPrint('✅ 현재 위치: ${position.latitude}, ${position.longitude}');
-      return position;
+      return LocationFix.ok(position);
     } catch (e) {
       if (kDebugMode) debugPrint('❌ 위치 가져오기 실패: $e');
-      return null;
+      return LocationFix.failed(classifyFixError(e));
     }
+  }
+
+  /// [F291-C10] 측정 예외 → 실패 이유(시험 가능하도록 분리).
+  @visibleForTesting
+  static LocationFixFailure classifyFixError(Object e) {
+    if (e is TimeoutException) return LocationFixFailure.timeout;
+    if (e is PermissionDeniedException ||
+        e is LocationServiceDisabledException) {
+      return LocationFixFailure.permission;
+    }
+    return LocationFixFailure.unavailable;
   }
 
   /// 두 지점 간 거리 계산 (미터)

@@ -135,9 +135,11 @@ void main() {
     });
 
     test('마감이 업무 단위 대기도 줄인다', () {
-      final close = _flat(_codeOf(_callableOf(raw, 'callableCloseSlots')));
-      expect(close.contains('const rejectedByWd = new Map<string, number>();'), true);
-      expect(close.contains('slotUpdate[`workDetailCounts.\${rejectedWdId}.pendingCount`] = '
+      // [판정295/296 F295-CLOSE-01 · server_296] 대기 정리는 callable·매시 공용 helper(srvCloseSlotCleanupOne)로 옮겼다 — 그 본문을 본다.
+      final s0 = raw.indexOf('async function srvCloseSlotCleanupOne(');
+      final close = _flat(_codeOf(raw.substring(s0, raw.indexOf('async function srvCloseSlotsRecomputeTo(', s0))));
+      expect(close.contains('const byWd = new Map<string, number>();'), true);
+      expect(close.contains('slotUpdate[`workDetailCounts.\${w}.pendingCount`] = '
           'admin.firestore.FieldValue.increment(-n);'), true,
           reason: '슬롯 합계만 줄이면 날짜칩의 업무별 대기가 거절된 지원을 계속 센다');
     });
@@ -207,7 +209,12 @@ void main() {
   });
 
   group('마감은 대기만 정리하고 약속은 건드리지 않는다', () {
-    final close = _flat(_codeOf(_callableOf(raw, 'callableCloseSlots')));
+    // [판정295/296 · server_296] 정리·공고 상태 재계산이 공용 helper 로 옮겨 갔다 — callable 본문 + 두 helper 를 함께 본다(의미 동일).
+    final s1 = raw.indexOf('async function srvCloseSlotCleanupOne(');
+    final close = _flat(_codeOf(_callableOf(raw, 'callableCloseSlots') +
+        raw.substring(s1, raw.indexOf('async function srvCloseAdoptCleanupMarkers(', s1))));
+    final recompute = _flat(_codeOf(raw.substring(raw.indexOf('async function srvCloseSlotsRecomputeTo('),
+        raw.indexOf('async function srvCloseAdoptCleanupMarkers('))));
 
     test('PENDING만 거절 대상이다', () {
       expect(close.contains('.where("status", "==", "PENDING")'), true,
@@ -221,7 +228,7 @@ void main() {
     });
 
     test('열린 날짜가 하나도 없을 때만 공고를 닫는다', () {
-      expect(close.contains('if (!hasOpenSlot && openStates.includes(currentTOStatus ?? ""))'),
+      expect(recompute.contains('if (!hasOpenSlot && ["ACTIVE", "FULL", "SCHEDULED"].includes(currentTOStatus ?? ""))'),
           true, reason: '날짜 하나 마감이 공고 전체를 닫으면 다른 날짜 모집이 죽는다');
     });
   });
@@ -250,15 +257,19 @@ void main() {
     test('내 지원 목록', () {
       final s = _flat(_codeOf(_src('lib/screens/user/my_applications_screen.dart')));
       // [MW-52] 낱말 단위 줄바꿈(TextLayout.keepWords)은 글자를 바꾸지 않는다 — 서버 문장 그대로 전달은 같다.
+      // [impl_63 핀 갱신] 알려진 서버 거절 코드(OVERLAP_CHECK_INCOMPLETE)만 그 코드의 안내가 먼저다 — 그 밖은 여전히 서버 문장 그대로.
       expect(
           s.contains("ToastHelper.showError(e.message ?? '수락하지 못했어요.');") ||
-              s.contains("ToastHelper.showError(TextLayout.keepWords(e.message ?? '수락하지 못했어요.'));"),
+              s.contains("ToastHelper.showError(TextLayout.keepWords(e.message ?? '수락하지 못했어요.'));") ||
+              s.contains("ToastHelper.showError(TextLayout.keepWords(inviteAcceptRejectMessageOf(e) ?? e.message ?? '수락하지 못했어요.'));"),
           true, reason: 'generic 문구로 덮으면 왜 안 되는지 알 수 없다');
     });
 
     test('공고 상세', () {
       final s = _flat(_codeOf(_src('lib/screens/common/job_posting_screen.dart')));
-      expect(s.contains("ToastHelper.showError(e.message ?? '수락하지 못했어요.');"), true);
+      // [impl_63 핀 갱신] 알려진 서버 거절 코드만 그 코드의 안내가 먼저 · 그 밖은 서버 문장 그대로.
+      expect(s.contains("ToastHelper.showError(e.message ?? '수락하지 못했어요.');") ||
+          s.contains("ToastHelper.showError(inviteAcceptRejectMessageOf(e) ?? e.message ?? '수락하지 못했어요.');"), true);
     });
 
     test('수락은 언제나 서버를 거친다', () {

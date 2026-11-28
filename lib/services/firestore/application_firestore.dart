@@ -166,6 +166,15 @@ Future<List<Map<String, dynamic>>> fetchApplicationsByBizPaged(
 
 extension ApplicationFirestore on FirestoreService {
 
+  /// [서버296 H3 · impl_60] uid → 마지막 내 지원 조회 응답에 `activeIncluded` 가 있었는가.
+  ///   새 서버는 상한(200)으로 잘린 첫 페이지에 진행 중 관계(대기 · 초대 · 확정 · 계약 대기)를 따로 읽어 덧붙이고
+  ///   그 표식으로 `activeIncluded`(덧붙인 수)를 준다. 표식이 있으면 진행 중 근무는 빠지지 않았다.
+  ///   구서버는 이 키가 없다 — false(기존 방어 유지).
+  static final Map<String, bool> _myApplicationsLiveComplete = {};
+
+  /// 지원서 상한에 닿았어도 진행 중 근무는 모두 들어왔는가(새 서버 표식). 모르면 false.
+  bool myApplicationsLiveComplete(String uid) => _myApplicationsLiveComplete[uid] ?? false;
+
   // ───────────────────────────────────────────────────────
   // 조회
   // ───────────────────────────────────────────────────────
@@ -436,16 +445,9 @@ extension ApplicationFirestore on FirestoreService {
           .httpsCallable('callableGetMyApplications',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
       final result = await callable.call<Map<String, dynamic>>({'limit': 200});
-      final list = (result.data['applications'] as List? ?? [])
-          .whereType<Map>()
-          .map((m) {
-            final raw = _cfHydrate(Map<String, dynamic>.from(m));
-            final id = raw.remove('id') as String? ?? '';
-            return ApplicationModel.tryFromMap(raw, id);
-          })
-          .whereType<ApplicationModel>()
-          .toList()
-        ..sort((a, b) => b.appliedAt.compareTo(a.appliedAt));
+      // [PERF-L9 · impl_15] 해석은 근로자 홈 묶음과 같은 함수(worker_home_bundle_firestore.dart) — 두 경로가 어긋나지 않게.
+      final list = _parseMyApplications(result.data);
+      _myApplicationsLiveComplete[uid] = result.data.containsKey('activeIncluded');
       // 출발한 뒤 무효화됐다면(지원·취소 등) 이 응답은 변경 전 값일 수 있다 — 캐시에 남기지 않는다.
       if ((_myApplicationsGeneration[uid] ?? 0) == generation) {
         _myApplicationsCache[uid] = list;
@@ -528,8 +530,11 @@ extension ApplicationFirestore on FirestoreService {
         'hasMore': result.data['hasMore'] ?? false,
       };
     } catch (e) {
+      // [AUD-4 H1 · 판정296] 실패를 '빈 목록 + 끝(hasMore=false)' 으로 접지 않는다 — 내 지원 화면은 던져진 실패로
+      //   첫 조회 실패 본문 · 새로고침 실패 시 떠 둔 목록 유지(_stale) · 다음 페이지 실패(_moreFailed)를 이미 구분한다.
+      //   예전에는 이 catch 가 그 분기를 막아 '지원 내역 없음' · 보이던 목록 덮어쓰기 · '목록 끝' 으로 보였다.
       debugPrint('지원 내역 페이지 조회 실패: $e');
-      return {'items': <ApplicationModel>[], 'lastDocId': null, 'hasMore': false};
+      rethrow;
     }
   }
 
@@ -1119,6 +1124,11 @@ extension ApplicationFirestore on FirestoreService {
   //   canceledBy 위조 차단: 관리자 A가 관리자 B UID를 전달해 책임 전가하는 공격 차단
   //   statusHistory.at 위조 차단: 클라이언트 Timestamp.now() → CF 서버 시간
   // canceledBy 파라미터는 하위 호환 유지 — CF 내부에서 callerUid로 대체됨
+  //
+  // [impl_59] bool 판 — 예전 호출자(근무자 화면 apply_work_dialog)를 위한 얇은 포장이다.
+  //   판정·사유는 [cancelConfirmedApplicationWithResult] 가 정한다. 오프라인이면 예전처럼 호출자에게 던지고,
+  //   실패면 사유 한 줄을 토스트로 띄운 뒤 false 를 돌려준다(호출자는 false 에 토스트를 더 띄우지 않는다).
+  //   관리자 화면은 결과판을 써서 다시 읽은 뒤 사유를 한 번만 띄운다(이중 토스트 0).
   Future<bool> cancelConfirmedApplication(
     String applicationId, {
     bool applyNoShowPenalty = false,
@@ -1126,6 +1136,28 @@ extension ApplicationFirestore on FirestoreService {
     String? cancelReason, // 관리자 취소 사유
   }) async {
     NetworkChecker.instance.assertOnline('확정 취소를 하려면 인터넷 연결이 필요합니다.');
+    final r = await cancelConfirmedApplicationWithResult(
+      applicationId,
+      applyNoShowPenalty: applyNoShowPenalty,
+      cancelReason: cancelReason,
+    );
+    if (!r.success) ToastHelper.showError(r.message);
+    return r.success;
+  }
+
+  /// [impl_59] 확정 취소 — 결과판. **토스트를 띄우지 않는다**(안내는 호출 화면이 [ConfirmCancelResult.message] 로 한 번).
+  ///   서버 거절은 이유를, 시간 초과·모르는 예외·응답 이상은 '결과 모름'([ConfirmCancelResult.outcomeUnknown])을 돌려준다.
+  Future<ConfirmCancelResult> cancelConfirmedApplicationWithResult(
+    String applicationId, {
+    bool applyNoShowPenalty = false,
+    String? canceledBy,   // 하위 호환 — CF가 callerUid로 대체, 이 값은 무시됨
+    String? cancelReason, // 관리자 취소 사유
+  }) async {
+    try {
+      NetworkChecker.instance.assertOnline('확정 취소를 하려면 인터넷 연결이 필요합니다.');
+    } on NetworkOfflineException catch (e) {
+      return ConfirmCancelResult.fromError(e);
+    }
     GlobalLoadingController.show('처리 중...');
     try {
       // 1. CF로 application 상태 업데이트 (canceledBy·at 서버 강제)
@@ -1139,7 +1171,8 @@ extension ApplicationFirestore on FirestoreService {
       });
       final cfData = Map<String, dynamic>.from(cfResult.data as Map);
       final uid = cfData['workerUid'] as String? ?? '';
-      if (uid.isEmpty) return false;
+      // [impl_59] 성공 응답인데 근무자 uid 가 없다 — 취소 여부를 단정하지 않는다(예전: 안내 없이 false).
+      if (uid.isEmpty) return const ConfirmCancelResult.unknown();
 
       final toId = cfData['toId'] as String?;
       final slotId = cfData['slotId'] as String?;
@@ -1180,23 +1213,15 @@ extension ApplicationFirestore on FirestoreService {
       //   (confirmationCanceled 는 원래 서브어드민 팬아웃 대상이 아니다.)
 
       debugPrint('✅ 확정 취소 완료 (관리자: $isAdminCancel, 패널티(서버판정): $serverShouldPenalty)');
-      return true;
+      return const ConfirmCancelResult.succeeded();
     } on FirebaseFunctionsException catch (e) {
-      if (e.code == 'not-found') {
-        ToastHelper.showError('지원서를 찾을 수 없습니다');
-        return false;
-      }
-      if (e.code == 'failed-precondition') {
-        ToastHelper.showError(e.message ?? '확정된 지원만 취소할 수 있습니다');
-        return false;
-      }
+      // [impl_59] 예전: not-found · failed-precondition 만 사유 토스트(서버 문구 그대로 — '[Fix-A] …' 개발 문장 포함), 나머지 일반 문구.
+      //   이제 사유를 돌려준다 — not-found/permission-denied 는 고정 안내, 그 밖의 거절은 보여도 되는 서버 문구, 시간 초과 등은 결과 모름.
       debugPrint('❌ 확정 취소 CF 오류: ${e.code} ${e.message}');
-      ToastHelper.showError('확정 취소에 실패했습니다');
-      return false;
+      return ConfirmCancelResult.fromError(e);
     } catch (e) {
       debugPrint('❌ 확정 취소 실패: $e');
-      ToastHelper.showError('확정 취소에 실패했습니다');
-      return false;
+      return ConfirmCancelResult.fromError(e);
     } finally {
       GlobalLoadingController.hide();
     }
@@ -1270,7 +1295,12 @@ extension ApplicationFirestore on FirestoreService {
         return true;
       }
       debugPrint('❌ [R5.1] releaseNoshowSeat CF 실패: code=${e.code}, message=${e.message}');
-      ToastHelper.showError(e.message ?? '빈자리 다시 모집 처리 결과를 확인하지 못했어요');
+      // [impl_59 · 판정] 서버 거절 사유는 그대로 전한다 — 단 보여도 되는 문장일 때만(adminActionErrorMessage).
+      //   결과를 모르는 실패(시간 초과 등)는 '결과를 확인하지 못했어요', 개발 문장이 섞인 거절은 '하지 못했어요' 기본 안내.
+      final releaseFallback = serverOutcomeUnknownCodes.contains(e.code)
+          ? '빈자리 다시 모집 처리 결과를 확인하지 못했어요'
+          : noshowReleaseFailedMessage;
+      ToastHelper.showError(adminActionErrorMessage(e, fallback: releaseFallback));
       return false;
     } catch (e) {
       debugPrint('❌ [R5.1] releaseNoshowSeat 실패: $e');

@@ -27,6 +27,7 @@ import 'package:ALfit/utils/dialog_helper.dart';
 import 'package:ALfit/widgets/common/app_checkbox.dart';
 import 'package:ALfit/widgets/dialogs/contract_template_selector_dialog.dart';
 import 'package:ALfit/widgets/dialogs/styled_dialog.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 // ── 글꼴(상대 경로) ──
 Future<void> _loadFonts() async {
@@ -221,7 +222,7 @@ Future<void> _cts(_Ctx c, String arg) async {
   expect(reads, 1, reason: '양식 읽기 1 회');
   await c.visible(find.text('계약서 템플릿 선택'), '제목', hit: false);
   if (arg == 'E') {
-    await c.visible(find.text('등록된 템플릿이 없습니다'), '빈 상태 제목', hit: false);
+    await c.visible(findVisibleText('등록된 템플릿이 없습니다'), '빈 상태 제목', hit: false);
     for (final b in const ['기존 계약서로 시작', 'ALfit 기본 조항', '빈 계약서로 진행']) {
       // [r3] '빈 계약서로 진행' 은 빈 안내 안 글 단추 + 아래 고정 단추 2 개 — 모두 보임·hit 확인(개수 1 이상)
       final n = find.text(b).evaluate().length;
@@ -242,7 +243,7 @@ Future<void> _cts(_Ctx c, String arg) async {
     expect(done && result is List && (result as List).isEmpty, isTrue, reason: '결과 = 빈 조항 목록 · $result');
   } else {
     await c.visible(find.text('템플릿 불러오기 실패'), '오류 제목', hit: false);
-    await c.tap(find.text('다시 시도'), '다시 시도');
+    await c.tap(findVisibleText('다시 시도'), '다시 시도');
     await c.frames(10);
     expect(reads, 2, reason: '다시 시도 → 양식 읽기 1 → 2 회');
     await c.visible(find.text('템플릿 불러오기 실패'), '다시 시도 뒤 같은 오류', hit: false);
@@ -297,7 +298,7 @@ Future<void> _wdm(_Ctx c, String arg) async {
   await c.tap(find.descendant(of: dlg, matching: find.text('상하차')), '상하차 카드 선택');
   // 동작 단추 = 정확 '1개 마감' · 도달/hit 만(누르기 0 — 쓰기 경로)
   await c.visible(find.descendant(of: dlg, matching: find.text('1개 마감')), "동작 단추 '1개 마감'");
-  await c.tap(find.descendant(of: dlg, matching: find.text('취소')), '취소');
+  await c.tap(find.descendant(of: dlg, matching: findVisibleText('취소')), '취소');
   expect(dlg, findsNothing, reason: '취소 → 창 닫힘');
   expect(completes, 0, reason: '취소 → onComplete 0(쓰기 0)');
 }

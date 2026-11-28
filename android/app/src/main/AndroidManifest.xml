@@ -53,6 +53,20 @@
             </intent-filter>
         </activity>
         
+        <!-- [ALFIT-AUTH-KAKAO-ONBOARDING.1] 카카오 로그인(카카오계정 웹 로그인) 리다이렉트 수신.
+             scheme = kakao{네이티브 앱 키} — 값은 res/values/kakao_config.xml (현재 자리표시 · PENDING X3).
+             카카오 Flutter SDK 1.10.0 이 activity 를 선언하고, 앱은 intent-filter 만 붙인다(공식 설정 방식). -->
+        <activity
+            android:name="com.kakao.sdk.flutter.AuthCodeCustomTabsActivity"
+            android:exported="true">
+            <intent-filter android:label="flutter_web_auth">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="@string/kakao_scheme" android:host="oauth" />
+            </intent-filter>
+        </activity>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
@@ -95,6 +109,9 @@
             <data android:scheme="http" />
         </intent>
         
+        <!-- [ALFIT-AUTH-KAKAO-ONBOARDING.1] 카카오톡 설치 확인(카카오톡으로 로그인) -->
+        <package android:name="com.kakao.talk" />
+
         <!-- ⭐ 전화 걸기 -->
         <intent>
             <action android:name="android.intent.action.DIAL" />

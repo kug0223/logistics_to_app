@@ -388,8 +388,12 @@ void main() {
     });
 
     test('DEL-PRE-53 외국인 identity finalize 가 sentinel 을 되살리지 않는다', () {
-      final f = _fn(raw, 'callableFinalizeForeignIdentity');
-      expect(f, contains('srvAssertNotDeletingAccount(userSnap.data())'));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 옛 finalize 는 닫혀 sentinel 을 쓰지 않는다. 등록번호를 받는 새 writer 가 같은 gate 를 지난다.
+      expect(_fn(raw, 'callableFinalizeForeignIdentity'),
+          contains('throw srvLegacyClosed("LEGACY_SIGNUP_CLOSED");'));
+      final f = _fn(raw, 'callableRegisterForeignIdDocument');
+      expect(f, contains('srvAssertNotDeletingAccount(cur)'));
+      expect(f, isNot(contains('foreignIdFingerprints')), reason: '새 writer 는 옛 sentinel 을 만들지 않는다');
       // registration_pending 은 영향 없다 — gate 는 deleting 만 본다.
       final g = _helper(raw, 'srvAssertNotDeletingAccount');
       expect(g, contains('ACCOUNT_STATUS_DELETING'));
@@ -439,8 +443,10 @@ void main() {
     test('DEL-PRE-61 members create 의 모든 분기가 barrier 뒤에 있다 (§32·§34)', () {
       final c = membersCreate();
       // barrier 가 분기 괄호 **앞**에 있어야 역할 우회가 불가능하다.
+      // [판정281 서버 확정 갱신 2026-11-26] 바깥에 caller 탈퇴 freeze 울타리 `callerNotDeleting() && (` 가 덧씌워졌다(K281-R1).
+      //   대상 uid barrier 는 여전히 모든 분기 괄호 앞이다 — 의도 그대로.
       expect(c, contains(
-          'allow create: if isLoggedIn() && !accountDeletionBarrierExists(uid) &&'));
+          'allow create: if callerNotDeleting() && (isLoggedIn() && !accountDeletionBarrierExists(uid) &&'));
       expect(c, contains('isSuperAdmin()'));
       expect(
         c.indexOf('!accountDeletionBarrierExists(uid)'),

@@ -66,7 +66,14 @@ void main() {
 
     test('PR-12 스냅샷 갱신은 attendance 만 쓴다 → 판정은 그대로다', () {
       final b = _codeOf(_cf(fn, 'callableRefreshWagePaymentSnapshot'));
-      expect(_flat(b), contains('db.collection("attendance").doc(id).update('));
+      // [AUD-3 H1 · 정책 7 · server_295/296] 예전 핀: 'db.collection("attendance").doc(id).update(' (거래 밖 조건 없는 쓰기).
+      //   이체·잠금 경합에서 '보낸 계좌' 기록을 덮어서, 근태를 거래 안에서 다시 읽고 지금도 같은 사업장·근로자·confirmed·잠금 없음일
+      //   때만 거래 안 update 로 쓴다. 쓰는 문서는 여전히 attendance 하나다(이 핀의 뜻 = 판정 문서를 쓰지 않는다 — 그대로).
+      expect(_flat(b), contains('const attRef = db.collection("attendance").doc(id);'));
+      expect(_flat(b), contains('const fresh = await tx.get(attRef);'));
+      expect(_flat(b), contains('if (fd.wageStatus === "transferred") return "alreadyTransferred";'));
+      expect(_flat(b), contains('tx.update(attRef, {'));
+      expect(_flat(b).contains('db.collection("attendance").doc(id).update('), false);
       // users / 검토 문서는 읽기만 한다
       expect(b.contains('db.collection("users").doc(u)'), true);
       expect(_flat(b).contains('collection("users").doc(uid).update('), false);

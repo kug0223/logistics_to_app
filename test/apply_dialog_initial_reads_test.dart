@@ -20,6 +20,7 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 
 import 'package:ALfit/models/core/application_model.dart';
+import 'package:ALfit/utils/expected_daily_wage.dart';
 import 'package:ALfit/models/core/to_model.dart';
 import 'package:ALfit/models/core/user_model.dart';
 import 'package:ALfit/models/core/work_detail_data.dart';
@@ -300,8 +301,8 @@ void main() {
     expect(find.text('업무 선택'), findsNothing);
     expect(find.text('상하차'), findsNothing);
     // 껍데기(제목·닫기)는 로딩 분기 밖이라 살아 있다.
-    expect(find.text('지원하기'), findsOneWidget);
-    expect(find.text('닫기'), findsOneWidget);
+    expect(findVisibleText('지원하기'), findsOneWidget);
+    expect(findVisibleText('닫기'), findsOneWidget);
   });
 
   testWidgets('[ARR-2] 하나만 미완료여도 스피너다 — Future.wait 는 셋을 기다린다',
@@ -644,7 +645,11 @@ void main() {
 
         // 3. 카드의 핵심 사실 — 업무명 · 시간 · 임금 · 근무 날짜.
         expect(find.text('상하차'), findsWidgets, reason: '업무명');
-        expect(find.text('12,000원/시급'), findsWidgets, reason: '임금');
+        // [F293-WAGE-01 · impl_30 핀 갱신] 시급 업무의 임금 줄은 '하루 예상 … · 시급 12,000원'(같은 helper) — 예전 '12,000원/시급'.
+        //   의도(임금이 카드에서 읽힌다)는 그대로다.
+        expect(find.text(ExpectedWageText.combined(ExpectedDailyWage.forWorkDetail(_work()))!), findsWidgets,
+            reason: '임금');
+        expect(find.textContaining('시급 12,000원'), findsWidgets, reason: '시급 원값 보조');
         expect(find.text('근무 날짜'), findsOneWidget);
         expect(find.text(FormatHelper.formatDateKorean(kWorkDate)),
             findsOneWidget, reason: '근무 날짜');
@@ -663,7 +668,10 @@ void main() {
     );
     expect(tester.takeException(), isNull);
     expect(find.text('냉장창고 입출고 및 파렛트 정리'), findsWidgets);
-    expect(find.text('12,000원/시급'), findsWidgets);
+    // [F293-WAGE-01 · impl_30 핀 갱신] 임금 줄 = 같은 helper 의 하루 예상 한 줄(예전 '12,000원/시급').
+    expect(find.text(ExpectedWageText.combined(ExpectedDailyWage.forWorkDetail(
+            _work(workType: '냉장창고 입출고 및 파렛트 정리')))!),
+        findsWidgets);
   });
 
   testWidgets('[AWC-3] 업무 3건이면 시간 문구가 길어진다 — 320dp × 2.0',

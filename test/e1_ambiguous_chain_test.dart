@@ -341,7 +341,7 @@ void main() {
     }
 
     Future<void> sendDirect(WidgetTester t) async {
-      final cta = find.textContaining('근무 초대');
+      final cta = findVisibleTextContaining('근무 초대');
       expect(cta, findsWidgets, reason: '부족 2 — 초대 CTA');
       await t.tap(cta.first);
       await _settle(t);
@@ -368,7 +368,7 @@ void main() {
       expect(_statAfter(t, '초대: '), '1명', reason: '창 목록이 저장 사실을 다시 읽었다');
       expect(find.text('큐에이근로'), findsOneWidget);
 
-      await t.tap(find.text('닫기').last);
+      await t.tap(findVisibleText('닫기').last);
       await _settle(t);
       expect(closed, isTrue);
       expect(result?.hasChanges, isTrue, reason: '상위 카드가 다시 읽는 신호');
@@ -392,7 +392,7 @@ void main() {
       // 창을 정상적으로 닫아 전역 중복 실행 가드(ActionGuard)를 풀어 둔다.
       await t.tap(find.widgetWithText(OutlinedButton, '닫기'));
       await _settle(t, 40);
-      await t.tap(find.text('닫기').last);
+      await t.tap(findVisibleText('닫기').last);
       await _settle(t);
       await t.pump(const Duration(seconds: 5));
     });
@@ -407,7 +407,7 @@ void main() {
       expect(find.byType(InviteWorkerDialog), findsNothing);
       // 창은 목록을 다시 읽는다 — 목록 읽기는 성공해 초대가 보인다.
       expect(_statAfter(t, '초대: '), '1명');
-      await t.tap(find.text('닫기').last);
+      await t.tap(findVisibleText('닫기').last);
       await _settle(t);
       // [E1-W3 수정] 예전에는 여기서 false 였다(창은 `초대 1`, 카드는 옛 수치).
       //   이제 성공한 재조회가 그 대상의 이 업무 INVITED 를 읽었으므로 전파한다.

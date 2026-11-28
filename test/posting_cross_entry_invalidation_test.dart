@@ -579,7 +579,11 @@ void main() {
       //   WorkDetailRow._showApplicantsDialog와 같은 이유다.
       // [POSTING-AUTH-45] + batchClose 의 부분 반영 거절 분기 — 날짜 일부가 이미 닫혔으므로
       //   성공 분기와 같은 이유로 Home 인력 현황에 알린다. 같은 action 안이다.
-      expect('notifyDataChanged'.allMatches(cardCode).length, 6);
+      // [impl_35 · 판정294 F294-CLOSE-01] + batchClose 미완료(CLOSE_SLOTS_INCOMPLETE) 갱신 helper
+      //   `_refreshAfterClose` — 날짜 종료가 이미 커밋됐으므로 성공 분기와 같은 이유. 같은 action(batchClose) 안이다.
+      expect('notifyDataChanged'.allMatches(cardCode).length, 7);
+      final closeRefresh = _codeOf(_bodyOf(card, 'void _refreshAfterClose('));
+      expect(closeRefresh.contains('notifyDataChanged'), isTrue);
       // 새로 늘어난 자리가 실제로 지원자 처리 경로인지 확인한다.
       final opened = _codeOf(_bodyOf(card, 'Future<void> _openApplicants('));
       expect(opened.contains('WorkApplicantsDialog('), isTrue);

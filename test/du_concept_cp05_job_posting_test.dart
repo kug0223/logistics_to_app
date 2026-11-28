@@ -48,6 +48,7 @@ import 'package:ALfit/utils/identity_identifier.dart';
 import 'package:ALfit/utils/text_layout.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake with MockPlatformInterfaceMixin implements FirebaseAppPlatform {
   @override
@@ -1073,7 +1074,7 @@ void main() {
                 expect(plain('(휴게 1시간)'), findsWidgets, reason: '$id 휴게 원천');
                 expect(plain('실근무 8시간'), findsWidgets, reason: '$id 실근무');
                 expect(plain('52,000원'), findsNothing, reason: '$id 새 예상 총액 0');
-                expect(find.textContaining('예상'), findsNothing, reason: '$id 예상 총액 문구 0');
+                expect(findVisibleTextContaining('예상'), findsNothing, reason: '$id 예상 총액 문구 0');
                 // 업무별 다른 요율(일급) — normal 은 같은 날 상하차, multi 는 열람일 11/20 의 야간 분류.
                 if (c.state == 'normal') expect(plainRich('120,000원'), findsOneWidget, reason: '$id 업무별 다른 요율(상하차 일급)');
                 if (c.state == 'multi') expect(plainRich('150,000원'), findsOneWidget, reason: '$id 업무별 다른 요율(야간 일급)');

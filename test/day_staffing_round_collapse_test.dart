@@ -46,6 +46,7 @@ import 'package:ALfit/screens/business_admin/dialogs/attendance_reads.dart';
 import 'package:ALfit/screens/business_admin/dialogs/day_applicants_dialog.dart';
 import 'package:ALfit/screens/business_admin/dialogs/day_applicants_reads.dart';
 import 'package:ALfit/utils/format_helper.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake
     with MockPlatformInterfaceMixin
@@ -479,7 +480,7 @@ void main() {
       expect(r.calls.where((c) => c == 'business').length, 1);
       // 기반 데이터 실패 → ERROR 상태의 '다시 시도' 로 두 번째 회차를 돈다.
       r.failApplications = false;
-      await tester.tap(find.text('다시 시도'));
+      await tester.tap(findVisibleText('다시 시도'));
       await _settle(tester);
       expect(r.calls.where((c) => c == 'business').length, 2,
           reason: '실패한 회차가 표식을 남겼다면 두 번째 회차가 건너뛴다');

@@ -125,7 +125,7 @@ void main() {
       // ① 핵심: 업무 유형 / 급여 타입 / 모집 인원 / 근무 시간
       expect(find.text('업무 유형'), findsOneWidget);
       expect(find.text('급여 타입'), findsOneWidget);
-      expect(find.text('근무 시간'), findsOneWidget);
+      expect(findVisibleText('근무 시간'), findsOneWidget);
       // ② 근무조건: 근무 시간대 섹션이 바로 보인다
       expect(find.text('야간수당 설정'), findsOneWidget);
     });
@@ -135,7 +135,7 @@ void main() {
       // 접어서 숨기지 않는다.
       await _openAddDialog(tester);
       expect(find.text('급여·정산 설정'), findsOneWidget);
-      expect(find.text('공제 방식'), findsOneWidget);
+      expect(findVisibleText('공제 방식'), findsOneWidget);
       expect(find.text('급여 지급 일정'), findsOneWidget);
     });
 
@@ -143,7 +143,7 @@ void main() {
       await _openAddDialog(tester);
       await tester.tap(find.text('급여·정산 설정'));
       await tester.pumpAndSettle();
-      expect(find.text('공제 방식'), findsNothing);
+      expect(findVisibleText('공제 방식'), findsNothing);
       expect(find.text('급여 지급 일정'), findsNothing);
     });
 
@@ -153,7 +153,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('급여·정산 설정'));
       await tester.pumpAndSettle();
-      expect(find.text('공제 방식'), findsOneWidget);
+      expect(findVisibleText('공제 방식'), findsOneWidget);
     });
   });
 

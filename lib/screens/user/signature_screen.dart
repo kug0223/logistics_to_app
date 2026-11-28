@@ -11,6 +11,7 @@ import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/action_guard.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/text_layout.dart';
 import '../../widgets/contract/signature_pad_widget.dart';
@@ -351,11 +352,12 @@ class _SignatureScreenState extends State<SignatureScreen> {
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableSaveUserSignature')
           .call({'signatureBase64': b64});
-      // [F-07-3] CF 성공 확정 — refresh 실패가 서명 등록 실패로 오인되지 않도록 별도 처리
+      // [F-07-3] CF 성공 확정 — 반영 실패가 서명 등록 실패로 오인되지 않도록 별도 처리
+      // [PERF-L43] users 전체 재적재(refreshUserData) 대신 서버가 확정한 값을 현재 모델에만 반영한다(읽기 0).
       try {
-        await userProvider.refreshUserData();
+        userProvider.applyConfirmedSignature(uid: uid, signatureBase64: b64);
       } catch (e) {
-        debugPrint('⚠️ 사용자 정보 갱신 실패 (서명은 저장됨): $e');
+        debugPrint('⚠️ 사용자 정보 반영 실패 (서명은 저장됨): $e');
       }
       if (mounted) ToastHelper.showSuccess('서명이 등록되었습니다');
     } catch (e) {
@@ -365,7 +367,12 @@ class _SignatureScreenState extends State<SignatureScreen> {
     }
   }
 
-  Future<void> _delete(BuildContext context) async {
+  /// [I9 · impl_18] 확인 창이 먼저 떠도 터치 차단막은 **다음 프레임**에 덮인다 — 같은 프레임의 두 번째 탭이
+  ///   창을 하나 더 띄우고 처리까지 한 번 더 갈 수 있다. 첫 await 전에 같은 화면·같은 잠금 묶음을 잠근다.
+  Future<void> _delete(BuildContext context) => ActionGuard.runVoid(
+      ActionGuard.ownerKey('signature._isSaving', this), () => _deleteLocked(context));
+
+  Future<void> _deleteLocked(BuildContext context) async {
     final userProvider = context.read<UserProvider>();
     final uid = userProvider.currentUser?.uid;
     if (uid == null) return;
@@ -383,11 +390,12 @@ class _SignatureScreenState extends State<SignatureScreen> {
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableSaveUserSignature')
           .call({'signatureBase64': null});
-      // [F-07-3] CF 성공 확정 — refresh 실패가 서명 삭제 실패로 오인되지 않도록 별도 처리
+      // [F-07-3] CF 성공 확정 — 반영 실패가 서명 삭제 실패로 오인되지 않도록 별도 처리
+      // [PERF-L43] users 전체 재적재 대신 서버가 지운 필드를 현재 모델에서만 지운다(읽기 0).
       try {
-        await userProvider.refreshUserData();
+        userProvider.applyConfirmedSignature(uid: uid, signatureBase64: null);
       } catch (e) {
-        debugPrint('⚠️ 사용자 정보 갱신 실패 (서명은 삭제됨): $e');
+        debugPrint('⚠️ 사용자 정보 반영 실패 (서명은 삭제됨): $e');
       }
       if (mounted) ToastHelper.showSuccess('서명이 삭제되었습니다');
     } catch (e) {

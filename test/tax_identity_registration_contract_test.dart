@@ -56,10 +56,12 @@ void main() {
     });
 
     test('03 users에 전체번호를 새로 저장하지 않는다', () {
-      // 외국인 finalize가 users에 쓰는 필드 목록에 번호가 없어야 한다.
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 외국인 등록번호를 받는 users writer 는 옛 finalize(닫힘) 대신 가입 후 등록 writer 다.
+      //   그 writer 가 users 에 쓰는 patch 에 번호(원문·암호문)가 없어야 한다.
       final txUpdate = _flat(_sliceOf(cfRaw,
-          'tx.update(userRef, {\n          foreignIdentityFingerprint',
-          '});'));
+          'const patch: Record<string, unknown> = {\n        ...profilePatch,',
+          'tx.update(userRef, patch);'));
+      expect(txUpdate, contains('foreignIdDocumentFingerprint: docFp'));
       expect(txUpdate, isNot(contains('foreignIdNumberEncrypted')));
       expect(txUpdate, isNot(contains('rawForeignId')));
       expect(txUpdate, isNot(contains('residentNumber')));

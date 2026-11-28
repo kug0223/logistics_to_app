@@ -74,7 +74,12 @@ void main() {
       //   한 곳이 소유하기 위해서다. 결정적 id 와 create 의미는 그대로다:
       //   id 는 helper 의 두 번째 인자, create 는 helper 내부.
       final emp = _codeOf(_cfBody(fn, 'callableFinalizeEmployerSignature'));
-      expect(emp.contains('srvPersistNotification'), true);
+      // [L56 r4] 본문 직접 호출 또는 같은 거래의 direct 작업(실행기가 srvPersistNotificationWithId 로 쓴다).
+      // [판정292] 정확히 하나 + 작업 경로면 두 거래(새 계약 · 기존 계약) 모두.
+      final cnDirect = emp.contains('srvPersistNotification');
+      final cnJobs = 'tx.create(signJobRef, srvNotificationJobDoc("direct", {'.allMatches(emp).length;
+      expect(cnDirect || cnJobs == 2, true, reason: '사업주 서명 알림 경로가 없다(또는 한 거래에만 있다)');
+      expect(cnDirect && cnJobs > 0, false, reason: '직접 호출과 작업이 함께 있다 — 이중 발송 가능');
     });
   });
 

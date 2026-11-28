@@ -17,9 +17,16 @@ class AvailabilityService {
   /// 내 근무 가능일 문서 로드.
   /// 문서 없으면 null 반환.
   Future<WorkerAvailabilityModel?> loadMyAvailability(String uid) async {
-    final doc = await _col.doc(uid).get();
-    return WorkerAvailabilityModel.tryFromFirestore(doc);
+    final doc = await availabilityDoc(uid);
+    return parseAvailability(doc);
   }
+
+  /// [PERF-L20] 내 가능일 문서 원본 읽기 — 같은 문서를 쓰는 초대 지역 읽기와 공유하려고 나눴다(규칙·경로 그대로).
+  Future<DocumentSnapshot<Map<String, dynamic>>> availabilityDoc(String uid) => _col.doc(uid).get();
+
+  /// [PERF-L20] [loadMyAvailability] 의 해석 규칙(문서 없으면 null).
+  static WorkerAvailabilityModel? parseAvailability(DocumentSnapshot<Map<String, dynamic>> doc) =>
+      WorkerAvailabilityModel.tryFromFirestore(doc);
 
   /// 근무 가능일 저장.
   ///

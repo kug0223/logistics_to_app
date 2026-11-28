@@ -328,7 +328,7 @@ void main() {
         expect(find.byType(ApplicantRowSurface), findsNWidgets(4));
 
         // 필수 상태 글자가 살아 있다 — 색에만 의존하지 않는다.
-        expect(find.text('계약 종료'), findsOneWidget);
+        expect(findVisibleText('계약 종료'), findsOneWidget);
         expect(find.text('최근 90일 노쇼 7회'), findsOneWidget);
 
         // 행동 버튼이 화면 폭 안에 있고 눌릴 수 있다.
@@ -343,7 +343,7 @@ void main() {
         }
 
         // 닫기 접근 가능.
-        final close = tester.getRect(find.text('닫기'));
+        final close = tester.getRect(findVisibleText('닫기'));
         expect(close.bottom, lessThanOrEqualTo(h + 0.5));
 
         // 스크롤로 마지막 행까지 닿는다.
@@ -379,7 +379,7 @@ void main() {
       ));
       await tester.pump();
       expect(tester.takeException(), isNull);
-      expect(find.text('닫기'), findsOneWidget);
+      expect(findVisibleText('닫기'), findsOneWidget);
       // 마지막 행까지 스크롤해서 닿는다.
       await tester.scrollUntilVisible(find.text('근무자11(W-011) · 010-0000-0000'),
           200, scrollable: find.byType(Scrollable).first);
@@ -397,7 +397,7 @@ void main() {
       ));
       await tester.pump();
       expect(tester.takeException(), isNull);
-      final r = tester.getRect(find.text('닫기'));
+      final r = tester.getRect(findVisibleText('닫기'));
       expect(r.bottom, lessThanOrEqualTo(740 - 300 + 0.5));
     });
 
@@ -411,7 +411,7 @@ void main() {
       ));
       await tester.pump();
       expect(tester.takeException(), isNull);
-      expect(find.text('닫기'), findsOneWidget);
+      expect(findVisibleText('닫기'), findsOneWidget);
     });
 
     testWidgets('ARS-B-ENDED 종료 행에는 행동 버튼이 없다', (tester) async {

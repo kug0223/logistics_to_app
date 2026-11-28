@@ -32,6 +32,7 @@ ApplicationModel _app(
   String start = '10:00',
   String end = '11:00',
   int wage = 12000,
+  int? breakMinutes,
 }) =>
     ApplicationModel(
       id: id,
@@ -46,6 +47,7 @@ ApplicationModel _app(
       endTime: end,
       wage: wage,
       wageType: 'hourly',
+      breakMinutes: breakMinutes,
       workDate: workDate,
       appliedAt: workDate.subtract(const Duration(days: 3)),
     );
@@ -158,7 +160,9 @@ void main() {
   group('예상수입 — 끝난 미출근 근무는 벌 예정이 아니다', () {
     final zdn7 = _app('zdn7', workDate: d20);
     final rube = _app('rube', workDate: d20, start: '13:00', end: '14:00');
-    final later = _app('later', workDate: d20, start: '20:00', end: '21:00');
+    // [impl_39 · AUD-3 M3 픽스처 갱신] 월 합계는 이제 약속 휴게를 뺀 하루 예상(휴게 모름 = 계산 불가)이다 —
+    //   WI-5 가 보는 것은 '종료된 미출근 제외' 이므로 남는 근무에 실제 지원서처럼 약속 휴게 0 을 준다(기대 12,000 그대로).
+    final later = _app('later', workDate: d20, start: '20:00', end: '21:00', breakMinutes: 0);
     final atts = [
       _att('rube',
           workDate: d20,

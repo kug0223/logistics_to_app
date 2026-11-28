@@ -17,6 +17,7 @@ import 'package:shimmer/shimmer.dart';
 import '../theme/app_colors.dart';
 import '../widgets/common/loading_widget.dart';
 import 'picker_cache_scope.dart';
+import 'action_guard.dart';
 
 /// 🖼️ 이미지 관련 공용 헬퍼
 /// 
@@ -27,6 +28,28 @@ import 'picker_cache_scope.dart';
 /// - 서류 이미지 (신분증, 통장 등)
 class ImageHelper {
   static final ImagePicker _picker = ImagePicker();
+
+  // ==================== 사진 고르기 단일 실행 (impl_23) ====================
+  //
+  // 기기의 사진 고르기(출처 시트 → 카메라/갤러리 → 압축)는 **한 번에 하나**다. 버튼을 시트가 뜨기 전(다음 프레임)
+  // 연타하면 시트가 두 장 뜨고, 두 번째 피커 호출은 플러그인이 `already_active` 로 거절하거나 같은 사진이 두 번
+  // 들어갔다(호출 6곳 · impl_16/19 후보). 여기 공용 진입점이 첫 await 전에 잠근다.
+  //
+  // 진행 중에 들어온 호출은 **즉시 null(목록이면 빈 목록)** 을 돌려준다 — "아무것도 고르지 않음(취소)"과 같다.
+  //   같은 Future 를 돌려주지 않는 이유: 두 호출자가 같은 압축 사본(앱 소유 staging 파일)을 받으면 한쪽이 업로드 뒤
+  //   지우는(TMP-01) 파일을 다른 쪽이 또 올리거나, 같은 사진을 두 번 추가한다. 모든 호출자는 이미 null/빈 목록을
+  //   "취소"로 처리하므로(토스트 없음) 화면 의미가 바뀌지 않는다. 사용자는 첫 탭의 시트를 이미 보고 있다.
+  //
+  // 안쪽 단계(`_pickSingleImage` 등)는 잠그지 않는다 — 바깥 진입점이 이미 잠갔다(중첩 잠금으로 스스로 막히지 않게).
+  static const String _pickerKey = 'device.imagePicker';
+
+  /// 사진 고르기 흐름 하나를 단일 실행으로 돌린다 — 진행 중이면 [body] 를 부르지 않고 null.
+  ///   이 helper 밖에서 `ImagePicker` 를 직접 부르는 화면(출처 시트 + 직접 pickImage)도 이것으로 감싼다.
+  static Future<T?> exclusive<T>(Future<T?> Function() body) => ActionGuard.run<T>(_pickerKey, body);
+
+  /// 사진 고르기가 진행 중인가(시험용).
+  @visibleForTesting
+  static bool get debugPickerBusy => ActionGuard.isBusy(_pickerKey);
 
   // ==================== 이미지 압축 설정 ====================
   
@@ -305,6 +328,16 @@ class ImageHelper {
     double maxHeight = 1080,
     int imageQuality = 85,
     bool useBottomSheet = false,
+  }) =>
+      exclusive(() => _pickSingleImage(context,
+          maxWidth: maxWidth, maxHeight: maxHeight, imageQuality: imageQuality, useBottomSheet: useBottomSheet));
+
+  static Future<File?> _pickSingleImage(
+    BuildContext context, {
+    required double maxWidth,
+    required double maxHeight,
+    required int imageQuality,
+    required bool useBottomSheet,
   }) async {
     try {
       ImageSource? source;
@@ -339,7 +372,8 @@ class ImageHelper {
     double maxWidth = 1920,
     double maxHeight = 1080,
     int imageQuality = 85,
-  }) async {
+  }) =>
+      exclusive(() async {
     try {
       final XFile? image = await _picker.pickImage(
         source: source,
@@ -354,7 +388,7 @@ class ImageHelper {
       debugPrint('❌ 이미지 선택 실패: $e');
       return null;
     }
-  }
+  });
 
   // ==================== 다중 이미지 선택 ====================
 
@@ -372,6 +406,24 @@ class ImageHelper {
     double maxHeight = 1080,
     int imageQuality = 85,
     @visibleForTesting List<String>? pickedPathsOut,
+  }) async =>
+      (await exclusive(() => _pickMultipleImages(context,
+          maxImages: maxImages,
+          currentCount: currentCount,
+          maxWidth: maxWidth,
+          maxHeight: maxHeight,
+          imageQuality: imageQuality,
+          pickedPathsOut: pickedPathsOut))) ??
+      <File>[];
+
+  static Future<List<File>> _pickMultipleImages(
+    BuildContext context, {
+    required int maxImages,
+    required int currentCount,
+    required double maxWidth,
+    required double maxHeight,
+    required int imageQuality,
+    List<String>? pickedPathsOut,
   }) async {
     try {
       // 최대 개수 체크
@@ -641,6 +693,13 @@ class ImageHelper {
     BuildContext context, {
     ImageType type = ImageType.general,
     bool useBottomSheet = false,
+  }) =>
+      exclusive(() => _pickAndCompressImage(context, type: type, useBottomSheet: useBottomSheet));
+
+  static Future<File?> _pickAndCompressImage(
+    BuildContext context, {
+    required ImageType type,
+    required bool useBottomSheet,
   }) async {
     // [SIM-PICKER-CACHE] 이 선택이 cache 에 만든 UUID 사본·scaled_ 를 추적한다.
     //   compressImage 는 언제나 **앱 소유 staging 사본**을 돌려주므로(R7-P4.3B),
@@ -648,7 +707,7 @@ class ImageHelper {
     final scope = await PickerCacheScope.begin();
     try {
       if (!context.mounted) return null;
-      final file = await pickSingleImage(
+      final file = await _pickSingleImage(
         context,
         useBottomSheet: useBottomSheet,
         // ImagePicker 자체 리사이징은 최소화 (압축에서 처리)
@@ -673,6 +732,16 @@ class ImageHelper {
     ImageType type = ImageType.general,
     int maxImages = 0,
     int currentCount = 0,
+  }) async =>
+      (await exclusive(() => _pickAndCompressMultipleImages(context,
+          type: type, maxImages: maxImages, currentCount: currentCount))) ??
+      <File>[];
+
+  static Future<List<File>> _pickAndCompressMultipleImages(
+    BuildContext context, {
+    required ImageType type,
+    required int maxImages,
+    required int currentCount,
   }) async {
     // [SIM-PICKER-CACHE] 단일 선택과 같다 — compressImages 는 앱 소유 staging 사본만
     //   돌려주므로, 그것이 다 만들어지면 picker 산출물(잘라낸 것 포함)은 쓰는 곳이 없다.
@@ -680,7 +749,7 @@ class ImageHelper {
     final raw = <String>[];
     try {
       if (!context.mounted) return [];
-      final files = await pickMultipleImages(
+      final files = await _pickMultipleImages(
         context,
         maxImages: maxImages,
         currentCount: currentCount,
@@ -1124,6 +1193,10 @@ class ImageFileInfo {
 }
 
 /// 🔍 전체화면 이미지 뷰어 위젯
+@visibleForTesting
+int fullScreenDecodeWidthForTest(Size screen, double dpr) =>
+    _FullScreenImageViewerState.decodeWidthFor(screen, dpr);
+
 class _FullScreenImageViewer extends StatefulWidget {
   final String? imageUrl;
   final File? imageFile;
@@ -1226,11 +1299,23 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
     );
   }
 
+  /// [P10 · 탭 분석 §3-17] 전체화면 디코드 폭 상한 — 원본(카메라 12MP 등)을 그대로 디코드하지 않는다.
+  ///   화면 **긴 변** × DPR × 2(확대·회전 여유 · 판정291 D 의 ×2 잠정 기준). 원본이 더 작으면 원본 그대로(확대 0).
+  ///   신분증 등 글자 판독 화질은 실기기 확인 전 미검증이다.
+  @visibleForTesting
+  static int decodeWidthFor(Size screen, double dpr) {
+    final longest = screen.width > screen.height ? screen.width : screen.height;
+    return (longest * dpr * 2).round().clamp(1080, 4096);
+  }
+
   Widget _buildImage() {
+    final mq = MediaQuery.of(context);
+    final decodeWidth = decodeWidthFor(mq.size, mq.devicePixelRatio);
     if (widget.imageFile != null) {
       return Image.file(
         widget.imageFile!,
         fit: BoxFit.contain,
+        cacheWidth: decodeWidth,
       );
     }
 
@@ -1241,6 +1326,7 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
         return Image.network(
           widget.imageUrl!,
           fit: BoxFit.contain,
+          cacheWidth: decodeWidth,
           loadingBuilder: (context, child, progress) {
             if (progress == null) return child;
             return const Center(
@@ -1266,6 +1352,7 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
         imageUrl: widget.imageUrl!,
         cacheKey: widget.cacheKey,
         fit: BoxFit.contain,
+        memCacheWidth: decodeWidth,
         placeholder: (context, url) => const Center(
           child: CircularProgressIndicator(color: Colors.white),
         ),

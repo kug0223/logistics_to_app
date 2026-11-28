@@ -30,6 +30,79 @@ void _refreshQuotaOnLimit(Object e) {
   if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) unawaited(PostingQuotaStore.refreshLast());
 }
 
+/// [F291-C03 같은 뿌리] 한 슬롯의 마감시간·업무 재구성 갱신 내용(순수 함수 · 시험 가능).
+///   예전 `updateSlotsDeadlines` 반복문 안의 계산을 **그대로** 옮겼다 — 입력이 읽어 둔 사본이 아니라
+///   트랜잭션에서 읽은 최신 슬롯이라는 것만 다르다. 같은 업무(workType)의 기존 상태(마감·closedBy 등)는 유지하며
+///   시간·마감·금액·인원만 새 정의로 고친다. 새 업무는 추가한다.
+Map<String, dynamic> slotDeadlineUpdateData({
+  required SlotModel slot,
+  required List<WorkDetailData> newWorkDetails,
+  required String deadlineType,
+  required int hoursBeforeStart,
+  DateTime? fixedDeadline,
+  required DateTime now,
+}) {
+  // newWorkDetails 기준으로 슬롯 업무상세 재구성 (신규 업무유형 추가 포함)
+  final updatedWorkDetails = newWorkDetails.map((newDef) {
+    final existing = slot.workDetails.firstWhere(
+      (d) => d.workType == newDef.workType,
+      orElse: () => newDef,
+    );
+    DateTime? deadline;
+    if (deadlineType == 'HOURS_BEFORE') {
+      final parts = newDef.startTime.split(':');
+      if (parts.length >= 2) {
+        // startTime은 항상 KST — DateTime.utc()로 생성 후 KST→UTC(-9h) 변환
+        deadline = DateTime.utc(
+          slot.date.year, slot.date.month, slot.date.day,
+          int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
+        ).subtract(const Duration(hours: 9)).subtract(Duration(hours: hoursBeforeStart));
+      }
+    } else if (deadlineType == 'FIXED_TIME' && fixedDeadline != null) {
+      deadline = fixedDeadline.toUtc();
+    }
+    // 기존 슬롯에 같은 workType이 있으면 기존 상태(closedBy 등) 유지하면서 갱신
+    final isNew = slot.workDetails.every((d) => d.workType != newDef.workType);
+    if (isNew) {
+      return newDef.copyWith(applicationDeadline: deadline);
+    }
+    return existing.copyWith(
+      startTime: newDef.startTime,
+      endTime: newDef.endTime,
+      applicationDeadline: deadline,
+      wage: newDef.wage,
+      wageType: newDef.wageType,
+      requiredCount: newDef.requiredCount,
+    );
+  }).toList();
+
+  // 슬롯 레벨 마감 = 가장 이른 업무 마감
+  final slotDeadline = updatedWorkDetails
+      .where((d) => d.applicationDeadline != null)
+      .map((d) => d.applicationDeadline!)
+      .fold<DateTime?>(null, (earliest, dt) =>
+          earliest == null || dt.isBefore(earliest) ? dt : earliest);
+
+  // 미래 마감시간이 있는 활성 업무상세가 존재하면 자동마감 슬롯 재오픈
+  final hasOpenDetail = updatedWorkDetails.any((d) =>
+      !d.isClosed &&
+      (d.applicationDeadline == null || d.applicationDeadline!.isAfter(now)));
+  final isAutoClosed =
+      slot.status == SlotStatus.closed && slot.closedBy == null;
+
+  return <String, dynamic>{
+    'workDetails': WorkDetailData.listToFirestore(updatedWorkDetails),
+    'applicationDeadline': slotDeadline != null
+        ? Timestamp.fromDate(slotDeadline)
+        : FieldValue.delete(),
+    if (hasOpenDetail && isAutoClosed) ...{
+      'status': SlotStatus.open,
+      'isManualClosed': false,
+      'closedAt': FieldValue.delete(),
+    },
+  };
+}
+
 extension TOFirestore on FirestoreService {
 
   // ───────────────────────────────────────────────────────
@@ -227,15 +300,7 @@ extension TOFirestore on FirestoreService {
           .httpsCallable('callableGetPublishedTOs',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
       final result = await callable.call<Map<String, dynamic>>({});
-      final tos = (result.data['tos'] as List? ?? [])
-          .whereType<Map>()
-          .map((m) {
-            final raw = _cfHydrate(Map<String, dynamic>.from(m));
-            final id = raw.remove('id') as String? ?? '';
-            return TOModel.tryFromMap(raw, id);
-          })
-          .whereType<TOModel>()
-          .toList();
+      final tos = _parsePublishedTOs(result.data); // [PERF-L9 · impl_15] 근로자 홈 묶음과 같은 해석 함수
       _cachedPublishedTOs = tos;
       _cachedPublishedTOsAt = now;
       return tos;
@@ -394,6 +459,13 @@ extension TOFirestore on FirestoreService {
     String? publishTime,
   }) async {
     NetworkChecker.instance.assertOnline('공고 등록을 하려면 인터넷 연결이 필요합니다.');
+
+    // [impl_58 · server_296 A4/A6] 서버와 같은 경계(정원 1–999 정수 · 날짜 ≤366 · 실제 달력 날짜)를 **보내기 전에** 본다 —
+    //   공고 문서를 만든 뒤 슬롯 생성에서 거절돼 롤백하는 왕복을 줄인다. 서버 재검증은 그대로다(같은 code 로 같은 안내).
+    assertPostingInputWithinServerBounds(
+      requiredCounts: workDetails.map((w) => w.requiredCount),
+      dateStrings: type == TOType.flex && dates != null ? _flexDateStrings(dates) : null,
+    );
 
     // [HIGH-02] 개수 제한은 callableCreateTO CF에서 서버 측 강제 — 클라이언트 체크 제거
     GlobalLoadingController.show('공고 등록 중...');
@@ -771,6 +843,22 @@ extension TOFirestore on FirestoreService {
         ToastHelper.showWarning(postingPartialRevokeMessage);
         return true;
       }
+      // [판정294 F294-DEL-01] 지원서 정리 일부만 반영됐고 공고는 아직 지우지 않았다(aborted · CLEANUP_INCOMPLETE).
+      //   목록을 새로 읽게 true 를 돌린다. 같은 삭제를 다시 하면 남은 것만 처리된다(공고는 목록에 남아 있다).
+      if (isPostingIncomplete(e)) {
+        clearCache(toId: toId);
+        ToastHelper.showWarning(postingDeleteIncompleteMessage);
+        return true;
+      }
+      // [POSTING-RACE-46 · 판정294] 확인 뒤 새 지원이 들어와 삭제가 막혔다. 그 사이 늦은 지원서 정리가
+      //   반영됐을 수 있어 목록을 새로 읽는다. 안내는 서버 메시지(공고 종료 안내) 그대로.
+      if (isPostingRelationAfterCheck(e)) {
+        clearCache(toId: toId);
+        final relMsg = (e as FirebaseFunctionsException).message;
+        ToastHelper.showError(
+            (relMsg?.isNotEmpty ?? false) ? relMsg! : '공고 삭제에 실패했습니다.');
+        return true;
+      }
       // [POSTING-V2-01C.2] 서버가 쓴 안내를 그대로 전달한다.
       // callableDeleteTO는 관계가 있으면 failed-precondition과 함께
       // '…모집을 중단하려면 공고 종료를 이용해주세요.'를 반환하는데,
@@ -997,12 +1085,21 @@ extension TOFirestore on FirestoreService {
   }
 
   /// 근무시간/마감시간 설정 변경 시 모든 슬롯의 workDetails.applicationDeadline 일괄 재계산
+  /// [PERF-L53] 슬롯 쓰기 helper([updateSlotsPublishSettings] · [updateSlotsDeadlines]) 의 **완전 읽기** 한 번.
+  ///   저장 흐름이 이것으로 한 번 읽어 두 helper 에 `preloadedSlots` 로 넘긴다 — helper 안 읽기와 같은 규칙
+  ///   (`requireComplete: true` · 하나라도 해석 못 하면 SlotDataException · 실패 = 실패).
+  Future<List<SlotModel>> getSlotsForWrite(String toId) => getSlots(toId, requireComplete: true);
+
   Future<void> updateSlotsDeadlines({
     required String toId,
     required String deadlineType,
     required int hoursBeforeStart,
     required List<WorkDetailData> newWorkDetails,
     DateTime? fixedDeadline,
+    /// [PERF-L53] 호출부가 방금 `getSlots(toId, requireComplete: true)` 로 읽은 목록. 주면 다시 읽지 않는다.
+    ///   이 함수가 쓰는 슬롯 필드(date · workDetails · status · closedBy)는 같은 저장 흐름의
+    ///   visibleFrom 갱신이 바꾸지 않으므로 같은 스냅샷을 써도 결과가 같다. 쓰기는 그대로다.
+    List<SlotModel>? preloadedSlots,
   }) async {
     try {
       // [POSTING-V2-03D.1 TC2] PARTIAL WRITE != SUCCESS.
@@ -1010,92 +1107,65 @@ extension TOFirestore on FirestoreService {
       //   그것을 "성공"으로 보고한다. 그러면 그 날짜만 옛 마감시간을 유지한 채
       //   공고에 남는다. 하나라도 못 읽으면 부분 성공 대신 실패로 만든다.
       //   (createdAt 없는 슬롯은 이제 정상 파싱되므로 여기에 걸리지 않는다)
-      final slots = await getSlots(toId, requireComplete: true);
+      final slots = preloadedSlots ?? await getSlots(toId, requireComplete: true);
       if (slots.isEmpty) return;
-
-      var batch = _firestore.batch();
-      int count = 0;
 
       final today = DateTime.now();
       final todayMidnight = DateTime(today.year, today.month, today.day);
 
-      for (final slot in slots) {
-        // [PAST-01 FIX] 이미 지난 슬롯은 deadline 재계산 건너뜀
-        // 과거 슬롯의 applicationDeadline=null + isAutoClosed 조합 시 의도치 않은 재오픈 방지
-        if (slot.date.isBefore(todayMidnight)) continue;
+      // [PAST-01 FIX] 이미 지난 슬롯은 deadline 재계산 건너뜀(날짜는 바뀌지 않으므로 목록의 날짜로 고른다)
+      // 과거 슬롯의 applicationDeadline=null + isAutoClosed 조합 시 의도치 않은 재오픈 방지
+      final targets = slots.where((s) => !s.date.isBefore(todayMidnight)).toList();
 
-        final slotRef = _firestore
-            .collection('tos').doc(toId)
-            .collection('slots').doc(slot.id);
-
-        // newWorkDetails 기준으로 슬롯 업무상세 재구성 (신규 업무유형 추가 포함)
-        final updatedWorkDetails = newWorkDetails.map((newDef) {
-          final existing = slot.workDetails.firstWhere(
-            (d) => d.workType == newDef.workType,
-            orElse: () => newDef,
-          );
-          DateTime? deadline;
-          if (deadlineType == 'HOURS_BEFORE') {
-            final parts = newDef.startTime.split(':');
-            if (parts.length >= 2) {
-              // startTime은 항상 KST — DateTime.utc()로 생성 후 KST→UTC(-9h) 변환
-              deadline = DateTime.utc(
-                slot.date.year, slot.date.month, slot.date.day,
-                int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
-              ).subtract(const Duration(hours: 9)).subtract(Duration(hours: hoursBeforeStart));
-            }
-          } else if (deadlineType == 'FIXED_TIME' && fixedDeadline != null) {
-            deadline = fixedDeadline.toUtc();
+      // [F291-C03 같은 뿌리 · 2026-11-26] 예전에는 위에서 **읽어 둔** 슬롯의 workDetails 로 배열을 다시 만들어 batch 로
+      //   통째로 덮어썼다(트랜잭션·버전 조건 없음). 읽은 뒤 쓰기 전 사이에 다른 관리자가 그 슬롯의 업무를 마감/재오픈하면
+      //   그 변경이 옛 사본으로 덮여 사라졌다(갱신 유실 — 업무 일괄 마감 C03 과 같은 구조).
+      //   이제 슬롯마다 트랜잭션에서 **최신 문서**를 읽어 같은 계산(`slotDeadlineUpdateData` · 규칙 무변경)으로 고친 뒤
+      //   쓴다 — 겹치면 트랜잭션이 최신 문서로 다시 시도한다(C03 의 `_updateWorkDetailsInArrayAtomic` 과 같은 방식).
+      //   슬롯은 서로 다른 문서라 동시에 10개씩 보낸다. 하나라도 못 하면 실패로 던진다(PARTIAL WRITE != SUCCESS 유지 —
+      //   호출부는 예전처럼 '슬롯 동기화 실패' 로 알린다). 해석하지 못한 최신 문서도 실패다(예전 requireComplete 와 같은 뜻).
+      final now = DateTime.now();
+      final failed = <String>[];
+      const chunk = 10;
+      for (var i = 0; i < targets.length; i += chunk) {
+        final part = targets.sublist(i, (i + chunk).clamp(0, targets.length));
+        await Future.wait(part.map((slot) async {
+          final slotRef = _firestore
+              .collection('tos').doc(toId)
+              .collection('slots').doc(slot.id);
+          try {
+            await _firestore.runTransaction((tx) async {
+              final snap = await tx.get(slotRef);
+              if (!snap.exists) return; // 그 사이 지워진 슬롯 — 쓸 것이 없다
+              final fresh = SlotModel.tryFromMap(
+                  Map<String, dynamic>.from(snap.data() as Map), snap.id, toId);
+              if (fresh == null) {
+                throw StateError('슬롯 문서를 해석하지 못함: ${snap.id}');
+              }
+              tx.update(slotRef, {
+                ...slotDeadlineUpdateData(
+                  slot: fresh,
+                  newWorkDetails: newWorkDetails,
+                  deadlineType: deadlineType,
+                  hoursBeforeStart: hoursBeforeStart,
+                  fixedDeadline: fixedDeadline,
+                  now: now,
+                ),
+                // [impl_21 · Q25] 업무 배열을 바꿨다 — 슬롯 수정 토큰을 올려, 이 변경 전에 열린 슬롯 수정 폼의
+                //   저장을 서버(callableUpdateSlotWorkDetails · STALE-EDIT)가 거절하게 한다(옛 폼이 덮어쓰지 않게).
+                'editRevision': fresh.editRevision + 1,
+              });
+            });
+          } catch (e) {
+            debugPrint('❌ [TO] 슬롯 마감시간 갱신 실패(${slot.id}): $e');
+            failed.add(slot.id);
           }
-          // 기존 슬롯에 같은 workType이 있으면 기존 상태(closedBy 등) 유지하면서 갱신
-          final isNew = slot.workDetails.every((d) => d.workType != newDef.workType);
-          if (isNew) {
-            return newDef.copyWith(applicationDeadline: deadline);
-          }
-          return existing.copyWith(
-            startTime: newDef.startTime,
-            endTime: newDef.endTime,
-            applicationDeadline: deadline,
-            wage: newDef.wage,
-            wageType: newDef.wageType,
-            requiredCount: newDef.requiredCount,
-          );
-        }).toList();
-
-        // 슬롯 레벨 마감 = 가장 이른 업무 마감
-        final slotDeadline = updatedWorkDetails
-            .where((d) => d.applicationDeadline != null)
-            .map((d) => d.applicationDeadline!)
-            .fold<DateTime?>(null, (earliest, dt) =>
-                earliest == null || dt.isBefore(earliest) ? dt : earliest);
-
-        // 미래 마감시간이 있는 활성 업무상세가 존재하면 자동마감 슬롯 재오픈
-        final now = DateTime.now();
-        final hasOpenDetail = updatedWorkDetails.any((d) =>
-            !d.isClosed &&
-            (d.applicationDeadline == null || d.applicationDeadline!.isAfter(now)));
-        final isAutoClosed =
-            slot.status == SlotStatus.closed && slot.closedBy == null;
-
-        final updateData = <String, dynamic>{
-          'workDetails': WorkDetailData.listToFirestore(updatedWorkDetails),
-          'applicationDeadline': slotDeadline != null
-              ? Timestamp.fromDate(slotDeadline)
-              : FieldValue.delete(),
-          if (hasOpenDetail && isAutoClosed) ...{
-            'status': SlotStatus.open,
-            'isManualClosed': false,
-            'closedAt': FieldValue.delete(),
-          },
-        };
-
-        batch.update(slotRef, updateData);
-        count++;
-        if (count >= 499) { await batch.commit(); batch = _firestore.batch(); count = 0; }
+        }));
       }
-
-      if (count > 0) await batch.commit();
-      debugPrint('✅ [TO] 슬롯 ${slots.length}개 마감시간 갱신 완료');
+      if (failed.isNotEmpty) {
+        throw StateError('슬롯 마감시간 갱신 일부 실패: ${failed.length}/${targets.length}');
+      }
+      debugPrint('✅ [TO] 슬롯 ${targets.length}개 마감시간 갱신 완료');
     } catch (e) {
       debugPrint('❌ [TO] 슬롯 마감시간 갱신 실패: $e');
       rethrow;
@@ -1125,8 +1195,11 @@ extension TOFirestore on FirestoreService {
     final toRef = _firestore.collection('tos').doc(toId);
     final newTotalRequired = workDetails.fold<int>(0, (s, d) => s + d.requiredCount);
 
+    // [impl_21 · Q25 · 2026-11-26] 배열(`workDetails`)은 거래 안에서 **최신 문서**와 짝지어 만든다(아래).
+    //   예전에는 호출 화면이 들고 있던 편집 사본을 그대로 썼다 — 폼을 연 뒤 다른 관리자/서버가 같은 슬롯의
+    //   업무를 마감(closedAt/closedBy)·재오픈·긴급 종료하면 저장이 그 변경을 지웠다(C03 과 같은 갱신 유실).
+    //   지금 lib 에 이 함수의 호출자는 없다(슬롯 수정은 `callableUpdateSlotWorkDetails`) — 되살려 써도 같은 유실이 없게 고친다.
     final slotUpdate = <String, dynamic>{
-      'workDetails': WorkDetailData.listToFirestore(workDetails),
       'applicationDeadline': applicationDeadline != null
           ? Timestamp.fromDate(applicationDeadline.toUtc())
           : FieldValue.delete(),
@@ -1140,16 +1213,29 @@ extension TOFirestore on FirestoreService {
       // 슬롯 현재 totalRequired를 서버에서 읽어 delta 계산 (클라이언트 스테일 값 배제)
       final currentSlot = await tx.get(slotRef);
       int currentRequired = 0;
+      var freshDetails = const <WorkDetailData>[];
+      var currentRevision = 0;
       if (currentSlot.exists) {
-        final wds = currentSlot.data()!['workDetails'] as List? ?? [];
+        final data = currentSlot.data()!;
+        final wds = data['workDetails'] as List? ?? [];
         currentRequired = wds.whereType<Map>().fold<int>(0, (s, wd) {
           final map = Map<String, dynamic>.from(wd);
           return s + ((map['requiredCount'] as num?)?.toInt() ?? 0);
         });
+        freshDetails = WorkDetailData.listFromFirestore(wds);
+        currentRevision = (data['editRevision'] as num?)?.toInt() ?? 0;
       }
       final delta = newTotalRequired - currentRequired;
 
-      tx.update(slotRef, slotUpdate);
+      // [impl_21 · Q25] 상태 필드(마감·긴급)는 최신 문서의 것을 wdId(없으면 업무 정체)로 짝지어 보존하고,
+      //   폼이 소유한 정의(시간·금액·인원·마감시각)만 폼 값으로 쓴다. 겹치면 거래가 최신 문서로 다시 돈다.
+      //   슬롯 수정 토큰(editRevision)도 올린다 — 서버 슬롯 수정(STALE-EDIT)이 이 변경 뒤의 옛 폼을 거절하게.
+      tx.update(slotRef, {
+        ...slotUpdate,
+        'workDetails': WorkDetailData.listToFirestore(
+            WorkDetailData.withStatusFrom(workDetails, freshDetails)),
+        'editRevision': currentRevision + 1,
+      });
       if (delta != 0) {
         tx.update(toRef, {'totalRequired': FieldValue.increment(delta)});
       }
@@ -1162,29 +1248,39 @@ extension TOFirestore on FirestoreService {
   /// 선택한 슬롯들 일괄 마감 — CF callableCloseSlots 위임 (Admin SDK로 보안 규칙 우회)
   /// PENDING 취소·카운터 감소·알림 발송은 CF에서 처리.
   /// [closedBy] 파라미터는 CF에서 callerUid로 대체되므로 무시됨 (하위 호환 유지)
-  Future<void> batchCloseSlots({
+  ///
+  /// [F295-CLOSE-01 · impl_41] [cleanupOnly] = 이미 종료한 날짜의 남은 정리만 다시 보낸다(서버 계약 server_295_impl §8).
+  ///   최초 closedAt/closedBy 를 덮지 않고, 서버가 커밋마다 지금 권한을 본다. 일반 닫기 재호출은 종료 기록을 다시 쓴다.
+  ///   반환 = 서버 응답(새 서버: `mode`·`notClosedSlotIds` additive · 구서버: `{success, canceledCount}`).
+  Future<Map<String, dynamic>> batchCloseSlots({
     required String toId,
     required String businessId,
     required List<String> slotIds,
     required String closedBy,
+    bool cleanupOnly = false,
   }) async {
-    if (slotIds.isEmpty) return;
-    GlobalLoadingController.show('슬롯 마감 중...');
+    if (slotIds.isEmpty) return const {};
+    GlobalLoadingController.show(cleanupOnly ? '남은 정리 중...' : '슬롯 마감 중...');
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callableCloseSlots');
+    Map<String, dynamic> data = const {};
     try {
-      await callable.call({
+      final res = await callable.call({
         'toId': toId,
         'slotIds': slotIds,
         'businessId': businessId,
+        if (cleanupOnly) 'cleanupOnly': true,
       });
+      final raw = res.data;
+      if (raw is Map) data = Map<String, dynamic>.from(raw);
     } on FirebaseFunctionsException catch (e) {
       debugPrint('❌ [Slot] 일괄 마감 실패: ${e.code} — ${e.message}');
       rethrow;
     } finally {
       GlobalLoadingController.hide();
     }
-    debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 마감 완료 (CF)');
+    debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 ${cleanupOnly ? '남은 정리' : '일괄 마감'} 완료 (CF)');
+    return data;
   }
 
   /// 선택한 슬롯들 일괄 재오픈 — callableReopenSlots CF 위임
@@ -1280,12 +1376,14 @@ extension TOFirestore on FirestoreService {
     required String publishMode,
     int? publishDaysBefore,
     String? publishTime,
+    /// [PERF-L53] 호출부가 방금 완전하게 읽은 슬롯 목록(같은 저장 흐름에서 한 번만 읽기). 주면 다시 읽지 않는다.
+    List<SlotModel>? preloadedSlots,
   }) async {
     try {
       // [POSTING-V2-03D.1 TC2] PARTIAL WRITE != SUCCESS.
       //   빠진 슬롯은 옛 visibleFrom을 그대로 들고 있다가 관리자가 바꾼 적 없는
       //   시각에 공개된다. 부분 갱신을 성공으로 보고하지 않는다.
-      final slots = await getSlots(toId, requireComplete: true);
+      final slots = preloadedSlots ?? await getSlots(toId, requireComplete: true);
       if (slots.isEmpty) return;
 
       var batch = _firestore.batch();
@@ -1337,6 +1435,12 @@ extension TOFirestore on FirestoreService {
   // 내부 유틸
   // ───────────────────────────────────────────────────────
 
+  /// 슬롯 날짜 → 'YYYY-MM-DD'(callableCreateFlexSlots 가 받는 형식 · 사전 경계 검사와 같은 값).
+  static List<String> _flexDateStrings(List<DateTime> dates) => dates.map((d) =>
+      '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}').toList();
+
   /// [TZ-FIX] CF callableCreateFlexSlots — KST 기준 서버 계산으로 기기 타임존 무관
   /// dates를 "YYYY-MM-DD" 문자열로 전달 → CF에서 KST→UTC 명시 변환
   Future<void> _callCreateFlexSlots({
@@ -1356,10 +1460,7 @@ extension TOFirestore on FirestoreService {
         .httpsCallable('callableCreateFlexSlots',
             options: HttpsCallableOptions(timeout: const Duration(seconds: 120)));
 
-    final dateStrings = dates.map((d) =>
-        '${d.year.toString().padLeft(4, '0')}-'
-        '${d.month.toString().padLeft(2, '0')}-'
-        '${d.day.toString().padLeft(2, '0')}').toList();
+    final dateStrings = _flexDateStrings(dates);
 
     await callable.call({
       'toId': toId,

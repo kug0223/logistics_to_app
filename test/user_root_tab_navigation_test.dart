@@ -126,12 +126,12 @@ void main() {
       (tester) async {
     await _pump(tester);
 
-    // IndexedStack 이므로 네 루트가 모두 만들어져 있다(상태 유지 구조).
-    //   선택되지 않은 탭은 Offstage 라 skipOffstage 를 꺼야 보인다.
+    // [impl_9 PERF-L5 의도적 갱신 · 판정289 §5] 탭은 **방문 시** 만든다 — 첫 진입에는 홈만 있다.
+    //   (예전: IndexedStack 이 네 루트를 모두 만들었다.) 방문한 탭은 IndexedStack 안에 남아 상태가 유지된다(URN-2 뒤 확인).
     expect(find.byType(UserHomeScreen), findsOneWidget);
-    expect(find.byType(UserJobTab, skipOffstage: false), findsOneWidget);
-    expect(find.byType(MyScheduleScreen, skipOffstage: false), findsOneWidget);
-    expect(find.byType(UserMyTab, skipOffstage: false), findsOneWidget);
+    expect(find.byType(UserJobTab, skipOffstage: false), findsNothing);
+    expect(find.byType(MyScheduleScreen, skipOffstage: false), findsNothing);
+    expect(find.byType(UserMyTab, skipOffstage: false), findsNothing);
 
     final bar = tester.widget<AppBottomTabBar>(find.byType(AppBottomTabBar));
     expect(bar.currentIndex, 0, reason: '첫 화면은 홈이다');
@@ -156,6 +156,10 @@ void main() {
       expect(bar.currentIndex, entry.value,
           reason: '${entry.key} 탭을 눌렀는데 다른 탭이 선택됐다');
     }
+    // [impl_9 PERF-L5] 네 탭을 모두 방문했으니 네 루트가 모두 있고(숨은 탭은 Offstage), 다시 만들지 않는다.
+    expect(find.byType(UserJobTab, skipOffstage: false), findsOneWidget);
+    expect(find.byType(MyScheduleScreen, skipOffstage: false), findsOneWidget);
+    expect(find.byType(UserMyTab, skipOffstage: false), findsOneWidget);
   });
 
   testWidgets('URN-3 시스템 뒤로는 탭 안쪽 스택을 먼저 소비한다', (tester) async {

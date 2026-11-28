@@ -268,8 +268,10 @@ void main() {
     test('BAR-52 SUPER_ADMIN 수동 승인 경로 무변경', () {
       final manage = _tsBlock(fns, 'export const callableManageBusiness');
       expect(manage.contains('callerRole !== "SUPER_ADMIN"'), true);
-      expect(manage.contains('hasValidBusinessLicense(businessId, bizSnap.data())'),
-          true);
+      // [서버 병합 2026-11-26 갱신] 배포판 승인 경로(BA-53 · merge_report_1 §2.3)가 사업장 문서를 `cur` 로 한 번 받아
+      //   같은 값으로 등록증 관문을 부른다 — 관문·인자 뜻 그대로, 이름만 바뀌었다. `cur` 가 그 문서임을 함께 고정한다.
+      expect(manage.contains('const cur: Record<string, any> = bizSnap.data() ?? {};'), true);
+      expect(manage.contains('hasValidBusinessLicense(businessId, cur)'), true);
       expect(manage.contains('approvedBy: callerUid'), true);
     });
 

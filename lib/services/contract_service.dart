@@ -17,7 +17,6 @@ import '../models/core/user_model.dart';
 import '../utils/work_detail_helper.dart';
 import '../models/core/work_detail_data.dart';
 import '../utils/format_helper.dart';
-import 'firestore_service.dart';
 
 /// [R8P6-SIG-CUTOVER] 서명 이미지 1건의 **그때의** 열람 링크.
 ///
@@ -124,7 +123,7 @@ class SignatureOutcomeUnknown extends FirebaseFunctionsException {
 
 class ContractService {
   final _db = FirebaseFirestore.instance;
-  final _firestoreService = FirestoreService();
+  // [impl_42] _firestoreService 제거 — 유일한 사용처(retryVoidFailedApps 의 건별 취소)가 서버 1회 처리로 바뀌었다.
 
   /// 서명 이미지 바이트를 받을 때만 쓴다 — 테스트에서 교체할 수 있게 주입받는다.
   final http.Client _http;
@@ -1121,43 +1120,19 @@ class ContractService {
     //   [H-34] 알림 실패가 TX 상태(voided+CANCELED)를 되돌리지 않는 것도 그대로다.
   }
 
-  /// voidFailedAppIds에 기록된 application들을 재시도로 취소 처리.
-  /// 성공한 항목은 voidFailedAppIds에서 제거하고, 전부 성공 시 필드를 삭제.
-  Future<void> retryVoidFailedApps(EmploymentContractModel contract) async {
-    if (contract.voidFailedAppIds.isEmpty) return;
-
-    // [PERF] 재처리 N+1 → 병렬 처리 (voidContract와 동일 패턴)
-    final retryResults = await Future.wait(
-      contract.voidFailedAppIds.map((appId) async {
-        try {
-          final ok = await _firestoreService.cancelConfirmedApplication(
-            appId,
-            canceledBy: 'system', // [W-2] 재처리도 시스템 취소 — ADMIN_CANCELED 기록 유지
-            cancelReason: '계약서가 무효화되었습니다',
-          );
-          if (!ok) {
-            debugPrint('⚠️ retryVoidFailedApps: application 취소 실패 ($appId): false 반환');
-            return appId;
-          }
-          return null;
-        } catch (e) {
-          debugPrint('⚠️ retryVoidFailedApps: application 취소 실패 ($appId): $e');
-          return appId;
-        }
-      }),
-    );
-    final stillFailedIds = retryResults.whereType<String>().toList();
-
-    // 성공한 항목 반영: 전부 성공 시 voidFailedAppIds 필드 삭제, 일부 실패 시 갱신
-    await _db.collection('employment_contracts').doc(contract.id).update({
-      'voidFailedAppIds': stillFailedIds.isEmpty
-          ? FieldValue.delete()
-          : stillFailedIds,
-    });
-
-    if (stillFailedIds.isNotEmpty) {
-      throw Exception('${stillFailedIds.length}개 지원서 재처리 실패. 잠시 후 다시 시도해주세요.');
-    }
+  /// voidFailedAppIds 에 남은 지원서를 서버에서 다시 정리한다(서버296 보안 묶음 · impl_42).
+  ///
+  ///   예전: 목록 id 마다 `cancelConfirmedApplication` 을 부르고 클라가 `voidFailedAppIds` 를 직접 고쳐 썼다
+  ///   (rules R2374 직접 쓰기 · 서버 인가·실근무 판정 없음). 이제 `callableRetryVoidFailedApplications({contractId})` 1회다.
+  ///   서버가 계약 사업장 권한(owner/admin/SA · 배정 SubAdmin + canManageContract)·연결·실근무를 판정하고
+  ///   남은 목록을 정리한다(재실행 멱등). 클라 쓰기 0.
+  ///   오류는 그대로 던진다(성공·빈 결과로 접지 않는다) — 화면이 [retryVoidFailedErrorMessage] 로 안내한다.
+  Future<RetryVoidFailedResult> retryVoidFailedApps(EmploymentContractModel contract) async {
+    final res = await _fn
+        .httpsCallable('callableRetryVoidFailedApplications',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 60)))
+        .call({'contractId': contract.id});
+    return RetryVoidFailedResult.fromResponse(res.data);
   }
 
   // ── 내부: 번들 탐색 ──────────────────────────────────────────
@@ -1419,4 +1394,84 @@ class ContractService {
 
   String _fmtDate(DateTime? d) =>
       d == null ? '' : FormatHelper.formatDateISO(d);
+}
+
+// ─── 무효 계약 지원서 재처리 결과 (impl_42) ─────────────────────────────
+
+/// 서버 `kept[].reason` → 화면 말. 모르는 사유는 '기타'.
+const Map<String, String> retryVoidKeptReasonLabels = {
+  'ACTUAL_WORK': '실제 근무 기록 있음',
+  'CHANGED': '그 사이 상태가 바뀜',
+  'NOT_LINKED': '이 계약서와 연결되지 않음',
+  'WORKER_MISMATCH': '근로자 불일치',
+  'BUSINESS_MISMATCH': '사업장 불일치',
+  'NOT_FOUND': '지원서 없음',
+  'FAILED': '처리 실패',
+};
+
+@immutable
+class RetryVoidFailedResult {
+  final List<String> canceled;
+  final List<String> cleared;
+
+  /// (applicationId, reason) — 서버가 정리하지 않고 남긴 지원서.
+  final List<(String, String)> kept;
+
+  /// 서버 응답 모양을 알아들었는가(canceled·cleared·kept 가 모두 목록). false 면 결과를 모른다 — 성공이라 말하지 않는다.
+  final bool known;
+
+  const RetryVoidFailedResult({required this.canceled, required this.cleared, required this.kept, this.known = true});
+
+  factory RetryVoidFailedResult.fromResponse(Object? data) {
+    final m = data is Map ? data : const {};
+    List<String> ids(Object? v) => v is List ? v.whereType<String>().toList() : const [];
+    final kept = <(String, String)>[];
+    final rawKept = m['kept'];
+    if (rawKept is List) {
+      for (final k in rawKept) {
+        if (k is Map && k['applicationId'] is String) {
+          kept.add((k['applicationId'] as String, k['reason'] is String ? k['reason'] as String : ''));
+        }
+      }
+    }
+    final known = m['canceled'] is List && m['cleared'] is List && rawKept is List;
+    return RetryVoidFailedResult(canceled: ids(m['canceled']), cleared: ids(m['cleared']), kept: kept, known: known);
+  }
+
+  bool get hasKept => kept.isNotEmpty;
+
+  /// 경고로 알려야 하는가(남은 것이 있거나 결과를 모름).
+  bool get needsAttention => hasKept || !known;
+
+  /// '실제 근무 기록 있음 1 · 처리 실패 1' — 사유 순서는 [retryVoidKeptReasonLabels] 순, 모르는 사유는 '기타'.
+  String keptSummary() {
+    final counts = <String, int>{};
+    for (final (_, r) in kept) {
+      final l = retryVoidKeptReasonLabels[r] ?? '기타';
+      counts[l] = (counts[l] ?? 0) + 1;
+    }
+    final order = [...retryVoidKeptReasonLabels.values, '기타'];
+    return order.where(counts.containsKey).map((l) => '$l ${counts[l]}').join(' · ');
+  }
+
+  /// 결과 안내 — 남은 것이 있으면 성공이라 말하지 않는다.
+  String message() => !known
+      ? '처리 결과를 확인하지 못했어요. 목록을 새로 불러왔으니 남은 건을 확인해 주세요.'
+      : hasKept
+      ? '확인 필요 ${kept.length}건이 남았어요(${keptSummary()})'
+      : '지원서 취소 재처리를 마쳤어요';
+}
+
+/// 재처리 거절 안내 — 사유 code 를 먼저 보고, 없으면 서버 문구 · 모르는 실패는 일반 문구(예외 문자열 0).
+String retryVoidFailedErrorMessage(Object error) {
+  if (error is FirebaseFunctionsException) {
+    final d = error.details;
+    final code = (d is Map && d['code'] is String) ? d['code'] as String : null;
+    if (code == 'CONTRACT_NOT_VOIDED') return '무효 처리된 계약서만 재처리할 수 있어요.';
+    if (error.code == 'permission-denied') return '계약서 관리 권한이 없어 재처리할 수 없어요.';
+    if (error.code == 'not-found') return '계약서를 찾을 수 없어요. 목록을 새로 불러와 주세요.';
+    final msg = error.message ?? '';
+    if (msg.isNotEmpty) return msg; // 예: 대상 50건 초과 안내(서버 문구)
+  }
+  return '재처리에 실패했어요. 잠시 뒤 다시 시도해 주세요.';
 }

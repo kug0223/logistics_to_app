@@ -17,6 +17,8 @@ import '../../theme/app_colors.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
+import '../../utils/keep_content_refresh.dart';
+import '../../widgets/common/keep_content_body.dart';
 
 /// [MW-52] 화면 값과 서버에서 불러온 값의 차이만 연도별 변경으로 만든다.
 ///   expected = 서버에서 불러온 그 연도의 값(없었으면 null) — 서버가 현재 값과 비교해 다르면 충돌로 거절한다.
@@ -41,7 +43,10 @@ class MinimumWageSettingsScreen extends StatefulWidget {
   State<MinimumWageSettingsScreen> createState() => _MinimumWageSettingsScreenState();
 }
 
-class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
+class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen>
+    with KeepContentRefreshMixin {
+  /// [impl_28] 마지막으로 서버에서 읽어 보인 표 — 다시 읽는 동안 편집 중이던 값 대신 이것을 보인다(값 미리 표시 0).
+  Map<int, int> _lastShownWages = const {};
   final _firestore = FirebaseFirestore.instance;
   final int _currentYear = DateTime.now().year;
 
@@ -67,12 +72,21 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
   }
 
   Future<void> _load() async {
+    // [L48 · impl_28] 처리 뒤 다시 읽기는 목록을 유지한다(잠금 + 얇은 진행 표시 · KeepContentRefreshMixin) — 첫 읽기·실패 화면만 전체 로딩 · 늦은 옛 응답 착지 0.
+    //   값 미리 표시 0: 유지하는 동안 표는 **마지막으로 읽은 값**으로 되돌린다(서버가 거절한 편집값을 보이지 않게).
+    final t = beginContentLoad(canKeep: !_loadFailed);
     setState(() {
-      _isLoading = true;
+      if (t.keep) {
+        _wages = Map.of(_lastShownWages);
+      } else {
+        _isLoading = true;
+      }
       _loadFailed = false;
     });
+    var shown = false;
     try {
       final doc = await _firestore.collection('settings').doc('wage_config').get();
+      if (!isCurrentContentLoad(t.gen)) return;
       final raw = doc.data()?['minimumWages'];
       // [MW-52] 양의 정수만 값으로 본다 — 손상된 값(문자열·소수)은 비어 있는 연도로 보이고, 서버도 '없음'과 같이 비교해 덮어쓸 수 있다.
       _serverWages = {
@@ -89,13 +103,19 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
           2027: 10700, // [.73] 고시 제2026-60호 — 서버 SETMW 공식표와 같은 값
         };
       }
+      _lastShownWages = Map.of(_wages);
+      shown = true;
     } catch (e) {
       debugPrint('⚠️ 최저시급 설정 불러오기 실패: $e');
+      if (!isCurrentContentLoad(t.gen)) return;
       _wages = {};
       _loadFailed = true;
-      if (mounted) ToastHelper.showError('최저시급 설정을 불러오지 못했습니다. 다시 열어 주세요. 이 상태에서는 저장할 수 없습니다.');
+      ToastHelper.showError('최저시급 설정을 불러오지 못했습니다. 다시 열어 주세요. 이 상태에서는 저장할 수 없습니다.');
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (isCurrentContentLoad(t.gen)) {
+        setState(() => _isLoading = false);
+        finishContentLoad(t.gen, shown: shown);
+      }
     }
   }
 
@@ -190,7 +210,7 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: FilledButton.icon(
-              onPressed: (_isSaving || _loadFailed) ? null : _save,
+              onPressed: (_isSaving || _loadFailed || refreshingKeep) ? null : _save,
               icon: _isSaving
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                   : const Icon(Icons.save, size: 18),
@@ -202,7 +222,9 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
             ),
           ),
       ],
-      body: _isLoading
+      body: KeepContentBody(
+        refreshing: refreshingKeep,
+        child: _isLoading
           ? const LoadingWidget()
           : Column(
               children: [
@@ -312,7 +334,8 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
                 ),
               ],
             ),
-      floatingActionButton: _isLoading
+      ),
+      floatingActionButton: _isLoading || refreshingKeep
           ? null
           : FloatingActionButton.extended(
               onPressed: () => _showAddOrEditDialog(),

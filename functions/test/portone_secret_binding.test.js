@@ -68,11 +68,15 @@ t('PSB-02 verifyPassAuth 에 PORTONE_IMP_SECRET 이 바인딩됐다', () => {
   assert.ok(/secrets\s*:\s*\[[^\]]*["']PORTONE_IMP_SECRET["']/.test(vpaOpts),
       'secrets 에 PORTONE_IMP_SECRET 이 없다');
 });
-t('PSB-03 바인딩은 그 둘뿐이다 — 다른 비밀을 끌어오지 않는다', () => {
+// [ALFIT-AUTH-KAKAO-ONBOARDING.1 §2.3 · 계약 변경] CI 원문을 저장하지 않고 용도 구분 HMAC
+//   (`ci1_` + HMAC(CI_HMAC_KEY_V1, "alfit:identity:ci:v1:" + CI))만 남기려면 이 함수가 그
+//   키를 받아야 한다. 범위를 넓히는 것이 아니라 **세 번째 비밀 하나**만 같은 함수에 더한다
+//   (PSB-07 — 다른 함수에는 여전히 0). 예전 기대(두 개)는 판정278 착수 범위에서 바뀐다.
+t('PSB-03 바인딩은 PORTONE 둘 + CI_HMAC_KEY_V1 뿐이다 — 다른 비밀을 끌어오지 않는다', () => {
   const m = vpaOpts.match(/secrets\s*:\s*\[([^\]]*)\]/);
   assert.ok(m, 'secrets 옵션이 없다');
   const names = m[1].split(',').map((s) => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
-  assert.deepStrictEqual(names.sort(), ['PORTONE_IMP_KEY', 'PORTONE_IMP_SECRET']);
+  assert.deepStrictEqual(names.sort(), ['CI_HMAC_KEY_V1', 'PORTONE_IMP_KEY', 'PORTONE_IMP_SECRET']);
 });
 
 // ══════════════════════════════════════════════════════════════════════
@@ -106,9 +110,13 @@ t('PSB-08 PORTONE 전환이 함수 목록을 건드리지 않았다', () => {
   //   그래서 "PORTONE 과 무관한 export 가 사라지지 않았는지"로 바꾼다.
   assert.ok(exportDecls.length >= 250,
       `export 가 ${exportDecls.length}개로 줄었다 — 사라진 함수가 있다`);
+  // [ALFIT-AUTH-KAKAO-ONBOARDING.1] 닫힌 옛 표면(finalizeRegistration·resetPasswordWithPass)도
+  //   export 는 남는다 — 옛 앱이 부르면 LEGACY_* 로 거절받아야 하고, 함수가 사라지면 배포가
+  //   그 함수를 지운다(옛 앱은 not-found 를 받는다). 새 가입 callable 도 목록에 있어야 한다.
   for (const must of [
     'verifyPassAuth', 'finalizeRegistration', 'resetPasswordWithPass',
     'callableApplyToTO', 'callableFinalizeWorkerSignature',
+    'callableAuthKakao', 'callableCompleteSignup', 'callableSignupFinalizeAuth',
   ]) {
     assert.ok(byName.has(must), `${must} 가 사라졌다`);
   }
@@ -117,81 +125,101 @@ t('PSB-08 PORTONE 전환이 함수 목록을 건드리지 않았다', () => {
 // ══════════════════════════════════════════════════════════════════════
 // ④ 키를 읽는 위치 — 모듈 최상위가 아니라 핸들러 안이어야 한다
 // ══════════════════════════════════════════════════════════════════════
-t('PSB-09 PORTONE 키는 핸들러 안에서만 읽는다', () => {
+t('PSB-09 PORTONE 키·CI HMAC 키는 verifyPassAuth 핸들러 안에서만 읽는다', () => {
   const sites = [];
   SRC_LINES.forEach((l, i) => {
-    if (/process\.env\.PORTONE_IMP_(KEY|SECRET)\b/.test(l)) sites.push(i + 1);
+    if (/process\.env\.(PORTONE_IMP_(KEY|SECRET)|CI_HMAC_KEY_V1)\b/.test(l)) sites.push(i + 1);
   });
-  assert.ok(sites.length > 0, 'PORTONE 키를 읽는 곳이 없다');
+  assert.ok(sites.length >= 3, 'PORTONE·CI 키를 읽는 곳이 없다');
   const d = byName.get('verifyPassAuth');
   for (const ln of sites) {
     assert.ok(ln > d.start && ln < d.end,
-        `줄 ${ln} 의 PORTONE 읽기가 verifyPassAuth(${d.start}~${d.end}) 밖이다`);
+        `줄 ${ln} 의 비밀 읽기가 verifyPassAuth(${d.start}~${d.end}) 밖이다`);
     // 들여쓰기가 있어야 핸들러 내부다. 최상위 `const X = process.env...` 는 0칸이다.
     assert.ok(/^\s{2,}/.test(SRC_LINES[ln - 1]),
         `줄 ${ln} 이 모듈 최상위 초기화로 보인다 — Secret 주입 전에 읽힐 수 있다`);
   }
+  // [ALFIT-AUTH-KAKAO-ONBOARDING.1] 새 모듈은 키를 **인자로 받기만** 한다 — 스스로 읽지 않는다.
+  for (const f of ['auth_kakao.ts', 'auth_adapters.ts', 'signup_core.ts']) {
+    const s = fs.readFileSync(path.join(FUNCTIONS_DIR, 'src', f), 'utf8');
+    assert.ok(!/process\.env/.test(s), `${f} 가 process.env 를 직접 읽는다`);
+  }
 });
 
 // ══════════════════════════════════════════════════════════════════════
-// ⑤ 판정·writer 계약 불변 — 합성 응답으로 기존 분기를 그대로 통과시킨다
+// ⑤ 판정·writer 계약 — [ALFIT-AUTH-KAKAO-ONBOARDING.1 §2.3] 계약 변경
 // ══════════════════════════════════════════════════════════════════════
-//   실제 함수를 불러오려면 firebase-functions 런타임과 Firestore 가 필요하다.
-//   여기서는 **판정식 자체**를 소스에서 떼어 와 같은 입력으로 돌린다 —
-//   식을 복제해 적는 것이 아니라, 소스 문구를 고정한 뒤 합성 입력으로 검증한다.
+//   예전: verifyPassAuth 가 PortOne 을 직접 부르고 `!certified` truthy 판정 · DEV 전화 대체 CI ·
+//         성별 여성 폴백 · 무키 SHA ciHash · passTokens 발급(register/reauth/resetPassword).
+//   지금: 판정은 순수 모듈(signup_core.parsePortOneCertification — certified === true 엄격 ·
+//         CI 없음 = 실패 · 성별 미제공 = null) · 키는 핸들러가 읽어 auth_kakao 로 넘김 ·
+//         옛 세 목적은 LEGACY_* 로 닫힘 · 저장은 passCertifications/signupSessions(auth_kakao).
+//   판정 함수는 **컴파일된 원문**(lib/signup_core.js)을 그대로 불러 합성 응답으로 돌린다.
+const CORE = require(path.join(FUNCTIONS_DIR, 'lib', 'signup_core.js'));
+const vpaBody = (() => {
+  const d = byName.get('verifyPassAuth');
+  return SRC_LINES.slice(d.start - 1, d.end).join('\n');
+})();
 
-t('PSB-10 PORTONE 응답 판정식이 그대로다 (code===0 && certified)', () => {
-  assert.ok(SRC.includes('if (certData.code !== 0 || !certData.response?.certified) {'),
-      '인증 성공 판정이 바뀌었다');
+t('PSB-10 PORTONE 응답 판정은 순수 모듈의 엄격 판정이다 (code===0 && certified===true)', () => {
+  const ak = fs.readFileSync(path.join(FUNCTIONS_DIR, 'src', 'auth_kakao.ts'), 'utf8');
+  assert.ok(ak.includes('parsePortOneCertification(r.raw)'), 'auth_kakao 가 순수 판정을 쓰지 않는다');
+  const core = fs.readFileSync(path.join(FUNCTIONS_DIR, 'src', 'signup_core.ts'), 'utf8');
+  assert.ok(core.includes('r.code !== 0 || !res || typeof res !== "object" || res["certified"] !== true'),
+      '엄격 판정식이 바뀌었다');
 });
-t('PSB-11 거절은 permission-denied, 토큰 실패는 internal 이다', () => {
-  assert.ok(SRC.includes('throw new HttpsError("permission-denied", "본인인증에 실패했습니다.");'),
-      '거절 응답이 바뀌었다');
-  assert.ok(SRC.includes('throw new HttpsError("internal", "PortOne 토큰 발급 실패.");'),
-      '토큰 실패 응답이 바뀌었다');
+t('PSB-11 옛 목적은 서버에서 닫힌다 (register · reauth · resetPassword)', () => {
+  assert.ok(vpaBody.includes('if (purpose === "register") throw srvLegacyClosed("LEGACY_SIGNUP_CLOSED");'),
+      'register 가 열려 있다');
+  assert.ok(vpaBody.includes('if (purpose === "reauth" || purpose === "resetPassword") {') &&
+      vpaBody.includes('throw srvLegacyClosed("LEGACY_PASS_FLOW_CLOSED");'), 'reauth/resetPassword 가 열려 있다');
 });
 t('PSB-12 키 누락은 안전하게 실패한다 — 빈 키로 호출하지 않는다', () => {
-  // `?? ""` 로 받아 그대로 fetch 하면 PORTONE 에 빈 자격증명을 보낸다.
-  // 기존 코드는 먼저 막는다. Secret 미주입(= 빈 값)일 때도 이 가드가 받는다.
-  assert.ok(SRC.includes('if (!impKey || !impSecret) {'), '키 누락 가드가 사라졌다');
-  assert.ok(SRC.includes(
-      'throw new HttpsError("internal", "PortOne 인증 설정이 없습니다. 환경 변수를 확인하세요.");'),
-  '키 누락 시 메시지가 바뀌었다');
+  // 모의 모드가 아니면 PortOne 키가 없을 때 핸들러가 먼저 막는다.
+  assert.ok(vpaBody.includes('if (!isMock && (!impKey || !impSecret)) {'), '키 누락 가드가 사라졌다');
+  assert.ok(vpaBody.includes('"PORTONE_NOT_CONFIGURED PortOne 인증 설정이 없습니다. 환경 변수를 확인하세요."'),
+      '키 누락 시 메시지가 바뀌었다');
+  // CI HMAC 키가 없으면 신원 키를 만들 수 없다 — fail-closed(CI_KEY_UNAVAILABLE).
+  assert.throws(() => CORE.computeCiKeyV1('', 'SYNTH-CI'), /CI_KEY_UNAVAILABLE/);
+  assert.throws(() => CORE.computeCiKeyV1('short', 'SYNTH-CI'), /CI_KEY_UNAVAILABLE/);
 });
-t('PSB-13 사용자 상태 writer 계약이 불변이다 (passTokens 문서)', () => {
-  // 이 함수가 쓰는 곳은 passTokens 하나다. users 를 직접 쓰지 않는다 —
-  // 인증 결과가 곧 계정 상태가 되지 않는다는 기존 설계다.
-  assert.ok(SRC.includes('.collection("passTokens")'), 'passTokens writer 가 사라졌다');
-  const d = byName.get('verifyPassAuth');
-  const body = SRC_LINES.slice(d.start - 1, d.end).join('\n');
-  for (const field of ['ciHash', 'name', 'gender', 'birthDate', 'phone',
-    'purpose', 'role', 'expiresAt', 'createdAt']) {
-    assert.ok(new RegExp(`\\b${field}\\b`).test(body), `passToken 필드 ${field} 가 사라졌다`);
-  }
-  assert.ok(/return \{passToken, name, gender, birthDate: birthDateStr, phone\};/.test(body),
-      '반환 계약이 바뀌었다 — 클라이언트가 이 다섯 필드를 읽는다');
-  // 이 함수가 users 컬렉션에 **쓰지** 않는다는 것도 못박는다(읽기는 중복 검사용).
-  assert.ok(!/db\s*\n?\s*\.collection\("users"\)\s*\n?\s*\.doc\([^)]*\)\s*\n?\s*\.set\(/.test(body),
-      'users 직접 쓰기가 생겼다 — 인증이 계정 상태를 바꾸면 안 된다');
+t('PSB-13 verifyPassAuth 는 users·passTokens 를 쓰지 않는다 — 새 목적은 auth_kakao 로 넘긴다', () => {
+  assert.ok(!vpaBody.includes('.collection("users")'), 'verifyPassAuth 가 users 를 직접 다룬다');
+  assert.ok(!vpaBody.includes('passTokens'), '옛 passTokens writer 가 남아 있다');
+  assert.ok(vpaBody.includes('authKakaoSvc.verifyPassSignup(request, keys)') &&
+      vpaBody.includes('authKakaoSvc.verifyPassDeletion(request, keys)'), '새 목적 위임이 없다');
+  assert.ok(!/DEV-CI-/.test(SRC), 'DEV 전화 대체 CI 분기가 남아 있다');
 });
-t('PSB-14 만 19세 미만 차단과 CI 해시가 그대로다', () => {
-  assert.ok(SRC.includes('throw new HttpsError("permission-denied", "만 19세 이상만 가입 가능합니다.");'),
-      '연령 게이트가 바뀌었다');
-  assert.ok(SRC.includes('const ciHash = crypto.createHash("sha256").update(ci).digest("hex");'),
-      'CI 해시 방식이 바뀌었다');
+t('PSB-14 만 19세 미만 차단과 CI 키 형식(용도 구분 HMAC · v1)', () => {
+  const now = Date.UTC(2026, 10, 25, 3, 0); // KST 2026-11-25 12:00
+  assert.strictEqual(CORE.ageKst('20071125', now), 19, '생일 당일 19세');
+  assert.strictEqual(CORE.ageKst('20071126', now), 18, '생일 전날 18세');
+  const k = CORE.computeCiKeyV1('0123456789abcdef0123', 'SYNTH-CI');
+  assert.ok(/^ci1_[0-9a-f]{64}$/.test(k), 'ci1_ 접두 HMAC 이 아니다');
+  const crypto = require('crypto');
+  assert.notStrictEqual(k.slice(4), crypto.createHash('sha256').update('SYNTH-CI').digest('hex'),
+      '무키 SHA 와 같으면 안 된다');
+  assert.notStrictEqual(k.slice(4), crypto.createHmac('sha256', '0123456789abcdef0123')
+      .update('SYNTH-CI').digest('hex'), '용도 접두 없는 HMAC 과 같으면 안 된다');
 });
 
-// ── 합성 응답으로 분기 동작 확인 ──────────────────────────────────────
-// PORTONE 응답 모양만 흉내낸 double 로, 위에서 고정한 판정식과 같은 조건을 돌린다.
-const accepted = (certData) => !(certData.code !== 0 || !certData.response?.certified);
+// ── 합성 응답으로 분기 동작 확인 — 컴파일된 순수 판정 원문 ─────────────
+const accepted = (certData) => CORE.parsePortOneCertification(certData).ok;
 t('PSB-15 정상 응답은 통과한다', () => {
-  assert.strictEqual(accepted({code: 0, response: {certified: true, unique_key: 'SYNTH-CI'}}), true);
+  assert.strictEqual(accepted({code: 0, response: {certified: true, unique_key: 'SYNTH-CI',
+    name: '홍길동', birthday: '1990-01-15', phone: '01012345678'}}), true);
 });
-t('PSB-16 거절·취소·만료 응답은 전부 막힌다', () => {
-  assert.strictEqual(accepted({code: 0, response: {certified: false}}), false, '미인증');
-  assert.strictEqual(accepted({code: -1, response: {certified: true}}), false, 'API 오류코드');
+t('PSB-16 거절·취소·만료·CI 없음·문자열 certified 응답은 전부 막힌다', () => {
+  const base = {name: '홍길동', birthday: '1990-01-15', phone: '01012345678', unique_key: 'SYNTH-CI'};
+  assert.strictEqual(accepted({code: 0, response: {...base, certified: false}}), false, '미인증');
+  assert.strictEqual(accepted({code: -1, response: {...base, certified: true}}), false, 'API 오류코드');
   assert.strictEqual(accepted({code: 0}), false, 'response 없음(취소)');
   assert.strictEqual(accepted({}), false, '빈 응답(만료)');
+  assert.strictEqual(accepted({code: 0, response: {...base, certified: 'true'}}), false, '문자열 true');
+  assert.strictEqual(accepted({code: 0, response: {...base, certified: true, unique_key: ''}}), false,
+      'CI 없음 — DEV 전화 대체 없음');
+  const g = CORE.parsePortOneCertification({code: 0, response: {...base, certified: true, gender: 'x'}});
+  assert.strictEqual(g.ok && g.cert.gender, null, '모르는 성별을 여성으로 접으면 안 된다');
 });
 t('PSB-17 키 누락은 PORTONE 호출 전에 막힌다', () => {
   const guard = (k, s) => !(!k || !s);

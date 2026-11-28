@@ -184,7 +184,13 @@ void main() {
       // newApplication 알림은 여전히 CF 안에서 지원 1건당 발송된다
       final b = _flat(_codeOf(_cf(_fn(), 'callableApplyToTO')));
       expect(b, contains('type: "newApplication"'));
-      expect(b, contains('await Promise.all(allRecipients.map((adminId) =>'));
+      // [L56 r5] 수신자마다 알림 1건 — 예전 커밋 뒤 Promise.all 또는 지원 거래 안 수신자별 direct 작업.
+      final maOld = b.contains('await Promise.all(allRecipients.map((adminId) =>');
+      final maJob = b.contains('for (const adminId of applyNoticeRecipients) {') &&
+          b.contains('tx.create(naJobRef, srvNotificationJobDoc("direct", {');
+      // [판정292] 정확히 하나 — 둘 다 있으면 수신자마다 두 번 갈 수 있다.
+      expect(maOld || maJob, isTrue);
+      expect(maOld && maJob, isFalse, reason: '커밋 뒤 발송과 작업이 함께 있다');
     });
 
     test('MA-62 성공 표시는 서버 응답 뒤에만 한다 — 선반영 없음', () {

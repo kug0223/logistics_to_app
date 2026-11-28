@@ -282,7 +282,8 @@ void main() {
     test('ACC-DEL-41 Auth not-found 는 성공 동치다 (§48)', () {
       final f = fin();
       expect(f, contains('if (errCode === "auth/user-not-found") {'));
-      expect(f, contains('return {success: true};'));
+      // [판정280 갱신] Final 성공 반환이 카카오 연결 해제 범위(providerUnlink · server_api_1 §5A)를 함께 싣게 됐다 — 같은 명시적 성공 반환.
+      expect(f, contains('return providerUnlink === null ? {success: true} : {success: true, providerUnlink};'));
     });
 
     test('ACC-DEL-42 user 문서가 이미 없어도 진행된다 (§47 identity split)', () {
@@ -315,10 +316,13 @@ void main() {
       for (final keep in [
         '"재인증 후 10분이 초과되었습니다. 다시 시도해주세요."',
         '서브관리자로 등록된 사업장',
-        '미서명 계약서',
+        // [판정296 정책 P2 · server_296] '미서명 계약서' 서명 강제 관문은 제거됐다(탈퇴 취소 거래가 미서명 계약을 무효 +
+        //   사업주 알림). 금전 blocker 는 그대로다 — 그 전제를 대신 본다.
+        '[PENDING_WAGES]',
       ]) {
         expect(helper, contains(keep), reason: '$keep 전제가 바뀌면 안 된다');
       }
+      expect(helper, isNot(contains('먼저 서명해주세요')), reason: 'P2: 서명 강제 관문 제거');
       expect(fin(), contains('await srvAssertAccountDeletionAllowed('));
       final pre = _codeOf(_slice(raw,
           'export const callableDeleteAccountPreData', '\n);'));

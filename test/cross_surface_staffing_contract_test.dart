@@ -407,8 +407,9 @@ void main() {
     test('10-b 잔여 0은 정원 마감이라는 뜻이다', () {
       // 예전에는 대기까지 빼서 0이 될 수 있어 `대기중`으로 얼버무렸다.
       expect(jp.contains("workPending > 0 ? '대기중' : '마감'"), isFalse);
-      expect(jp.contains("workAvailable > 0\n                                    ? '\$workAvailable명'\n                                    : '마감'"),
-          isTrue);
+      // [impl_26] 같은 삼항이 TextSpan(`text:`) 안으로 옮겨져 들여쓰기만 달라졌다 — 공백을 접어 같은 식을 본다.
+      final jpFlat = jp.replaceAll(RegExp(r'\s+'), ' ');
+      expect(jpFlat.contains("text: workAvailable > 0 ? '\$workAvailable명' : '마감',"), isTrue);
     });
 
     test('10-c FULL 판정도 확정만 본다', () {

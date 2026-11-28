@@ -59,6 +59,13 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
   List<String> _bizIds = [];
   Map<String, String> _bizNameMap = {};
   bool _loading = false;
+
+  /// [impl_27b · L48 같은 꼴] 전체 읽기 중에 들어온 다시 읽기 요청(권한 변경·초대 뒤) — 버리지 않고 끝난 뒤 한 번 더.
+  ///   예전에는 진행 중이면 return(전체)·건너뜀(사업장 하나) 해, 처리 **전에** 출발한 읽기가 앉았다.
+  bool _reloadAgain = false;
+
+  /// [impl_27b] 사업장별 다시 읽기 차례 — 같은 사업장의 두 다시 읽기 중 늦게 끝난 옛 것이 새 것을 덮지 않게.
+  final Map<String, int> _sectionGen = {};
   bool _isProcessing = false;
   bool _isSubAdmin = false;
   // [ERROR-AS-EMPTY] fetch 실패 여부 — false=초기/성공, true=오류
@@ -117,7 +124,10 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
   }
 
   Future<void> _load() async {
-    if (_loading) return;
+    if (_loading) {
+      _reloadAgain = true;
+      return;
+    }
     setState(() => _loading = true);
     try {
       final user = context.read<UserProvider>().currentUser;
@@ -165,6 +175,13 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
 
       // M2: 이전 setState(() => _sections) + finally setState(() => _loading=false) 병합
       if (!mounted) return;
+      if (_reloadAgain) {
+        // [impl_27b] 이 결과는 다시 읽기 요청보다 먼저 출발했다 — 앉히지 않고 한 번 더 읽는다(로딩 유지).
+        _reloadAgain = false;
+        _loading = false;
+        unawaited(_load());
+        return;
+      }
       _refreshErrorTimer?.cancel(); // [H-2 E] 성공 로드면 남은 결과 띠를 지운다
       setState(() { _sections = sectionResults; _loading = false; _hasError = false; _refreshError = null; });
     } catch (e) {
@@ -180,6 +197,9 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
 
   Future<void> _cancelInvitation(MemberInvitationModel invitation) async {
     if (_isProcessing) return;
+    // [P12 · LATE-LOCK] 첫 await(확인 창) 전에 잠근다 — 창이 뜨기 전 연타로 취소가 두 번 나가지 않게. 닫으면 finally 가 푼다.
+    setState(() => _isProcessing = true);
+    try {
     // [판정52 §6 · 54 §5-4 · DU417] 초대 취소 확인 — 공용 삭제 결합 문구('초대을(를) 삭제') 대신 이 업무의 말(제목 · 최종 '초대 취소' · 닫기 '닫기').
     //   위험 확인창 형식 · 최종 위험색 · ok 이후 writer 는 그대로. 공용 showDeleteConfirm 은 바꾸지 않는다.
     final ok = await DialogHelper.showDangerConfirm(
@@ -190,12 +210,11 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
       cancelText: '닫기',
     );
     if (ok != true || !mounted) return;
-    setState(() => _isProcessing = true);
-    try {
       await _service.cancelInvitation(invitation);
       if (!mounted) return;
       ToastHelper.showSuccess('초대를 취소했습니다');
-      _load();
+      // [PERF-L52] 바뀐 것은 그 사업장의 초대 목록뿐이다 — 그 사업장만 다시 읽는다.
+      unawaited(_reloadSection(invitation.businessId));
     } catch (e) {
       if (mounted) ToastHelper.showError('초대 취소에 실패했습니다');
     } finally {
@@ -212,7 +231,53 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
         businessName: businessName,
       ),
     );
-    if (result == true && mounted) _load();
+    // [PERF-L52] 초대가 바꾼 것은 그 사업장의 대기 초대뿐이다 — 전 사업장(이름 + 멤버 + 초대)을 다시 읽지 않는다.
+    if (result == true && mounted) unawaited(_reloadSection(businessId));
+  }
+
+  /// [PERF-L52] 한 사업장의 멤버 + 대기 초대만 다시 읽어 그 섹션을 바꾼다.
+  ///   전체 로드가 진행 중이면 그것이 이 사업장도 읽으므로 건너뛴다. 섹션이 아직 없으면(첫 로드 전 · 오류 뒤) 전체를 읽는다.
+  ///   실패하면 이전 섹션을 두고 화면 안 결과 띠로 알린다(전체 로드의 새로고침 실패와 같은 표현).
+  Future<void> _reloadSection(String businessId) async {
+    if (_loading) {
+      _reloadAgain = true; // [impl_27b] 진행 중인 전체 읽기는 이 처리보다 먼저 출발했다 — 끝난 뒤 한 번 더
+      return;
+    }
+    final idx = _sections.indexWhere((s) => s.id == businessId);
+    if (idx < 0) {
+      await _load();
+      return;
+    }
+    final g = (_sectionGen[businessId] ?? 0) + 1;
+    _sectionGen[businessId] = g;
+    try {
+      final pair = await Future.wait([
+        (widget.reads?.members ?? _service.getMembers)(businessId),
+        _isSubAdmin
+            ? Future.value(<MemberInvitationModel>[])
+            : (widget.reads?.sentPendingInvitations ?? _service.getSentPendingInvitations)(businessId),
+      ]);
+      if (!mounted || _loading || _sectionGen[businessId] != g) return;
+      final i = _sections.indexWhere((s) => s.id == businessId);
+      if (i < 0) return;
+      final old = _sections[i];
+      setState(() {
+        _sections = [
+          for (var k = 0; k < _sections.length; k++)
+            k == i
+                ? _BizSection(
+                    id: old.id,
+                    name: old.name,
+                    members: pair[0] as List<BusinessMemberModel>,
+                    pendingInvitations: pair[1] as List<MemberInvitationModel>,
+                  )
+                : _sections[k],
+        ];
+      });
+    } catch (e) {
+      debugPrint('⚠️ 사업장 멤버 다시 읽기 실패: $e');
+      if (mounted) _showRefreshError('멤버 목록을 불러오지 못했어요');
+    }
   }
 
   Future<void> _editPermissions(

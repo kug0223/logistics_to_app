@@ -302,9 +302,16 @@ void main() {
       final f = _fn(code, 'export const onAttendanceWageChanged');
       expect(f.contains('srvPayrollContribution(before)'), isTrue);
       expect(f.contains('srvPayrollContribution(after)'), isTrue);
-      expect(f.contains('cAfter.count - cBefore.count'), isTrue);
-      expect(f.contains('cAfter.notTransferred - cBefore.notTransferred'),
-          isTrue);
+      // [server_300 · 판정298 F298-01 갱신] 집계가 delta(after−before) 합산에서 **원장 재집계**로 바뀌었다 —
+      //   뒤바뀐 이벤트 도착에서 delta 가 중복가산(90,000→180,000)했기 때문이다. before/after 는 이제 '영향 받는 달'을
+      //   고르는 데만 쓰이고, 금액·건수·미이체는 그 달 지급 대상 근태마다 같은 식(srvPayrollContribution)으로 다시 센다.
+      expect(f.contains('srvReadPayrollMonthInTx('), isTrue);
+      final h = _after(code, 'async function srvReadPayrollMonthInTx(', 3200);
+      expect(h.contains('srvPayrollContribution(d.data())'), isTrue);
+      expect(h.contains('notTransferredCount += c.notTransferred'), isTrue);
+      expect(h.contains('confirmedCount += c.count'), isTrue);
+      expect(f.contains('cAfter.count - cBefore.count'), isFalse,
+          reason: 'delta 합산이 남으면 순서 뒤바뀜에서 다시 중복가산한다');
     });
 
     test('P1-32 after 만 보고 빠져나가지 않는다', () {
@@ -316,9 +323,12 @@ void main() {
     });
 
     test('P1-33 workDays 가 자기 delta 를 쓴다', () {
+      // [server_300 · F298-01 갱신] workDays 도 원장 재집계 — 근태 1건의 몫(c.workDays)을 근무자별로 더한 절대값을 쓴다.
+      final h = _after(code, 'async function srvReadPayrollMonthInTx(', 3200);
+      expect(h.contains('w.days += c.workDays'), isTrue);
+      expect(h.contains('workDays: w.days'), isTrue);
       final f = _fn(code, 'export const onAttendanceWageChanged');
-      expect(f.contains('cAfter.workDays - cBefore.workDays'), isTrue);
-      expect(f.contains('existingWorker.workDays + workDaysDelta'), isTrue);
+      expect(f.contains('existingWorker.workDays + workDaysDelta'), isFalse);
     });
 
     test('P1-34 Home 이 canonical 판정을 쓴다', () {

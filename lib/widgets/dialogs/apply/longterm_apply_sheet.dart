@@ -16,6 +16,7 @@ import '../../../utils/text_layout.dart';
 import '../../calendar/app_calendar.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
+import '../../../utils/expected_daily_wage.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../work_type_icon.dart';
@@ -329,32 +330,52 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
       var anyPolicyChanged = false;
       // [R7-PAYROLL-POLICY.4D] 기준 **없음**은 변경과도 다른 상태다.
       var anyPolicyUnavailable = false;
-      for (final work in widget.selectedWorks) {
-        final result = await _firestoreService.applyToTOWithWorkType(
-          uid: _currentUserId!,
-          businessId: widget.to.businessId,
-          businessName: widget.to.businessName,
-          toTitle: widget.to.title,
-          workDate: effectiveWorkDate,
-          selectedWorkType: work.workType,
-          workDetailId: work.id,
-          wage: work.wage,
-          wageType: work.wageType,
-          workTypeIcon: work.workTypeIcon,
-          workTypeColor: work.workTypeColor,
-          workTypeBackgroundColor: work.workTypeBackgroundColor,
-          startTime: work.startTime,
-          endTime: work.endTime,
-          workEndDate: effectiveWorkEndDate,
-          workDays: widget.to.workDays,
-          type: widget.to.type,
-          toId: widget.to.id,
-          slotId: null,
-          desiredStartDate: effectiveDesiredStart,
-          // [R7-PAYROLL-POLICY.4C] 공고 상세에서 보여준 기준의 토큰.
-          expectedAttendancePolicy:
-              attendancePolicyFingerprint(widget.policyRules),
-        );
+      // [PERF-L45 · 판정291 §4] 업무별 지원을 차례로 기다리지 않고 **동시 최대 4개**로 보낸다(단기 다날짜 시트와 같은 상한).
+      //   서버는 업무마다 그대로 재검증한다. 결과는 **고른 순서대로** 모아 아래 판정(첫 실패 사유 · 모름 · 기준 변경)을
+      //   예전과 같은 순서로 한다. 한 건이 예외로 끝나도 다른 건을 버리지 않는다 — 그 건은 '결과 모름'이다
+      //   (보냈는지 모르는 것을 실패로 말하지 않는다 · 예전에는 예외 한 번에 나머지 결과·이미 된 지원을 모두 잃었다).
+      final works = widget.selectedWorks;
+      final results = List<ApplyResult?>.filled(works.length, null);
+      var next = 0;
+      Future<void> lane() async {
+        while (true) {
+          final i = next++;
+          if (i >= works.length) return;
+          final work = works[i];
+          try {
+            results[i] = await _firestoreService.applyToTOWithWorkType(
+              uid: _currentUserId!,
+              businessId: widget.to.businessId,
+              businessName: widget.to.businessName,
+              toTitle: widget.to.title,
+              workDate: effectiveWorkDate,
+              selectedWorkType: work.workType,
+              workDetailId: work.id,
+              wage: work.wage,
+              wageType: work.wageType,
+              workTypeIcon: work.workTypeIcon,
+              workTypeColor: work.workTypeColor,
+              workTypeBackgroundColor: work.workTypeBackgroundColor,
+              startTime: work.startTime,
+              endTime: work.endTime,
+              workEndDate: effectiveWorkEndDate,
+              workDays: widget.to.workDays,
+              type: widget.to.type,
+              toId: widget.to.id,
+              slotId: null,
+              desiredStartDate: effectiveDesiredStart,
+              // [R7-PAYROLL-POLICY.4C] 공고 상세에서 보여준 기준의 토큰.
+              expectedAttendancePolicy:
+                  attendancePolicyFingerprint(widget.policyRules),
+            );
+          } catch (e) {
+            debugPrint('⚠️ 장기 지원 결과 확인 불가(${work.workType}): $e');
+            results[i] = ApplyResult.unknown('지원 결과를 확인하지 못했어요.', code: 'unknown');
+          }
+        }
+      }
+      await Future.wait([for (var k = 0; k < (works.length < 4 ? works.length : 4); k++) lane()]);
+      for (final result in results.whereType<ApplyResult>()) {
         if (result.isNewlyApplied) appliedCount++;
         if (!result.isApplied) {
           if (result.isUnknown) anyUnknown = true;
@@ -970,6 +991,12 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
         _sectionTitle(context, '선택한 업무'),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         ...widget.selectedWorks.map((work) => _buildWorkCard(context, work)),
+        // [F293-WAGE-01] 하루 예상 금액이 있으면 계산 범위 고지(정본 문구 그대로).
+        if (widget.selectedWorks.any((w) => ExpectedDailyWage.forWorkDetail(w).isEstimate))
+          Text(
+            ExpectedWageText.disclosure,
+            style: ResponsiveHelper.tinyStyle(context).copyWith(color: AppColors.textTertiary),
+          ),
       ],
     );
   }
@@ -980,7 +1007,8 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
         : work.wageType == 'hourly'
             ? AppColors.successDark
             : AppColors.textSecondary; // [DU272] 월급 grey600
-    final wageText =
+    // [F293-WAGE-01] 시급 업무는 하루 예상(주) + 시급(보조) — 이 업무 1회 기준(장기 근무 전체 합이 아니다).
+    final wageText = ExpectedWageText.combined(ExpectedDailyWage.forWorkDetail(work)) ??
         '${work.wageType == 'hourly' ? '시급' : work.wageType == 'daily' ? '일급' : '월급'} ${FormatHelper.formatNumber(work.wage)}원';
     final stacked = MediaQuery.textScalerOf(context).scale(10) >= 13;
     final wageLabel = Text(

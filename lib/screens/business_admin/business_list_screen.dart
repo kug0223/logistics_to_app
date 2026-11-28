@@ -133,7 +133,11 @@ class BusinessListScreen extends StatefulWidget {
     return b.toString();
   }
 
-  const BusinessListScreen({super.key, this.reads});
+  const BusinessListScreen({super.key, this.reads, this.openDocuments = false});
+
+  /// [X0 실기기 2026-11-25] 설정 '사업장 서류 관리' 진입 — 카드를 누르면 사업장 정보 화면이 아니라
+  ///   수정 폼의 '정보·서류' 단계(사업자등록증)를 바로 연다. 기본(false)은 기존 '내 사업장 관리' 그대로.
+  final bool openDocuments;
 
   /// [R7-PREDEVICE-STABILIZATION.1A] 읽기 경계. production 은 null —
   ///   기존 서비스 호출을 그대로 쓴다. 테스트만 주입해 **실패와 0개**를
@@ -157,6 +161,13 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   bool _loadFailed = false;
   bool _isDeleting = false;
   bool _fetchInProgress = false; // 중복 호출 방지 (_isLoading과 분리)
+
+  /// [impl_27b · L48 같은 꼴] 읽는 중에 들어온 다시 읽기(처리 뒤) — 버리지 않고 끝난 뒤 한 번 더 읽는다.
+  ///   예전에는 진행 중이면 return 해, 처리 **전에** 출발한 조회가 앉아 방금 등록·수정한 사업장이 옛 모습으로 남았다.
+  bool _reloadAgain = false;
+
+  /// [impl_27b] 정상 목록을 한 번이라도 앉혔는가 — 그 뒤 다시 읽기는 목록을 지우지 않고 얇은 진행 표시 + 누르기 잠금.
+  bool _hasLoadedOnce = false;
 
   // [H-3 E N2] 운영 종료 결과 — overlay 토스트 대신 본문 위 결과 띠 하나(둘째 카드 · 버튼 가림 0).
   //   성공 2s(successBg 면 · successDark 글 · check) / 오류 4s(errorBg 면 · errorDark 글 · error_outline) · 다음 결과가 바로 교체 · 만료 · dispose 로만 정리.
@@ -205,7 +216,11 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
   /// 사업장 목록 로드
   Future<void> _loadBusinesses({bool forceServer = false}) async {
-    if (!mounted || _fetchInProgress) return;
+    if (!mounted) return;
+    if (_fetchInProgress) {
+      _reloadAgain = true;
+      return;
+    }
     _fetchInProgress = true;
     if (!_isLoading) setState(() => _isLoading = true);
 
@@ -242,20 +257,27 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       }
 
       if (!mounted) return;
+      if (_reloadAgain) return; // [impl_27b] 이 결과는 다시 읽기 요청보다 먼저 출발했다 — 앉히지 않고 아래에서 한 번 더
       setState(() {
         _businesses = businesses;
         _loadFailed = false;
+        _hasLoadedOnce = true;
       });
     } catch (e) {
       debugPrint('❌ 사업장 로드 실패: $e');
-      if (mounted) {
+      if (mounted && !_reloadAgain) { // [impl_27b] 다시 읽기가 걸려 있으면 옛 실패를 앉히지 않는다
         setState(() => _loadFailed = true);
         // [DU410] 토스트를 띄우지 않는다 — `_loadFailed` 면 오류 본문(제목 · 부제 · 다시 시도)이 늘 그려져
         //   같은 말을 두 번 하게 된다. 로그인 정보를 읽지 못한 경로(위 ownerId == null)도 토스트가 없다.
       }
     } finally {
       _fetchInProgress = false;
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted && _reloadAgain) {
+        _reloadAgain = false;
+        unawaited(_loadBusinesses(forceServer: true)); // 로딩 유지 — 옛 결과·옛 실패를 앉히지 않았다
+      } else if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -347,7 +369,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     final isSubAdmin = userProvider.isSubAdmin;
 
     return AppPageScaffold(
-      title: '내 사업장 관리',
+      title: widget.openDocuments ? '사업장 서류 관리' : '내 사업장 관리',
       actions: [
         IconButton(
           icon: const Icon(Icons.refresh_rounded),
@@ -382,14 +404,20 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
               padding: EdgeInsets.fromLTRB(ResponsiveHelper.spacing(context, 16), ResponsiveHelper.spacing(context, 8), ResponsiveHelper.spacing(context, 16), 0),
               child: _archiveResultBand(_archiveResult!),
             ),
+          // [impl_27b] 처리 뒤 다시 읽는 중 — 목록은 그대로, 얇은 진행 표시 + 누르기 잠금.
+          if (_isLoading && _hasLoadedOnce && !_loadFailed)
+            const LinearProgressIndicator(key: ValueKey('business-list-refresh-after-mutation'), minHeight: 2),
           Expanded(
-            child: _isLoading
+            child: AbsorbPointer(
+              absorbing: _isLoading && _hasLoadedOnce && !_loadFailed,
+              child: _isLoading && !(_hasLoadedOnce && !_loadFailed)
                 ? const LoadingWidget()
                 : _loadFailed
                     ? _buildErrorState(context)
                     : _businesses.isEmpty
                         ? _buildEmptyState(context, isSubAdmin)
                         : _buildBusinessList(context, theme, isSubAdmin),
+            ),
           ),
         ],
       ),
@@ -486,7 +514,11 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         onTap: () {
           NavigationHelper.push<bool>(
             context,
-            destination: BusinessDetailScreen(business: business),
+            destination: widget.openDocuments
+                ? BusinessFormScreen(
+                    business: business,
+                    initialStep: BusinessFormScreen.documentsStep)
+                : BusinessDetailScreen(business: business),
             onReturn: (result) {
               if (result == true && mounted) _loadBusinesses(forceServer: true);
             },

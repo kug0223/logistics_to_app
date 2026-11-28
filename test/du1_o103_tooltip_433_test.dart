@@ -24,6 +24,7 @@ import 'package:ALfit/theme/role_theme.dart';
 import 'package:ALfit/utils/text_layout.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 Future<void> _loadFonts() async {
   Future<ByteData> b(String p) => File(p).readAsBytes().then((x) => ByteData.view(x.buffer));
@@ -288,7 +289,7 @@ void main() {
           _out('D433 $tok att color tipN=$tipN tip=${_tok(tipColor)} tipFill=${_tok(tipFill)} tipCr=${_f2(_cr(tipColor, tipFill))} gradN=$gradN shadowN=$shadowN');
 
           // ── 확인 — 도달 · 채움 · 대비 · 높이 · 닫기 ──
-          final okF = inD(find.text('확인', skipOffstage: false));
+          final okF = inD(findVisibleText('확인', skipOffstage: false));
           must('확인 1', okF.evaluate().length == 1, '${okF.evaluate().length}개');
           await t.ensureVisible(okF);
           await t.pump(const Duration(milliseconds: 300));

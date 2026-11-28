@@ -57,8 +57,55 @@ class JobPostingReads {
       slots: (toId, {bool visibleOnly = true}) =>
           svc.getSlots(toId, visibleOnly: visibleOnly),
       myApplications: svc.getMyApplications,
-      workTypeCatalog: svc.getBusinessWorkTypeCatalog,
+      // [L33] 업무 안내 원천은 사업장 단위 기준 정보 — 짧은 TTL 로 공고 상세 재진입마다 다시 읽지 않는다.
+      workTypeCatalog: WorkTypeCatalogTtlCache.shared.wrap(svc.getBusinessWorkTypeCatalog),
       applicationOnce: svc.getApplicationOnce,
     );
+  }
+}
+
+/// [L33 · 탭 분석 §3-7] 공고 상세의 업무 안내 원천(catalog) TTL 캐시 — 사업장 id 단위.
+///
+///   catalog 는 사업장의 업무 유형 기준 정보다(지원 가능 여부·정원·임금 판정에 쓰지 않는다 — 아이콘·안내 연결만).
+///   같은 사업장 공고를 연달아 열 때마다 workTypes 를 페이지로 다시 읽던 것을 [ttl] 안에서는 재사용한다.
+///   · 성공한 결과만 담는다 — 실패는 담지 않아 다음 진입에서 다시 읽는다.
+///   · 같은 사업장 조회가 날아가 있으면 그 응답을 함께 받는다(in-flight 1).
+///   · 사업장이 업무 유형을 바꾸면 최대 [ttl] 동안 옛 안내가 보일 수 있다(판정 영향 0).
+class WorkTypeCatalogTtlCache {
+  WorkTypeCatalogTtlCache({this.ttl = const Duration(minutes: 5), DateTime Function()? now})
+      : _now = now ?? DateTime.now;
+
+  static final WorkTypeCatalogTtlCache shared = WorkTypeCatalogTtlCache();
+
+  final Duration ttl;
+  final DateTime Function() _now;
+  final Map<String, ({WorkTypeCatalog value, DateTime at})> _hits = {};
+  final Map<String, Future<WorkTypeCatalog>> _inFlight = {};
+
+  Future<WorkTypeCatalog> Function(String businessId) wrap(
+          Future<WorkTypeCatalog> Function(String businessId) load) =>
+      (businessId) => get(businessId, load);
+
+  Future<WorkTypeCatalog> get(
+      String businessId, Future<WorkTypeCatalog> Function(String businessId) load) {
+    final hit = _hits[businessId];
+    if (hit != null && _now().difference(hit.at) < ttl) return Future.value(hit.value);
+    final flying = _inFlight[businessId];
+    if (flying != null) return flying;
+    final request = load(businessId).then((v) {
+      _hits[businessId] = (value: v, at: _now());
+      return v;
+    });
+    _inFlight[businessId] = request;
+    void release() {
+      if (identical(_inFlight[businessId], request)) _inFlight.remove(businessId);
+    }
+    request.then<void>((_) => release(), onError: (Object _) => release());
+    return request;
+  }
+
+  void clear() {
+    _hits.clear();
+    _inFlight.clear();
   }
 }

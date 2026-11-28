@@ -10,6 +10,7 @@ import '../models/core/business_member_model.dart';
 import '../models/core/employment_contract_model.dart';
 import '../services/business_posting_readiness.dart';
 import '../services/auth_service.dart';
+import '../services/auth/login_gate.dart';
 import '../services/member_service.dart';
 import '../services/contract_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -17,6 +18,11 @@ import 'notification_provider.dart';
 import '../services/fcm_service.dart';
 import '../services/firestore_service.dart';
 import '../utils/navigation_key.dart';
+import '../utils/perf_log.dart';
+import 'user_snapshot_prefetch.dart';
+import '../services/app_check_ready.dart';
+import '../services/home_recommend_cache.dart';
+import '../utils/sensitive_cache_cleanup.dart';
 
 /// [CROSS-DOMAIN-R5.1F.3] 사업장 권한 값의 신선도.
 ///
@@ -67,6 +73,11 @@ extension PermissionCheckUx on PermissionCheck {
   bool get isPending =>
       this == PermissionCheck.unknown || this == PermissionCheck.error;
 }
+
+/// [PERF-L2 · 판정289 §2] 미서명 계약 목록 출처 상태.
+///   unknown = 아직 조회하지 않음(로그아웃 직후 포함) · loading = 조회 중 ·
+///   loaded = 첫 페이지가 전부 · partial = 더 있음(첫 페이지만 보유) · error = 마지막 조회 실패(이전 목록 유지).
+enum PendingContractsStatus { unknown, loading, loaded, partial, error }
 
 class UserProvider with ChangeNotifier {
   final AuthService _authService;
@@ -250,6 +261,7 @@ class UserProvider with ChangeNotifier {
 
     // SA-01: 세대 카운터 — 연속 탭 또는 toggleAdminMode 호출 시 stale 재개 방지
     final gen = ++_switchGeneration;
+    unawaited(HomeRecommendCache.shared.invalidateAll()); // [impl_12 · P2] 역할(모드) 전환 — 추천 표시 캐시 폐기
 
     _selectedSubAdminBusinessId = businessId;
     _memberPermissions = null; // SA-06: stale 권한 즉시 초기화
@@ -379,6 +391,7 @@ class UserProvider with ChangeNotifier {
     if (!isSubAdmin) return;
     // BUG-001: switchToAdminMode in-flight continuation의 stale 재개 차단
     _switchGeneration++;
+    unawaited(HomeRecommendCache.shared.invalidateAll()); // [impl_12 · P2] 역할(모드) 전환 — 추천 표시 캐시 폐기
     _isAdminMode = false;
     _permissionsLoaded = false;
     // BUG-6 수정: 근무자 모드 복귀 시 stale 권한 캐시 + 리스너 정리
@@ -1136,6 +1149,8 @@ class UserProvider with ChangeNotifier {
 
   // 초기화 - Firebase Auth 상태 리스닝
   void initialize() {
+    // [판정281 C281-01] 이번 세션에서 시작한 탈퇴가 BEGIN 뒤 실패하면 삭제 파이프라인이 여기로 알린다.
+    AuthService.deletionRecoveryHook = enterDeletionRecovery;
     // 앱 재시작 시 Firebase Auth가 토큰을 복원하는 동안 isLoading=true 유지.
     // 이렇게 해야 AuthWrapper가 "isLoggedIn=false" 를 먼저 보여주는 flash를 방지할 수 있다.
     _isLoading = true;
@@ -1183,6 +1198,7 @@ class UserProvider with ChangeNotifier {
     // [NEW-03] 세대 카운터: 이 호출이 최신임을 식별. signOut() 또는 새 호출이 오면 _loadGeneration이 증가하여
     // 이 gen과 불일치 → stale load를 조기 종료.
     final gen = ++_loadGeneration;
+    PerfLog.mark('user.load.start');
     // signIn/signUp 경로는 호출 전에 이미 _isLoading=true를 설정하지만,
     // initialize() 의 Auth 스트림 경로는 여기서 설정한다.
     if (!_isLoading) {
@@ -1193,12 +1209,24 @@ class UserProvider with ChangeNotifier {
       // [.25 AUTH-BOUNDARY] 읽은 값은 세대 확인 **뒤에** 대입한다. 예전에는 먼저
       //   `_currentUser` 에 넣고 나서 세대를 봤기 때문에, 로그아웃 뒤 늦게 온 이전 계정
       //   응답이 사용자를 다시 세우거나 B 로그인 뒤 늦은 A 응답이 B 를 A 로 바꿨다(LOCAL 재현).
-      final loaded = await _authService.getUserData(uid);
+      // [PERF-L1 안전판] main 이 버전 판정과 겹쳐 미리 출발시킨 같은 uid 의 읽기가 있으면 그것을 1회 쓴다
+      //   (시효 20초 · 실패하면 평소처럼 다시 읽는다). 아래 세대 검사·계정 판정은 그대로다.
+      final prefetched = UserSnapshotPrefetch.take(uid);
+      // [PERF-L12] 미리 읽기가 없으면 첫 App Check 토큰에 합류한 뒤 읽는다(이미 끝났으면 즉시 · 상한 8초).
+      if (prefetched == null) await AppCheckReady.wait();
+      if (_disposed || _loadGeneration != gen) return;
+      final loaded = prefetched == null
+          ? await _authService.getUserData(uid)
+          : await prefetched.then<UserModel?>((u) => u,
+              onError: (Object _) => _authService.getUserData(uid));
+      PerfLog.mark('user.doc.done', () => {'found': loaded != null, 'prefetched': prefetched != null});
       if (_disposed) return; // dispose 후 결과를 반영하지 않음
       // [NEW-03] stale request는 현재 state를 절대 변경하지 않는다.
       // "A load → B login 완료 → A stale 응답" 케이스에서 userB 상태를 훼손 방지.
       // signOut 및 authStateChanges(null)이 독립적으로 모든 logout state를 책임진다.
       if (_loadGeneration != gen) return;
+      // [impl_12 · P2] 다른 계정으로 바뀌었으면 추천 표시 캐시를 버린다(키에 uid 가 있어도 세대째 폐기).
+      if (_currentUser?.uid != loaded?.uid) unawaited(HomeRecommendCache.shared.invalidateAll());
       _currentUser = loaded;
       // [SA-MINWAGE.51] 앱 시작 때 최저시급 읽기는 로그인 전이라 설정을 받지 못했다(기기: 안내 10,320 / 설정 10,600).
       //   로그인된 사용자가 생긴 뒤 한 번 다시 읽는다 — 실패하면 기존 캐시·내장값(기존 동작) 그대로.
@@ -1269,6 +1297,21 @@ class UserProvider with ChangeNotifier {
         return;
       }
 
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · §2.8 K7] 자동 복원·custom token 로그인도 아이디 로그인과 **같은**
+      //   계정 상태 판정을 지난다(이용 차단 · 거절 · 기간 제한 → 세션 정리). 삭제 진행 중(deleting)은 위에서
+      //   이미 삭제 재개로 보냈고, 가입 미완료(pending)도 위 분기가 처리한다. 업무 gate 는 서버가 따로 본다.
+      final gate = LoginGate.fromUser(_currentUser!);
+      if (gate.signsOut) {
+        debugPrint('🚫 [_loadUserData] 계정 상태로 세션 정리: ${gate.kind}');
+        _currentUser = null;
+        _error = gate.message;
+        _isLoading = false;
+        await _authService.signOut(showToast: false);
+        if (_disposed) return;
+        notifyListeners();
+        return;
+      }
+
       if (_currentUser != null) {
         // 스냅샷: await 이후 signOut() 경쟁조건으로 _currentUser가 null이 될 수 있음
         final user = _currentUser!;
@@ -1301,7 +1344,10 @@ class UserProvider with ChangeNotifier {
           final activeBizId = _selectedSubAdminBusinessId ?? user.subAdminBusinessIds.firstOrNull;
 
           // FCM은 일단 false로 초기화, permissions 로드 완료 후 실제 모드 반영 (race 방지)
-          final fcmFuture = FCMService().initialize(user.uid, isAdmin: false);
+          // [PERF-L2 · 판정289 §2] FCM(권한 창·토큰 등록)은 홈 진입을 막지 않는다 — 독립 진행 ·
+          //   오류 관찰 · 세대 검사(_runAuxInit). 권한 요청 **시점**은 그대로(지금 출발).
+          //   홈 진입은 아래 서브관리자 권한·사업장 이름·저장 모드 판정이 끝난 뒤다.
+          _runAuxInit(gen, 'fcm', () => FCMService().initialize(user.uid, isAdmin: false));
           final permsFuture = activeBizId != null
               ? MemberService().getMemberPermissions(activeBizId, uid)
               : Future.value(null);
@@ -1310,9 +1356,10 @@ class UserProvider with ChangeNotifier {
               : Future.value(<String, String>{});
           // [POSTING-V2-02G.1] 배정 사업장별 권한 — 이름 배치와 같은 지점에서 한 번.
           final permMapFuture = _hydrateSubAdminPermissions(user, uid, gen: gen);
+          // [ROOT-FUTURE] 나중에 await 하는(또는 앞에서 return 하면 아예 await 하지 않는) future — 먼저 실패해도 '처리되지 않은 오류'(Crashlytics fatal)로 새지 않게. await 하는 곳은 그대로 같은 오류를 받는다.
+          namesFuture.ignore();
+          permMapFuture.ignore();
 
-          await fcmFuture;
-          if (_loadGeneration != gen) return; // [NEW-03]
           // D1-20 수정: permsFuture 예외 시 외부 catch로 빠져 _permissionsLoaded=false 잔존 방지
           try {
             _memberPermissions = await permsFuture;
@@ -1351,19 +1398,24 @@ class UserProvider with ChangeNotifier {
               _contractFcmCallback = () => refreshPendingContracts();
               FCMService().addUserContractRefreshListener(_contractFcmCallback!);
             }
-            await Future.wait([
-              FCMService().initialize(user.uid, isAdmin: false),
-              refreshPendingContracts(joinInFlight: true),
-              _bootstrapHomeRegion(uid, user), // homeRegion 1회 보정 (오류 내부 처리)
-            ]);
-            if (_disposed || _loadGeneration != gen) return; // [NEW-03]
+            // [PERF-L2 · 판정289 §2] 셋 다 홈 진입의 전제가 아니다 — 예전에는 셋이 다 끝날 때까지
+            //   (첫 로그인은 알림 권한 창 응답까지) 로딩을 풀지 않았다. 지금은 계정 판정이 끝나면
+            //   홈을 연다. 각자 독립 상태·오류 관찰·세대 검사(_runAuxInit)를 가진다.
+            //   · FCM: 권한 요청 시점 그대로(지금 출발) · 알림 탭 cold-start payload 는
+            //     FCMService.consumeColdStartPayloadWhenReady 가 준비 완료 뒤 1회 소비한다.
+            //   · 미서명 계약: pendingContractsStatus 가 LOADING/LOADED/PARTIAL/ERROR 를 따로 말한다
+            //     (아직 모르는 것을 '미서명 없음'으로 접지 않는다).
+            //   · homeRegion 보정: 늦게 끝나면 반영 후 알린다(세대가 바뀌었으면 쓰지 않는다).
+            _runAuxInit(gen, 'fcm', () => FCMService().initialize(user.uid, isAdmin: false));
+            _runAuxInit(gen, 'pendingContracts', () => refreshPendingContracts(joinInFlight: true));
+            _runAuxInit(gen, 'homeRegion', () => _bootstrapHomeRegion(uid, user, gen: gen));
           } else {
-            await FCMService().initialize(user.uid, isAdmin: user.isAdmin);
-            if (_disposed || _loadGeneration != gen) return; // [NEW-03]
+            _runAuxInit(gen, 'fcm', () => FCMService().initialize(user.uid, isAdmin: user.isAdmin));
           }
         }
       }
 
+      PerfLog.mark('user.core.ready', () => {'role': _currentUser?.roleString ?? 'none'});
       _isLoading = false;
       notifyListeners();
     } catch (e) {
@@ -1402,18 +1454,21 @@ class UserProvider with ChangeNotifier {
   /// 신규 USER는 가입 시 homeRegion을 직접 입력 → homeRegion != null → 즉시 return.
   /// 가입 전 기존 사용자(address는 있지만 homeRegion=null)만 address 파싱을 시도한다.
   /// 실패(오프라인·파싱 오류)는 조용히 삼키고 다음 로그인 시 재시도.
-  Future<void> _bootstrapHomeRegion(String uid, UserModel user) async {
+  Future<void> _bootstrapHomeRegion(String uid, UserModel user, {required int gen}) async {
     if (user.homeRegion != null) return; // 이미 설정됨
     final addr = user.address;
     if (addr == null || addr.isEmpty) return; // 주소 없음 → skip
     final region = parseKoreanAddress(addr);
     if (region == null) return; // 파싱 실패 → 추천 fallback 동작
+    // [PERF-L2] 홈이 먼저 열린다 — 로그아웃·다른 계정 로드 뒤의 늦은 쓰기를 막는다.
+    if (_disposed || _loadGeneration != gen || _currentUser?.uid != uid) return;
     try {
       await FirestoreService().updateUserDocument(uid, {'homeRegion': region.toMap()});
-      if (_disposed) return;
-      // _currentUser에 즉시 반영 — 홈 화면 첫 빌드에서 추천 섹션이 이미 보이도록
+      if (_disposed || _loadGeneration != gen) return;
+      // _currentUser에 반영 — [PERF-L2] 홈이 이미 열려 있을 수 있으므로 알린다.
       if (_currentUser?.uid == uid) {
         _currentUser = _currentUser!.copyWith(homeRegion: region);
+        notifyListeners();
       }
     } catch (e) {
       // 오프라인 또는 일시 네트워크 오류 — 다음 로그인 시 재시도
@@ -1428,6 +1483,31 @@ class UserProvider with ChangeNotifier {
   Future<void>? _pendingContractsInFlight;
   String? _pendingContractsInFlightUid;
   int _pendingContractsSeq = 0;
+
+  /// [PERF-L2 · 판정289 §2] 미서명 계약 목록의 출처 상태 — 홈이 이 조회를 기다리지 않게 되면서
+  ///   "아직 모름"과 "없음"이 같은 빈 목록이 됐다. 그 둘을 가른다. 화면 표시(배너)는 그대로다.
+  PendingContractsStatus _pendingContractsStatus = PendingContractsStatus.unknown;
+  PendingContractsStatus get pendingContractsStatus => _pendingContractsStatus;
+
+  /// [PERF-L2] 홈 진입을 막지 않는 부가 초기화 — 오류는 관찰해 남기고, 세대가 바뀐 뒤 끝난 것은 무시한다.
+  ///   부가 실패로 전역 로딩을 다시 켜지 않는다.
+  void _runAuxInit(int gen, String label, Future<void> Function() task) {
+    PerfLog.mark('user.aux.start', () => {'task': label});
+    Future<void> f;
+    try {
+      f = task();
+    } catch (e) {
+      f = Future<void>.error(e);
+    }
+    unawaited(f.then((_) {
+      if (_disposed || _loadGeneration != gen) return;
+      PerfLog.mark('user.aux.done', () => {'task': label, 'ok': true});
+    }, onError: (Object e) {
+      if (_disposed || _loadGeneration != gen) return;
+      debugPrint('⚠️ [$label] 부가 초기화 실패(홈은 계속): $e');
+      PerfLog.mark('user.aux.done', () => {'task': label, 'ok': false});
+    }));
+  }
 
   /// 시험 전용 — 인증 없이 현재 사용자를 정한다(미서명 계약 갱신 경로 시험).
   @visibleForTesting
@@ -1447,6 +1527,7 @@ class UserProvider with ChangeNotifier {
       return cur;
     }
     final seq = ++_pendingContractsSeq;
+    _pendingContractsStatus = PendingContractsStatus.loading;
     final request = _fetchPendingContracts(uid, seq);
     _pendingContractsInFlight = request;
     _pendingContractsInFlightUid = uid;
@@ -1470,9 +1551,17 @@ class UserProvider with ChangeNotifier {
         return;
       }
       _pendingContracts = result.items;
+      // 첫 페이지(50)만 읽는 선재 한계는 그대로다 — 더 있으면 PARTIAL 로 말한다(전수로 인증하지 않는다).
+      _pendingContractsStatus = result.hasMore
+          ? PendingContractsStatus.partial
+          : PendingContractsStatus.loaded;
       notifyListeners();
     } catch (e) {
       debugPrint('⚠️ 미서명 계약서 조회 실패: $e');
+      if (_disposed || seq != _pendingContractsSeq || _currentUser?.uid != uid) return;
+      // 이전 목록은 지우지 않는다(기존 동작) — 상태만 ERROR 로 둔다.
+      _pendingContractsStatus = PendingContractsStatus.error;
+      notifyListeners();
     }
   }
 
@@ -1594,6 +1683,8 @@ class UserProvider with ChangeNotifier {
       _hasIncompleteRegistration = false; // [C안] 이전 미완료 상태 리셋
       notifyListeners();
 
+      // [PERF-L12] 앱을 켜자마자 누른 로그인도 첫 App Check 토큰에 합류한다(대개 이미 끝나 즉시 통과).
+      await AppCheckReady.wait();
       final user = await _authService.signIn(username, password);
       if (user != null) {
         // _loadUserData로 FCM·NotificationProvider·권한 초기화까지 한번에 처리
@@ -1647,6 +1738,95 @@ class UserProvider with ChangeNotifier {
     }
   }
 
+  /// [ALFIT-AUTH-KAKAO-ONBOARDING.1 · §2.1/§2.5] 서버 custom token 으로 로그인한다(카카오 · 가입 완료).
+  ///
+  ///   아이디 로그인([signIn])과 같은 틀이다 — 로딩 표시 · authStateChanges 로드 합류 · 미완료/삭제 재개 예외.
+  ///   계정 상태 판정은 [AuthService.signInWithCustomToken] 과 `_loadUserData` 가 [LoginGate] 로 한다.
+  Future<bool> signInWithCustomToken(String customToken) async {
+    _isSigningIn = true;
+    try {
+      _isLoading = true;
+      _error = null;
+      _hasIncompleteRegistration = false;
+      notifyListeners();
+
+      await AppCheckReady.wait(); // [PERF-L12] signIn 과 같다
+      final user = await _authService.signInWithCustomToken(customToken);
+      if (user == null) {
+        _error = '로그인에 실패했습니다';
+        return false;
+      }
+      final joined = _signInLoad;
+      _signInLoad = null;
+      if (joined != null && joined.uid == user.uid && joined.gen == _loadGeneration) {
+        await joined.future;
+        if (_currentUser?.uid != user.uid || joined.gen != _loadGeneration) {
+          await _loadUserData(user.uid);
+        }
+      } else {
+        await _loadUserData(user.uid);
+      }
+      // 삭제 재개로 갔으면 currentUser 가 없다 — 로그인 성공으로 세지 않지만 세션은 유지된다.
+      return _currentUser?.uid == user.uid;
+    } catch (e) {
+      if (e is IncompleteRegistrationException) {
+        _hasIncompleteRegistration = true;
+        return false;
+      }
+      if (e is DeletionRecoveryRequiredException) {
+        _deletionRecovery = DeletionRecoveryState.required;
+        return false;
+      }
+      _error = e.toString().replaceFirst('Exception: ', '');
+      return false;
+    } finally {
+      _isSigningIn = false;
+      _signInLoad = null;
+      if (_isLoading) {
+        _isLoading = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  /// [ALFIT-AUTH-KAKAO-ONBOARDING.1 · §4.2 UID 전환 격리 · C277-03] 다른 UID(역할 추가로 생긴 계정 등)로 옮긴다.
+  ///
+  ///   먼저 **기존 로그아웃 경로 전체**([signOut])로 이전 UID 의 알림 · 권한 구독 · FCM 토큰 · 캐시 ·
+  ///   관리자 모드 기억을 정리한 뒤 새 토큰으로 들어간다. 두 UID 의 상태가 한순간도 섞이지 않는다.
+  Future<bool> switchAccountWithCustomToken(String customToken) async {
+    await signOut();
+    if (_disposed) return false;
+    return signInWithCustomToken(customToken);
+  }
+
+  /// [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정281 C281-01] 이 세션에서 삭제가 시작(BEGIN)된 뒤 실패했다 —
+  ///   앱 gate 를 서버 사실(삭제중/모름)에 맞춘다.
+  ///
+  ///   users 문서는 실시간 구독이 아니라서(authStateChanges + 단발 읽기) PreData 가 서버를 deleting 으로
+  ///   바꿔도 캐시 모델은 active 로 남는다. 그래서 여기서 현재 사용자를 내리고 재개 상태로 바꾼 뒤,
+  ///   스택의 일반 화면(설정 · 탈퇴 화면 · 시트)을 모두 걷어내고 AuthWrapper 를 다시 세운다 — AuthWrapper 는
+  ///   어떤 일반 화면보다 먼저 삭제 재개 화면을 보인다. 뒤로가기로 일반 화면에 돌아갈 길이 남지 않는다.
+  ///   unknown 을 none 으로 접지 않는다(§27). 이미 재개 화면이면 상태만 갱신한다(화면 재구성 0).
+  void enterDeletionRecovery(DeletionRecoveryState state) {
+    if (state == DeletionRecoveryState.none) return;
+    final alreadyRecovering =
+        _deletionRecovery != DeletionRecoveryState.none && _currentUser == null;
+    _loadGeneration++; // 진행 중 로드가 active 모델을 다시 세우지 못하게
+    unawaited(HomeRecommendCache.shared.invalidateAll()); // [impl_12 · P2] 탈퇴 재개 진입 — 추천 표시 캐시 폐기
+    // 일반 화면용 구독은 끊는다(재개 화면은 쓰지 않는다). 세션·FCM 정리는 파이프라인/로그아웃 몫이다.
+    _notificationProvider?.clearUser();
+    _memberPermsSub?.cancel();
+    _memberPermsSub = null;
+    _memberPermsBusinessId = null;
+    _currentUser = null;
+    _deletionRecovery = state;
+    _isAdminMode = false;
+    _error = null;
+    _isLoading = false;
+    notifyListeners();
+    if (!alreadyRecovering) redirectToLogin();
+  }
+
   // 로그아웃
   Future<void> signOut() async {
     try {
@@ -1661,6 +1841,8 @@ class UserProvider with ChangeNotifier {
       //   판정을 잠시 보게 된다. 그 값으로 '공고 등록' 버튼이 뜨거나
       //   사라지면, 남의 사업장 상태로 내 행동이 정해지는 셈이다.
       FirstPostingReadinessStore.reset();
+      // [impl_12 · P2] 추천 표시 캐시 — 로그아웃(성공·실패)마다 세대를 올리고 지운다(같은 uid 재로그인도 옛 값 0).
+      unawaited(HomeRecommendCache.shared.invalidateAll());
       // 알림 Provider 정리
       _notificationProvider?.clearUser();
 
@@ -1696,6 +1878,7 @@ class UserProvider with ChangeNotifier {
       _pendingContracts = [];
       _pendingContractsSeq++; // 로그아웃 전에 출발한 미서명 조회는 쓰지 않는다
       _pendingContractsInFlight = null;
+      _pendingContractsStatus = PendingContractsStatus.unknown;
       _signInLoad = null; // [LOGIN-INIT-SINGLE] 로그아웃 전 로그인 로드에 합류하지 않는다
       _error = null;
       _isLoading = false;
@@ -1711,6 +1894,9 @@ class UserProvider with ChangeNotifier {
       // goHome()이 AuthWrapper를 스택에서 제거한 경우에도 로그인 화면으로
       // 이동하도록 popUntil 대신 AuthWrapper를 새로 push하는 방식 사용.
       redirectToLogin();
+      // [AUD-10 M2·M3 · impl_70] 이미지 캐시(메모리·디스크)와 플러그인 공유 사본(cache/share_plus · cache/share)을 비운다.
+      //   로그인 화면으로 바꾼 뒤에 부른다 — 디스크 정리는 기다리지 않는다(로그아웃을 늦추지 않는다).
+      SensitiveCacheCleanup.onSignOut();
     } catch (e) {
       debugPrint('❌ 로그아웃 실패: $e');
       // 로그아웃 실패해도 로컬 상태는 초기화
@@ -1733,11 +1919,13 @@ class UserProvider with ChangeNotifier {
       _pendingContracts = [];
       _pendingContractsSeq++; // 로그아웃 전에 출발한 미서명 조회는 쓰지 않는다
       _pendingContractsInFlight = null;
+      _pendingContractsStatus = PendingContractsStatus.unknown;
       _signInLoad = null; // [LOGIN-INIT-SINGLE] 로그아웃 전 로그인 로드에 합류하지 않는다
       _error = null;
       FirestoreService().clearCache();
       notifyListeners();
       redirectToLogin();
+      SensitiveCacheCleanup.onSignOut(); // [AUD-10 · impl_70] 실패 갈래도 같은 정리
     }
   }
 
@@ -1747,6 +1935,35 @@ class UserProvider with ChangeNotifier {
     notifyListeners();
   }
   
+  /// [PERF-L43] 서버가 방금 저장(또는 삭제)을 **확정한** 내 서명을 현재 사용자 모델에 반영한다.
+  ///
+  ///   예전 호출부는 `refreshUserData()`(= `_loadUserData`)로 users 를 통째로 다시 적재했다 — 전역 로딩 표지 ·
+  ///   미서명 계약·FCM·지역 보정까지 다시 돌아 서명 하나 바꾸는 데 앱 전체가 다시 준비 상태를 탔다.
+  ///   서버(`callableSaveUserSignature`)는 받은 값을 그대로 쓰거나 필드를 지운다 — 같은 값을 여기 둔다.
+  ///   쓰기는 여전히 CF 전용이다(이 함수는 서버에 아무것도 쓰지 않는다). 다른 계정이면 반영하지 않는다.
+  ///   다음 정식 재조회가 서버 값으로 덮는다.
+  void applyConfirmedSignature({required String uid, String? signatureBase64}) {
+    final u = _currentUser;
+    if (_disposed || u == null || u.uid != uid) return;
+    _currentUser = (signatureBase64 == null || signatureBase64.isEmpty)
+        ? u.copyWith(clearSignature: true)
+        : u.copyWith(signatureBase64: signatureBase64);
+    notifyListeners();
+  }
+
+  /// [impl_12 · PERF-L43 연장] 서버(`callableSaveSeal`)가 방금 확정한 내 날인을 현재 모델에 반영한다.
+  ///   서버는 `sealBase64`(없으면 null)와 `sealType`(없으면 'stamp')만 쓴다 — 같은 규칙으로 둔다.
+  ///   이 함수는 서버에 쓰지 않는다(날인 쓰기는 CF 전용 그대로). 다른 계정이면 반영하지 않는다.
+  void applyConfirmedSeal({required String uid, String? sealBase64, required String sealType}) {
+    final u = _currentUser;
+    if (_disposed || u == null || u.uid != uid) return;
+    final has = sealBase64 != null && sealBase64.isNotEmpty;
+    _currentUser = has
+        ? u.copyWith(sealBase64: sealBase64, sealType: sealType)
+        : u.copyWith(clearSeal: true, sealType: 'stamp');
+    notifyListeners();
+  }
+
   Future<void> refreshCurrentUser() async {
     if (_currentUser != null) {
       final uid = _currentUser!.uid; // [NEW-03] UID 스냅샷 — Firestore 응답 도착 후 재검증

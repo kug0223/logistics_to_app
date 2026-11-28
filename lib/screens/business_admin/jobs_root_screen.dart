@@ -356,9 +356,15 @@ class _JobsRootScreenState extends State<JobsRootScreen>
               //   준비됐는데 공고가 0건이다는 **사용자가 할 일이 전부 다르다.**
               //   예전에는 셋을 모두 '등록된 공고가 없습니다 + 새 공고 등록'
               //   으로 그렸다 — 아직 아무것도 모르는 채 행동을 권한 것이다.
-              final r = snap.isResolved ? snap.value : null;
+              // [PERF-L16] 다시 세는 동안(loading)에도 **같은 계정·같은 사업장 집합의 이전 값**이 있으면
+              //   그 값으로 그린다. 저장소는 loading 중에도 그 값을 들고 있다(scope 가 같을 때만 —
+              //   `ensureLoaded`). 예전에는 이 화면이 resolved 만 보았기 때문에, 앱 복귀의
+              //   `_ensureReadiness(force: true)` 한 번에 목록이 트리에서 빠졌다가 다시 만들어져
+              //   펼침·스크롤·마감 탭 페이지가 처음으로 돌아갔다(위 복귀 주석의 "깜빡이지 않는다" 와 반대).
+              //   첫 판정 전(idle)·실패(failed)·이전 값 없는 loading 은 예전처럼 '모름' 화면이다.
+              final r = snap.displayValue;
               final setupRequired = r != null && !r.allReady;
-              final unknown = !snap.isResolved;
+              final unknown = r == null;
               // [DU231 F4] 큰 글자·낮은 화면에서는 범위·한도 요약을 고정 머리에서 빼 목록 맨 앞 카드로 옮긴다.
               //   준비 미완료·모름 화면에는 목록이 없으므로 지금처럼 머리에 둔다.
               final infoScrolls = !setupRequired && !unknown && _jobsInfoScrolls(ctx);

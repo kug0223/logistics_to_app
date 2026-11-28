@@ -23,9 +23,15 @@ class InviteRegionService {
   ///
   /// 실패를 "설정 없음"으로 바꾸지 않는다 — [InvitePreferenceState.unknown].
   /// ERROR != OFF, ERROR != UNSET (§8).
-  Future<InviteRegionPreference> loadMine(String uid) async {
+  Future<InviteRegionPreference> loadMine(String uid) =>
+      parseOrUnknown(() => _db.collection('worker_availability').doc(uid).get());
+
+  /// [PERF-L20] [loadMine] 의 해석 규칙 — 같은 문서를 가능일 읽기와 공유할 때도 같은 규칙을 쓴다.
+  ///   실패는 unknown(ERROR != OFF) · 문서 없음은 기본값.
+  static Future<InviteRegionPreference> parseOrUnknown(
+      Future<DocumentSnapshot<Map<String, dynamic>>> Function() read) async {
     try {
-      final doc = await _db.collection('worker_availability').doc(uid).get();
+      final doc = await read();
       if (!doc.exists) return const InviteRegionPreference();
       return InviteRegionPreference.fromAvailabilityMap(doc.data());
     } catch (e) {

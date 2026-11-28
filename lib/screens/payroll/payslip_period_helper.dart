@@ -6,6 +6,7 @@
 
 import '../../models/core/attendance_model.dart';
 import '../../models/core/wage_detail_model.dart';
+import '../../utils/format_helper.dart';
 
 // ─── 발행 유형 ───────────────────────────────────────────────────
 
@@ -67,6 +68,20 @@ class WeekPeriod {
 // ─── 기간 계산 헬퍼 ───────────────────────────────────────────────
 
 class PayslipPeriodHelper {
+  /// [impl_40 · AUD-4 H7/H11] 근무일(attendance.workDate = **KST 자정 instant**)이 속한 주차.
+  ///   [weeksOfMonth] 와 **같은 기준**(월요일이 속한 달 · 월~일)을 KST 달력으로 고른다 — 화면마다 따로 계산하지 않는다.
+  ///   예전 근무자 상세(_WorkerPayDetailScreen)는 '1일 이전 월요일'부터 세어(subtract) 칩보다 1주차 컸고, 기기 시간대 날짜를 썼다.
+  static WeekPeriod weekOfWorkDate(DateTime workDate) {
+    final k = FormatHelper.toKstDate(workDate); // UTC 필드 = KST 달력일
+    final monday = DateTime(k.year, k.month, k.day - (k.weekday - 1)); // 시간대·일광절약 영향 없는 달력 계산
+    for (final w in weeksOfMonth(monday.year, monday.month)) {
+      if (w.start.year == monday.year && w.start.month == monday.month && w.start.day == monday.day) return w;
+    }
+    // 월요일은 그 달 주 목록에 항상 있다(weeksOfMonth = 그 달 첫 월요일부터 7일씩) — 방어용.
+    return WeekPeriod(weekNo: ((monday.day - 1) ~/ 7) + 1, start: monday,
+        end: DateTime(monday.year, monday.month, monday.day + 6), year: monday.year, month: monday.month);
+  }
+
   /// 특정 연월의 주차 목록 반환 — 월요일 기준 월~일(Mon~Sun)
   ///
   /// 이체현황(_calcWeekRanges)과 동일한 기준:
@@ -121,9 +136,11 @@ class PayslipPeriodHelper {
     WeekPeriod week,
   ) {
     return records.where((r) {
-      final d = DateTime(r.workDate.year, r.workDate.month, r.workDate.day);
-      final s = DateTime(week.start.year, week.start.month, week.start.day);
-      final e = DateTime(week.end.year, week.end.month, week.end.day);
+      // [impl_53 · AUD-4 H8] workDate = KST 자정 instant — 기기 성분으로 읽으면 UTC 기기에서 D-1(월요일 근무가 빠지고
+      //   다음 주 월요일이 들어온다). KST 달력 키(FormatHelper.toKstDate · UTC 필드)로 비교한다. 주 경계는 달력일 그대로.
+      final d = FormatHelper.toKstDate(r.workDate);
+      final s = DateTime.utc(week.start.year, week.start.month, week.start.day);
+      final e = DateTime.utc(week.end.year, week.end.month, week.end.day);
       return !d.isBefore(s) && !d.isAfter(e);
     }).toList();
   }

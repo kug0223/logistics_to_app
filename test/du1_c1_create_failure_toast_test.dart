@@ -33,6 +33,7 @@ import 'package:ALfit/theme/role_theme.dart';
 import 'package:ALfit/utils/navigation_key.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake with MockPlatformInterfaceMixin implements FirebaseAppPlatform {
   @override
@@ -214,9 +215,20 @@ void main() {
       }
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
-      final day = today.add(const Duration(days: 7));
+      // [impl_57] 시한부 fixture 수리 — 예전: 오늘+7 고정이라 월말 주(11-24~)에는 다음 달로 넘어가 시험이 깨졌다.
+      //   셀이 묻는 것은 '같은 달 달력에서 미래 날짜를 고른다' 이므로, 같은 달 안에서 가장 먼 날(최대 +7)을 고른다.
+      //   그 달 마지막 날이면 같은 달 미래 날짜가 없다 → 이 셀은 건너뛴다(셀 재설계 대상 · 제품 코드 변경 0).
+      var dayOffset = 7;
+      while (dayOffset > 1 && today.add(Duration(days: dayOffset)).month != today.month) {
+        dayOffset--;
+      }
+      final day = today.add(Duration(days: dayOffset));
+      if (day.month != today.month) {
+        markTestSkipped('그 달 마지막 날 — 같은 달 미래 날짜 없음(월 이동 셀은 별도)');
+        return;
+      }
       out('${c.id} 실행 시각=$now tz=${now.timeZoneName}(${now.timeZoneOffset}) 선택일=${day.toIso8601String().substring(0, 10)} · NetworkChecker.isOnline=${NetworkChecker.instance.isOnline}');
-      expect(day.month == today.month, isTrue, reason: '오늘+7 이 같은 달(월 이동 없이) — 다르면 셀 재설계');
+      expect(day.month == today.month, isTrue, reason: '같은 달(월 이동 없이)에서 고른 미래 날짜');
       final deferred = <String>[];
       final results = <Object?>[];
       final key = GlobalKey();
@@ -376,7 +388,7 @@ void main() {
         }
         out('   $hint 피커 선택=${times[ctl.selectedItem]} (목표 $target)');
         expect(times[ctl.selectedItem], target, reason: '$hint 실제 스크롤 선택');
-        await t.tap(find.descendant(of: find.ancestor(of: picker, matching: find.byType(Column)).first, matching: find.text('확인')));
+        await t.tap(find.descendant(of: find.ancestor(of: picker, matching: find.byType(Column)).first, matching: findVisibleText('확인')));
         await frames(10);
       }
       await pickTime('시작 시간', '09:00');
@@ -493,7 +505,7 @@ void main() {
       Finder toastSurface() => find.ancestor(
           of: failToast,
           matching: find.byWidgetPredicate((w) => w is Container && w.decoration is BoxDecoration && (w.decoration as BoxDecoration).color != null && (w.decoration as BoxDecoration).boxShadow != null)).first;
-      final ctaLabel = find.descendant(of: cta, matching: find.text('공고 등록'));
+      final ctaLabel = find.descendant(of: cta, matching: findVisibleText('공고 등록'));
       // 공개 widget/controller 에서 읽는 UI 의미 snapshot — 지연 목록이라 각 섹션까지 실제 끌기(왼쪽 여백) 뒤 읽는다
       Future<String> uiSnap() async {
         final ti = await readTitle();

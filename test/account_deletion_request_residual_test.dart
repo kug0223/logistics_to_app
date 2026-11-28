@@ -175,25 +175,29 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('DEL-REQ-2x freeze 이후 신규 생성 차단 (§32~§36)', () {
     test('DEL-REQ-20 freeze 후 새 일정변경 요청 생성 DENY', () {
+      // [rules_297 갱신 · 판정297 §B-4] isValidSCRCreator(legacy users.businessId) → isValidApplicantRequest
+      //   (지원서 소유·사업장 결속). freeze 차단은 같은 user 문서로 그대로 본다.
       final h = _flat(rules.substring(
-          rules.indexOf('function isValidSCRCreator(businessId) {'),
-          rules.indexOf('}', rules.indexOf('function isValidSCRCreator(businessId) {'))));
+          rules.indexOf('function isValidApplicantRequest(applicationId, businessId) {'),
+          rules.indexOf('}', rules.indexOf('function isValidApplicantRequest(applicationId, businessId) {'))));
       expect(h, contains("u.data.get('accountStatus', 'active') != 'deleting' &&"));
       // 이미 읽고 있는 같은 문서를 본다 — 추가 read 없음.
       expect(h, contains('let u = get(/databases/\$(database)/documents/users/\$(request.auth.uid));'));
-      expect('get(/databases'.allMatches(h).length, 1,
+      // [rules_297 갱신] get 은 user 1 + 지원서 1. user 문서는 여전히 한 번만 읽는다.
+      expect('documents/users/'.allMatches(h).length, 1,
           reason: 'create 평가에서 user 문서를 한 번만 읽는다');
       // 그 helper 가 실제로 create 규칙에 쓰인다.
-      expect(rules, contains('isValidSCRCreator(request.resource.data.businessId) &&'));
+      expect(rules, contains(
+          'isValidApplicantRequest(request.resource.data.applicationId, request.resource.data.businessId) &&'));
     });
 
     test('DEL-REQ-21 freeze 후 새 지급방식 요청 생성 DENY', () {
       final pay = rules.substring(
           rules.indexOf('match /payment_change_requests/{reqId} {'),
           rules.indexOf('match /interim_settlement_requests/{reqId} {'));
+      // [rules_297 갱신] 근로자 갈래의 freeze 는 isValidApplicantRequest(위 DEL-REQ-20 이 freeze 줄을 단언) 로 본다.
       expect(pay, contains(
-          "get(/databases/\$(database)/documents/users/\$(request.auth.uid))"
-          ".data.get('accountStatus', 'active') != 'deleting' &&"));
+          'isValidApplicantRequest(request.resource.data.applicationId, request.resource.data.businessId))'));
       // self 분기에만 넣었다 — 관리자 분기는 .0b 소관(target 축).
       expect(pay, contains('request.resource.data.workerId == request.auth.uid &&'));
     });

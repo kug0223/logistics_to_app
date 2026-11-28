@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Models
 import '../../../models/core/business_model.dart';
+import '../../../models/core/slot_model.dart';
 import '../../../models/core/to_model.dart';
 import '../../../utils/action_guard.dart';
 import '../../../utils/close_state_utils.dart';
@@ -65,6 +66,7 @@ import 'admin_work_detail.dart';
 import '../../../screens/common/job_posting_screen.dart';
 import '../../../screens/business_admin/dialogs/work_detail_management_dialog.dart';
 import '../../../utils/staffing_clock.dart';
+import '../../../utils/server_reject_codes.dart';
 
 enum TOCardDisplayMode { list, calendar }
 
@@ -172,6 +174,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
   ///
   /// 부모가 scoped 갱신을 지원하면 그 공고만 다시 읽고, 아니면 기존처럼
   /// 전체 갱신으로 떨어진다 — 동작은 어느 쪽이든 최신 canonical state다.
+  /// [PERF-L27] 이 카드가 이미 받은 슬롯(공고 목록 FLEX preload) — 날짜 선택 창이 바로 그리고 서버로 다시 확인한다.
+  List<SlotModel> _seedSlots() => [
+        for (final t in widget.groupItem.groupTOs)
+          if (t.slot != null) t.slot!,
+      ];
+
   void _notifyTOChanged(String toId) {
     final scoped = widget.onTOChanged;
     if (scoped != null) {
@@ -292,6 +300,61 @@ class _TOGroupCardState extends State<TOGroupCard> {
       if (msg != null && msg.isNotEmpty) return msg;
     }
     return fallback;
+  }
+
+  /// 날짜 종료가 (일부라도) 반영된 뒤 목록·Home 인력 현황을 새로 읽는다 — 성공 경로와 같은 신호.
+  void _refreshAfterClose(String toId) {
+    widget.firestoreService.clearCache(toId: toId);
+    widget.onChanged();
+    WorkforceController.notifyDataChanged(origin: AdminMutationOrigin.jobs);
+  }
+
+  /// [판정294 F294-CLOSE-01] 날짜 종료는 반영됐고 대기 정리·공고 상태 갱신 일부가 남았을 때(aborted ·
+  ///   CLOSE_SLOTS_INCOMPLETE) 다시 시도를 제안한다. 종료한 날짜는 '종료할 날짜 선택'(openOnly)에 다시
+  ///   나오지 않아 사용자가 같은 요청을 다시 보낼 길이 이 자리뿐이다. 서버는 같은 요청을 다시 받으면 남은
+  ///   것만 처리한다(종료 재기록은 같은 값). '나중에'를 고르면 아무것도 하지 않는다.
+  Future<void> _offerCloseRetry({
+    required TOModel masterTO,
+    required List<String> slotIds,
+    required String closedBy,
+    required Object error,
+  }) async {
+    final (outcome, lastError) = await runPostingCloseRetry(
+      initialError: error,
+      slotIds: slotIds,
+      // [impl_41] resumable:true = '자동으로 이어서 정리' 안내 + 다시 정리 유지 · false/모름 = '같은 요청을 다시 보내 주세요'.
+      ask: (err) => DialogHelper.showConfirm(
+        context,
+        title: postingCloseIncompleteTitle,
+        message: postingCloseIncompleteMessageFor(err),
+        confirmText: '다시 정리',
+        cancelText: '나중에',
+        icon: Icons.warning_amber_rounded,
+        iconColor: AppColors.warning,
+      ),
+      // [F295-CLOSE-01 · impl_41] 다시 보낼 때는 cleanupOnly — 최초 closedAt/closedBy 를 덮지 않고 서버가 지금 권한을 본다.
+      send: (ids) => widget.firestoreService.batchCloseSlots(
+        toId: masterTO.id,
+        businessId: masterTO.businessId,
+        slotIds: ids,
+        closedBy: closedBy,
+        cleanupOnly: true,
+      ),
+      refresh: () => _refreshAfterClose(masterTO.id),
+      isMounted: () => mounted,
+    );
+    if (!mounted) return;
+    switch (outcome) {
+      case PostingCloseRetryOutcome.declined:
+        return;
+      case PostingCloseRetryOutcome.completed:
+        ToastHelper.showSuccess('남은 정리를 마쳤어요');
+      case PostingCloseRetryOutcome.revoked:
+        ToastHelper.showWarning(postingPartialRevokeMessage);
+      case PostingCloseRetryOutcome.failed:
+        ToastHelper.showError(_cfErrorMessage(lastError ?? error,
+            fallback: '종료 처리에 실패했습니다'));
+    }
   }
 
   @override
@@ -1302,13 +1365,17 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final masterTO = widget.groupItem.masterTO;
 
     // DayApplicantsDialog 계약/신분증 기능을 위해 사업장 정보 로드
-    // 실패 시 businesses:[] 로 열림 — 계약서·신분증 기능 비활성되므로 로그 필수
-    BusinessModel? biz;
-    try {
-      biz = await widget.firestoreService.getBusinessById(masterTO.businessId);
-    } catch (e) {
+    // 실패 시 businesses:[] — 계약서·신분증 기능 비활성되므로 로그 필수
+    // [PERF-P8] 예전에는 사업장 문서(서버 읽기)를 받은 **뒤에** 다이얼로그를 열었다 — 로딩 표시도 없어
+    //   카드를 눌러도 한동안 반응이 없었다. 이제 바로 열고, 명단은 그동안 읽기 시작한다.
+    //   사업장 문서가 필요한 행동은 다이얼로그가 이 future 가 끝날 때까지 잠근다.
+    final bizFuture = widget.firestoreService
+        .getBusinessById(masterTO.businessId)
+        .then<List<BusinessModel>>((b) => b != null ? [b] : const [])
+        .catchError((Object e) {
       debugPrint('⚠️ DayApplicantsDialog 사업장 정보 로드 실패 (${masterTO.businessId}): $e');
-    }
+      return const <BusinessModel>[];
+    });
     if (!mounted) return;
 
     final hasChanges = await showDialog<bool>(
@@ -1317,7 +1384,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
       builder: (_) => DayApplicantsDialog(
         date: date,
         businessIds: [masterTO.businessId],
-        businesses: biz != null ? [biz] : const [],
+        businesses: const [],
+        businessesFuture: bizFuture,
         filterToId: masterTO.id,
       ),
     );
@@ -1998,6 +2066,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
                 ),
               ],
             // FULL / TIME_EXPIRED / eligible 없음: 재오픈 HIDE
+            // [F295-CLOSE-01 · impl_41] 종료한 날짜의 남은 정리 재진입 — '나중에'를 고른 뒤나 화면을 떠난 뒤에도
+            //   여기서 같은 정리를 다시 보낸다(cleanupOnly · 종료 기록은 그대로). 고를 날짜가 없으면 선택 창이 빈 상태를 말한다.
+            [
+              AppMenuSheetItem(
+                icon: Icons.cleaning_services_outlined,
+                label: '종료한 날짜 다시 정리',
+                color: AppColors.grey600,
+                onTap: () => _handleSingleTOMenuAction(context, 'batchCleanup'),
+              ),
+            ],
           ],
         ],
         // [REPOST-GAPFIX] 다시 모집하기 — WHITELIST/FAIL-CLOSED (canRepost 조건 참조)
@@ -2017,6 +2095,19 @@ class _TOGroupCardState extends State<TOGroupCard> {
               label: '관리용 카드명 변경',
               color: AppColors.purple,
               onTap: () => _handleSingleTOMenuAction(context, 'renameCard'),
+            ),
+          ],
+        // [impl_59 · 기능 도달] 업무별 마감·재오픈·긴급모집 종료(WorkDetailManagementDialog)의 진입은 캘린더 모드 메뉴뿐이었다.
+        //   그 메뉴를 쓰던 캘린더 뷰(WorkforceCalendarView → TOItemCard)가 f27721d(09-06)에서 지워진 뒤로 앱 어디서도 열리지
+        //   않았다(유일 생성처 workforce_list_view 는 기본 list 모드). 같은 항목 · 같은 권한(canManageTo)을 여기 둔다.
+        //   대상이 **한 날짜(슬롯 1개)로 정해질 때만** 보인다 — 여러 날짜 공고는 날짜를 고르는 단계가 없어 열지 않는다(남은 일).
+        if (canManageTo && _listModeWorkDetailTarget() != null)
+          [
+            AppMenuSheetItem(
+              icon: Icons.assignment_turned_in,
+              label: '업무별 마감',
+              color: Theme.of(context).primaryColor,
+              onTap: () => _handleSingleTOMenuAction(context, 'manageWorkDetails'),
             ),
           ],
         // 근로자 초대 / 보낸 초대 관리 (canManageTo)
@@ -2258,7 +2349,13 @@ class _TOGroupCardState extends State<TOGroupCard> {
   }
 
   /// 단일 TO 메뉴 액션
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_handleSingleTOMenuActionLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
   Future<void> _handleSingleTOMenuAction(
+      BuildContext context, String value) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('adminToGroupCard.menuAction', this), () => _handleSingleTOMenuActionLocked(context, value));
+
+  Future<void> _handleSingleTOMenuActionLocked(
       BuildContext context, String value) async {
     final masterTO = widget.groupItem.masterTO;
 
@@ -2372,6 +2469,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           context: context,
           to: masterTO,
           firestoreService: widget.firestoreService,
+          seedSlots: _seedSlots(),
           title: '일괄수정 날짜 선택',
           confirmLabel: '수정',
           openOnly: true, // [4H.0C-CLOSED-02] 마감된 슬롯 선택 방지
@@ -2402,6 +2500,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           context: context,
           to: masterTO,
           firestoreService: widget.firestoreService,
+          seedSlots: _seedSlots(),
           title: '종료할 날짜 선택',
           confirmLabel: '종료',
           openOnly: true,
@@ -2460,9 +2559,65 @@ class _TOGroupCardState extends State<TOGroupCard> {
               origin: AdminMutationOrigin.jobs,
             );
             ToastHelper.showWarning(postingPartialRevokeMessage);
+          } else if (mounted && isPostingIncomplete(e)) {
+            // [판정294 F294-CLOSE-01] 날짜 종료는 커밋됐고 남은 정리가 끝나지 않았다 — 목록을 새로 읽고
+            //   이 자리에서 다시 시도를 제안한다(종료한 날짜는 종료 선택 목록에 다시 나오지 않는다).
+            _refreshAfterClose(masterTO.id);
+            await _offerCloseRetry(
+              masterTO: masterTO,
+              slotIds: closeSlots.map((s) => s.id).toList(),
+              closedBy: closeUid,
+              error: e,
+            );
           } else if (mounted) {
             final msg = _cfErrorMessage(e, fallback: '종료 처리에 실패했습니다');
             ToastHelper.showError(msg);
+          }
+        } finally {
+          if (mounted) setState(() => _isLifecycleActionRunning = false);
+        }
+        break;
+
+      case 'batchCleanup':
+        if (_isLifecycleActionRunning) return;
+        final cleanupUid = context.read<UserProvider>().currentUser?.uid ?? 'UNKNOWN';
+        final cleanupSelection = await SlotBatchSelectDialog.show(
+          context: context,
+          to: masterTO,
+          firestoreService: widget.firestoreService,
+          seedSlots: _seedSlots(),
+          title: '다시 정리할 날짜 선택',
+          confirmLabel: '다시 정리',
+          closedOnly: true,
+        );
+        if (cleanupSelection == null || cleanupSelection.isEmpty || !mounted) return;
+        final cleanupIds = cleanupSelection.slots.map((s) => s.id).toList();
+        setState(() => _isLifecycleActionRunning = true);
+        try {
+          final res = await widget.firestoreService.batchCloseSlots(
+            toId: masterTO.id,
+            businessId: masterTO.businessId,
+            slotIds: cleanupIds,
+            closedBy: cleanupUid,
+            cleanupOnly: true,
+          );
+          if (!mounted) return;
+          _refreshAfterClose(masterTO.id);
+          final notClosed = postingNotClosedSlotIds(res);
+          if (notClosed.isNotEmpty) {
+            ToastHelper.showInfo('${notClosed.length}개 날짜는 그 사이 다시 열려 있어 정리하지 않았어요');
+          } else {
+            ToastHelper.showSuccess('남은 정리를 마쳤어요');
+          }
+        } catch (e) {
+          if (mounted && isPostingPartialRevoke(e)) {
+            _refreshAfterClose(masterTO.id);
+            ToastHelper.showWarning(postingPartialRevokeMessage);
+          } else if (mounted && isPostingIncomplete(e)) {
+            _refreshAfterClose(masterTO.id);
+            await _offerCloseRetry(masterTO: masterTO, slotIds: cleanupIds, closedBy: cleanupUid, error: e);
+          } else if (mounted) {
+            ToastHelper.showError(_cfErrorMessage(e, fallback: '정리에 실패했습니다'));
           }
         } finally {
           if (mounted) setState(() => _isLifecycleActionRunning = false);
@@ -2476,6 +2631,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           context: context,
           to: masterTO,
           firestoreService: widget.firestoreService,
+          seedSlots: _seedSlots(),
           // [4I.1] "종료한 날짜 재오픈" copy
           title: '다시 열 날짜 선택',
           confirmLabel: '다시 열기',
@@ -2557,6 +2713,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           context: context,
           to: masterTO,
           firestoreService: widget.firestoreService,
+          seedSlots: _seedSlots(),
           title: '일괄삭제 날짜 선택',
           confirmLabel: '삭제',
           includeMalformed: true,
@@ -2645,6 +2802,19 @@ class _TOGroupCardState extends State<TOGroupCard> {
             widget.firestoreService.clearCache(toId: masterTO.id);
             widget.onChanged();
             ToastHelper.showWarning(postingPartialRevokeMessage);
+          } else if (mounted && isPostingIncomplete(e)) {
+            // [판정294 F294-DEL-01] 늦은 지원서 정리 일부만 반영됐고 날짜는 아직 지우지 않았다 —
+            //   목록을 새로 읽는다. 날짜가 남아 있어 같은 삭제를 다시 하면 남은 것만 처리된다.
+            widget.firestoreService.clearCache(toId: masterTO.id);
+            widget.onChanged();
+            ToastHelper.showWarning(postingDeleteIncompleteMessage);
+          } else if (mounted && isPostingRelationAfterCheck(e)) {
+            // [POSTING-RACE-46 · 판정294] 확인 뒤 새 지원(또는 실근무가 있는 확정)이 있어 삭제가 막혔다.
+            //   그 사이 대기 거절 등 정리분이 반영됐을 수 있어 목록을 새로 읽는다. 안내는 서버 메시지 그대로.
+            widget.firestoreService.clearCache(toId: masterTO.id);
+            widget.onChanged();
+            ToastHelper.showError(
+                _cfErrorMessage(e, fallback: '삭제 처리에 실패했습니다'));
           } else if (mounted) {
             final msg = _cfErrorMessage(e, fallback: '삭제 처리에 실패했습니다');
             ToastHelper.showError(msg);
@@ -2752,7 +2922,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
           widget.onChanged();
           if (mounted) ToastHelper.showSuccess('카드 제목이 변경되었습니다');
         } catch (e) {
-          if (mounted) ToastHelper.showError('제목 변경에 실패했습니다');
+          // [impl_58 · server_296 A3] 허용 밖 항목 거절(TO_FIELD_NOT_ALLOWED)은 그 사실을 말한다.
+          if (mounted) ToastHelper.showError(postingInputRejectMessageOf(e) ?? '제목 변경에 실패했습니다');
         }
         break;
 
@@ -2765,7 +2936,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
           showDialog(context: this.context, barrierDismissible: false,
               builder: (_) => const Center(child: LoadingWidget()));
           try {
-            final calSlotForManage = widget.calendarSlot;
+            // [impl_59] 리스트 모드(슬롯 1개)도 그 슬롯 기준으로 읽는다 — 캘린더 모드와 같은 범위.
+            final calSlotForManage = widget.calendarSlot ??
+                (toItemForManage.slot != null ? toItemForManage : null);
             final result = calSlotForManage != null
                 ? await widget.firestoreService.loadTOWorkDetails(
                     toItemForManage.to,
@@ -2798,6 +2971,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
         ).show();
         break;
     }
+  }
+
+  /// [impl_59] 리스트 모드 '업무별 마감' 대상 — 단기(슬롯) 공고의 슬롯이 정확히 하나로 정해졌을 때만 그 슬롯.
+  ///   고정(계약)·장기 공고 · 슬롯 미로드(groupTOs 빔) · 여러 날짜는 null(메뉴 숨김 — 미로드면 숨기는 기존 꼴과 같다).
+  TOItem? _listModeWorkDetailTarget() {
+    final g = widget.groupItem;
+    if (g.masterTO.isContractType || g.isLongTerm) return null;
+    if (g.groupTOs.length != 1) return null;
+    final only = g.groupTOs.first;
+    return only.slot != null ? only : null;
   }
 
   /// 단건 TO 로딩 중 여부

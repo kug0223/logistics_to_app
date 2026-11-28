@@ -622,6 +622,43 @@
       "collectionGroup": "applications",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "businessId", "order": "ASCENDING" },
+        { "fieldPath": "resignStatus", "order": "ASCENDING" },
+        { "fieldPath": "resignRetroRequest", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "applications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "businessId", "order": "ASCENDING" },
+        { "fieldPath": "resignStatus", "order": "ASCENDING" },
+        { "fieldPath": "resignRetroRequest", "order": "ASCENDING" },
+        { "fieldPath": "resignAutoApproveAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "applications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "resignStatus", "order": "ASCENDING" },
+        { "fieldPath": "resignRetroRequest", "order": "ASCENDING" },
+        { "fieldPath": "resignAutoApproveAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "applications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "resignStatus", "order": "ASCENDING" },
+        { "fieldPath": "resignRetroRequest", "order": "ASCENDING" },
+        { "fieldPath": "resignRequestedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "applications",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "terminationStatus", "order": "ASCENDING" },
         { "fieldPath": "terminationRequestedAt", "order": "ASCENDING" }
       ]

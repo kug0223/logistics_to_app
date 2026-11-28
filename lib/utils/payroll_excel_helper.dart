@@ -22,6 +22,10 @@ import 'format_helper.dart';
 import 'toast_helper.dart';
 import 'transfer_export_plan.dart';
 import 'person_label.dart';
+import 'off_main.dart';
+
+/// [PERF-L54] 엑셀에 쓰는 근로자 이름·사람 번호(uid → 값).
+typedef WorkerProfiles = ({Map<String, String> names, Map<String, String> personNos});
 
 class PayrollExcelHelper {
 
@@ -32,8 +36,11 @@ class PayrollExcelHelper {
   static Future<TransferExportPlan> prepareTransferPlan({
     required List<AttendanceModel> records,
     required String businessId,
+    /// [PERF-L54] 화면이 같은 사업장·같은 용도(purposeWorkerDirectory)로 이미 받은 이름·번호. 기록의 **모든**
+    ///   근로자가 들어 있을 때만 주고, 그러면 다시 읽지 않는다. 하나라도 없으면 null 로 두어 예전처럼 읽는다.
+    WorkerProfiles? profiles,
   }) async {
-    final p = await _loadWorkerProfiles(records, businessId);
+    final p = profiles ?? await _loadWorkerProfiles(records, businessId);
     return buildTransferExportPlan(
       records: records,
       names: p.names,
@@ -152,6 +159,8 @@ class PayrollExcelHelper {
     required String title,
     required String filename,
     required String businessId,
+    /// [PERF-L54] [prepareTransferPlan] 과 같은 규칙 — 화면이 이미 받은 이름·번호(모든 근로자 포함일 때만).
+    WorkerProfiles? knownProfiles,
   }) async {
     if (records.isEmpty) {
       ToastHelper.showWarning('내보낼 급여 내역이 없습니다');
@@ -160,7 +169,7 @@ class PayrollExcelHelper {
 
     // [PII-DOC-R0.1] 이 시트는 이름만 필요하다 — 계좌 컬럼이 없다.
     // [R7-PRE1A.1] 사람 번호는 함께 읽는다 — 이름만으로는 동명이인이 구분되지 않는다.
-    final profiles = await _loadWorkerProfiles(records, businessId);
+    final profiles = knownProfiles ?? await _loadWorkerProfiles(records, businessId);
     final names = profiles.names;
     final personNos = profiles.personNos;
 
@@ -289,8 +298,7 @@ class PayrollExcelHelper {
   ///
   ///   번호가 row identity 를 대신하지는 않는다 — 한 사람이 여러 근무 행을
   ///   가질 수 있다. 행은 업무·근무시간·근무일이 가르고, 번호는 사람을 가른다.
-  static Future<({Map<String, String> names, Map<String, String> personNos})>
-      _loadWorkerProfiles(
+  static Future<WorkerProfiles> _loadWorkerProfiles(
     List<AttendanceModel> records,
     String businessId,
   ) async {
@@ -315,7 +323,9 @@ class PayrollExcelHelper {
     Excel excel,
     String filename,
   ) async {
-    final bytes = excel.encode();
+    // [PERF-L54 → impl_19] 시트 직렬화(zip 압축)는 행 수에 비례해 무겁다 — 공용 `OffMain.encodeExcel` 로
+    //   메인 isolate 밖에서 한다(보낼 수 없음·실패·시간 초과면 이 자리에서 · 결과 바이트는 같다).
+    final List<int>? bytes = await OffMain.encodeExcel(excel, tag: 'payrollXlsx');
     if (bytes == null) {
       if (context.mounted) ToastHelper.showError('엑셀 생성에 실패했습니다');
       return;

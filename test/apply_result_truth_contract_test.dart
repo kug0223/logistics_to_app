@@ -111,7 +111,17 @@ void main() {
 
     test('AR-32 서버는 알림 실패를 지원 실패로 만들지 않는다', () {
       final body = _codeOf(_cf(_fn(), 'callableApplyToTO'));
-      expect(_flat(body), contains('} catch (notifErr) { console.error("⚠️ [applyToTO] newApplication 알림 실패 (지원은 완료됨):", notifErr); }'));
+      // [L56 r5] 둘 중 하나: ① 예전 — 커밋 뒤 알림 실패를 catch 로 받아 지원 성공을 유지 ·
+      //   ② 지금 — 알림은 지원 거래 안의 direct 작업이고, 수신자 조회 실패는 catch 로 받아 알림만 빠진다(지원은 계속).
+      final viaJob = body.contains('tx.create(naJobRef, srvNotificationJobDoc("direct", {') &&
+          _flat(body).contains('} catch (notifErr) { console.error("⚠️ [applyToTO] newApplication 수신자 조회 실패 (지원은 계속):", notifErr);');
+      final arOld = _flat(body).contains('} catch (notifErr) { console.error("⚠️ [applyToTO] newApplication 알림 실패 (지원은 완료됨):", notifErr); }');
+      // [판정292] 정확히 하나: 작업 경로면 커밋 뒤 직접 알림 쓰기가 없어야 한다(이중 발송 0).
+      //   `_cf` 는 다음 export 까지라 뒤의 비공개 helper(사업장 종료 알림 등)를 포함한다 — 이 함수 본문(첫 `\n);\n`)만 본다.
+      final arFnBody = body.substring(0, body.indexOf('\n);\n') < 0 ? body.length : body.indexOf('\n);\n'));
+      final arDirect = RegExp(r'srvPersistNotification(WithId)?\(').hasMatch(arFnBody);
+      expect(arOld || viaJob, isTrue);
+      expect(viaJob && (arOld || arDirect), isFalse, reason: '작업과 직접 알림 쓰기가 함께 있다');
       expect(_flat(body), contains('return {success: true, applicationId: complexId, isReactivation};'));
     });
   });

@@ -25,6 +25,9 @@ import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/common_widgets.dart';
+import '../../utils/action_guard.dart';
+import '../../utils/keep_content_refresh.dart';
+import '../../widgets/common/keep_content_body.dart';
 
 class LegalTermsManagementScreen extends StatefulWidget {
   const LegalTermsManagementScreen({super.key});
@@ -35,10 +38,14 @@ class LegalTermsManagementScreen extends StatefulWidget {
 }
 
 class _LegalTermsManagementScreenState
-    extends State<LegalTermsManagementScreen> {
+    extends State<LegalTermsManagementScreen> with KeepContentRefreshMixin {
   final _service = LegalTermsService();
   LegalTerms? _terms;
   bool _isLoading = true;
+
+  /// [impl_28] 발행·활성 전환 진행 중 — 예전에는 `_isLoading` 을 잠금으로 같이 써서 처리하는 동안 목록 전체가
+  ///   로딩 화면으로 바뀌었다. 이제 잠금은 이 값, 목록은 그대로(잠금 + 얇은 진행 표시).
+  bool _isMutating = false;
 
   @override
   void initState() {
@@ -54,25 +61,39 @@ class _LegalTermsManagementScreenState
   }
 
   Future<void> _loadTerms() async {
-    setState(() => _isLoading = true);
+    // [L48 · impl_28] 처리 뒤 다시 읽기는 목록을 유지한다(잠금 + 얇은 진행 표시 · KeepContentRefreshMixin) — 첫 읽기·실패 화면만 전체 로딩 · 늦은 옛 응답 착지 0.
+    final t = beginContentLoad(canKeep: _terms != null);
+    if (!t.keep) setState(() => _isLoading = true);
+    var shown = false;
     try {
       // [R7-PAYROLL-POLICY.5B] 발행 화면은 **편집용** 경로를 쓴다.
       //   아직 발행되지 않은 항목도 기본값으로 꺼내 편집해야 하기 때문이다.
       //   동의를 받는 화면은 fetchEffectiveTerms() 를 쓴다.
       final terms = await _service.getTermsForEditing();
-      if (mounted) setState(() { _terms = terms; });
+      if (!isCurrentContentLoad(t.gen)) return;
+      setState(() { _terms = terms; });
+      shown = true;
     } catch (e) {
+      if (!isCurrentContentLoad(t.gen)) return;
       // [.54] 읽기 실패를 기본값으로 바꾸지 않는다(서비스가 throw) — 이전 목록도 지운다.
       //   낡은 목록을 그대로 두면 그 위에서 다시 발행할 수 있다.
-      if (mounted) setState(() => _terms = null);
-      if (mounted) ToastHelper.showError('약관을 불러오는데 실패했습니다');
+      setState(() => _terms = null);
+      ToastHelper.showError('약관을 불러오는데 실패했습니다');
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (isCurrentContentLoad(t.gen)) {
+        setState(() => _isLoading = false);
+        finishContentLoad(t.gen, shown: shown);
+      }
     }
   }
 
-  Future<void> _editItem(LegalTermsItem item) async {
-    if (_isLoading) return;
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_editItemLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _editItem(LegalTermsItem item) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('legalTerms._isMutating', this), () => _editItemLocked(item));
+
+  Future<void> _editItemLocked(LegalTermsItem item) async {
+    if (_isLoading || _isMutating) return;
     final result = await Navigator.push<_PublishDraft>(
       context,
       MaterialPageRoute(
@@ -98,7 +119,7 @@ class _LegalTermsManagementScreenState
     if (!ok || !mounted) return;
 
     final uid = context.read<UserProvider>().currentUser?.uid ?? '';
-    setState(() => _isLoading = true);
+    setState(() => _isMutating = true);
     try {
       final scheduled = await _service.updateItem(result.item,
           updatedBy: uid,
@@ -128,7 +149,7 @@ class _LegalTermsManagementScreenState
     } catch (e) {
       if (mounted) ToastHelper.showError('발행에 실패했습니다');
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => _isMutating = false);
     }
   }
 
@@ -179,8 +200,8 @@ class _LegalTermsManagementScreenState
   }
 
   Future<void> _toggleActive(LegalTermsItem item) async {
-    if (_isLoading) return;
-    setState(() => _isLoading = true);
+    if (_isLoading || _isMutating) return;
+    setState(() => _isMutating = true);
     final uid = context.read<UserProvider>().currentUser?.uid ?? '';
     try {
       await _service.toggleActive(item.id, !item.isActive, updatedBy: uid);
@@ -190,7 +211,7 @@ class _LegalTermsManagementScreenState
     } catch (e) {
       if (mounted) ToastHelper.showError('변경에 실패했습니다');
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => _isMutating = false);
     }
   }
 
@@ -199,7 +220,9 @@ class _LegalTermsManagementScreenState
     final theme = Theme.of(context);
     return AppPageScaffold(
       title: '약관 관리',
-      body: _isLoading
+      body: KeepContentBody(
+        refreshing: refreshingKeep || _isMutating,
+        child: _isLoading
           ? const LoadingWidget()
           : _terms == null
               ? Center(
@@ -279,6 +302,7 @@ class _LegalTermsManagementScreenState
                     SizedBox(height: ResponsiveHelper.spacing(context, 24)),
                   ],
                 ),
+      ),
     );
   }
 

@@ -167,9 +167,15 @@ void main() {
       // [R7-P4.4E.11C.0C 갱신] 3 → 4. 늘어난 자리는 삭제 재개 상태를
       //   돌려주는 self-only **읽기** callable 이다.
       final tombWrites = 'ACCOUNT_DELETION_TOMBSTONE_COL'.allMatches(cf).length;
-      expect(tombWrites, 6,
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 6 → 7. 옛 가입중단이 tombstone 이 선 uid 를 거부하려고 존재를 읽는다(.get() — 쓰기 아님).
+      expect(cf, isNot(contains('ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).delete()')));
+      // [판정281 갱신] 7 → 8. 서버 fence helper(srvAssertCallerNotInDeletion)가 caller 의 tombstone 존재를 **읽는다**
+      //   (.get() — 쓰기·삭제 아님). 삭제 writer 0 은 위 단언 그대로.
+      expect(_src('functions/src/index.ts'),
+          contains('frozen = (await db.collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).get()).exists;'));
+      expect(tombWrites, 8,
           reason: '선언 1 + ensure 1 + in-tx 읽기 1 + 재개 질의 1 + '
-              'Auth-tail 증거 읽기 1 + 가입중단 race guard 1 = 6');
+              'Auth-tail 증거 읽기 1 + 가입중단 race guard 1 + 가입중단 거부 읽기 1 + fence 읽기 1 = 8');
       // 늘어난 자리는 `tx.get` 이고 삭제가 아니다.
       expect(cf, contains('await tx.get(\n    db.collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid))'));
       expect('ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).delete()'.allMatches(cf).length, 0);
@@ -178,10 +184,11 @@ void main() {
     test('ACC-TOMB-09 완전 성공 뒤에도 유지한다 (§21·§51)', () {
       final f = fin();
       // 성공 반환 직전 구간에 tombstone 삭제가 없다.
-      final tail = _slice(f, 'admin.auth().deleteUser(uid)', 'return {success: true};');
+      // [판정280 갱신] Final 성공 반환이 카카오 연결 해제 범위(providerUnlink · server_api_1 §5A)를 함께 싣게 됐다 — 같은 명시적 성공 반환.
+      final tail = _slice(f, 'admin.auth().deleteUser(uid)', 'return providerUnlink === null ? {success: true} : {success: true, providerUnlink};');
       expect(tail, isNot(contains('tombstone')));
       expect(tail, isNot(contains('account_deletion_tombstones')));
-      expect(f, contains('return {success: true};'));
+      expect(f, contains('return providerUnlink === null ? {success: true} : {success: true, providerUnlink};'));
     });
 
     test('ACC-TOMB-10 자동 삭제·TTL·cleanup owner 가 없다 (§7·§52)', () {
@@ -340,7 +347,8 @@ void main() {
       // deleted_accounts 는 건드리지 않았다 (§3)
       final da = _flat(_slice(fsRules, 'match /deleted_accounts/{docId} {', '\n    }'));
       expect(da, contains('allow read: if isSuperAdmin();'));
-      expect(da, contains('allow delete: if isSuperAdmin();'));
+      // [판정281 갱신] 서버 fence: 쓰기 규칙 바깥에 `callerNotDeleting() && (` 감싸기만 붙었다 — 안쪽 조건 단언은 그대로.
+      expect(da, contains('allow delete: if callerNotDeleting() && (isSuperAdmin());'));
       // collectionGroup 조건을 손대지 않았다.
       expect(fsRules.contains('collectionGroup'), fsRules.contains('collectionGroup'));
     });
@@ -364,7 +372,12 @@ void main() {
       // [DOC-PRODUCT-DELETE.8 갱신] 예전 단언: get() 1곳. create 에 '정리 대기 이름은 다시 만들지
       //   못한다'(isRetiringIdCard)가 더해져 2곳이다. 둘 다 **같은 users 문서**라 평가당 서로 다른
       //   문서 수는 users + tombstone 최대 2개 그대로다(§40).
-      expect('firestore.get('.allMatches(_codeOf(stRules)).length, 2);
+      // [storage_301 갱신] 예전 단언: get() 2곳. 증빙(통장사본·사업자등록증) 현재 경로 재생성 금지(isCurrentEvidence)가
+      //   더해져 3곳이다. 셋 다 **같은 users 문서**이고 이름 범위가 서로 겹치지 않아(idCard_ / bankbook_·businessLicense_)
+      //   한 평가에서 도는 get 은 많아야 같은 문서 하나 — 서로 다른 문서 수는 users + tombstone 최대 2개 그대로다(§40).
+      expect('firestore.get('.allMatches(_codeOf(stRules)).length, 3);
+      final ev = _flat(_slice(stRules, 'function isCurrentEvidence(uid, name)', '\n    }'));
+      expect(ev, contains('firestore.get(/databases/(default)/documents/users/\$(uid))'));
       final cur = _flat(_slice(stRules, 'function isCurrentIdCard(uid, name)', '\n    }'));
       expect(cur, contains('firestore.get(/databases/(default)/documents/users/\$(uid))'));
       final ret = _flat(_slice(stRules, 'function isRetiringIdCard(uid, name)', '\n    }'));
@@ -386,10 +399,15 @@ void main() {
           '(!isIdCardName(request.resource.name) || '
           '(resource == null && !isCurrentIdCard(uid, request.resource.name) && '
           '!isRetiringIdCard(uid, request.resource.name))) && '
+          // [storage_301] 증빙 이름도 객체가 없고 지금 기록 경로가 아닐 때만 만든다(바꿔치기 0).
+          '(!isEvidenceName(request.resource.name) || '
+          '(resource == null && !isCurrentEvidence(uid, request.resource.name))) && '
           'isUnder5MB() && isImageType() && !accountDeletionBarrierExists(uid);'));
       expect(u, contains(
           'allow update: if isLoggedIn() && request.auth.uid == uid && '
           '!isIdCardName(resource.name) && '
+          // [storage_301] 증빙 객체 덮어쓰기 금지.
+          '!isEvidenceName(resource.name) && '
           'isUnder5MB() && isImageType() && !accountDeletionBarrierExists(uid);'));
       // generic prefix 이므로 네 writer + 미래 writer 전부 덮는다 (§32·§33)
       expect(u, contains('match /users/{uid}/{allPaths=**} {'));

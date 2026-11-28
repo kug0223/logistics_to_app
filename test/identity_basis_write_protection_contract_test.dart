@@ -56,8 +56,9 @@ void main() {
   final rulesRaw = _src(_rulesPath);
   final userFs = _src(_userFsPath);
 
+  // [판정281 갱신] users 본인 update 는 fence 예외형 `(callerNotDeleting() || <로그인 시각·FCM 토큰만>) && (` — 안쪽 조건 단언은 그대로.
   final ownerUpdate = _sliceOf(rulesRaw,
-      'allow update: if isLoggedIn() &&', ']);');
+      'allow update: if (callerNotDeleting() ||', ']);');
   final rulesDeny = _quoted(ownerUpdate);
   final protDeny = _quoted(_sliceOf(userFs,
       '_protectedUserFields = {', '};'));
@@ -87,38 +88,45 @@ void main() {
       expect(p, contains('identityBasisAt: admin.firestore.FieldValue.serverTimestamp()'));
     });
 
+    // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정278 §2 · 시험 갱신] 옛 내국인 가입 완료(finalizeRegistration) ·
+    //   PASS 재인증(finalizePassReauth) · 외국인 가입(callableFinalizeForeignIdentity)은 서버에서 닫혔다.
+    //   의도(신원 기준은 서버가 KG/등록번호 값으로 확정하고, 근거가 둘 다일 때만 표시)는 새 writer 에서 그대로 고정한다:
+    //   새 가입 = signup_core.ts buildNewUserDoc(KG cert 값) · 외국인 = callableRegisterForeignIdDocument.
     test('04 내국인 가입 — 서버 토큰 값으로 다시 확정한다', () {
-      final fin = _flat(_codeOf(_sliceOf(cfRaw,
-          'tx.update(db.collection("users").doc(uid), {', '});')));
-      expect(fin, contains('ciHash'));
-      expect(fin, contains('passVerifiedAt'));
-      // 클라이언트가 쓴 값을 그대로 두지 않는다.
-      expect(fin, contains('regGender ? {gender: regGender} : {}'));
-      expect(fin, contains('regBirth ? {birthDate: regBirth} : {}'));
-      expect(fin, contains('srvIdentityBasisPatch(IDENTITY_BASIS_PASS)'));
+      final core = _src('functions/src/signup_core.ts');
+      final build = _flat(_codeOf(_sliceOf(core, 'export function buildNewUserDoc(', '\n}')));
+      // 클라이언트 값이 아니라 서버가 받은 KG 결과(i.gender · i.birthDateTs)로만 쓴다.
+      expect(build, contains('if (i.birthDateTs) doc["birthDate"] = i.birthDateTs;'));
+      expect(build, contains('if (i.gender) doc["gender"] = i.gender;'));
+      expect(build, contains('doc["identityBasisSource"] = "PASS";'));
+      expect(cf, contains('const IDENTITY_BASIS_PASS = "PASS";'), reason: '표시 값이 옛 PASS 기준과 같다');
+      // 옛 경로는 쓰기 없이 거절만 한다.
+      final fin = _flat(_codeOf(_sliceOf(cfRaw, 'export const finalizeRegistration = onCall(', '\n);')));
+      expect(fin, contains('throw srvLegacyClosed("LEGACY_SIGNUP_CLOSED");'));
+      expect(fin, isNot(contains('tx.update')));
     });
 
     test('05 근거가 없으면 표시도 남기지 않는다', () {
-      final fin = _flat(_codeOf(_sliceOf(cfRaw,
-          'tx.update(db.collection("users").doc(uid), {', '});')));
+      final core = _src('functions/src/signup_core.ts');
+      final build = _flat(_codeOf(_sliceOf(core, 'export function buildNewUserDoc(', '\n}')));
       // 둘 다 있을 때만 표시한다 — 반쪽 근거를 근거로 쓰지 않는다.
-      expect(fin, contains('(regGender && regBirth) ? srvIdentityBasisPatch'));
+      expect(build, contains('if (i.gender && i.birthDateTs) {'));
     });
 
     test('06 재인증도 같은 경로다', () {
-      final re = _flat(_codeOf(_sliceOf(cfRaw,
-          'const reauthName   = tokenData["name"]', 'await db.collection("users")')));
-      expect(re, contains('srvPassBirthDateToTimestamp(reauthBdStr)'));
-      expect(re, contains(
-          'if (reauthGender && reauthBirth) { Object.assign(updateFields, '
-          'srvIdentityBasisPatch(IDENTITY_BASIS_PASS)); }'));
+      // 재인증(finalizePassReauth)은 닫혔다 — 기준 필드를 쓰는 다른 경로가 생기지 않는다.
+      final re = _flat(_codeOf(_sliceOf(cfRaw, 'export const finalizePassReauth = onCall(', '\n);')));
+      expect(re, contains('throw srvLegacyClosed("LEGACY_PASS_FLOW_CLOSED");'));
+      expect(re, isNot(contains('updateFields')));
+      expect(re, isNot(contains('gender')));
     });
 
     test('07 외국인은 등록번호에서 파생한 값에 표시를 붙인다', () {
       final fg = _flat(_codeOf(_sliceOf(cfRaw,
-          'foreignIdentityFingerprint: fingerprint,', '});')));
-      expect(fg, contains('srvIdentityBasisPatch(IDENTITY_BASIS_FOREIGN)'));
-      expect(fg, contains('birthDate: admin.firestore.Timestamp.fromDate(serverBirthDate)'));
+          'export const callableRegisterForeignIdDocument = onCall(', 'console.info(`[foreignIdDocument]')));
+      // KG 가 성별을 주지 않았을 때만 번호에서 보완하고, 그때 표시를 붙인다.
+      expect(fg, contains('patch["gender"] = derived.gender; Object.assign(patch, srvIdentityBasisPatch(IDENTITY_BASIS_FOREIGN));'));
+      expect(fg, contains('const bts = srvPassBirthDateToTimestamp(derived.birthDate);'));
     });
 
     test('08 날짜 파싱이 UTC로 한 곳에 모였다', () {
@@ -158,8 +166,9 @@ void main() {
   group('INV-4 — 가입을 막지 않는다 (§5)', () {
     test('12 CREATE 경로는 그대로다', () {
       // 차단은 allow update 블록 하나뿐이다.
+      // [판정281 갱신] users 본인 update 는 fence 예외형 `(callerNotDeleting() || <로그인 시각·FCM 토큰만>) && (` — 경계 문자열만 바뀌었다.
       final createBlock = _sliceOf(rulesRaw,
-          'match /users/{userId}', 'allow update: if isLoggedIn()');
+          'match /users/{userId}', 'allow update: if (callerNotDeleting() ||');
       for (final f in ['birthDate', 'gender']) {
         expect(createBlock.contains("'$f'"), isFalse,
             reason: '$f 를 create에서까지 막으면 가입이 깨진다');

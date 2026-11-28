@@ -18,10 +18,12 @@ import '../../models/core/attendance_model.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/concept_tokens.dart';
 import '../../utils/text_layout.dart';
+import '../../utils/expected_daily_wage.dart';
 import '../../screens/payroll/payslip_period_helper.dart';
 import '../../screens/payroll/payslip_pdf_builder.dart';
 import 'package:printing/printing.dart';
 import '../../widgets/common/app_empty_state.dart';
+import 'tab_revisit_watch.dart';
 import 'user_tab_scope.dart';
 import '../../models/core/invite_region_preference.dart';
 import '../../services/invite_region_service.dart';
@@ -29,10 +31,26 @@ import 'invite_region_settings_screen.dart';
 import '../../utils/person_label.dart';
 
 class MyScheduleScreen extends StatefulWidget {
-  const MyScheduleScreen({super.key, this.reads});
+  /// 근태 → Map (applicationId + **KST 근무일** 복합키 · 월·일 미패딩).
+  ///   [AUD-4 H9 · 판정296] 조회 키는 달력이 고른 날(KST 달력 성분 · S82)이다. 예전에는 근태 쪽 키만 **기기 성분**
+  ///   (`att.workDate.year/month/day`)이라 KST 가 아닌 기기에서 그날 카드에 근태가 붙지 않았다(확정 급여 대신 예상 금액 ·
+  ///   출근 상태 누락). 저장 근무일은 KST 자정 instant 이므로 KST 날짜로 키를 만든다. KST 기기에서는 결과가 같다.
+  static Map<String, AttendanceModel> buildAttendanceMap(List<AttendanceModel> list) {
+    final map = <String, AttendanceModel>{};
+    for (final att in list) {
+      final d = FormatHelper.toKstDate(att.workDate);
+      map['${att.applicationId}_${d.year}-${d.month}-${d.day}'] = att;
+    }
+    return map;
+  }
+
+  const MyScheduleScreen({super.key, this.reads, this.clock});
 
   /// [R7-P2-3 READ] 화면을 만들 때의 읽기 경계. production 은 null.
   final MyScheduleReads? reads;
+
+  /// [PERF-P9] 재방문 신선도의 "지금". production 은 null → `DateTime.now`.
+  final DateTime Function()? clock;
 
   @override
   State<MyScheduleScreen> createState() => _MyScheduleScreenState();
@@ -80,6 +98,45 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       _loadedMonth!.year == _focusedDay.year &&
       _loadedMonth!.month == _focusedDay.month;
   bool _initialLoadStarted = false;
+
+  // ── [PERF-P9 · 판정291 §8] 재방문 신선도 ─────────────────────────────────
+  //   다시 보이거나 보이는 채로 앱이 복귀하면: 계정이 바뀌었으면 처음부터, 지원·근태 무효화 세대가 바뀌었거나
+  //   (출퇴근·지원·취소 등) 1분이 지났거나 KST 날짜가 바뀌었으면 **보이는 달력·목록을 둔 채** 표시월을 다시 읽는다.
+  //   지난 조회가 실패한 상태면 다시 읽는다. 이미 신선하면 호출 0. 고른 달·날짜·상태 필터·가능일 편집은 건드리지 않는다.
+  //   실패는 기존 월 조회 실패 정책 그대로다(DU213 — 미완결 자료를 현재 사실로 두지 않는다).
+  static const Duration _freshFor = Duration(minutes: 1);
+  late final TabRevisitWatch _revisit = TabRevisitWatch(onRevisit: _onRevisit);
+  DateTime? _scheduleLoadedAt;
+  Object? _revAtLoad;
+  String? _loadedUid;
+  DateTime _now() => (widget.clock ?? DateTime.now)();
+
+  void _markFresh(String uid, Object? rev) {
+    _scheduleLoadedAt = _now();
+    _revAtLoad = rev;
+    _loadedUid = uid;
+  }
+
+  void _onRevisit() {
+    if (!mounted || _isLoading || _monthLoading) return;
+    final uid = context.read<UserProvider>().currentUser?.uid;
+    if (uid == null) return;
+    if (_loadedUid != null && uid != _loadedUid) {
+      _loadApplications();
+      return;
+    }
+    if (_loadError != null || _attError != null) {
+      _loadMonthlyAttendances(_focusedDay);
+      return;
+    }
+    final at = _scheduleLoadedAt;
+    final now = _now();
+    final stale = at == null ||
+        now.difference(at) >= _freshFor ||
+        FormatHelper.toKstDate(now) != FormatHelper.toKstDate(at) ||
+        _reads.dataRevision?.call(uid) != _revAtLoad;
+    if (stale) _loadMonthlyAttendances(_focusedDay, quiet: true);
+  }
 
   // 필터: ALL / CONFIRMED / PENDING
   String _selectedFilter = 'ALL';
@@ -145,6 +202,8 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   // ─── 월별 통계 캐시 (build()마다 재계산 방지) ─────────────
   int _cachedConfirmedCount = 0;
   int _cachedTotalIncome = 0;
+  /// [AUD-3 M3] 예상수입 합계에 넣지 못한 근무 수(약속 휴게 모름 · 월급 · 유형 모름 등).
+  int _cachedIncomeUnknown = 0;
   int _cachedActualDays = 0;
   int _cachedConfirmedIncome = 0;
   List<AttendanceModel> _cachedConfirmedWageRecords = []; // H2: getter 대신 캐시
@@ -158,8 +217,10 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     _cachedConfirmedCount  = CalendarHelper.getConfirmedCount(thisMonth);
     // [PREDEVICE-INCOME-NOSHOW] 근태를 함께 넘긴다 — NO_SHOW·결근으로 마감된
     //   날이 예상수입에 남지 않도록.
-    _cachedTotalIncome     = CalendarHelper.getTotalIncome(
+    final income = CalendarHelper.getTotalIncomeDetail(
         thisMonth, _focusedDay, attendances: attendances, now: DateTime.now());
+    _cachedTotalIncome     = income.total;
+    _cachedIncomeUnknown   = income.unknownShifts;
     _cachedActualDays      = CalendarHelper.getActualWorkDays(attendances, _focusedDay);
     _cachedConfirmedIncome = CalendarHelper.getConfirmedIncome(attendances, _focusedDay);
     // H2: 확정 급여 기록 — 월 기준으로 필터링 후 캐시
@@ -188,6 +249,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   @override
   void initState() {
     super.initState();
+    _revisit.attach();
     _selectedDay = DateTime(
       _focusedDay.year,
       _focusedDay.month,
@@ -202,17 +264,48 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   }
 
   @override
+  void dispose() {
+    _revisit.dispose();
+    super.dispose();
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _revisit.updateFrom(context);
+    final scope = UserTabScope.of(context);
     if (!_initialLoadStarted) {
       _initialLoadStarted = true;
+      // [PERF-L5 · 판정290 §7] 첫 생성(지연 생성 뒤 첫 방문)에 받은 날짜·달은 **첫 조회 전에** 동기로 반영한다.
+      //   예전에는 첫 조회를 먼저 출발시키고 postFrame 에서 다른 달로 옮겨 세대를 올렸다 — 첫 조회가 세대 검사에서
+      //   빠지며 `_isLoading` 을 끄지 못해 화면이 '일정을 불러오고 있어요'에 갇혔다(LOCAL 재현 L5S-1).
+      //   이제 첫 조회가 처음부터 그 달을 읽는다(조회 1벌). 소비(clear)만 postFrame 에서 한다.
+      final firstDate = scope?.pendingScheduleDate;
+      final clearFirstDate = scope?.clearPendingScheduleDate;
+      final firstMonth = scope?.pendingScheduleMonth;
+      final clearFirstMonth = scope?.clearPendingScheduleMonth;
+      if (firstDate != null && clearFirstDate != null) {
+        final day = DateTime(firstDate.year, firstDate.month, firstDate.day);
+        _selectedFilter = 'ALL';
+        _focusedDay = day;
+        _selectedDay = day;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) clearFirstDate();
+        });
+      }
+      if (firstMonth != null && clearFirstMonth != null) {
+        // 첫 생성의 표시월은 이미 이번 달이다(날짜 지정이 있으면 그쪽이 이긴다 — root 가 둘을 같이 두지 않는다).
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) clearFirstMonth();
+        });
+      }
       _loadApplications();
+      return;
     }
     // pendingScheduleMonth: 홈 "근무 기록 보기" 경유 진입 시 현재 달로 리셋.
     // UserJobTab.didChangeDependencies의 pendingJobDate 소비 패턴과 동일.
     // clearFn을 여기서 캡처 — postFrameCallback 안에서 context 재호출 시
     // debug assertion이 터지므로 클로저로 미리 캡처한다.
-    final scope = UserTabScope.of(context);
     final pending = scope?.pendingScheduleMonth;
     if (pending != null) {
       final clearFn = scope!.clearPendingScheduleMonth;
@@ -230,6 +323,36 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         _loadMonthlyAttendances(_focusedDay);
       });
     }
+    // [판정285 §4·§5] 홈 선택일 「내 일정에서 보기」 — 그 날짜의 월·날짜·당일 목록 + 상태 필터 ALL.
+    //   이미 열렸던 탭(IndexedStack 이라 이전 선택·필터가 남아 있다)·다른 달·이전 확정/대기 필터 모두 여기서 맞춘다.
+    //   소비는 1회(clear) — 이후 일반 탭 전환은 사용자가 고른 상태를 그대로 둔다.
+    final pendingDate = scope?.pendingScheduleDate;
+    final clearDate = scope?.clearPendingScheduleDate;
+    if (pendingDate != null && clearDate != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        clearDate();
+        _showScheduleDate(pendingDate);
+      });
+    }
+  }
+
+  /// [판정285 §5] 외부에서 받은 날짜(KST 달력일 — 년·월·일 성분)로 달력·목록을 맞춘다.
+  ///   다른 달이면 그 달을 새로 읽는다(기존 월 이동과 같은 경로). 같은 달이면 색인·당일 목록만 다시 계산한다.
+  ///   가능일 편집 중이면 편집 내용을 버리지 않는다 — 날짜·필터만 맞추고 편집은 사용자가 끝낸다.
+  void _showScheduleDate(DateTime date) {
+    final day = DateTime(date.year, date.month, date.day);
+    final otherMonth = _focusedDay.year != day.year || _focusedDay.month != day.month;
+    setState(() {
+      _selectedFilter = 'ALL';
+      _focusedDay = day;
+      _selectedDay = day;
+      _recomputeStats();
+    });
+    if (otherMonth) {
+      _monthGeneration++;
+      _loadMonthlyAttendances(day);
+    }
   }
 
   // ─── 데이터 로드 ────────────────────────────────────────────
@@ -245,6 +368,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     // [DU213 C17·C19] 이 요청의 세대·표시월 — 늦게 온 응답·오류·toast 가 새 상태를 덮지 않는다.
     final gen = ++_monthGeneration;
     final month = DateTime(_focusedDay.year, _focusedDay.month);
+    final revAtStart = _reads.dataRevision?.call(uid);
     setState(() {
       _isLoading = true;
       _loadError = null;
@@ -252,17 +376,21 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       _monthLoading = true;
     });
 
-    // Phase 1: 지원 내역 먼저 로드 (1분 TTL 캐시 — 재방문 시 즉시 반환)
-    try {
-      final applications = await _reads.myApplications(uid);
-      if (!mounted || gen != _monthGeneration) return;
-      _applications = applications;
-      _attendanceMap = {};
-      _recomputeStats();
-      setState(() => _isLoading = false);
-    } catch (e) {
-      debugPrint('❌ 지원 내역 로드 실패: $e');
-      if (!mounted || gen != _monthGeneration) return;
+    // [PERF-L20] 지원 내역과 표시월 근태를 **같이 출발**시킨다(예전: 지원 → 근태 직렬 · 1 왕복).
+    //   반영 순서는 그대로 지원 먼저 — 달력·목록이 먼저 서고 근태가 뒤따른다. 두 실패는 각각 붙잡는다
+    //   (지원이 실패하면 근태 결과는 버린다 · 처리되지 않은 오류를 남기지 않는다).
+    final appsF = _reads
+        .myApplications(uid)
+        .then<Object?>((v) => v, onError: (Object e) => _ReadFail(e));
+    final attsF = _reads
+        .myMonthlyAttendances(userId: uid, year: month.year, month: month.month)
+        .then<Object?>((v) => v, onError: (Object e) => _ReadFail(e));
+
+    // Phase 1: 지원 내역 반영 (1분 TTL 캐시 — 재방문 시 즉시 반환)
+    final appsResult = await appsF;
+    if (!mounted || gen != _monthGeneration) return;
+    if (appsResult is _ReadFail) {
+      debugPrint('❌ 지원 내역 로드 실패: ${appsResult.error}');
       setState(() {
         _isLoading = false;
         _monthLoading = false;
@@ -276,33 +404,44 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       ToastHelper.showError('일정을 불러오지 못했어요');
       return;
     }
+    _applications = appsResult as List<ApplicationModel>;
+    _attendanceMap = {};
+    _recomputeStats();
+    setState(() => _isLoading = false);
 
-    // Phase 2: 출근 기록 로드 (2분 TTL 캐시)
+    // Phase 2: 출근 기록 반영 (2분 TTL 캐시 · 이미 출발해 있다)
     // [DU213 C18] 실패를 조용히 삼키지 않는다 — 요약은 '확인하지 못함', 목록 자리에 지속 안내·다시 시도.
-    try {
-      final attendances = await _reads.myMonthlyAttendances(
-        userId: uid,
-        year: month.year,
-        month: month.month,
-      );
-      if (!mounted || gen != _monthGeneration) return;
-      setState(() {
-        _attendanceMap = _buildAttendanceMap(attendances);
-        _recomputeStats();
-        _monthLoading = false;
-        _loadedMonth = month;
-      });
-    } catch (e) {
-      debugPrint('❌ 출근 기록 로드 실패: $e');
-      if (!mounted || gen != _monthGeneration) return;
+    final attsResult = await attsF;
+    if (!mounted || gen != _monthGeneration) return;
+    if (attsResult is _ReadFail) {
+      debugPrint('❌ 출근 기록 로드 실패: ${attsResult.error}');
       setState(() {
         _monthLoading = false;
         _attError = '출근 기록을 불러오지 못했습니다';
         _loadedMonth = null;
       });
+      return;
     }
+    _markFresh(uid, revAtStart); // [PERF-P9] 신선도 기준점
+    setState(() {
+      _attendanceMap = _buildAttendanceMap(attsResult as List<AttendanceModel>);
+      _recomputeStats();
+      _monthLoading = false;
+      _loadedMonth = month;
+    });
   }
 
+  /// [PERF-L20] 당겨서 새로고침 · 일정 카드 변경 뒤 — **달력을 그대로 둔 채**(`_monthLoading`) 표시월만 다시 읽는다.
+  ///   예전에는 `_loadApplications` 가 `_isLoading=true` 로 화면 전체를 로딩 표지로 바꿨고(달력이 사라졌다 돌아옴),
+  ///   1분/2분 TTL 캐시 때문에 방금 바뀐 서버 값을 못 볼 수 있었다 → 먼저 이 사용자의 두 캐시를 비운다.
+  ///   첫 조회 전(`_isLoading`)이나 첫 조회 실패 화면의 '다시 시도'는 기존 전체 경로(`_loadApplications`)다.
+  Future<void> _refreshSchedule() async {
+    if (!mounted) return;
+    if (_isLoading) return _loadApplications();
+    final uid = context.read<UserProvider>().currentUser?.uid;
+    if (uid != null) _reads.invalidateCaches?.call(uid);
+    await _loadMonthlyAttendances(_focusedDay);
+  }
   /// 월 이동 시 호출 — 출근 기록 + 지원 내역 모두 갱신
   ///
   /// [B03] 이전 코드는 _loadMonthlyAttendances에서 출근 기록만 재조회하고
@@ -310,19 +449,28 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   /// TTL 캐시(1분)가 있어 서버 부담이 거의 없고, 장기 지원서는 월별로
   /// isScheduledOnDate 판단이 달라지므로 _applications도 함께 갱신해야
   /// 통계·캘린더 인덱스가 올바르게 갱신된다.
-  Future<void> _loadMonthlyAttendances(DateTime focusedDay) async {
+  ///
+  /// [quiet] — [PERF-P9] 재방문 재검증. **같은 달**을 다시 읽는 동안 보이는 값·표식을 지우지 않는다
+  ///   (DU213 C17 은 다른 달로 옮길 때 이전 달 값을 숨기려는 규칙이다). 결과 반영·실패 처리는 일반 경로와 같다.
+  Future<void> _loadMonthlyAttendances(DateTime focusedDay, {bool quiet = false}) async {
     if (!mounted) return;
     final gen = ++_monthGeneration; // 빠른 전환 시 stale 배치 폐기용
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) return;
     final month = DateTime(focusedDay.year, focusedDay.month);
+    final revAtStart = _reads.dataRevision?.call(uid);
+    final sameShownMonth = _loadedMonth != null &&
+        _loadedMonth!.year == month.year &&
+        _loadedMonth!.month == month.month;
     // [DU213 C17] 새 표시월의 두 read 가 끝나기 전에는 이전 월 값·목록·표식을 보이지 않는다.
-    setState(() {
-      _monthLoading = true;
-      _loadError = null;
-      _attError = null;
-      _loadedMonth = null;
-    });
+    if (!(quiet && sameShownMonth)) {
+      setState(() {
+        _monthLoading = true;
+        _loadError = null;
+        _attError = null;
+        _loadedMonth = null;
+      });
+    }
     // 두 read 를 함께 보내고 실패를 각각 붙잡는다 — 먼저 끝난 실패가 처리되지 않은 채 남지 않게.
     final results = await Future.wait<Object?>([
       _reads
@@ -333,12 +481,13 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               userId: uid, year: month.year, month: month.month)
           .then<Object?>((v) => v, onError: (Object e) => _ReadFail(e)),
     ]);
-    if (!mounted || _monthGeneration != gen) return;
+    if (!mounted || _monthGeneration != gen) return; // stale — 새 세대의 로딩 상태를 끄지 않는다
     final apps = results[0];
     final atts = results[1];
     if (apps is _ReadFail) {
       debugPrint('❌ 월별 지원 내역 로드 실패: ${apps.error}');
       setState(() {
+        _isLoading = false; // [PERF-L5 · 판정290 §7] 현재 세대의 실패도 첫 로딩을 끝낸다
         _monthLoading = false;
         _loadError = '일정을 불러오지 못했습니다.';
         _applications = [];
@@ -351,6 +500,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     if (atts is _ReadFail) {
       debugPrint('❌ 월별 출근 기록 로드 실패: ${atts.error}');
       setState(() {
+        _isLoading = false; // [PERF-L5] 현재 세대 실패
         _monthLoading = false;
         _attError = '출근 기록을 불러오지 못했습니다';
         // 근태를 모르는 카드·표식(미완결 자료)은 노출하지 않는다 — 화면 로컬 자료만 비운다.
@@ -361,7 +511,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       ToastHelper.showError('출근 기록을 불러오지 못했어요');
       return;
     }
+    _markFresh(uid, revAtStart); // [PERF-P9] 신선도 기준점
     setState(() {
+      _isLoading = false; // [PERF-L5] 현재 세대 성공 — 이 함수가 지원 목록도 다시 읽었다
       _applications = apps as List<ApplicationModel>;
       _attendanceMap = _buildAttendanceMap(atts as List<AttendanceModel>);
       _recomputeStats();
@@ -573,14 +725,8 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   ///
   /// ⚠️ CalendarHelper.getActualWorkDays의 uniqueDates 키 포맷('year-month-day' 미패딩)과
   ///    스케줄 목록 조회 키 포맷이 이 포맷과 일치해야 함 — 변경 시 세 곳 동시 수정 필요.
-  Map<String, AttendanceModel> _buildAttendanceMap(List<AttendanceModel> list) {
-    final map = <String, AttendanceModel>{};
-    for (final att in list) {
-      final key = '${att.applicationId}_${att.workDate.year}-${att.workDate.month}-${att.workDate.day}';
-      map[key] = att;
-    }
-    return map;
-  }
+  Map<String, AttendanceModel> _buildAttendanceMap(List<AttendanceModel> list) =>
+      MyScheduleScreen.buildAttendanceMap(list);
 
   // ─── Build ───────────────────────────────────────────────────
 
@@ -788,7 +934,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         (_selectedDay != null && _selectedDayEvents.isEmpty);
 
     return RefreshIndicator(
-      onRefresh: _loadApplications,
+      onRefresh: _refreshSchedule, // [PERF-L20] 달력 유지 + TTL 무효화
       color: Theme.of(context).primaryColor,
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -867,8 +1013,20 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
             },
             onPageChanged: (focusedDay) {
               _monthGeneration++;
+              if (_isEditMode) {
+                // [impl_9 발견·수정 · 근본 원인] 세대를 올리면 진행 중이던 조회는 stale 로 빠지며 **자기가 켠 로딩을 끄지 않는다**.
+                //   편집 중에는 새 조회를 시작하지 않으므로 그 로딩을 끌 주인이 없어 `_monthLoading` 이 true 로 남았고,
+                //   편집을 끝낼 때 `_ensureMonthLoaded` 가 '조회 중'이라 보고 건너뛰어 목록이 '월 일정을 확인하고 있어요'에 갇혔다.
+                //   규칙: 세대를 올리는 곳은 새 조회를 시작하거나(그 조회가 로딩을 끝낸다) 로딩 표지를 직접 내린다.
+                setState(() {
+                  _focusedDay = focusedDay;
+                  _monthLoading = false;
+                  _isLoading = false;
+                });
+                return;
+              }
               setState(() => _focusedDay = focusedDay);
-              if (!_isEditMode) _loadMonthlyAttendances(focusedDay);
+              _loadMonthlyAttendances(focusedDay);
             },
           ),
 
@@ -1370,7 +1528,13 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           //   아니면 수입 두 항목만 세로로 쌓는다. 글자 축소·말줄임·단위 제거는 하지 않는다.
           LayoutBuilder(
             builder: (context, constraints) {
-              final expected = unknown ?? '${_fmt.format(_cachedTotalIncome)}원';
+              // [AUD-3 M3 · 판정296] 계산할 수 없는 근무가 있으면 부분합·0원을 전체처럼 말하지 않는다.
+              final expected = unknown ??
+                  // [AUD-4 H3] 지원서를 200 건 상한까지만 읽었으면 일부가 빠졌을 수 있다 — 같은 부분합 표기.
+                  ((_cachedIncomeUnknown > 0 || _applications.length >= 200)
+                      ? ExpectedWageText.partialTotal(
+                          _cachedTotalIncome, _cachedIncomeUnknown + (_applications.length >= 200 ? 1 : 0))
+                      : '${_fmt.format(_cachedTotalIncome)}원');
               final confirmed = unknown ?? '${_fmt.format(_cachedConfirmedIncome)}원';
               final expectedItem = _kpiItem(
                 '예상수입',
@@ -1419,6 +1583,15 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               );
             },
           ),
+          // [AUD-3 M3] 계산할 수 없는 근무는 예상수입에 0 으로 넣지 않고 건수로 말한다.
+          if (unknown == null && _cachedIncomeUnknown > 0) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+            Text(
+              TextLayout.keepWords('금액 확인 필요 $_cachedIncomeUnknown건 · 예상수입에 넣지 않았어요'),
+              semanticsLabel: '금액 확인 필요 $_cachedIncomeUnknown건 · 예상수입에 넣지 않았어요',
+              style: ResponsiveHelper.tinyStyle(context, color: AppColors.textSecondary),
+            ),
+          ],
         ],
       ),
     );
@@ -1630,7 +1803,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
               child: ScheduleCard(
                 application: app,
                 attendance: attendance,
-                onChanged: _loadApplications,
+                onChanged: _refreshSchedule, // [PERF-L20] 카드 변경 뒤에도 달력 유지
                 selectedDay: _selectedDay,
               ),
             );

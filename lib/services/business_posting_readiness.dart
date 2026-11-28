@@ -600,6 +600,17 @@ class FirstPostingReadinessSnapshot {
 
   bool get isResolved => status == FirstPostingReadinessStatus.resolved;
 
+  /// [PERF-L16 근본 수정] **화면에 그려도 되는 값.** resolved 의 값, 또는 다시 세는 중(loading)인데
+  ///   같은 계정·같은 사업장 집합의 이전 값을 들고 있으면 그 값(저장소는 scope 가 같을 때만 이전 값을
+  ///   넘긴다 — `ensureLoaded`). idle · failed · 이전 값 없는 loading 은 null(모름).
+  ///   화면마다 `isResolved ? value : null` 을 따로 쓰면 앱 복귀의 force 재조회 한 번에 아는 값이
+  ///   '모름' 으로 바뀌어 화면이 통째로 바뀌었다(공고 탭 목록 소실). 표시 판단은 이 getter 하나로 한다.
+  ///   실행 판정(값이 **이번에** 확정됐는가)은 여전히 [isResolved] 를 쓴다.
+  FirstPostingReadiness? get displayValue => isResolved ||
+          (status == FirstPostingReadinessStatus.loading && value != null)
+      ? value
+      : null;
+
   /// 지금 이 사용자에게 이 값을 보여도 되는가.
   bool matches(String? currentUid, String? currentScopeKey) =>
       uid != null && uid == currentUid && scopeKey == currentScopeKey;
@@ -619,6 +630,11 @@ class FirstPostingReadinessStore {
           const FirstPostingReadinessSnapshot.idle());
 
   static Future<void>? _inFlight;
+
+  /// [PERF impl_22 · Q31] 세는 차례 번호 — 새 scope 로 다시 세거나 [reset] 하면 올라간다.
+  ///   앞 차례의 늦은 결과가 지금 값을 덮지 않게 하고(publish/markFailed 둘 다), 앞 차례의 정리가
+  ///   지금 차례의 [_inFlight] 를 지우지 않게 한다.
+  static int _generation = 0;
 
   /// 여러 사업장을 한 문자열로 — 집합이 바뀌면 판정도 바뀐다.
   static String scopeKeyOf(Iterable<String> businessIds) {
@@ -649,6 +665,7 @@ class FirstPostingReadinessStore {
 
   /// 로그아웃·계정 전환·사업장 전환처럼 이전 판정을 이어 쓰면 안 되는 경계.
   static void reset() {
+    _generation++; // 진행 중인 세기의 결과는 이제 버린다(로그아웃 뒤 이전 계정 값이 되살아나지 않게)
     _inFlight = null;
     current.value = const FirstPostingReadinessSnapshot.idle();
   }
@@ -681,18 +698,29 @@ class FirstPostingReadinessStore {
       value: snap.matches(uid, scopeKey) ? snap.value : null,
     );
 
+    // [PERF impl_22 · Q31 뿌리] 예전 결함 2:
+    //   ① resolve 가 **동기로** 던지면 아래 async 본문이 반환 전에 끝나(finally 가 먼저 돈다) 끝난 future 가
+    //      _inFlight 에 남았다 → 같은 scope 의 다음 요청이 그 끝난 future 에 합류해 다시 세지 않았다(실패가 굳음).
+    //   ② finally 가 무조건 비워, 앞 scope 의 늦은 정리가 새 scope 의 진행 중 세기를 지웠고, 앞 scope 의 늦은
+    //      결과가 새 scope 판정을 덮었다.
+    //   → 차례 번호가 같을 때만 결과를 쓰고, 자기 future 일 때만 비우고, 이미 끝났으면 걸어 두지 않는다.
+    final gen = ++_generation;
+    var settled = false;
+    Future<void>? self;
     final future = () async {
       try {
         final value = await resolve();
-        publish(value, uid: uid, scopeKey: scopeKey);
+        if (gen == _generation) publish(value, uid: uid, scopeKey: scopeKey);
       } catch (e) {
         debugPrint('❌ [readiness] 준비 상태 조회 실패: $e');
-        markFailed(uid: uid, scopeKey: scopeKey);
+        if (gen == _generation) markFailed(uid: uid, scopeKey: scopeKey);
       } finally {
-        _inFlight = null;
+        settled = true;
+        if (self != null && identical(_inFlight, self)) _inFlight = null;
       }
     }();
-    _inFlight = future;
+    self = future;
+    if (!settled) _inFlight = future;
     return future;
   }
 }

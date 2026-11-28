@@ -21,6 +21,8 @@ import '../../widgets/app_select_field.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../utils/loading_state_mixin.dart';
+import '../../utils/keep_content_refresh.dart';
+import '../../widgets/common/keep_content_body.dart';
 
 /// 배지 관리 화면
 class BadgeSettingsScreen extends StatefulWidget {
@@ -34,7 +36,7 @@ class BadgeSettingsScreen extends StatefulWidget {
 }
 
 class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
-    with LoadingStateMixin {
+    with LoadingStateMixin, KeepContentRefreshMixin {
   final _firestore = FirebaseFirestore.instance;
   List<BadgeModel> _badges = [];
   List<BadgeModel> _trustBadges = [];
@@ -71,56 +73,67 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
   }
 
   Future<void> _loadBadges() async {
-    setLoading(true);
+    // [L48 · impl_28] 처리 뒤 다시 읽기는 목록을 유지한다(잠금 + 얇은 진행 표시 · KeepContentRefreshMixin) — 첫 읽기·실패 화면만 전체 로딩 · 늦은 옛 응답 착지 0.
+    //   결과는 지역 값에 모았다가 최신 읽기일 때만 화면 목록(_badges)에 앉힌다(예전에는 기다리는 도중 바로 바꿨다).
+    final t = beginContentLoad(canKeep: _loadError == null);
+    if (!t.keep) setLoading(true);
     if (mounted) setState(() => _loadError = null);
+    var shown = false;
     try {
+      List<BadgeModel> badges;
       if (widget.load != null) {
-        _badges = await widget.load!();
-        _groupBadges();
-        return;
-      }
-      final snapshot = await _firestore
-          .collection('badges')
-          .orderBy('order')
-          .get();
-      
-      if (snapshot.docs.isEmpty) {
-        // 기본 배지 생성
-        _badges = BadgeModel.defaultBadges();
-        final batch = _firestore.batch();
-        for (final badge in _badges) {
-          batch.set(_firestore.collection('badges').doc(badge.id), badge.toMap());
-        }
-        await batch.commit();
+        badges = await widget.load!();
       } else {
-        _badges = snapshot.docs.map((doc) {
-          try { return BadgeModel.fromMap(doc.data(), doc.id); } catch (_) { return null; }
-        }).whereType<BadgeModel>().toList();
+        final snapshot = await _firestore
+            .collection('badges')
+            .orderBy('order')
+            .get();
 
-        // 기본 배지 중 파싱 성공한 항목에 없는 ID만 추가 (손상 문서는 기존 ID 보유 상태로 방치하지 않음)
-        final existingIds = _badges.map((b) => b.id).toSet();
-        final missing = BadgeModel.defaultBadges()
-            .where((b) => !existingIds.contains(b.id))
-            .toList();
-        if (missing.isNotEmpty) {
+        if (snapshot.docs.isEmpty) {
+          // 기본 배지 생성
+          badges = BadgeModel.defaultBadges();
           final batch = _firestore.batch();
-          for (final badge in missing) {
+          for (final badge in badges) {
             batch.set(_firestore.collection('badges').doc(badge.id), badge.toMap());
           }
           await batch.commit();
-          _badges = [..._badges, ...missing]..sort((a, b) => a.order.compareTo(b.order));
-          debugPrint('✅ 누락 기본 배지 ${missing.length}개 동기화: ${missing.map((b) => b.id).join(', ')}');
+        } else {
+          badges = snapshot.docs.map((doc) {
+            try { return BadgeModel.fromMap(doc.data(), doc.id); } catch (_) { return null; }
+          }).whereType<BadgeModel>().toList();
+
+          // 기본 배지 중 파싱 성공한 항목에 없는 ID만 추가 (손상 문서는 기존 ID 보유 상태로 방치하지 않음)
+          final existingIds = badges.map((b) => b.id).toSet();
+          final missing = BadgeModel.defaultBadges()
+              .where((b) => !existingIds.contains(b.id))
+              .toList();
+          if (missing.isNotEmpty) {
+            final batch = _firestore.batch();
+            for (final badge in missing) {
+              batch.set(_firestore.collection('badges').doc(badge.id), badge.toMap());
+            }
+            await batch.commit();
+            badges = [...badges, ...missing]..sort((a, b) => a.order.compareTo(b.order));
+            debugPrint('✅ 누락 기본 배지 ${missing.length}개 동기화: ${missing.map((b) => b.id).join(', ')}');
+          }
         }
       }
+      if (!isCurrentContentLoad(t.gen)) return;
+      _badges = badges;
       _groupBadges();
+      shown = true;
     } catch (e) {
       debugPrint('❌ 배지 로드 실패: $e');
+      if (!isCurrentContentLoad(t.gen)) return;
       // [.61] 예전에는 기본 배지를 현재 설정처럼 보였다(그 위에서 수정·삭제 가능). 못 읽은 것은 못 읽었다고 말한다.
       _badges = [];
       _groupBadges();
-      if (mounted) setState(() => _loadError = e);
+      setState(() => _loadError = e);
     } finally {
-      if (mounted) setLoading(false);
+      if (isCurrentContentLoad(t.gen)) {
+        setLoading(false);
+        finishContentLoad(t.gen, shown: shown);
+      }
     }
   }
 
@@ -269,7 +282,9 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
     return AppPageScaffold(
       title: '배지 관리',
       // [DU503 · 감사48 (가)] 떠 있는 '배지 추가' 버튼(FAB)을 두지 않는다 — 목록 머리의 글자 행동으로 옮겼다(아래 ListView).
-      body: isLoading
+      body: KeepContentBody(
+        refreshing: refreshingKeep,
+        child: isLoading
           ? const LoadingWidget()
           : _loadError != null
               ? AppEmptyState(
@@ -384,6 +399,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
                 SizedBox(height: ResponsiveHelper.spacing(context, 80)), // FAB 공간
               ],
             ),
+      ),
     );
   }
 

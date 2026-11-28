@@ -3,7 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:provider/provider.dart';
+
+import '../../providers/user_provider.dart';
 import '../../services/fcm_service.dart';
+import '../../utils/perf_log.dart';
 import '../../widgets/common/app_bottom_tab_bar.dart';
 import 'my_schedule_screen.dart';
 import 'user_home_screen.dart';
@@ -33,13 +37,31 @@ class UserRootScreen extends StatefulWidget {
 class _UserRootScreenState extends State<UserRootScreen> {
   int _currentIndex = 0;
 
+  /// [PERF-L5 · 판정289 §5] 실제로 열어 본 탭만 만든다(관리자 셸 R8-P1A 와 같은 방식).
+  ///
+  ///   IndexedStack 은 자식을 전부 만든다 — TickerMode 는 애니메이션만 멈출 뿐 생성을 막지 않는다.
+  ///   그래서 첫 진입에 일자리·내 일정·내 정보의 initState 가 홈과 같은 프레임에 돌았고, 보이지 않는 탭의
+  ///   조회(일자리 페이지·일정 월근태 등)가 홈 첫 조회와 같은 대역을 나눠 썼다.
+  ///   방문 전 자리에는 아무것도 하지 않는 위젯을 두고, 한 번 방문한 탭은 다시 빼지 않는다(상태 보존).
+  ///   첫 postFrame 에 나머지를 몰아 만들지 않는다. 유휴 미리 생성(2단계)은 기본으로 쓰지 않는다 —
+  ///   기기에서 첫 방문 지연을 잰 뒤 필요한 탭 하나씩·취소 가능하게만 검토한다(준비 노트 §2.2).
+  final Set<int> _visitedTabs = <int>{0};
+
   @override
   void initState() {
     super.initState();
     // [Phase 9D] cold-start pending payload 소비
-    // role root가 실제 마운트된 후 첫 프레임에서 1회 실행 — back stack이 올바르게 구성된 상태에서 navigate.
+    // role root가 실제 마운트된 후 1회 실행 — back stack이 올바르게 구성된 상태에서 navigate.
+    PerfLog.mark('root.user.init');
+    // [PERF-L2 · 판정289 §2] 홈은 FCM 초기화를 기다리지 않고 열린다 — payload 가 아직 저장 전일 수 있다.
+    //   준비(cold-start ready) 완료 뒤 mounted·현재 uid·세션·버전을 다시 보고 1회 소비한다.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      FCMService().consumePendingColdStartPayload();
+      if (!mounted) return;
+      final uid = context.read<UserProvider>().currentUser?.uid;
+      unawaited(FCMService().consumeColdStartPayloadWhenReady(
+        uid: uid,
+        isActive: () => mounted && context.read<UserProvider>().currentUser?.uid == uid,
+      ));
     });
   }
 
@@ -72,7 +94,10 @@ class _UserRootScreenState extends State<UserRootScreen> {
     if (_currentIndex == index) {
       _popTab(index); // [DU1 R8-TAB-RESELECT] 화면 PopScope 를 따른다
     } else {
-      setState(() => _currentIndex = index);
+      setState(() {
+        _currentIndex = index;
+        _visitedTabs.add(index); // [PERF-L5] 방문 시 생성
+      });
     }
   }
 
@@ -84,6 +109,7 @@ class _UserRootScreenState extends State<UserRootScreen> {
     }
     setState(() {
       _currentIndex = index;
+      _visitedTabs.add(index); // [PERF-L5] 첫 방문이면 이 프레임에 생기며 날짜를 첫 조회 전에 받는다
       _pendingJobDate = date;
     });
   }
@@ -103,8 +129,30 @@ class _UserRootScreenState extends State<UserRootScreen> {
     }
     setState(() {
       _currentIndex = 2;
+      _visitedTabs.add(2); // [PERF-L5]
       _pendingScheduleMonth = DateTime.now();
     });
+  }
+
+  /// [판정285 §4·§5] 홈 선택일 → 일정 탭을 그 날짜로. 이미 일정 탭이면 탭 안 스택을 먼저 비운다(재탭과 같은 규칙).
+  ///   홈 Navigator 에 일정 화면을 쌓지 않는다(탭 전환). 날짜는 MyScheduleScreen 이 소비한다.
+  DateTime? _pendingScheduleDate;
+  void _switchToScheduleDate(DateTime date) {
+    if (_currentIndex == 2) {
+      _popTab(2); // [DU1 R8-TAB-RESELECT]
+    }
+    setState(() {
+      _currentIndex = 2;
+      _visitedTabs.add(2); // [PERF-L5]
+      _pendingScheduleMonth = null; // 날짜 지정이 이긴다 — 현재 달 리셋과 겹치지 않게
+      _pendingScheduleDate = date;
+    });
+  }
+
+  void _clearPendingScheduleDate() {
+    if (_pendingScheduleDate != null) {
+      setState(() => _pendingScheduleDate = null);
+    }
   }
 
   /// MyScheduleScreen이 pendingScheduleMonth를 소비한 후 호출.
@@ -112,6 +160,12 @@ class _UserRootScreenState extends State<UserRootScreen> {
     if (_pendingScheduleMonth != null) {
       setState(() => _pendingScheduleMonth = null);
     }
+  }
+
+  /// [PERF-L5] 방문 전에는 자식을 만들지 않는다 — root 를 빌더로 받아 방문 시점에만 평가한다.
+  Widget _lazyTab(int index, Widget Function() root) {
+    if (!_visitedTabs.contains(index)) return const SizedBox.shrink();
+    return _buildTabNavigator(index, root());
   }
 
   Widget _buildTabNavigator(int index, Widget root) {
@@ -148,15 +202,19 @@ class _UserRootScreenState extends State<UserRootScreen> {
         pendingScheduleMonth: _pendingScheduleMonth,
         clearPendingScheduleMonth: _clearPendingScheduleMonth,
         switchToScheduleNow: _switchToScheduleNow,
+        switchToScheduleDate: _switchToScheduleDate,
+        pendingScheduleDate: _pendingScheduleDate,
+        clearPendingScheduleDate: _clearPendingScheduleDate,
         child: Scaffold(
           body: IndexedStack(
           index: _currentIndex,
           children: [
             // [DU581c] 숨은 탭은 TickerMode 를 끈다 — 숨은 탭에 붙은 출퇴근 서명 안내가 셸 띠를 중립으로 낮추지 않게(판정171 §4 DU581b · 출퇴근 _SignNoticeHold 가 TickerMode 를 본다). 숨은 탭의 애니메이션은 멈췄다가 탭이 보이면 다시 돈다.
             TickerMode(enabled: _currentIndex == 0, child: _buildTabNavigator(0, const UserHomeScreen())),
-            TickerMode(enabled: _currentIndex == 1, child: _buildTabNavigator(1, const UserJobTab())),
-            TickerMode(enabled: _currentIndex == 2, child: _buildTabNavigator(2, const MyScheduleScreen())),
-            TickerMode(enabled: _currentIndex == 3, child: _buildTabNavigator(3, const UserMyTab())),
+            // [PERF-L5] 나머지 셋은 방문 시 생성 — 숨은 방문 탭의 TickerMode(false)는 그대로.
+            TickerMode(enabled: _currentIndex == 1, child: _lazyTab(1, () => const UserJobTab())),
+            TickerMode(enabled: _currentIndex == 2, child: _lazyTab(2, () => const MyScheduleScreen())),
+            TickerMode(enabled: _currentIndex == 3, child: _lazyTab(3, () => const UserMyTab())),
           ],
         ),
         bottomNavigationBar: Column(

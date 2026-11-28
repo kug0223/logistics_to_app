@@ -7,6 +7,7 @@ import '../../../models/core/slot_model.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/text_layout.dart';
 import '../../../utils/format_helper.dart';
+import '../../../utils/expected_daily_wage.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../theme/app_colors.dart';
@@ -18,6 +19,7 @@ import '../../common/loading_widget.dart';
 import '../../../screens/common/job_posting_screen.dart';
 import '../../dialogs/apply/apply_work_dialog.dart';
 import '../../dialogs/apply/application_relation.dart';
+import '../../../utils/action_guard.dart';
 
 /// 지원자용 TO 카드
 ///
@@ -291,14 +293,29 @@ class _UserTOCardState extends State<UserTOCard> {
     return FormatHelper.formatDateCompact(to.date);
   }
 
-  String get _wageLabel =>
-      widget.to.wageType != null
-          ? FormatHelper.getWageTypeLabel(widget.to.wageType!)
-          : '급여';
+  // [F293-WAGE-01] 이 카드가 대표하는 업무 집합(to.workDetails — 기존 min/max 와 같은 집합) 각각을 환산한 범위.
+  ExpectedWageRange get _expected => ExpectedWageRange.ofWorkDetails(widget.to.workDetails);
+
+  /// 하루 예상 주금액 — 시급 업무가 있을 때만(아니면 null · 기존 표시).
+  String? get _expectedDaily => ExpectedWageText.dailyRange(_expected);
+
+  String get _wageLabel {
+    final r = _expected;
+    // 시급·다른 유형이 섞이면 첫 업무 유형으로 전체를 부르지 않는다.
+    if (r.mixed) return '급여';
+    if (_expectedDaily != null) return ExpectedWageText.rateRange(r) ?? '시급';
+    return widget.to.wageType != null
+        ? FormatHelper.getWageTypeLabel(widget.to.wageType!)
+        : '급여';
+  }
 
   String get _wageAmount {
     final to = widget.to;
+    final daily = _expectedDaily;
+    if (daily != null) return daily;
     if (to.maxWage == null) return '-';
+    // [C294-WAGE-C] 누락 단가(모델 0)를 '0원' 으로 말하지 않는다.
+    if (to.maxWage! <= 0) return ExpectedWageText.wageUnknown;
     if (to.minWage == to.maxWage) return FormatHelper.formatWage(to.maxWage!);
     return '~${FormatHelper.formatNumber(to.maxWage!)}원';
   }
@@ -428,10 +445,15 @@ class _UserTOCardState extends State<UserTOCard> {
   /// 여러 업무 급여가 다르면 최솟값 기준 "70,000원~"
   String get _compactWageAmount {
     final to = widget.to;
+    final daily = _expectedDaily;
+    if (daily != null) return daily;
     if (to.maxWage == null) return '-';
+    // [C294-WAGE-C] 누락 단가(모델 0)를 '0원' · '0원~' 으로 말하지 않는다.
+    if (to.maxWage! <= 0) return ExpectedWageText.wageUnknown;
     if (to.minWage == null || to.minWage == to.maxWage) {
       return FormatHelper.formatWage(to.maxWage!);
     }
+    if (to.minWage! <= 0) return '~${FormatHelper.formatNumber(to.maxWage!)}원';
     return '${FormatHelper.formatNumber(to.minWage!)}원~';
   }
 
@@ -655,9 +677,19 @@ class _UserTOCardState extends State<UserTOCard> {
                   // [DU465] B(320 · 2.0)에서 급여가 '12,00…'로 잘렸다 — Flexible + Spacer 가 남는 폭을 반씩 나눴다.
                   //   Expanded 로 남는 폭을 모두 쓰고, 말줄임 대신 쉼표 뒤에서만 줄바꿈(읽기는 원문). 모집 현황은 오른쪽 끝 그대로.
                   Expanded(
-                    child: Text(
-                      TextLayout.amount(_compactWageAmount),
-                      semanticsLabel: _compactWageAmount,
+                    child: Text.rich(
+                      TextSpan(children: [
+                        TextSpan(text: TextLayout.amount(_compactWageAmount)),
+                        // [F293-WAGE-01] 하루 예상 금액이면 카드의 짧은 말(예상·세전).
+                        if (_expected.complete)
+                          TextSpan(
+                            text: '  ${ExpectedWageText.shortNote}',
+                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary),
+                          ),
+                      ]),
+                      semanticsLabel: _expected.complete
+                          ? '$_compactWageAmount ${ExpectedWageText.shortNote}'
+                          : _compactWageAmount,
                       style: ResponsiveHelper.subtitleStyle(context).copyWith(
                         fontWeight: FontWeight.w700,
                         // [DU577b] 공고 목록 카드 급여 금액 = brand(판정170 §5 · BL-04 · 실제 소비 compact 카드) — 금액 계산 · 단위 · 줄바꿈 그대로.
@@ -1024,8 +1056,31 @@ class _UserTOCardState extends State<UserTOCard> {
     final recruit = _recruitText;
     final pill = _pill(context, _wageLabel, AppColors.brandSurface, AppColors.brand,
         border: AppColors.brandSurface);
-    final amount = Text(
-      _wageAmount,
+    // [F294-WAGE-01 · 판정294 관측 한계] 금액 글(하루 예상 범위 · '급여 확인 필요' · '업무별 급여 확인')은 말줄임하지 않는다.
+    //   한 줄 배치는 금액 전체가 실제로 들어갈 때만(실측) — 아니면 두 줄 배치에서 금액이 쉼표 뒤에서만 줄을 바꾼다.
+    final amountStyle = ResponsiveHelper.subtitleStyle(context).copyWith(
+      color: AppColors.brand,
+      fontWeight: FontWeight.bold,
+    );
+    final noteStyle = ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary);
+    final wrapAmount = Text.rich(
+      TextSpan(children: [
+        TextSpan(text: TextLayout.amount(_wageAmount)),
+        if (_expected.complete) TextSpan(text: '  ${ExpectedWageText.shortNote}', style: noteStyle),
+      ]),
+      semanticsLabel: _expected.complete ? '$_wageAmount ${ExpectedWageText.shortNote}' : _wageAmount,
+      style: amountStyle,
+    );
+    final amount = Text.rich(
+      TextSpan(children: [
+        TextSpan(text: _wageAmount),
+        // [F293-WAGE-01] 하루 예상 금액이면 카드의 짧은 말(예상·세전).
+        if (_expected.complete)
+          TextSpan(
+            text: '  ${ExpectedWageText.shortNote}',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary),
+          ),
+      ]),
       style: ResponsiveHelper.subtitleStyle(context).copyWith(
         color: AppColors.brand,
         fontWeight: FontWeight.bold,
@@ -1047,12 +1102,36 @@ class _UserTOCardState extends State<UserTOCard> {
             ),
           ];
     return LayoutBuilder(builder: (_, box) {
-      if (TextLayout.fits(context, box.maxWidth, 300)) {
+      final base = DefaultTextStyle.of(context).style;
+      final scaler = MediaQuery.textScalerOf(context);
+      double natural(String s, TextStyle st) {
+        final tp = TextPainter(
+            text: TextSpan(text: s, style: base.merge(st)), textDirection: TextDirection.ltr, textScaler: scaler, maxLines: 1)
+          ..layout();
+        final w = tp.width;
+        tp.dispose();
+        return w;
+      }
+
+      final pillW = natural(_wageLabel, ResponsiveHelper.tinyStyle(context, fontWeight: FontWeight.bold)) +
+          ResponsiveHelper.spacing(context, 7) * 2 + 2;
+      final amountW = natural(_wageAmount, amountStyle) +
+          (_expected.complete ? natural('  ${ExpectedWageText.shortNote}', noteStyle) : 0);
+      final peopleW = recruit == null
+          ? 0.0
+          : ResponsiveHelper.spacing(context, 6) +
+              ResponsiveHelper.iconSize(context, 13) +
+              natural(recruit, ResponsiveHelper.tinyStyle(context));
+      // 한 줄에 금액 전체 + 인원 + 요약 최소 폭(40 · 배율) + 여유 4 가 들어갈 때만 한 줄.
+      final oneLine = pillW + ResponsiveHelper.spacing(context, 6) + amountW + peopleW +
+              (hint != null ? 40 * scaler.scale(14) / 14 : 0) + 4 <=
+          box.maxWidth;
+      if (TextLayout.fits(context, box.maxWidth, 300) && oneLine) {
         return Row(
           children: [
             pill,
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-            Flexible(child: amount),
+            Flexible(flex: 0, child: amount),
             if (hint != null) ...[
               Padding(
                 padding: EdgeInsets.symmetric(
@@ -1078,7 +1157,10 @@ class _UserTOCardState extends State<UserTOCard> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [pill, SizedBox(width: ResponsiveHelper.spacing(context, 6)), Flexible(child: amount)]),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [pill, SizedBox(width: ResponsiveHelper.spacing(context, 6)), Flexible(child: wrapAmount)],
+          ),
           if (hint != null || recruit != null) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Row(
@@ -1662,11 +1744,21 @@ class _UserTOCardState extends State<UserTOCard> {
     // flex TO는 슬롯 데이터 기반이지만 상세 화면은 마스터 workDetails 사용
     var details = _workDetails;
     if (details.isEmpty && !widget.to.isFlexType) {
+      // [impl_21 · 2026-11-26] 같은 카드의 지원 경로(`_openApplyDialogLocked`)와 같은 꼴로 맞춘다.
+      //   예전에는 try 없이 `await _fetch()` 를 불러 조회가 던지면 `_isApplyLoading` 이 true 로 남아
+      //   '지원하기' 자리가 끝없는 진행 표시가 됐고(오류도 처리되지 않음), 성공해도 반환값 대신
+      //   부모가 다시 그려 주기 전의 `widget.workDetails`(빈 목록)를 다시 읽어 상세로 가지 못했다.
       setState(() => _isApplyLoading = true);
-      await _fetch();
+      try {
+        details = await _fetch();
+      } catch (e) {
+        debugPrint('❌ [UserTOCard] 상세 이동 전 근무 정보 조회 실패: $e');
+        if (mounted) ToastHelper.showError('근무 정보를 불러오는데 실패했습니다.');
+        return;
+      } finally {
+        if (mounted) setState(() => _isApplyLoading = false);
+      }
       if (!mounted) return;
-      setState(() => _isApplyLoading = false);
-      details = _workDetails;
       if (details.isEmpty) return;
     } else if (details.isEmpty && widget.to.isFlexType) {
       // flex TO: 마스터 TO workDetails (슬롯 없어도 이동 가능)
@@ -1682,7 +1774,12 @@ class _UserTOCardState extends State<UserTOCard> {
   }
 
   /// 하단 "지원하기" 버튼 — flex TO면 전체 슬롯 다이얼로그, contract TO면 단일 다이얼로그
-  Future<void> _openApplyDialog() async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_openApplyDialogLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _openApplyDialog() =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('userToCard.openApply', this), () => _openApplyDialogLocked());
+
+  Future<void> _openApplyDialogLocked() async {
     if (_isApplyLoading) return; // 연타 방지
     if (widget.to.isFlexType) {
       await _openApplyDialogAllSlots();
@@ -1899,6 +1996,30 @@ class _WorkItem extends StatelessWidget {
     );
   }
 
+  /// [F293-WAGE-01] 펼친 업무 행의 급여 — 시급 업무는 '하루 예상 22,000원'(주) + '시급 11,000원'(보조) · 계산 불가는
+  ///   '예상 금액 확인 필요' + 시급. 시급이 아니면 예전처럼 금액만.
+  Widget _workWageText(BuildContext context, WorkDetailModel work) {
+    final e = ExpectedDailyWage.forWorkDetail(work);
+    final main = ExpectedWageText.daily(e);
+    final mainStyle = ResponsiveHelper.smallStyle(context).copyWith(
+      color: AppColors.brand,
+      fontWeight: FontWeight.bold,
+    );
+    // [C294-WAGE-C] 알려진 비시급 유형만 원시 금액 — 누락(0)은 '급여 확인 필요'.
+    if (main == null) return Text(ExpectedWageText.rawWage(work.wage), style: mainStyle);
+    final rate = ExpectedWageText.rate(e);
+    return Text.rich(
+      TextSpan(children: [
+        TextSpan(text: main, style: e.isEstimate ? mainStyle : ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary)),
+        if (rate != null)
+          TextSpan(
+            text: ' · $rate',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary),
+          ),
+      ]),
+    );
+  }
+
   Widget _infoRow(BuildContext context) {
     return Wrap(
       spacing: ResponsiveHelper.spacing(context, 8),
@@ -1940,13 +2061,7 @@ class _WorkItem extends StatelessWidget {
               ),
             ],
           ),
-        Text(
-          FormatHelper.formatWage(work.wage),
-          style: ResponsiveHelper.smallStyle(context).copyWith(
-            color: AppColors.brand,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        _workWageText(context, work),
         TaxDeductionBadge.chip(taxDeductionType: work.taxDeductionType),
       ],
     );

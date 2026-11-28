@@ -132,6 +132,10 @@ class PostingQuotaStore {
 
   static const int _chunk = 20;
 
+  /// [PERF impl_22 · 판정291 L32 Quota] 나눠 묻기를 동시에 몇 개까지 보내는가(제한 병렬).
+  @visibleForTesting
+  static int maxConcurrentChunks = 3;
+
   static final ValueNotifier<PostingQuotaSnapshot> current =
       ValueNotifier<PostingQuotaSnapshot>(const PostingQuotaSnapshot.idle());
 
@@ -201,12 +205,42 @@ class PostingQuotaStore {
     });
   }
 
+  /// [PERF impl_22 · 판정291 L32 Quota] 20개씩 나눈 묶음을 **최대 [maxConcurrentChunks] 개 동시에** 묻는다(예전: 하나씩 차례로).
+  ///   의미는 예전과 같다:
+  ///   · 합치기는 **입력 순서**로 한다(같은 scopeToken 은 [PostingQuotaResult.merge] 가 하나로 · 사용량을 더하지 않는다).
+  ///   · 한 묶음이라도 실패하면 전체 실패다 — 성공한 묶음만으로 숫자를 만들지 않는다. 어떤 실패를 올릴지는
+  ///     **입력 순서상 첫 실패 묶음**이다(예전 차례 읽기가 처음 만난 실패와 같다 → 권한 거절/확인 불가 구분 그대로).
+  ///   · 전체 대기 상한([budget])은 호출자가 이 함수 전체에 한 번 건다 — 묶음별 상한이 아니다.
+  ///   차이: 앞 묶음이 실패해도 이미 출발한 다른 묶음은 끝까지 간다(결과는 버린다 · 쓰기 없는 읽기).
   static Future<PostingQuotaResult> _fetchAll(List<String> ids) async {
+    final chunks = <List<String>>[
+      for (var i = 0; i < ids.length; i += _chunk)
+        ids.sublist(i, i + _chunk > ids.length ? ids.length : i + _chunk),
+    ];
+    final outcomes = List<Object?>.filled(chunks.length, null);
+    final errors = List<Object?>.filled(chunks.length, null);
+    final stacks = List<StackTrace?>.filled(chunks.length, null);
+    var next = 0;
+    Future<void> lane() async {
+      while (next < chunks.length) {
+        final i = next++;
+        fetchCount++;
+        try {
+          outcomes[i] = await fetch(chunks[i]);
+        } catch (e, st) {
+          errors[i] = e;
+          stacks[i] = st;
+        }
+      }
+    }
+
+    final lanes = maxConcurrentChunks < 1 ? 1 : maxConcurrentChunks;
+    await Future.wait([for (var l = 0; l < lanes && l < chunks.length; l++) lane()]);
     final parts = <PostingQuotaResult>[];
-    for (var i = 0; i < ids.length; i += _chunk) {
-      fetchCount++;
-      final raw = await fetch(ids.sublist(i, i + _chunk > ids.length ? ids.length : i + _chunk));
-      final p = PostingQuotaResult.tryFromMap(raw);
+    for (var i = 0; i < chunks.length; i++) {
+      final err = errors[i];
+      if (err != null) Error.throwWithStackTrace(err, stacks[i] ?? StackTrace.current);
+      final p = PostingQuotaResult.tryFromMap(outcomes[i]);
       if (p == null) throw const FormatException('한도 요약 응답 형식');
       parts.add(p);
     }

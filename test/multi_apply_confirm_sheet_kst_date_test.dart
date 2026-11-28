@@ -268,7 +268,7 @@ void main() {
       (tester) async {
     final server = await _open(tester);
     // 1건이면 CTA 는 `지원하기` 다(2건 이상만 `N개 업무 지원하기`).
-    final cta = find.text('지원하기');
+    final cta = findVisibleText('지원하기');
     expect(cta, findsOneWidget, reason: '제출 버튼에 도달해야 한다');
     await tester.ensureVisible(cta);
     await tester.pump();
@@ -294,7 +294,7 @@ void main() {
       (tester) async {
     final server = await _open(tester,
         with_: _Server(commitments: [_commitment('c19', DateTime(2026, 10, 19))]));
-    expect(find.text('지원 불가'), findsNothing,
+    expect(findVisibleText('지원 불가'), findsNothing,
         reason: '다른 날(10/19)의 근무와 겹친다고 말하면 안 된다');
     expect(findVisibleText('지원하기'), findsOneWidget,
         reason: '지원할 수 있어야 한다');
@@ -308,7 +308,7 @@ void main() {
         with_: _Server(commitments: [_commitment('c20', DateTime(2026, 10, 20))]));
     expect(find.textContaining('이미 확정된 근무와 시간이 겹쳐'), findsOneWidget,
         reason: '막힌 이유를 말해야 한다');
-    expect(find.text('지원 불가'), findsWidgets,
+    expect(findVisibleText('지원 불가'), findsWidgets,
         reason: '같은 날 같은 시간의 확정 근무를 놓치면 안 된다');
     expect(findVisibleText('지원하기'), findsNothing,
         reason: '막힌 건은 제출 대상이 아니다');

@@ -569,7 +569,9 @@ void main() {
     //   근무 탭 화면 구성을 건드리지 않았다는 점이므로, 그 부분만 남긴다.
     test('10-d 근무 탭의 다른 동작을 건드리지 않았다 (§11)', () {
       final wf = _codeOf(_src(_wfPath));
-      expect(wf.contains('child: WorkforceOperationalView(),'), true);
+      // [PERF-L14] 운영 화면은 사업장 이름을 머리말에 알려 줄 뿐이다(다른 동작 무변경).
+      expect(wf.contains('child: WorkforceOperationalView('), true);
+      expect(wf.contains('onBusinessesResolved: _onBusinessesResolved,'), true);
       expect(wf.contains('String _computeScopeLabel('), true);
       // 공고 목록 lifecycle은 더 이상 여기 없다
       expect(wf.contains('WorkforceController.dataRevision.addListener'), false);

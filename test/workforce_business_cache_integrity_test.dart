@@ -342,6 +342,21 @@ void main() {
         'business_list_reads.dart':
             '[R7-PREDEVICE-STABILIZATION.1A] 사업장 목록 — 실패를 "0개" 로 '
                 '말하면 SubAdmin 이 만들 수 없는 사업장 등록을 권하게 된다',
+        // [impl_59 · 조정자 지시] AUD-4 H4 수리(impl_56 · impl_57)가 늘린 사용처 4곳 — 모두 '조회 실패를 사업장 없음으로 접던' 같은 결함의 수리다.
+        //   검사가 첫 누락에서 멈춰 계약 템플릿 1곳만 보고됐고, 그 뒤 세 곳(impl_56)도 같은 이유로 적는다.
+        'payroll_overview_reads.dart':
+            '[impl_56 · AUD-4 H4] 급여 개요 — 조회 실패를 "급여를 관리할 사업장이 없어요" 로 '
+                '보이지 않게 실패 화면으로 보낸다',
+        'create_to_screen.dart':
+            '[impl_56 · AUD-4 H4] 공고 등록 — 조회 실패를 "사업장 없음/승인 필요" 사전조건 '
+                '화면으로 보내지 않는다',
+        'notification_screen.dart':
+            '[impl_56 · AUD-4 H4] 알림 → 날짜별 지원자 — 조회 실패를 "등록된 사업장이 없습니다" 로 '
+                '말하지 않는다(기존 실패 안내)',
+        // [impl_59 · 조정자 지시] impl_57(AUD-4 H4 같은 꼴) 수리 — 계약 템플릿 목록의 '다른 사업장 템플릿' 읽기.
+        'contract_template_list_screen.dart':
+            '[impl_57 · AUD-4 H4 같은 꼴] 계약 템플릿 — 내 사업장 조회 실패를 [] 로 '
+                '접으면 "다른 사업장 템플릿 없음" 으로 보인다(실패 화면으로 보낸다)',
       };
 
       final dir = Directory('lib');

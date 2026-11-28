@@ -24,6 +24,7 @@ import 'admin_stats_access.dart';
 import 'stats_attendance_list_screen.dart';
 import '../../utils/text_layout.dart';
 import '../../widgets/common/count_chip.dart';
+import '../../utils/off_main.dart';
 
 class AdminMonthDetailScreen extends StatefulWidget {
   final List<String> businessIds;
@@ -343,7 +344,8 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
           : '';
       final fileName = '$bizPart근태현황_${widget.year}년${widget.month}월.xlsx';
       final file = File('${dir.path}/$fileName');
-      final bytes = excel.encode();
+      // [PERF impl_19] 인코딩(XML + zip)은 별도 isolate(`OffMain.encodeExcel` · 실패 시 이 자리 · 같은 바이트)
+      final bytes = await OffMain.encodeExcel(excel, tag: 'monthDetailXlsx');
       if (bytes == null) {
         if (mounted) ToastHelper.showError('엑셀 생성에 실패했습니다');
         return;

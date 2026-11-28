@@ -574,7 +574,7 @@ void main() {
             final statF = find.text('지원: ');
             final nStat = statF.evaluate().length;
             final nMsg = msgF.evaluate().length;
-            final closeF = find.descendant(of: find.byType(AppModalFooter), matching: find.text('닫기'), skipOffstage: true);
+            final closeF = find.descendant(of: find.byType(AppModalFooter), matching: findVisibleText('닫기'), skipOffstage: true);
             final nClose = closeF.evaluate().length;
             var inScroll = false;
             var msgIn = false;
@@ -847,7 +847,7 @@ void main() {
             await shot('1fail', 'fail-top');
             dense();
             final o = await obs(findVisibleText(_failText), find.byType(AppEmptyState));
-            final retryF = find.descendant(of: find.byType(AppEmptyState), matching: find.text('다시 시도'), skipOffstage: true);
+            final retryF = find.descendant(of: find.byType(AppEmptyState), matching: findVisibleText('다시 시도'), skipOffstage: true);
             final nRetry = retryF.evaluate().length;
             var retryIn = false;
             var retryHit = false;

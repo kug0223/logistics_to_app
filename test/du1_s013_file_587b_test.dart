@@ -37,6 +37,7 @@ import 'package:ALfit/utils/beacon_helper.dart';
 import 'package:ALfit/utils/text_layout.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake with MockPlatformInterfaceMixin implements FirebaseAppPlatform {
   @override
@@ -727,7 +728,7 @@ bool _atStep(Finder form, int step) => switch (step) {
 
 /// [DU587b · DU445/BF-R goNext 와 같은 동작] '다음' 을 화면에 넣고 실제로 누른다(단계 이동 · 저장 아님). 못 찾으면 false.
 Future<bool> _goNext(WidgetTester t) async {
-  final next = find.text('다음');
+  final next = findVisibleText('다음');
   if (next.evaluate().isEmpty) return false;
   await t.ensureVisible(next.first);
   await t.pump();

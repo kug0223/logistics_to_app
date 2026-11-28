@@ -174,15 +174,18 @@ void main() {
     });
 
     test('클라이언트 row도 같은 게이트 아래 있다', () {
-      final at = rows.indexOf("label: '스케줄 변경 요청'");
+      // [impl_57 · 홈 A안] label '스케줄 변경 요청' → '일정 변경 요청'
+      final at = rows.indexOf("label: '일정 변경 요청'");
+      expect(at, isNot(-1), reason: "'일정 변경 요청' row를 찾지 못함");
       final gate = rows.substring(0, at).lastIndexOf('if (_verified(up, (p) => p.');
       expect(rows.substring(gate, at).contains('canManageWorkers'), isTrue);
     });
 
     test('탭 시점에도 재확인한다', () {
-      final block = _rowBlock(rows, '스케줄 변경 요청');
+      // [impl_57 · 홈 A안] '스케줄 변경 요청' → '일정 변경 요청' · 토스트 '…권한이 없습니다' → '…권한이 없어요'
+      final block = _rowBlock(rows, '일정 변경 요청');
       expect(block.contains("_verified(up, (p) => p.canManageWorkers)"), isTrue);
-      expect(block.contains('근로자 관리 권한이 없습니다'), isTrue);
+      expect(block.contains("ToastHelper.showWarning('근로자 관리 권한이 없어요')"), isTrue);
     });
 
     test('승인 callable과 같은 권한 축이다', () {
@@ -192,7 +195,8 @@ void main() {
     });
 
     test('권한 확대가 없다', () {
-      final block = _rowBlock(rows, '스케줄 변경 요청');
+      // [impl_57 · 홈 A안] '스케줄 변경 요청' → '일정 변경 요청'
+      final block = _rowBlock(rows, '일정 변경 요청');
       expect(block.contains('canManageWage'), isFalse);
       expect(block.contains('canManageTo'), isFalse);
       expect(block.contains('canManageContract'), isFalse);
@@ -201,7 +205,8 @@ void main() {
 
   group('AHV2-02C-05 알림 비의존', () {
     test('row가 notification을 참조하지 않는다', () {
-      final block = _rowBlock(rows, '스케줄 변경 요청');
+      // [impl_57 · 홈 A안] '스케줄 변경 요청' → '일정 변경 요청'
+      final block = _rowBlock(rows, '일정 변경 요청');
       expect(block.contains('otification'), isFalse);
     });
 
@@ -221,7 +226,8 @@ void main() {
     });
 
     test('row가 기존 조회 실패 semantics를 쓴다', () {
-      final block = _rowBlock(rows, '스케줄 변경 요청');
+      // [impl_57 · 홈 A안] '스케줄 변경 요청' → '일정 변경 요청'
+      final block = _rowBlock(rows, '일정 변경 요청');
       expect(block.contains('available: sched?.available ?? false'), isTrue);
       expect(block.contains('_showCanonicalError(context)'), isTrue);
     });
@@ -234,7 +240,8 @@ void main() {
 
   group('AHV2-02C-07 multi-business scope', () {
     test('서버 scope model을 그대로 쓴다', () {
-      final block = _rowBlock(rows, '스케줄 변경 요청');
+      // [impl_57 · 홈 A안] '스케줄 변경 요청' → '일정 변경 요청'
+      final block = _rowBlock(rows, '일정 변경 요청');
       expect(block.contains('sec.byBusiness'), isTrue);
       expect(block.contains('managedBusinessIds'), isFalse);
     });
@@ -252,14 +259,16 @@ void main() {
     });
 
     test('여러 사업장이면 선택 시트를 거친다', () {
-      final block = _rowBlock(rows, '스케줄 변경 요청');
+      // [impl_57 · 홈 A안] '스케줄 변경 요청' → '일정 변경 요청'
+      final block = _rowBlock(rows, '일정 변경 요청');
       expect(block.contains('_pickBizFromSummary('), isTrue);
     });
   });
 
   group('AHV2-02C-08 기존 처리 UI 정밀 진입', () {
     test('ScheduleRequestManagementDialog로 진입한다', () {
-      final block = _rowBlock(rows, '스케줄 변경 요청');
+      // [impl_57 · 홈 A안] '스케줄 변경 요청' → '일정 변경 요청'
+      final block = _rowBlock(rows, '일정 변경 요청');
       expect(block.contains('ScheduleRequestManagementDialog('), isTrue);
       expect(block.contains('businessId: bizId'), isTrue);
     });
@@ -291,7 +300,8 @@ void main() {
 
   group('AHV2-02C-09 처리 후 Home 갱신', () {
     test('다이얼로그 닫힌 뒤 canonical summary를 재조회한다', () {
-      final block = _rowBlock(rows, '스케줄 변경 요청');
+      // [impl_57 · 홈 A안] '스케줄 변경 요청' → '일정 변경 요청'
+      final block = _rowBlock(rows, '일정 변경 요청');
       final dlgAt = block.indexOf('ScheduleRequestManagementDialog(');
       final reloadAt = block.indexOf('_loadCanonicalSummary()');
       expect(reloadAt, greaterThan(dlgAt));
@@ -324,7 +334,8 @@ void main() {
     //   사라지므로, 근무 후 정산 계열(마감·중간정산)보다 앞으로 올라갔다.
     test('스케줄 변경이 지원 검토 뒤, 계약 미발송 앞이다', () {
       final approval = rows.indexOf("label: '지원 검토'");
-      final sched = rows.indexOf("label: '스케줄 변경 요청'");
+      // [impl_57 · 홈 A안] '스케줄 변경 요청' → '일정 변경 요청'
+      final sched = rows.indexOf("label: '일정 변경 요청'");
       final unsent = rows.indexOf("label: '계약 미발송'");
       final settle = rows.indexOf("label: '중간정산 요청'");
       expect(sched, greaterThan(approval));
@@ -397,7 +408,8 @@ void main() {
       final at = rows.indexOf('final resign = cs?.actions.resignRequest;');
       expect(at, isNot(-1));
       final block = rows.substring(at, rows.indexOf('if (_verified(up, (p) => p.', at));
-      expect(block.contains("'내일 자동 승인 \$soon건'"), isTrue);
+      // [impl_57 · 홈 A안] 배지 '내일 자동 승인 $soon건' → 보조줄 '빠른 검토 필요 $soon건'(CP04 §4 확약 문구 0)
+      expect(block.contains("_TaskSub('빠른 검토 필요 \$soon건'"), isTrue);
     });
   });
 
@@ -412,14 +424,16 @@ void main() {
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
-      expect(titles, {'오늘', '다가오는 7일', '처리할 일'});
+      // [impl_57 · 홈 A안] {'오늘', '다가오는 7일', '처리할 일'} → {'오늘의 근무', '다가오는 근무', '처리할 일'}
+      expect(titles, {'오늘의 근무', '다가오는 근무', '처리할 일'});
     });
 
     // [AH-V2-03 갱신] 향후 7일 empty copy는 두 상태로 분리됐다.
     test('staffing·empty copy는 AH-V2-03 계약을 따른다', () {
       // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
 
-      expect(home.contains('향후 인력 현황을 불러오지 못했습니다'), isTrue);
+      // [impl_57 · 홈 A안] '향후 인력 현황을 불러오지 못했습니다' → '…못했어요'(해요체)
+      expect(home.contains("message: '향후 인력 현황을 불러오지 못했어요'"), isTrue);
       expect(home.contains('처리할 업무가 없어요'), isTrue);
     });
 

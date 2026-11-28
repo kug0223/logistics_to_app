@@ -331,10 +331,16 @@ void main() {
     });
 
     test('권한 축 무변경', () {
+      // [AUD-2 G-1c · server_295/296] 소속·권한 판정이 공통 helper(srvIdCardAuthorizedBusinesses)로 옮겨 갔다 —
+      //   URL 발급은 helper 를 부르고, SubAdmin 은 helper 안에서 members.canManageWage 로 본다. 축(급여 권한)은 그대로다.
       final signed =
           _codeOf(_callableBody(source, 'callableGetIdCardSignedUrl'));
-      expect(signed.contains('permissions?.canManageWage'), isTrue);
-      expect(signed.contains('canManageWorkers'), isFalse);
+      expect(signed.contains('srvIdCardAuthorizedBusinesses(request.auth.uid'), isTrue);
+      final a0 = source.indexOf('async function srvIdCardAuthorizedBusinesses(');
+      expect(a0, isNot(-1));
+      final authz = _codeOf(source.substring(a0, source.indexOf('async function srvIdCardGrantBusinessOf(', a0)));
+      expect(authz.contains('m.data()?.permissions?.canManageWage === true'), isTrue);
+      expect(signed.contains('canManageWorkers') || authz.contains('canManageWorkers'), isFalse);
     });
 
     test('통장사본 무변경', () {

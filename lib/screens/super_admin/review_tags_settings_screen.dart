@@ -19,6 +19,7 @@ import '../../widgets/dialogs/styled_dialog.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/app_tab_label.dart';
+import '../../utils/action_guard.dart';
 
 /// 리뷰 태그 관리 화면
 ///
@@ -155,7 +156,12 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
     }
   }
 
-  Future<void> _addTag(String type) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_addTagLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _addTag(String type) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('reviewTags._isSaving', this), () => _addTagLocked(type));
+
+  Future<void> _addTagLocked(String type) async {
     if (_isSaving || _loadError != null) return;
     // [FC-TAG-01 OWNERSHIP FIX] _TagInputDialog(StatefulWidget)이 ctrl을
     // 직접 소유하고 State.dispose()에서 해제한다.
@@ -182,7 +188,12 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
     }
   }
 
-  Future<void> _removeTag(String type, String tag) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_removeTagLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _removeTag(String type, String tag) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('reviewTags._isSaving', this), () => _removeTagLocked(type, tag));
+
+  Future<void> _removeTagLocked(String type, String tag) async {
     if (_isSaving || _loadError != null) return;
     final confirmed = await DialogHelper.showConfirm(
       context,

@@ -280,11 +280,18 @@ void main() {
     });
 
     test('TOC-C-06 거부 시 알림 0 (§19·§20)', () {
-      expect(_at(confirm, 'srvPersistNotification'),
+      // [L56 r4] 확정 알림은 TX 뒤 batch2 의 direct 작업이다(batch2 가 실패하면 작업도 없다).
+      //   알림 자리 = 본문 직접 호출이 있으면 그것, 없으면 그 작업 생성.
+      final cDirect = confirm.contains('srvPersistNotification');
+      final cJob = confirm.contains('batch2.create(cfJobRef, srvNotificationJobDoc("direct"');
+      expect(cDirect != cJob, isTrue, reason: '확정 알림 경로가 없거나 직접 호출·작업이 함께 있다');
+      final notifAnchor = cDirect ?
+          'srvPersistNotification' : 'batch2.create(cfJobRef, srvNotificationJobDoc("direct"';
+      expect(_at(confirm, notifAnchor),
           greaterThan(_at(confirm, 'runTransaction')));
       // 자동취소 알림도 TX 뒤다.
       expect(_at(confirm, 'txAutoCanceledDetails'),
-          lessThan(_at(confirm, 'srvPersistNotification')));
+          lessThan(_at(confirm, notifAnchor)));
     });
   });
 
@@ -350,11 +357,14 @@ void main() {
     test('TOC-CON-01 서명 완료 = MAY CONTINUE, 상류에서 이미 닫혀 있다 (§14)', () {
       // 서명은 이미 성립한 약속의 **문서화**다. 그리고 미서명 계약이 있는
       // 근로자는 애초에 탈퇴를 시작할 수 없다.
+      // [판정296 §2-5 · 정책 P2 · server_296] 전제가 바뀌었다 — 미서명 계약은 더 이상 탈퇴를 막지 않는다(탈퇴 취소 거래가
+      //   무효 + 사업주 알림). 그래서 '상류에서 닫혀 있다'가 아니라, 서명 거래가 **같은 거래에서 탈퇴 tombstone 을 보고**
+      //   freeze 뒤 커밋을 막는다(이미 들어온 요청 포함). 임시 freeze(srvAssertAccountNotFrozenInTx) 를 쓰지 않는 것은 그대로다.
       final worker = _fn(raw, 'callableFinalizeWorkerSignature');
       expect(worker, isNot(contains('srvAssertAccountNotFrozenInTx')));
+      expect(worker, contains('if (await srvDeletionBarrierExistsInTx(tx, uid)) {'));
       final assertFn = _helper(raw, 'srvAssertAccountDeletionAllowed');
-      expect(_flat(assertFn), contains(r'.where("workerSignedAt", "==", null)'));
-      expect(_flat(assertFn), contains('미서명 계약서'));
+      expect(_flat(assertFn), isNot(contains('먼저 서명해주세요')));
     });
 
     test('TOC-CON-02 연장 수락 = MUST BLOCK, 제안 생성은 제안일 뿐이다', () {
@@ -419,7 +429,14 @@ void main() {
       // 초대·대체제안·지원·확정 모두 TX 성공 뒤에 알림을 만든다.
       // [R7-APPLICATION-LIFECYCLE.1E.1] 두 자리의 첫 쓰기 리터럴에 활성화
       //   세대가 붙었다. "알림은 커밋 뒤"라는 순서 계약은 그대로다.
-      expect(_at(invite, 'srvPersistNotification'),
+      // [L56 r5] 초대 알림은 초대 생성 거래 안의 direct 작업(그 거래가 커밋돼야 존재 · 실행기가 커밋 뒤 쓴다).
+      //   알림 자리 = 직접 호출이 있으면 그것, 없으면 작업 생성 — 어느 쪽이든 초대 쓰기 뒤.
+      final iDirect = invite.contains('srvPersistNotification');
+      final iJob = invite.contains('invTx.create(invJobRef, srvNotificationJobDoc("direct"');
+      expect(iDirect != iJob, isTrue, reason: '초대 알림 경로가 없거나 직접 호출·작업이 함께 있다');
+      final inviteNotif = iDirect ?
+          'srvPersistNotification' : 'invTx.create(invJobRef, srvNotificationJobDoc("direct"';
+      expect(_at(invite, inviteNotif),
           greaterThan(_at(invite, 'invTx.set(newAppRef, {')));
       // 대체업무 제안은 알림 쓰기를 함수로 정의해 두고 **커밋된 뒤** 부른다.
       //   정의 위치가 아니라 호출 위치가 계약이다.

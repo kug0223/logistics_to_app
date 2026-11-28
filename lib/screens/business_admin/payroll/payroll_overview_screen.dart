@@ -5,7 +5,9 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 import 'package:provider/provider.dart';
 
+import '../../../models/core/attendance_model.dart';
 import '../../../models/core/payroll_summary_model.dart';
+import '../../../utils/payroll_due_scope.dart';
 import 'payroll_overview_reads.dart';
 import 'payroll_month_ledger.dart';
 import '../../../providers/user_provider.dart';
@@ -65,6 +67,12 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   int _todayPaymentCount = 0;
   /// [PAYROLL-BANNER-COMPLETENESS] 송금 대상을 끝까지 세지 못했다(실패·상한) — 0건이 아니다.
   bool _todayPaymentUnknown = false;
+
+  /// [PERF-L22] 배너 숫자를 센 전 기간 미이체 목록과 그 시각 — 배너를 누르면 대시보드에 그대로 넘긴다.
+  ({String bizId, List<AttendanceModel> records, DateTime at})? _outstandingSeed;
+
+  /// 배너 → 대시보드에 넘길 수 있는 최대 나이. 넘으면 대시보드가 스스로 다시 읽는다.
+  static const Duration _seedMaxAge = Duration(minutes: 2);
 
   // [ACCESS-DENIED-REGRESSION-01] permission hydration race 복구용 listener
   // initState에서 등록, dispose에서 해제
@@ -341,6 +349,43 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     );
   }
 
+  /// [PERF-L22] 월 상세에서 돌아왔을 때 — 그 달 원장과 연 요약(금액·인원 문서)만 다시 읽는다.
+  Future<void> _reloadMonthAfterReturn(int month) async {
+    final bizId = _businessId;
+    if (bizId == null || !mounted) return;
+    if (_isLoading || _anyMonthLoading || _ledgerScope != '$bizId|$_selectedYear') {
+      await _loadYear(_selectedYear);
+      return;
+    }
+    final year = _selectedYear;
+    final gen = ++_loadGen;
+    final previous = <int, MonthLedgerCounts>{
+      if (_ledger[month]?.counts != null) month: _ledger[month]!.counts!,
+    };
+    setState(() => _ledger = {..._ledger, month: MonthLedgerState.loading(previous[month])});
+    final ledgerDone = _readMonths(gen, bizId, year, [month], previous);
+    try {
+      final psItemsRaw = await _reads.payrollSummaries(businessId: bizId, year: year);
+      if (!mounted || gen != _loadGen) return;
+      final summaryMap = <int, PayrollSummaryModel>{};
+      for (final e in psItemsRaw) {
+        final raw = Map<String, dynamic>.from(e);
+        final id = raw.remove('id') as String? ?? '';
+        final m = PayrollSummaryModel.tryFromMap(raw, id);
+        if (m != null) summaryMap[m.month] = m;
+      }
+      setState(() {
+        _summaryDocs = summaryMap;
+        _summariesLoaded = true;
+      });
+    } catch (e) {
+      // 이전 요약은 남긴다(화면을 오류로 바꾸지 않는다) — 새로 읽지 못했다는 사실만 알린다.
+      debugPrint('⚠️ 급여 요약 다시 읽기 실패(이전 값 유지): $e');
+      if (mounted && gen == _loadGen) ToastHelper.showWarning('급여 요약을 새로 불러오지 못했어요');
+    }
+    await ledgerDone;
+  }
+
   /// 확인하지 못한 달만 다시 읽는다 — 이미 끝까지 센 달은 다시 읽지 않는다.
   Future<void> _retryUnresolvedMonths() async {
     final bizId = _businessId;
@@ -369,13 +414,25 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     if (bizId == null) return;
     final gen = ++_todayCountGen;
     int? count;
+    List<AttendanceModel>? records;
     try {
-      count = await _reads.todayPaymentCount(bizId);
+      final readAll = _reads.outstandingRecords;
+      if (readAll != null) {
+        // [PERF-L22] 같은 전 기간 조회로 숫자를 세고 목록을 보관한다(배너 → 대시보드 전달).
+        records = await readAll(bizId);
+        count = PayrollDueScope.dueByToday(records, PayrollDueScope.now()).length;
+      } else {
+        count = await _reads.todayPaymentCount(bizId);
+      }
     } catch (e) {
       debugPrint('⚠️ 오늘 급여 건수 조회 실패: $e');
       count = null;
+      records = null;
     }
     if (!mounted || _businessId != bizId || gen != _todayCountGen) return;
+    _outstandingSeed = records == null
+        ? null
+        : (bizId: bizId, records: List.unmodifiable(records), at: DateTime.now());
     // [PAYROLL-BANNER-COMPLETENESS] 예전에는 실패하면 이전 값(처음엔 0)을 그대로 둬
     //   배너가 사라졌다 — "오늘 보낼 것 없음"처럼 보였다. 모르면 모른다고 보인다.
     setState(() {
@@ -515,6 +572,13 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                 count: _todayPaymentCount,
                 onTap: () async {
                   final now = DateTime.now();
+                  // [PERF-L22] 배너를 센 그 목록을 넘긴다(같은 사업장 · 2분 안). 대시보드는 첫 화면에
+                  //   다시 전 기간을 읽지 않는다 — 새로고침·처리 뒤 갱신은 대시보드가 평소대로 읽는다.
+                  final seed = _outstandingSeed;
+                  final seedOk = seed != null &&
+                      seed.bizId == _businessId &&
+                      DateTime.now().difference(seed.at) <= _seedMaxAge;
+                  var mutated = false;
                   await Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -527,11 +591,17 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                         month: now.month,
                         showAllOutstanding: true,
                         outstandingDueByToday: true,
+                        initialOutstanding: seedOk ? seed.records : null,
+                        onMutated: () => mutated = true,
                       ),
                     ),
                   );
                   if (!mounted) return;
+                  // [PERF-L22] 대시보드에서 아무것도 바꾸지 않았으면 전 기간 재조회(2020~)를 하지 않는다.
+                  //   바꿨으면 배너 숫자와 그 달들의 원장을 다시 읽는다(예전엔 숫자만 다시 읽었다).
+                  if (!mutated) return;
                   _loadTodayCount();
+                  _loadYear(_selectedYear);
                 },
               ),
             if (_unresolvedMonths.isNotEmpty && !_anyMonthLoading) _buildUnresolvedBanner(),
@@ -710,8 +780,10 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                 ),
               );
               if (!mounted) return;
-              // 이체 처리/취소 등 변경사항이 있을 수 있으므로 항상 리로드
-              _loadYear(_selectedYear);
+              // [PERF-L22] 예전에는 결과와 무관하게 11개월 원장 + 요약 전체를 다시 읽었다.
+              //   이 달 화면에서 일어난 변경(이체·취소·복원)은 이 달 것이다 — 이 달 원장 + 연 요약만 다시 읽는다.
+              //   다른 범위가 진행 중이면 예전처럼 연 전체를 읽는다(세대가 겹치지 않게).
+              _reloadMonthAfterReturn(summary.month);
             },
       child: Container(
         // 최소 높이만 둔다 — 내용이 더 길면(큰 글자 배율 등) 카드가 늘어난다.
@@ -989,6 +1061,8 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
         yearMonthGte: ym,
         yearMonthLte: ym,
       );
+      // [ROOT-FUTURE] 나중에 await 하는(또는 앞에서 return 하면 아예 await 하지 않는) future — 먼저 실패해도 '처리되지 않은 오류'(Crashlytics fatal)로 새지 않게. await 하는 곳은 그대로 같은 오류를 받는다.
+      ledgerFuture.ignore();
       final items = await _reads.payrollSummaries(
         businessId: _liveSummary.businessId,
         year: _liveSummary.year,

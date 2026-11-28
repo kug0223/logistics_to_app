@@ -27,8 +27,10 @@ import 'package:ALfit/models/core/user_model.dart';
 import 'package:ALfit/models/core/user_region.dart';
 import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
+import 'package:ALfit/screens/user/my_schedule_screen.dart';
 import 'package:ALfit/screens/user/user_root_screen.dart';
 import 'package:ALfit/services/firestore_service.dart';
+import 'package:ALfit/widgets/common/app_bottom_tab_bar.dart';
 
 class _FakeApp extends Fake
     with MockPlatformInterfaceMixin
@@ -96,6 +98,9 @@ class _Server {
     final name = a['functionName'] as String;
     calls[name] = (calls[name] ?? 0) + 1;
     (args[name] ??= []).add((a['parameters'] as Map?) ?? const {});
+    // [impl_15 의도적 갱신] 이 대역은 개별 endpoint 경로(진행 중 공유·횟수)를 잰다 — 묶음 함수는 '구서버(없음)'로 답해
+    //   앱이 같은 호출 안에서 개별 호출로 폴백하게 한다(묶음 경로 자체는 perf_l9_bundle_test WHB-* 가 맡는다).
+    if (name == 'callableGetWorkerHomeBundle') return const StandardMessageCodec().encodeMessage(<Object?>['NOT_FOUND', 'no bundle', {'code': 'not-found', 'message': 'no bundle'}]);
     if (name == 'getMyMonthlyAttendances') {
       final r = atts[_attIdx < atts.length ? _attIdx : atts.length - 1];
       _attIdx++;
@@ -335,7 +340,15 @@ void main() {
       ],
       child: const MaterialApp(home: UserRootScreen()),
     ));
+    // [impl_9 PERF-L5 의도적 갱신] 일정 탭은 방문 시 생긴다 — 홈의 이번 달 근태 조회(300ms)가 진행 중일 때 일정 탭을 열어
+    //   '홈·일정이 같은 진행 중 조회를 한 번 공유한다'는 원래 계약을 그대로 입증한다(방문하지 않으면 공유 입증이 사라진다).
+    await t.pump(const Duration(milliseconds: 50));
+    await t.tap(find.descendant(
+        of: find.byType(AppBottomTabBar),
+        matching: find.byWidgetPredicate(
+            (w) => w is Text && (w.data ?? '').replaceAll('⁠', '').replaceAll('​', '') == '내 일정')));
     await _pumpFor(t, 3000);
+    expect(find.byType(MyScheduleScreen), findsOneWidget, reason: '일정 탭이 실제로 열렸다');
     // ignore: avoid_print
     print('[MAT-ROOT] ${s.calls}');
     // [.47 월초] 이 시험의 계약은 "이번 달 근태를 홈·일정이 **한 번** 공유한다" 이다.

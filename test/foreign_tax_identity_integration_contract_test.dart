@@ -44,63 +44,66 @@ void main() {
   final cf = _codeOf(cfRaw);
   final doc = _codeOf(_src(_docPath));
 
+  // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 외국인 등록번호가 세무 레코드가 되는 writer 는 옛 가입 finalize(판정278 §2 로 닫힘 · 가입 sentinel
+  //   포함) 대신 가입 후 등록 writer(callableRegisterForeignIdDocument)다. 이 파일의 불변식(한 커밋 · 밖에서 암호화 ·
+  //   읽기 먼저 · uid 문서 · 재시도 안전 · 세 truth 분리)을 그 writer 에 고정한다. 가입 uniqueness sentinel 은
+  //   clean cutover 로 이 writer 의 일이 아니다(가입 identity = KG CI) — 쓰지 않는다는 것을 함께 확인한다.
+  final reg = _sliceOf(cfRaw, 'export const callableRegisterForeignIdDocument = onCall(',
+      'console.info(`[foreignIdDocument]');
+  final regTx = _sliceOf(reg, 'await db.runTransaction(async (tx) => {', '\n    });');
+
   group('INV-1 — 한 커밋에서 같은 사람을 말한다 (§23·§24)', () {
     test('01 세무 쓰기가 finalize 트랜잭션 안에 있다', () {
-      final tx = _codeOf(_finalizeTx(cfRaw));
-      expect(tx, contains('tx.set(fpRef, {'), reason: 'uniqueness sentinel');
-      expect(tx, contains('tx.update(userRef, {'), reason: 'users 신원');
-      expect(tx, contains('tx.set(foreignTaxRef, {'), reason: '세무 레코드');
+      final tx = _codeOf(regTx);
+      expect(tx, contains('tx.update(userRef, patch);'), reason: 'users 서류 분류·지문');
+      expect(tx, contains('tx.set(taxRef, {'), reason: '세무 레코드');
+      expect(tx, isNot(contains('tx.set(fpRef')), reason: '옛 가입 sentinel 을 만들지 않는다(clean cutover)');
     });
 
     test('02 암호화·지문은 트랜잭션 밖에서 끝낸다', () {
       // 재시도마다 새 IV로 다시 암호화하면 같은 커밋 안에서 값이 흔들린다.
-      final pre = _flat(_codeOf(_sliceOf(cfRaw,
-          'const foreignTaxEnabled = await srvIsTaxIdentityCollectionEnabled();',
-          '_diagStage = "FINALIZE_STAGE_TRANSACTION_START"')));
+      final pre = _flat(_codeOf(_sliceOf(reg,
+          'const taxEnabled = await srvIsTaxIdentityCollectionEnabled();',
+          'await db.runTransaction(')));
       expect(pre, contains('srvEncryptTaxIdentifier(normalized)'));
       expect(pre, contains('srvTaxIdentifierFingerprint(normalized)'));
-      final tx = _codeOf(_finalizeTx(cfRaw));
-      expect(tx, isNot(contains('srvEncryptTaxIdentifier(')));
+      expect(_codeOf(regTx), isNot(contains('srvEncryptTaxIdentifier(')));
     });
 
     test('03 읽기를 쓰기보다 먼저 한다', () {
-      final tx = _codeOf(_finalizeTx(cfRaw));
-      final read = tx.indexOf('await tx.get(foreignTaxRef)');
-      final write = tx.indexOf('tx.set(fpRef');
+      final tx = _codeOf(regTx);
+      final read = tx.indexOf('await tx.get(taxRef)');
+      final write = tx.indexOf('tx.update(userRef, patch)');
       expect(read, greaterThan(0));
       expect(write, greaterThan(read),
           reason: 'Firestore는 쓰기 뒤 읽기를 허용하지 않는다');
     });
 
     test('04 타입이 외국인 등록번호로 기록된다', () {
-      final set = _flat(_sliceOf(cfRaw, 'tx.set(foreignTaxRef, {', '});'));
+      final set = _flat(_sliceOf(regTx, 'tx.set(taxRef, {', '});'));
       expect(set, contains('identifierType: TAX_ID_TYPE_FOREIGN'));
-      expect(set, contains('registrationSource: TAX_ID_SOURCE_FOREIGN_SIGNUP'));
-      // 가입 시 대조는 하지 않았다 — 판정으로 올리지 않는다.
+      expect(set, contains('registrationSource: TAX_ID_SOURCE_FOREIGN_DOCUMENT'));
+      // 등록 시 대조는 하지 않았다 — 판정으로 올리지 않는다.
       expect(set, contains('documentMatchOutcome: DOC_FIELD_UNASSESSED'));
     });
   });
 
   group('INV-2 — 재시도가 망가뜨리지 않는다 (§25)', () {
     test('05 문서 id가 uid다 — 중복 생성 불가', () {
-      expect(cf, contains('const foreignTaxRef = db.collection(TAX_ID_COL).doc(uid);'));
+      expect(_codeOf(reg), contains('const taxRef = db.collection(TAX_ID_COL).doc(uid);'));
     });
 
     test('06 값이 같으면 다시 쓰지 않는다', () {
-      final tx = _flat(_codeOf(_sliceOf(cfRaw,
-          'if (foreignTaxEnc && foreignTaxFp && foreignTaxSnap) {',
-          '\n      });')));
-      expect(tx, contains('if (!foreignTaxSnap.exists) {'));
-      expect(tx, contains(
-          'foreignTaxSnap.get("identifierFingerprint") !== foreignTaxFp'));
+      // 새 writer 는 기존 세무 레코드를 아예 덮지 않는다(없을 때만 set — 옛 '값이 다를 때만' 보다 강함).
+      expect(_flat(_codeOf(regTx)), contains('if (taxEnc && taxFp && taxSnap && !taxSnap.exists) {'));
     });
 
     test('07 기존 uniqueness 멱등 동작이 그대로다', () {
-      final tx = _flat(_codeOf(_sliceOf(cfRaw,
-          'const fpSnap = await tx.get(fpRef);', 'tx.set(fpRef')));
-      expect(tx, contains('if (existingUid === uid) {'));
+      // 같은 서류 재제출은 멱등(프로필만) · 다른 서류로 이미 정해진 계정은 거절 — 옛 sentinel 멱등의 대응.
+      final tx = _flat(_codeOf(regTx));
+      expect(tx, contains('if (ns === "foreign" && cur["foreignIdDocumentFingerprint"] === docFp) {'));
       expect(tx, contains('return;'));
-      expect(tx, contains('throw new HttpsError("already-exists"'));
+      expect(tx, contains('throw reject("NATIONALITY_ALREADY_SET"'));
     });
   });
 
@@ -130,9 +133,11 @@ void main() {
 
   group('INV-4 — 세 truth를 섞지 않는다 (§4·§21·§44)', () {
     test('11 uniqueness 지문과 세무 지문은 다른 필드다', () {
-      expect(cf, contains('foreignIdentityFingerprint: fingerprint'));
-      final set = _flat(_sliceOf(cfRaw, 'tx.set(foreignTaxRef, {', '});'));
-      expect(set, contains('identifierFingerprint: foreignTaxFp'));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 서류 지문(users.foreignIdDocumentFingerprint)과 세무 지문(taxIdentities.identifierFingerprint)이 다른 필드다.
+      expect(_flat(_codeOf(regTx)), contains('foreignIdDocumentFingerprint: docFp'));
+      final set = _flat(_sliceOf(regTx, 'tx.set(taxRef, {', '});'));
+      expect(set, contains('identifierFingerprint: taxFp'));
+      expect(set, isNot(contains('foreignIdDocumentFingerprint')));
       expect(set, isNot(contains('foreignIdentityFingerprint')));
     });
 
@@ -143,9 +148,9 @@ void main() {
     });
 
     test('13 세무 지문이 uniqueness sentinel을 대신하지 않는다', () {
-      // sentinel 경로는 여전히 computeForeignIdFingerprint를 쓴다.
-      expect(cf, contains('const fingerprint = computeForeignIdFingerprint(normalized);'));
-      expect(cf, contains(r'const fpDocId = `${fingerprint}_${role}`;'));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 서류 지문은 등록번호 HMAC(computeForeignIdFingerprint)이고 세무 HMAC 이 아니다.
+      expect(_codeOf(reg), contains('const docFp = computeForeignIdFingerprint(normalized);'));
+      expect(_codeOf(reg), isNot(contains('foreignIdFingerprints')), reason: '옛 가입 sentinel 은 만들지 않는다');
     });
   });
 
@@ -179,16 +184,19 @@ void main() {
     });
 
     test('18 서버 파생 birthDate·gender가 그대로다', () {
-      expect(cf, contains('birthDate: admin.firestore.Timestamp.fromDate(serverBirthDate)'));
-      expect(_flat(cf), contains(
-          '(genderDigit === 5 || genderDigit === 7) ? "남성" : '
-          '((genderDigit === 6 || genderDigit === 8) ? "여성" : null)'));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 파생은 서버 helper(signup_core deriveFromForeignId) — 같은 표(5·7 남성 / 6·8 여성 · 범위 밖 null).
+      expect(_codeOf(reg), contains('const derived = normalized ? skDeriveFromForeignId(normalized) : null;'));
+      expect(_codeOf(reg), contains('const bts = srvPassBirthDateToTimestamp(derived.birthDate);'));
+      final core = _flat(_src('functions/src/signup_core.ts'));
+      expect(core, contains('if (code < 5 || code > 8) return null;'));
+      expect(core, contains('gender: (code === 5 || code === 7) ? "남성" : "여성"'));
     });
 
     test('19 세무 준비 실패가 가입을 중단시키지 않는다', () {
-      final pre = _flat(_codeOf(_sliceOf(cfRaw,
-          'const foreignTaxEnabled = await srvIsTaxIdentityCollectionEnabled();',
-          'const foreignTaxRef')));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 새 등록 writer 에서도 세무 준비 실패는 등록을 멈추지 않는다.
+      final pre = _flat(_codeOf(_sliceOf(reg,
+          'const taxEnabled = await srvIsTaxIdentityCollectionEnabled();',
+          'const trimmed =')));
       expect(pre, contains('} catch (taxErr) {'));
       expect(pre, isNot(contains('throw')));
     });

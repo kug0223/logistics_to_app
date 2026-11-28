@@ -36,6 +36,9 @@ class IdCardAccessRequestModel {
   final DateTime? expiresAt;          // 만료 시각 (승인 후 7일)
   final String? applicationId;        // 관련 지원서 ID (선택)
   final String? rejectionReason;      // 거절 사유
+  /// [impl_58 · server_296 §2] 조회 응답 전용 — approved 였지만 지금 쓸 수 없어 'revoked' 로 내려온 이유
+  ///   (LEGACY_AUTO_GRANT · MANUAL_GRANT_EXPIRED · NOT_CURRENT_MEMBER · GRANT_APPLICATION_INACTIVE). 저장하지 않는다(toMap 제외).
+  final String? unusableReason;
 
   IdCardAccessRequestModel({
     required this.id,
@@ -53,6 +56,7 @@ class IdCardAccessRequestModel {
     this.expiresAt,
     this.applicationId,
     this.rejectionReason,
+    this.unusableReason,
   });
 
   /// Firestore에서 변환
@@ -75,6 +79,7 @@ class IdCardAccessRequestModel {
       expiresAt: (map['expiresAt'] as Timestamp?)?.toDate().toLocal(),
       applicationId: map['applicationId'],
       rejectionReason: map['rejectionReason'],
+      unusableReason: map['unusableReason'] is String ? map['unusableReason'] as String : null,
     );
   }
 

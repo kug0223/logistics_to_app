@@ -28,6 +28,7 @@ import 'package:ALfit/utils/navigation_key.dart';
 import 'package:ALfit/widgets/dialogs/apply/apply_work_dialog.dart';
 import 'package:ALfit/widgets/dialogs/apply/apply_work_reads.dart';
 import 'package:ALfit/widgets/dialogs/apply/apply_work_submit.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake
     with MockPlatformInterfaceMixin
@@ -264,7 +265,7 @@ void main() {
 
     // 확인 시트가 떴고, 아직 아무것도 보내지 않았다.
     expect(ctl.applyCalls, 0);
-    expect(find.text('지원하기'), findsWidgets);
+    expect(findVisibleText('지원하기'), findsWidgets);
   });
 
   testWidgets('[APR-2] 확인에서 취소하면 보내지 않고 카드로 돌아온다',
@@ -273,7 +274,7 @@ void main() {
     await _pumpAndOpen(tester, ctl);
     await _tapApply(tester);
 
-    final cancel = find.text('취소').hitTestable();
+    final cancel = findVisibleText('취소').hitTestable();
     if (cancel.evaluate().isEmpty) {
       // 이 시트에 취소 라벨이 없다면 그 사실을 남긴다 — 꾸미지 않는다.
       expect(ctl.applyCalls, 0);
@@ -290,7 +291,7 @@ void main() {
 
   Future<void> confirmAndSettle(WidgetTester tester) async {
     // 확인 시트의 승인 버튼 — 시트 안의 마지막 `지원하기` 를 누른다.
-    final ok = find.text('지원하기');
+    final ok = findVisibleText('지원하기');
     expect(ok, findsNWidgets(2),
         reason: '확인 시트가 열려 있어야 한다(다이얼로그 제목 + 시트 승인)');
     await tester.tap(ok.last);

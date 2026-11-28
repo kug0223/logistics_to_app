@@ -51,6 +51,7 @@ import 'package:ALfit/utils/text_layout.dart';
 import 'package:ALfit/widgets/calendar/schedule_calendar.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp311 extends Fake with MockPlatformInterfaceMixin implements FirebaseAppPlatform {
   @override
@@ -887,8 +888,8 @@ Future<void> _d311Run(WidgetTester t) async {
   if (after) expect(regEdge, greaterThanOrEqualTo(4), reason: 'D311 after B0 등록 receiver 아래 여유 ≥ 4');
   await tapAt('B0 등록', after ? Offset(regT.center.dx, regR.bottom - 2) : regT.center);
   final b0Edit = head('B0-edit', kEditTitle, null);
-  expect(find.text('취소'), findsOneWidget, reason: 'D311 B0 편집 모드 취소 버튼');
-  await tapAt('B0 편집 취소', t.getCenter(find.text('취소')));
+  expect(findVisibleText('취소'), findsOneWidget, reason: 'D311 B0 편집 모드 취소 버튼');
+  await tapAt('B0 편집 취소', t.getCenter(findVisibleText('취소')));
   expect(find.descendant(of: find.byType(AppBar), matching: plain(kTitle)), findsOneWidget, reason: 'D311 B0 편집 취소 → 머리 복귀');
   final b0Income = await incomeGeometry('B0');
   log('B0-end', {'edit': b0Edit, 'income': b0Income, 'pumps': pumps, 'taps': taps, 'drags': drags});
@@ -916,7 +917,7 @@ Future<void> _d311Run(WidgetTester t) async {
   }
   final b1Edit = head('B1-edit', kEditTitle, null);
   await capture('B1-edit', {'edit': b1Edit});
-  await tapAt('B1 편집 취소', t.getCenter(find.text('취소')));
+  await tapAt('B1 편집 취소', t.getCenter(findVisibleText('취소')));
   await reach('B1-invite', () {
     final lab = one('초대 받을 지역', 'B1 초대 행');
     return [t.getRect(find.ancestor(of: el(lab), matching: find.byType(InkWell)).first)];

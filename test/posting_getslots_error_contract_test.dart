@@ -450,12 +450,19 @@ void main() {
         'Future<void> updateSlotsPublishSettings(',
       ]) {
         final body = _flat(_codeOf(_bodyOf(_src(_toPath), sig)));
+        // [PERF-L53 · impl_11] 저장 흐름이 같은 완전 읽기(`getSlotsForWrite`)로 한 번 읽어 넘길 수 있다 —
+        //   넘긴 목록이 없으면 helper 가 직접 완전 읽기. 어느 쪽이든 부분 해석은 실패, TRUE EMPTY 는 no-op.
         expect(
-            body.contains('final slots = await getSlots(toId, requireComplete: true); '
+            body.contains('final slots = preloadedSlots ?? await getSlots(toId, requireComplete: true); '
                 'if (slots.isEmpty) return;'),
             true,
             reason: '$sig — TRUE EMPTY는 no-op, 부분 해석은 실패여야 한다');
       }
+      expect(
+          _flat(_codeOf(_src(_toPath))).contains(
+              'Future<List<SlotModel>> getSlotsForWrite(String toId) => getSlots(toId, requireComplete: true);'),
+          true,
+          reason: '미리 읽어 넘기는 목록도 같은 완전 읽기여야 한다');
     });
 
     test('08-a2 완전성 요구가 no-op 판정보다 앞이다', () {

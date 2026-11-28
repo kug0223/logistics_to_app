@@ -154,7 +154,8 @@ void main() {
     test('UI가 null을 에러 표면으로 그린다', () {
       final body = _bodyOf(homeCode, 'Widget? _buildTodayAttendanceLine(');
       expect(body.contains('if (_todayCheckedIn == null)'), isTrue);
-      expect(body.contains('출근 현황을 불러오지 못했습니다'), isTrue);
+      // [impl_57 · 홈 A안] '출근 현황을 불러오지 못했습니다' → '…못했어요'(해요체)
+      expect(body.contains("message: '출근 현황을 불러오지 못했어요'"), isTrue);
     });
   });
 
@@ -234,7 +235,8 @@ void main() {
         'lib/screens/business_admin/business_list_screen.dart',
         'lib/screens/business_admin/member_management_screen.dart',
         'lib/screens/business_admin/payroll/payroll_overview_screen.dart',
-        'lib/screens/business_admin/to_management/create_to_screen.dart',
+        // [impl_55 · AUD-4 H4] create_to_screen 도 빠졌다 — 사업장 조회 실패가 '사업장 없음/승인 필요'로 보이던 자리라
+        //   OrThrow + 실패 화면으로 정식 이관했다(R8-P7.4 business_picker_helper 와 같은 이유).
         // [R8-P7.4] business_picker_helper 는 이 목록에서 빠졌다.
         //   AH-V2-01 당시에는 범위 밖이었고, R8-P7.4 에서 공고 등록 길목으로
         //   정식 이관했다 — 조회 실패가 '등록된 사업장이 없습니다'로 보이던
@@ -276,7 +278,8 @@ void main() {
       // _getBusinesses를 쓰는 탐색 진입점은 전부 오류 토스트로 수렴한다
       final safe = _bodyOf(homeCode, 'Future<void> _safeNavigate(');
       expect(safe.contains('catch'), isTrue);
-      expect(safe.contains('처리 중 오류가 발생했습니다'), isTrue);
+      // [impl_57 · 홈 A안] '처리 중 오류가 발생했습니다' → '…발생했어요'(해요체)
+      expect(safe.contains("ToastHelper.showError('처리 중 오류가 발생했어요')"), isTrue);
       for (final marker in [
         '_navigateToDayApplicantsForDate(context',
         '_openTodayAttendanceDialog(context)',
@@ -344,7 +347,8 @@ void main() {
     test('empty copy는 AH-V2-03 두 상태 계약을 따른다', () {
       // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
 
-      expect(homeCode.contains('향후 인력 현황을 불러오지 못했습니다'), isTrue);
+      // [impl_57 · 홈 A안] '향후 인력 현황을 불러오지 못했습니다' → '…못했어요'(해요체)
+      expect(homeCode.contains("message: '향후 인력 현황을 불러오지 못했어요'"), isTrue);
       expect(homeCode.contains('처리할 업무가 없어요'), isTrue);
     });
 

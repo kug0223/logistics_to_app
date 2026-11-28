@@ -319,7 +319,7 @@ void main() {
     await tester.pump();
 
     // CTA 는 footer 라 스크롤과 무관하게 접근 가능해야 한다.
-    final cta = find.textContaining('지원하기');
+    final cta = findVisibleTextContaining('지원하기');
     expect(cta, findsWidgets, reason: 'CTA 가 사라졌다');
     await tester.ensureVisible(cta.last);
     await tester.pump();

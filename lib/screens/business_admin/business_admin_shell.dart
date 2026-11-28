@@ -42,6 +42,7 @@ import 'package:provider/provider.dart';
 import '../../controllers/workforce_controller.dart';
 import '../../providers/user_provider.dart';
 import '../../services/fcm_service.dart';
+import '../../utils/perf_log.dart';
 import '../../widgets/common/app_bottom_tab_bar.dart';
 import '../../utils/admin_tab_switcher.dart';
 import 'business_admin_home_screen.dart';
@@ -86,8 +87,16 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
     // [NAV-POLICY-N1] Home Task deep-link용 tab normalize + push 콜백 등록
     AdminTabSwitcher.instance.registerSwitchAndPush(_switchAndPush);
     // [Phase 9D] cold-start pending payload 소비
+    PerfLog.mark('root.admin.init');
+    // [PERF-L2 · 판정289 §2] 홈은 FCM 초기화를 기다리지 않고 열린다 — payload 가 아직 저장 전일 수 있다.
+    //   준비(cold-start ready) 완료 뒤 mounted·현재 uid·세션·버전을 다시 보고 1회 소비한다.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      FCMService().consumePendingColdStartPayload();
+      if (!mounted) return;
+      final uid = context.read<UserProvider>().currentUser?.uid;
+      unawaited(FCMService().consumeColdStartPayloadWhenReady(
+        uid: uid,
+        isActive: () => mounted && context.read<UserProvider>().currentUser?.uid == uid,
+      ));
     });
   }
 

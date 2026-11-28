@@ -426,7 +426,7 @@ void main() {
       await t.tap(find.text('확정'));
       await _settle(t, 10);
       expect(find.text('지원자 확정'), findsOneWidget);
-      await t.tap(find.text('취소'));
+      await t.tap(findVisibleText('취소'));
       await _settle(t, 10);
       await _finish(t);
     });
@@ -438,7 +438,7 @@ void main() {
       await t.tap(find.text('확정'));
       await _settle(t, 10);
       expect(find.text('지원자 확정'), findsOneWidget);
-      await t.tap(find.text('취소'));
+      await t.tap(findVisibleText('취소'));
       await _settle(t, 10);
       await _finish(t);
     });
@@ -463,7 +463,7 @@ void main() {
       await t.tap(find.text('확정'));
       await _settle(t, 10);
       expect(find.text('지원자 확정'), findsOneWidget, reason: 'ready 에서만 확인창');
-      await t.tap(find.text('취소'));
+      await t.tap(findVisibleText('취소'));
       await _settle(t, 10);
       await _finish(t);
     });
@@ -498,7 +498,7 @@ void main() {
       await t.tap(find.text('확정'));
       await _settle(t, 10);
       expect(find.text('지원자 확정'), findsOneWidget);
-      await t.tap(find.text('취소'));
+      await t.tap(findVisibleText('취소'));
       await _settle(t, 10);
       await _finish(t);
     });
@@ -526,7 +526,7 @@ void main() {
       await _open(t, provider: () => _SubP(PermissionCheck.allowed));
       expect(find.text('신분증 보기'), findsNothing);
       expect(_texts(t), contains('급여 관리 권한이 모두 있는 관리자가 신분증을 확인하면'));
-      expect(find.text('거절'), findsOneWidget, reason: '거절은 확정 권한으로 할 수 있다');
+      expect(findVisibleText('거절'), findsOneWidget, reason: '거절은 확정 권한으로 할 수 있다');
       await t.tap(findVisibleText('확정'));
       await _settle(t, 10);
       expect(findVisibleText('지원자 확정'), findsNothing);
@@ -543,7 +543,7 @@ void main() {
       await _settle(t, 10);
       expect(find.text('지원자 확정'), findsOneWidget,
           reason: '확정 조건은 열람 권한이 아니라 신분 확인이다');
-      await t.tap(find.text('취소'));
+      await t.tap(findVisibleText('취소'));
       await _settle(t, 10);
       await _finish(t);
     });
@@ -557,10 +557,10 @@ void main() {
       await _open(t, provider: () => _SubP(PermissionCheck.denied));
       expect(findVisibleText('확정'), findsNothing);
       expect(_texts(t).contains('확정할 수 있어요'), isFalse);
-      expect(find.text('거절'), findsNothing);
+      expect(findVisibleText('거절'), findsNothing);
       expect(find.text('확정·거절은 TO 관리 권한이 있는 관리자만 할 수 있어요.'),
           findsOneWidget);
-      expect(find.text('닫기'), findsOneWidget);
+      expect(findVisibleText('닫기'), findsOneWidget);
       await _finish(t);
     });
 
@@ -602,7 +602,7 @@ void main() {
           (t) async {
         ApplicantDocumentReviewService.debugOverride = _FakeReview([_map()]);
         await _open(t, provider: () => _SubP(c.$1));
-        await t.tap(find.text('거절'));
+        await t.tap(findVisibleText('거절'));
         await _settle(t, 10);
         expect(findVisibleText('지원자 거절'), findsNothing, reason: '사유 선택창이 열리면 실행 가능처럼 보인다');
         expect(find.text(c.$2), findsOneWidget);
@@ -615,11 +615,11 @@ void main() {
       ApplicantDocumentReviewService.debugOverride =
           _FakeReview([Exception('unavailable')]);
       await _open(t, provider: () => _SubP(PermissionCheck.allowed));
-      await t.tap(find.text('거절'));
+      await t.tap(findVisibleText('거절'));
       await _settle(t, 10);
       expect(find.text('지원자 거절'), findsOneWidget,
           reason: '거절의 서버 조건은 권한뿐 — 서류 조회 실패가 막지 않는다');
-      await t.tap(find.text('취소').last);
+      await t.tap(findVisibleText('취소').last);
       await _settle(t, 10);
       await _finish(t);
     });
@@ -679,7 +679,7 @@ void main() {
         ApplicantDocumentReviewService.debugOverride = _FakeReview([_map()]);
         await _open(t, width: c.$1, height: 760, scale: c.$2, name: '남궁아리아나크리스티나합성근로자');
         expect(_errors, isEmpty, reason: '넘침: $_errors');
-        final close = t.getCenter(find.text('닫기').last);
+        final close = t.getCenter(findVisibleText('닫기').last);
         final approve = t.getCenter(find.text('확정').last);
         if (c.$3) {
           expect((close.dy - approve.dy).abs(), lessThan(4), reason: '한 줄');

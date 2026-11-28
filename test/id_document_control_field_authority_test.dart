@@ -26,6 +26,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/users_create_rule.dart';
+
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('소스를 찾지 못했다: $p');
@@ -62,14 +64,16 @@ void main() {
 
   group('AUTH-1 — 제어 필드는 클라이언트가 쓸 수 없다 (§1)', () {
     // 본인 update 규칙은 `isOwner(userId)` 로 시작하는 denylist 하나다.
+    // [판정281 갱신] users 본인 update 는 fence 예외형 `(callerNotDeleting() || <로그인 시각·FCM 토큰만>) && (` — 안쪽 조건 단언은 그대로.
     String selfUpdateBlock() => _flat(_slice(
-        rules, 'allow update: if isLoggedIn() &&\n                       isOwner(userId)', ']);'));
+        rules, ') && (isLoggedIn() &&\n                       isOwner(userId)', ']);'));
 
     // 슈퍼관리자 direct update denylist — 본인 블록보다 **앞**에 있다.
     //   anchor 는 규칙 선언 자체다. `isSuperAdmin()` 첫 등장(함수 정의)으로
     //   자르면 파일 앞쪽을 통째로 집어 테스트가 우연히 통과한다.
+    // [판정281 갱신] 서버 fence: 쓰기 규칙 바깥에 `callerNotDeleting() && (` 감싸기만 붙었다 — 안쪽 조건 단언은 그대로.
     String superAdminBlock() => _flat(_slice(
-        rules, 'allow update: if isSuperAdmin() &&', ']);'));
+        rules, 'allow update: if callerNotDeleting() && (isSuperAdmin() &&', ']);'));
 
     for (final f in _controlFields) {
       test('본인 update denylist 에 $f 가 있다', () {
@@ -83,8 +87,8 @@ void main() {
       });
 
       test('가입(create) 시 $f 주입이 차단된다', () {
-        expect(rules,
-            contains("request.resource.data.get('$f', null) == null"),
+        // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정278 C278-3] users create 가 전면 거부(if false)가 됐다 — 같은 결론(주입 불가)을 더 강하게 확인한다. 다시 열리면 옛 null 조건을 요구한다(support/users_create_rule.dart).
+        expect(usersCreateDeniesField(rules, f), isTrue,
             reason: '가입 시 심으면 첫 제출부터 가드가 어긋난다');
       });
     }
@@ -236,8 +240,9 @@ void main() {
     test('클라이언트가 순번을 되돌려 legacy 로 떨어지는 길이 닫혔다', () {
       // 서버는 그대로 `latestSeq > 0` 를 보고, 그 값을 고칠 수 있는 유일한
       // 클라이언트 경로(Firestore 직접 write)는 rules 에서 닫혔다.
+      // [판정281 갱신] users 본인 update 는 fence 예외형 `(callerNotDeleting() || <로그인 시각·FCM 토큰만>) && (` — 안쪽 조건 단언은 그대로.
       final selfBlock = _flat(_slice(rules,
-          'allow update: if isLoggedIn() &&\n                       isOwner(userId)', ']);'));
+          ') && (isLoggedIn() &&\n                       isOwner(userId)', ']);'));
       expect(selfBlock, contains("'idDocumentAttemptSeq'"));
       expect(cf, contains(r'(cur["idDocumentAttemptSeq"] as number | undefined) ?? 0'));
     });

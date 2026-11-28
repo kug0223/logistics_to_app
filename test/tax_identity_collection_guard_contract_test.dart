@@ -105,19 +105,22 @@ void main() {
     });
 
     test('08 외국인 가입의 세무 쓰기도 플래그를 본다 (§63)', () {
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 외국인 등록번호가 세무 레코드가 되는 곳은 옛 가입 finalize(닫힘) 대신
+      //   가입 후 등록 writer(callableRegisterForeignIdDocument)다 — 같은 플래그·같은 실패 규칙을 고정한다.
       final f = _flat(_codeOf(_sliceOf(cfRaw,
-          'const foreignTaxEnabled = await srvIsTaxIdentityCollectionEnabled();',
-          'const foreignTaxRef')));
-      expect(f, contains('if (foreignTaxEnabled) {'));
+          'const taxEnabled = await srvIsTaxIdentityCollectionEnabled();',
+          'const trimmed =')));
+      expect(f, contains('if (taxEnabled) {'));
       expect(f, contains('srvTaxIdentifierFingerprint(normalized)'));
       // secret 실패도 "쓰지 않음"으로 떨어진다.
-      expect(f, contains('foreignTaxEnc = null;'));
+      expect(f, contains('taxEnc = null;'));
     });
 
     test('09 그래도 외국인 가입 자체는 깨지지 않는다 (§63)', () {
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 새 writer: 세무 문서가 없을 때만 같은 거래에서 쓴다 · 세무 준비 실패는 등록을 되돌리지 않는다.
       final tx = _flat(_codeOf(_sliceOf(cfRaw,
-          'if (foreignTaxEnc && foreignTaxFp && foreignTaxSnap) {', '\n      });')));
-      expect(tx, contains('if (!foreignTaxSnap.exists)'));
+          'if (taxEnc && taxFp && taxSnap && !taxSnap.exists) {', '\n      }')));
+      expect(tx, contains('tx.set(taxRef, {'));
       // 세무 쓰기 실패가 신원 등록을 되돌리는 분기가 없다.
       expect(tx, isNot(contains('throw new HttpsError')));
     });

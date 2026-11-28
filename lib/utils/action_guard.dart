@@ -89,6 +89,16 @@ class ActionGuard {
   // key를 호출부에서 문자열로 조립하면 오타 하나가 조용히 가드를 없앤다
   // (`'invite:$toId'` vs `'invite :$toId'`). 같은 행동은 같은 함수로 만든다.
 
+  /// [I9 · impl_16] 화면(State) **한 인스턴스** 안에서 같은 잠금 플래그를 쓰는 행동 묶음의 key.
+  ///
+  ///   `if (_flag) return;` → `await` 확인·선택 창 → `setState(() => _flag = true)` 꼴은 창이 뜨기 전(다음
+  ///   프레임) 연타의 두 번째 진입을 막지 못한다(위 클래스 설명). 그 행동을 이 key 로 [runVoid] 에 넣으면
+  ///   **첫 await 전에** 잠긴다. 범위 = 그 화면 인스턴스 + 묶음 이름(보통 `'<화면>.<플래그>'` — 화면 플래그와
+  ///   같은 범위)이라 다른 화면 · 같은 화면의 다른 인스턴스와 섞이지 않는다. 화면 플래그는 그대로 두어
+  ///   mutation 동안의 진행 표시 · 버튼 비활성에 쓴다.
+  static String ownerKey(String group, Object owner) =>
+      keyOf(group, ['${identityHashCode(owner)}']);
+
   /// 행동 이름 + 대상 식별자들. 빈 조각은 `_`로 남겨 서로 다른 대상이
   /// 우연히 같은 key가 되지 않게 한다.
   static String keyOf(String action, List<String?> entityIds) {

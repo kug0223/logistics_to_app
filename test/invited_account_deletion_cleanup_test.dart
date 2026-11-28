@@ -124,7 +124,8 @@ void main() {
       // [E1-EXPIRED-ACCEPT-RACE] + 호출 1: 수락 요청이 기한 지난 INVITED 를 만나도 **같은 만료
       //   전이**를 트랜잭션 안에서 쓴다. 예전의 batch(트랜잭션 밖 읽기 뒤 −1)는 스케줄러 만료와
       //   겹치면 대기를 두 번 내렸다(로컬 결정적 하네스 실측) — 그 경로는 사라져야 한다.
-      expect(_count(code, 'srvTerminateWaitingApplicationInTx'), 6);
+      // [판정296 정책 P1 · server_296] + 호출 1: 블랙리스트 제재 정리(PENDING/INVITED 종료)도 같은 전이를 쓴다(새 전이 0).
+      expect(_count(code, 'srvTerminateWaitingApplicationInTx'), 7);
       final acceptIdx = code.indexOf('export const callableAcceptTOInvitation');
       expect(acceptIdx, greaterThan(0));
       final accept = code.substring(acceptIdx, code.indexOf('\nexport const ', acceptIdx + 10));
@@ -202,10 +203,12 @@ void main() {
     });
 
     test('IAC-CLEAN-04 확정 계열 정책은 그대로다 (I13)', () {
+      // [판정296 §2-5 K-1c · server_296] 같은 취소에 '끊는 미서명 계약 무효 + 사업주 알림' 확장 인자만 더했다(정책 P2(b)).
       expect(_flat(cleanup), contains(
           'const delReport = await srvLifecycleCancelBulk( '
           '[...contractSnap.docs, ...confirmedSnap.docs], '
-          '{status: "CANCELED", canceledAt: now, cancelReason: "USER_DELETED"});'));
+          '{status: "CANCELED", canceledAt: now, cancelReason: "USER_DELETED"}, '
+          'CONFIRMED_STATUSES, {voidContracts: {reason: "WORKER_ACCOUNT_DELETED"}});'));
       expect(cleanup, contains('delReport.preserved'));
     });
 

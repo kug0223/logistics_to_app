@@ -1,5 +1,6 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 // iamport_flutter 0.10.21 API 구조:
 //   - IamportCertification.certification() static 메서드 없음
 //   - IamportCertification은 StatelessWidget — Navigator.push로 표시
@@ -28,6 +29,26 @@ class PassAuthResult {
   });
 }
 
+/// [ALFIT-AUTH-KAKAO-ONBOARDING.1] KG 인증창(WebView) 한 번의 결과 — 서버 확인 전 단계.
+///
+///   가입 마법사는 '취소 / 실패 / 서버 확인 중 / 완료' 를 구분해 보여야 한다. 그래서 창 결과와
+///   서버 확인(verifyPassAuth)을 나눈다. 이 값만으로 본인확인이 끝났다고 말하지 않는다.
+enum PassLaunchStatus { canceled, failed, returned, unavailable }
+
+class PassLaunchOutcome {
+  const PassLaunchOutcome._(this.status, {this.impUid, this.errorMessage});
+  const PassLaunchOutcome.canceled() : this._(PassLaunchStatus.canceled);
+  const PassLaunchOutcome.failed([String? message])
+      : this._(PassLaunchStatus.failed, errorMessage: message);
+  const PassLaunchOutcome.returned(String impUid)
+      : this._(PassLaunchStatus.returned, impUid: impUid);
+  const PassLaunchOutcome.unavailable() : this._(PassLaunchStatus.unavailable);
+
+  final PassLaunchStatus status;
+  final String? impUid;
+  final String? errorMessage;
+}
+
 /// PASS 본인인증 서비스 — PortOne(포트원) V1 SDK 기반
 ///
 /// 흐름:
@@ -46,7 +67,73 @@ class PassVerificationService {
   /// KG이니시스 본인인증 PG 코드
   /// 테스트: 'inicis_unified.MIIiasTest'
   /// 실연동: 계약 후 발급받은 MID로 교체 (예: 'inicis_unified.실제MID')
-  static const _pgCode = 'inicis_unified.MIIiasTest';
+  ///
+  /// [판정280 C280-01] 서버에서 닫힌 옛 본인인증 목적.
+  static const Set<String> closedLegacyPurposes = {'register', 'reauth', 'resetPassword'};
+
+  /// [판정280 C280-01] 닫힌 옛 본인인증 안내.
+  static const String legacyPassClosedMessage =
+      '이 본인인증 방법은 종료됐어요. 카카오로 시작하거나 고객센터에 문의해 주세요.';
+
+  /// [ALFIT-AUTH-KAKAO-ONBOARDING.1 · X2] 실 MID 는 dart-define `PORTONE_PG_CODE` 로 넣는다(값 미보유 = PENDING).
+  ///   없으면 기존 테스트 코드 그대로다.
+  static const _pgCode = String.fromEnvironment(
+    'PORTONE_PG_CODE',
+    defaultValue: 'inicis_unified.MIIiasTest',
+  );
+
+  /// [ALFIT-AUTH-KAKAO-ONBOARDING.1 · §2.2/§2.3] KG 인증창만 연다 — merchantUid 는 **서버가 발급한 requestId** 다
+  ///   (세션·목적·역할·기한 결합 · B277-02). 서버 확인(verifyPassAuth)은 호출자가 따로 한다.
+  ///   [launcher] 는 시험 대역(실제 WebView 없이 결과를 돌려준다).
+  static Future<PassLaunchOutcome> launchCertification({
+    required String requestId,
+    Future<Map<String, String>?> Function(String merchantUid)? launcher,
+  }) async {
+    // [§3 DEV 모의] 디버그 빌드 + dart-define `PASS_MOCK_SEED` → 창 없이 `mock-imp:{seed}`(서버 AUTH_MOCK_MODE 전용).
+    const mockSeed = String.fromEnvironment('PASS_MOCK_SEED');
+    if (launcher == null && kDebugMode && mockSeed.isNotEmpty) {
+      return const PassLaunchOutcome.returned('mock-imp:$mockSeed');
+    }
+    Map<String, String>? result;
+    if (launcher != null) {
+      result = await launcher(requestId);
+    } else {
+      final navState = navigatorKey.currentState;
+      if (navState == null) return const PassLaunchOutcome.unavailable();
+      result = await navState.push<Map<String, String>>(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (context) => IamportCertification(
+            userCode: _portoneUserCode,
+            data: CertificationData(
+              pg: _pgCode,
+              merchantUid: requestId,
+              name: '',
+              phone: '',
+              minAge: 19,
+              mRedirectUrl: UrlData.redirectUrl,
+            ),
+            callback: (Map<String, String> response) {
+              navigatorKey.currentState?.pop(response);
+            },
+          ),
+        ),
+      );
+    }
+    if (result == null) return const PassLaunchOutcome.canceled();
+    if (result['success'] != 'true') {
+      final msg = result['error_msg'];
+      debugPrint('[PassAuth] 인증창 실패: error_msg=$msg');
+      // PortOne 은 사용자가 창을 닫아도 success=false 로 돌려줄 때가 있다 — 문구로 취소를 가른다.
+      if (msg != null && (msg.contains('취소') || msg.toLowerCase().contains('cancel'))) {
+        return const PassLaunchOutcome.canceled();
+      }
+      return PassLaunchOutcome.failed(msg);
+    }
+    final impUid = result['imp_uid'];
+    if (impUid == null || impUid.isEmpty) return const PassLaunchOutcome.failed();
+    return PassLaunchOutcome.returned(impUid);
+  }
 
   /// PASS 인증 실행
   ///
@@ -58,6 +145,13 @@ class PassVerificationService {
     required String purpose,
     String role = 'USER',
   }) async {
+    // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정280 C280-01] 옛 목적(register · reauth · resetPassword)은 서버에서
+    //   닫혔다(LEGACY_SIGNUP_CLOSED / LEGACY_PASS_FLOW_CLOSED). KG 창(유료 인증)을 먼저 열고 서버 거절을
+    //   받는 막힌 길을 만들지 않는다 — 창을 열기 전에 안내하고 멈춘다. 새 가입·탈퇴 재확인은 launchCertification 을 쓴다.
+    if (closedLegacyPurposes.contains(purpose)) {
+      ToastHelper.showInfo(legacyPassClosedMessage);
+      return null;
+    }
     final merchantUid = 'alfit_cert_${DateTime.now().millisecondsSinceEpoch}';
 
     // navigatorKey가 아직 MaterialApp에 연결되지 않은 경우 무음 실패 방지

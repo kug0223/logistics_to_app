@@ -184,7 +184,9 @@ void main() {
       final s = _source('lib/screens/common/settings_screen.dart');
       final i = s.indexOf("_callSaveSeal(b64, 'stamp')");
       expect(i, greaterThan(-1));
-      expect(s.substring(i, i + 200).contains('refreshUserData()'), true);
+      // [impl_12 의도적 갱신] 전체 재적재(refreshUserData) 대신 서버가 확정한 값을 provider 에 반영하고 알린다
+      //   (`applyConfirmedSeal` → notifyListeners · 행동은 perf_refresh_p2_test RF-2). 계약(저장 뒤 provider 갱신)은 그대로.
+      expect(s.substring(i, i + 300).contains('applyConfirmedSeal('), true);
     });
   });
 

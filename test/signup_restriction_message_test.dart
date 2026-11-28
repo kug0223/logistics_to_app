@@ -2,6 +2,7 @@
 //   날짜·기간은 만들지 않는다. 서버 문장은 functions/src/index.ts callableFinalizeForeignIdentity 의 것.
 import 'dart:io';
 
+import 'package:ALfit/services/auth/signup_api.dart';
 import 'package:ALfit/services/auth_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -28,9 +29,17 @@ void main() {
   });
 
   test('SR-4 서버 문장이 바뀌면 이 시험이 알려 준다 — 두 문장은 지금 서버 원문에 있다', () {
+    // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 이 두 문장을 내던 옛 외국인 가입 finalize 는 닫혔다(LEGACY_SIGNUP_CLOSED · 판정278 §2).
+    //   서버가 더는 이 문장을 보내지 않으므로, 문장 대신 **새 가입의 같은 사실**이 구조화 reason 으로
+    //   오는지와 앱이 그것을 같은 뜻으로 말하는지를 고정한다(문장 파싱 0 — server_api_1 공통 규칙).
     final src = File('functions/src/index.ts').readAsStringSync();
-    expect(src, contains('"이용 정책 위반으로 재가입이 영구 제한된 계정입니다."'));
-    expect(src, contains('"탈퇴 후 1개월이 지난 후 재가입 가능합니다."'));
+    expect(src, isNot(contains('"이용 정책 위반으로 재가입이 영구 제한된 계정입니다."')));
+    final core = File('functions/src/signup_core.ts').readAsStringSync() +
+        File('functions/src/auth_kakao.ts').readAsStringSync();
+    expect(core, contains('REREGISTER_BLACKLISTED'));
+    expect(core, contains('REREGISTER_COOLDOWN'));
+    expect(SignupCopy.reasonMessage('REREGISTER_BLACKLISTED'), m('…영구 제한된 계정입니다.'));
+    expect(SignupCopy.reasonMessage('REREGISTER_COOLDOWN'), startsWith('탈퇴 후 재가입 제한 기간이라'));
   });
 
   // [DOC-APP-CLOSEOUT.10] failed-precondition — 같은 코드의 두 사유를 나눈다.
@@ -52,9 +61,13 @@ void main() {
     }
   });
   test('FP-4 두 문장은 서버 원문에 있고, 매핑이 이 함수를 쓴다', () {
+    // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 나이 문장을 내던 옛 finalize 는 닫혔다. 새 가입은 KG 확인(verifyPassAuth signup)에서
+    //   구조화 reason UNDER_AGE 로 거절한다 — 앱은 같은 나이 안내를 말한다. 탈퇴 동결 문장은 서버에 그대로 있다.
     final src = File('functions/src/index.ts').readAsStringSync();
-    expect(src, contains('"만 19세 이상만 가입할 수 있습니다."'));
     expect(src, contains('"탈퇴 처리 중인 계정입니다."'));
+    expect(File('functions/src/auth_kakao.ts').readAsStringSync() +
+        File('functions/src/signup_core.ts').readAsStringSync(), contains('UNDER_AGE'));
+    expect(SignupCopy.reasonMessage('UNDER_AGE'), contains('만 19세 이상만 가입할 수 있어요'));
     final a = File('lib/services/auth_service.dart').readAsStringSync();
     expect(a, contains("'failed-precondition'=> finalizePreconditionMessage(e.message),"));
   });

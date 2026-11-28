@@ -20,6 +20,7 @@ import 'package:ALfit/screens/business_admin/dialogs/invite_method_sheet.dart';
 import 'package:ALfit/services/available_workers_service.dart';
 import 'package:ALfit/theme/role_theme.dart';
 import 'package:ALfit/utils/dialog_helper.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 // ── 글꼴(상대 경로) ──
 Future<void> _loadFonts() async {
@@ -211,7 +212,7 @@ Future<void> _invm(_Ctx c) async {
   open();
   await c.frames(12);
   expect(sheet, findsOneWidget, reason: '초대 방법 시트 열림');
-  await c.visible(find.text('근무 초대'), '제목', hit: false);
+  await c.visible(findVisibleText('근무 초대'), '제목', hit: false);
   for (final b in const ['근무 가능 인력', '직접 초대']) {
     await c.visible(find.text(b), '선택지 $b');
   }
@@ -263,7 +264,7 @@ Future<void> _avwErr(_Ctx c) async {
   expect(sheet, findsOneWidget, reason: '근무 가능 인력 시트 열림');
   expect(svc.reads, 1, reason: '후보 조회 1 회');
   await c.visible(find.text('인력 조회에 실패했습니다. 다시 시도해주세요.'), '오류 안내 글', hit: false);
-  await c.tap(find.text('다시 시도'), '다시 시도');
+  await c.tap(findVisibleText('다시 시도'), '다시 시도');
   await c.frames(10);
   expect(svc.reads, 2, reason: '다시 시도 → 조회 1 → 2 회');
   await c.visible(find.text('인력 조회에 실패했습니다. 다시 시도해주세요.'), '다시 시도 뒤 같은 오류', hit: false);

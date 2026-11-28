@@ -152,7 +152,18 @@ class WorkDetailData {
     this.closedBy,
     this.emergencyOpenedAt,
     this.runtimeFull = false,
+    this.scheduleFromSource = true,
+    this.wageTypeFromSource = true,
   });
+
+  /// [F293-WAGE-01] 시작·종료 시각이 **원문에 있었는가**. `fromMap` 은 없으면 09:00–18:00 을 넣는다 —
+  ///   그 기본값으로 하루 예상 금액을 만들지 않기 위해 출처를 보존한다(저장하지 않는 표시 전용 값).
+  ///   코드에서 직접 만든 값·편집 폼 값은 true.
+  final bool scheduleFromSource;
+
+  /// [F293-WAGE-01] 급여 유형이 **원문에 유효하게 있었는가**. `fromMap` 은 없거나 모르는 값이면 'hourly' 를 넣는다 —
+  ///   그 기본값으로 '시급' 이라 부르거나 금액을 만들지 않는다(저장하지 않는 표시 전용 값).
+  final bool wageTypeFromSource;
 
   factory WorkDetailData.fromMap(Map<String, dynamic> map, [String? id]) {
     return WorkDetailData(
@@ -168,6 +179,8 @@ class WorkDetailData {
       wageType: const ['hourly', 'daily', 'monthly'].contains(map['wageType'])
           ? map['wageType'] as String
           : 'hourly',
+      wageTypeFromSource: const ['hourly', 'daily', 'monthly'].contains(map['wageType']),
+      scheduleFromSource: map['startTime'] is String && map['endTime'] is String,
       requiredCount: (map['requiredCount'] as num?)?.toInt() ?? 0,
       startTime: map['startTime'] as String? ?? '09:00',
       endTime: map['endTime'] as String? ?? '18:00',
@@ -313,6 +326,9 @@ class WorkDetailData {
       emergencyOpenedAt: clearEmergency ? null : (emergencyOpenedAt ?? this.emergencyOpenedAt),
       applicationDeadline: applicationDeadline ?? this.applicationDeadline,
       runtimeFull: runtimeFull ?? this.runtimeFull,  // bool? → bool 안전
+      // [F293-WAGE-01] 시각·유형을 새로 정하면 그 값은 출처가 확인된 값이다.
+      scheduleFromSource: (startTime != null && endTime != null) ? true : scheduleFromSource,
+      wageTypeFromSource: wageType != null ? true : wageTypeFromSource,
     );
   }
 
@@ -448,6 +464,11 @@ class WorkDetailData {
 
   /// [4H.0C-CF-SERIAL] CF 전달용 직렬화 — Firestore Timestamp → milliseconds 변환
   /// callableUpdateSlotWorkDetails 호출 시 사용.
+  ///
+  /// [impl_21 · 2026-11-26] 마감·긴급 상태 시각(`closedAt` · `emergencyOpenedAt`)도 밀리초로 보낸다(키 이름 그대로).
+  ///   예전에는 `applicationDeadline` 만 바꿔, 마감/긴급 모집 중인 업무가 하나라도 있는 날짜를 수정하면
+  ///   Timestamp 가 callable 전송 코덱(StandardMessageCodec)에서 `Invalid argument` 로 던져져 저장이 실패했다.
+  ///   서버(`srvNormalizeWorkDetailTimestamps` · WD_TIMESTAMP_FIELDS)는 이 두 필드를 밀리초 숫자로 받아 Timestamp 로 바꾼다.
   static List<Map<String, dynamic>> listToCFPayload(List<WorkDetailData> list) {
     return listToFirestore(list).map((m) {
       final result = Map<String, dynamic>.from(m);
@@ -456,7 +477,71 @@ class WorkDetailData {
         result.remove('applicationDeadline');
         result['applicationDeadlineMs'] = ts.millisecondsSinceEpoch;
       }
+      for (final key in const ['closedAt', 'emergencyOpenedAt']) {
+        final v = result[key];
+        if (v is Timestamp) result[key] = v.millisecondsSinceEpoch;
+      }
       return result;
     }).toList();
+  }
+
+  /// [impl_21 · Q25] 마감·긴급 모집 **상태 필드**(편집 폼이 바꾸지 않는 값)만 [source] 의 것으로 바꾼 사본.
+  ///   업무 정의(시간·금액·인원 등)는 그대로다. 상태가 없던 쪽이면 지운다(모름이 아니라 '없음'이 사실).
+  WorkDetailData withStatusOf(WorkDetailData source) =>
+      copyWith(clearClosedAt: true, clearEmergency: true).copyWith(
+        isManualClosed: source.isManualClosed,
+        closedAt: source.closedAt,
+        closedBy: source.closedBy,
+        isEmergencyOpen: source.isEmergencyOpen,
+        emergencyOpenedAt: source.emergencyOpenedAt,
+      );
+
+  /// [impl_29 · J3 · 판정292 C292-04] 업무 **정체** = 업무·시작·끝(서버 compositeId — `index.ts` callableUpdateSlotWorkDetails 의
+  ///   wdId 부여 규칙과 같다: composite 가 같으면 기존 wdId, 다르면 새 wdId).
+  static String identityOf(WorkDetailData d) => '${d.workType}_${d.startTime}_${d.endTime}';
+
+  /// [impl_21 · Q25 → impl_29 · J3] 편집본 [edited] 의 각 업무 상태 필드를 [current](그 문서의 현재 배열 · 폼 원본)에서 정한다(순수 함수).
+  ///   - 짝 = **업무 정체(composite)만**. impl_21 은 wdId 를 먼저 봤는데, 시간을 바꾼 업무는 wdId 가 같아도 서버가
+  ///     **새 업무(새 wdId)** 로 저장한다 — 클라 짝과 서버 정체가 어긋났다. 이제 서버와 같은 규칙 하나만 쓴다.
+  ///   - 짝이 있으면(기존 정체) 그 업무의 **현재** 마감·긴급 상태를 입힌다(폼의 옛 사본이 다른 관리자의 변경을 덮지 않게).
+  ///   - 짝이 없으면(새로 넣었거나 업무·시간을 바꾼 **새 정체**) 마감·긴급 상태를 **비운다** — 옛 업무의 마감/긴급이
+  ///     새 업무로 이월되지 않게(판정292 J3). impl_21 까지는 편집본 상태를 그대로 실었다.
+  static List<WorkDetailData> withStatusFrom(
+      List<WorkDetailData> edited, List<WorkDetailData> current) {
+    final byIdentity = <String, WorkDetailData>{};
+    for (final c in current) {
+      byIdentity.putIfAbsent(identityOf(c), () => c);
+    }
+    return edited.map((e) {
+      final match = byIdentity[identityOf(e)];
+      return match == null
+          ? e.copyWith(clearClosedAt: true, clearEmergency: true)
+          : e.withStatusOf(match);
+    }).toList();
+  }
+
+  /// [impl_29 · J1] 업무 **상태 필드** — 마감·재오픈·긴급 종료 writer 가 바꿔도 되는 키 전부(rules 의 TO 업무 상태 갈래와 같은 목록).
+  ///   `closedReason` 은 서버 자동 마감이 쓰는 키다 — 모델에는 없고, 재오픈(closedAt 제거) 때만 함께 지운다.
+  static const statusKeys = <String>[
+    'isManualClosed', 'closedAt', 'closedBy', 'isEmergencyOpen', 'emergencyOpenedAt', 'closedReason',
+  ];
+
+  /// [impl_29 · J1] 저장된 원본 맵 [raw] 에 [next] 의 **상태 필드만** 반영한 새 맵(순수 함수).
+  ///   예전 writer 는 대상 업무를 `next.toMap()` 으로 통째 다시 직렬화해, 모델이 모르는 서버 키(`closedReason` 등)를 떨어뜨리고
+  ///   기본값 표기(`baseHourlyWageMode` 등)를 바꿨다 — 상태만 바꾸는 쓰기가 정의까지 다시 쓰는 셈이었다.
+  ///   이제 상태 키만 넣거나 빼고 나머지는 저장된 그대로 둔다(rules 가 업무별로 '상태 키 외 변경 0' 을 검사한다).
+  static Map<String, dynamic> mergeStatusIntoRaw(Map<String, dynamic> raw, WorkDetailData next) {
+    final out = Map<String, dynamic>.from(raw);
+    final m = next.toMap();
+    for (final k in statusKeys) {
+      if (k == 'closedReason') continue;
+      if (m.containsKey(k)) {
+        out[k] = m[k];
+      } else {
+        out.remove(k);
+      }
+    }
+    if (next.closedAt == null) out.remove('closedReason');
+    return out;
   }
 }

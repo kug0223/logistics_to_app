@@ -242,7 +242,11 @@ const Object _kWorkMarker = Object();
 // ══════════════════════════════════════════════════════════════════
 
 class WorkforceOperationalView extends StatefulWidget {
-  const WorkforceOperationalView({super.key});
+  const WorkforceOperationalView({super.key, this.onBusinessesResolved});
+
+  /// [PERF-L14] 이 화면이 읽은 사업장 목록(`_ensureBusinesses` 성공 결과)을 머리말에 알려 준다.
+  ///   머리말의 사업장 이름 때문에 공고 controller 전체 로드를 기다리지 않게 하기 위해서다.
+  final ValueChanged<List<BusinessModel>>? onBusinessesResolved;
 
   @override
   State<WorkforceOperationalView> createState() =>
@@ -804,6 +808,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
     _cachedBusinesses = result;
     _cachedBusinessesScope = scope;
     _businessesStale = false;
+    if (mounted) widget.onBusinessesResolved?.call(result);
     return result;
   }
 
@@ -897,16 +902,13 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
   @override
   Widget build(BuildContext context) {
-    // [POSTING-V2-03P.1] 첫 조회가 끝나기 전에만 대기한다.
-    //   Jobs와 controller를 공유하게 된 뒤로(03O.1) Jobs의 pull-to-refresh가
-    //   isLoading을 올리면 이 화면 전체가 스피너로 바뀌었다. 관리자가 건드리지도
-    //   않은 탭이 비는 셈이라, 이미 확보한 데이터가 있으면 그대로 둔다.
-    //   loadError가 있으면 gate하지 않는다 — 첫 조회가 실패했을 때 영구
-    //   스피너로 남으면 안 되고, 아래 화면이 자체 에러/빈 상태를 보여준다.
-    final controller = context.watch<WorkforceController>();
-    if (!controller.hasLoadedOnce && controller.loadError == null) {
-      return const LoadingWidget(message: '인력 정보를 불러오는 중...');
-    }
+    // [PERF-L14] 공고 controller 를 기다리지 않는다(구독도 하지 않는다).
+    //   예전에는 첫 공고 로드(GetAdminTOs + FLEX 공고마다 슬롯 preload)가 끝날 때까지 이 화면
+    //   전체가 '인력 정보를 불러오는 중...' 이었다. 그런데 이 화면이 controller 에서 쓰는 것은
+    //   **없었다** — 근무 명단·달력은 모두 자기 조회(_ensureBusinesses → 날짜 명단)로 그린다.
+    //   머리말의 사업장 이름도 이제 `_ensureBusinesses` 결과로 받는다(onBusinessesResolved).
+    //   [POSTING-V2-03P.1] 의 뜻(Jobs 새로고침이 이 탭을 비우지 않음)은 더 강하게 지켜진다 —
+    //   공고 notify 로 이 화면이 다시 그려지지도 않는다(watch 제거). 아래 자체 로딩/오류 표면은 그대로다.
 
     final bottom = MediaQuery.paddingOf(context).bottom;
 

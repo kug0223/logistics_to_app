@@ -1,4 +1,6 @@
-import 'package:flutter/services.dart';
+import 'dart:isolate';
+
+import 'package:flutter/foundation.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
@@ -6,9 +8,16 @@ import '../../models/core/contract_template_model.dart';
 import '../../models/core/employment_contract_model.dart';
 import '../../models/core/insurance_rate_model.dart';
 import '../../utils/attendance_policy_disclosure.dart';
+import '../../utils/pdf_font_cache.dart';
 
 /// PDF 빌드 — 쌍방 서명 완료 시 호출
 class ContractPdfBuilder {
+  /// [PERF-L41 · 판정291 §4] [offMain] — 폰트 해석·글꼴 부분집합·저장(가장 무거운 CPU)을 **다른 isolate** 에서 한다.
+  ///   서명 버튼을 누른 뒤 화면(스피너)이 멈칫하지 않게 하려는 것이다. 같은 입력이면 같은 문서다 —
+  ///   같은 함수가 같은 인자로 돈다(시험이 비교한다). isolate 를 쓸 수 없거나 실패·시간 초과면 **이 isolate 에서**
+  ///   예전과 똑같이 만든다(결과가 사라지지 않는다). 기본값 false — 다른 호출자·시험의 동작은 그대로다.
+  ///   [debugUncompressed] 는 시험 전용이다 — 압축을 꺼 두 결과를 글자 그대로 비교할 수 있게 한다
+  ///   (pdf 패키지는 문서마다 무작위 ID·생성 시각을 넣으므로 그 둘만 걸러 비교한다).
   static Future<Uint8List> build({
     required ContractSnapshot snapshot,
     required DateTime contractDate,
@@ -19,6 +28,8 @@ class ContractPdfBuilder {
     String? ownerNameOverride,
     bool? isLongTermOverride,
     String employerSealType = 'stamp',
+    bool offMain = false,
+    @visibleForTesting bool debugUncompressed = false,
   }) async {
     // [R8P6-SIG-CUTOVER] 인자 검증은 폰트 파싱보다 **앞**이다 — 서명이 비었으면
     //   한글 폰트 두 벌을 읽을 이유가 없다. 빈 바이트는 "서명 없음"이 아니라
@@ -30,16 +41,88 @@ class ContractPdfBuilder {
       throw Exception('근로자 서명 이미지가 비어 있습니다');
     }
 
+    Future<Uint8List> here({({ByteData regular, ByteData bold})? fontBytes}) => _buildDocument(
+          snapshot: snapshot,
+          contractDate: contractDate,
+          slots: slots,
+          articles: articles,
+          employerSignatureBytes: employerSignatureBytes,
+          workerSignatureBytes: workerSignatureBytes,
+          ownerNameOverride: ownerNameOverride,
+          isLongTermOverride: isLongTermOverride,
+          employerSealType: employerSealType,
+          debugUncompressed: debugUncompressed,
+          fontBytes: fontBytes,
+        );
+
+    if (!offMain || kIsWeb) return here();
+
+    // 번들 읽기(rootBundle)는 이 isolate 에서만 된다 — 바이트를 읽어 넘기고, 해석은 저쪽에서 한다.
+    final ({ByteData regular, ByteData bold}) fontBytes;
+    try {
+      // 차례로 읽는다 — 번들 읽기가 SynchronousFuture 일 때 Future.wait 가 값을 놓친다(PdfFontCache PF-5 와 같은 함정).
+      final regular = await PdfFontCache.loadBytes(PdfFontCache.regularAsset);
+      final bold = await PdfFontCache.loadBytes(PdfFontCache.boldAsset);
+      fontBytes = (regular: regular, bold: bold);
+    } catch (e) {
+      debugPrint('⚠️ [ContractPdf] 폰트 바이트 읽기 실패 — 이 isolate 에서 만든다: $e');
+      return here();
+    }
+    try {
+      return await Isolate.run(() => _buildDocument(
+                snapshot: snapshot,
+                contractDate: contractDate,
+                slots: slots,
+                articles: articles,
+                employerSignatureBytes: employerSignatureBytes,
+                workerSignatureBytes: workerSignatureBytes,
+                ownerNameOverride: ownerNameOverride,
+                isLongTermOverride: isLongTermOverride,
+                employerSealType: employerSealType,
+                debugUncompressed: debugUncompressed,
+                fontBytes: fontBytes,
+              ))
+          .timeout(_offMainTimeout);
+    } catch (e) {
+      // 보낼 수 없는 값·isolate 실패·시간 초과 — 결과를 잃지 않고 예전 방식으로 만든다.
+      debugPrint('⚠️ [ContractPdf] 별도 isolate 빌드 실패 — 이 isolate 에서 다시 만든다: $e');
+      return here();
+    }
+  }
+
+  static const Duration _offMainTimeout = Duration(seconds: 20);
+
+  static Future<Uint8List> _buildDocument({
+    required ContractSnapshot snapshot,
+    required DateTime contractDate,
+    required List<ContractSlot> slots,
+    required List<ContractArticle> articles,
+    required Uint8List? employerSignatureBytes,
+    required Uint8List? workerSignatureBytes,
+    required String? ownerNameOverride,
+    required bool? isLongTermOverride,
+    required String employerSealType,
+    required bool debugUncompressed,
+    ({ByteData regular, ByteData bold})? fontBytes,
+  }) async {
+
     // ownerNameOverride: 근무자 경로에서 스냅샷 ownerName이 없을 때 Firestore 조회값.
     // 둘 다 없는 구형 계약서는 '(사업주)' fallback으로 PDF에서 빈 이름 방지.
     final effectiveOwnerName = snapshot.ownerName.isNotEmpty
         ? snapshot.ownerName
         : (ownerNameOverride?.isNotEmpty == true ? ownerNameOverride! : '(사업주)');
-    final doc = pw.Document();
+    final doc = debugUncompressed
+        ? pw.Document(compress: false, version: PdfVersion.pdf_1_4)
+        : pw.Document();
 
     // 한글 폰트 로드 (번들 에셋 — 오프라인 가능)
-    final fontRegular = pw.Font.ttf(await rootBundle.load('assets/fonts/NotoSansKR-Regular.ttf'));
-    final fontBold = pw.Font.ttf(await rootBundle.load('assets/fonts/NotoSansKR-Bold.ttf'));
+    // [L30] 세션 공용 캐시 — 계약서를 만들 때마다 두 폰트(각 약 6.2MB)를 다시 해석하지 않는다.
+    //   [PERF-L41] 별도 isolate 에서는 넘겨받은 바이트를 그 자리에서 해석한다(캐시는 isolate 마다 따로라 쓰지 않는다).
+    final fonts = fontBytes != null
+        ? [pw.Font.ttf(fontBytes.regular), pw.Font.ttf(fontBytes.bold)]
+        : await Future.wait([PdfFontCache.regular(), PdfFontCache.bold()]);
+    final fontRegular = fonts[0];
+    final fontBold = fonts[1];
 
     // 서명 이미지 로드
     pw.MemoryImage? employerSig;

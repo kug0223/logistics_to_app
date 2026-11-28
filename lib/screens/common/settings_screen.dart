@@ -15,6 +15,7 @@ import '../../models/core/user_model.dart';
 // Providers
 import '../../providers/user_provider.dart';
 import '../../providers/theme_provider.dart';
+import 'deletion_reauth_screen.dart';
 
 // Utils
 import '../../utils/responsive_helper.dart';
@@ -66,6 +67,7 @@ import '../../services/fcm_service.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/image_helper.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/action_guard.dart';
 import '../../utils/business_picker_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/app_page_actions.dart';
@@ -431,8 +433,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       icon: Icons.description_outlined,
                       iconColor: AppColors.successDark,
                       title: '사업장 서류 관리',
+                      // [X0 실기기 2026-11-25] '사업장 정보'와 같은 목록→정보 화면으로 가던 것을
+                      //   목록→수정 폼 '정보·서류' 단계로 연결(사업자등록증 확인·교체).
                       onTap: () => NavigationHelper.push<void>(context,
-                          destination: const BusinessListScreen()),
+                          destination: const BusinessListScreen(openDocuments: true)),
                     ),
                   ]),
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -1660,6 +1664,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               'PENDING_APPLICANTS' => '대기 중 지원자 $n명 — 탈퇴 시 자동 취소',
               'ACTIVE_TOS' => '활성 공고 $n개 — 탈퇴 시 자동 마감',
               'CONFIRMED_WORK' => '진행 중 장기 근무 $n건 — 탈퇴 전 관리자에게 퇴사 신청 권장',
+              // [서버296 P2 · impl_60] 미서명 계약은 이제 관문이 아니라 경고다 — 탈퇴하면 무효 처리되고 사업주에게 알린다.
+              //   (구서버는 같은 유형을 hardBlocks 로 보낸다 — blockLabel 쪽 문구 그대로.)
+              'UNSIGNED_CONTRACT' => '서명하지 않은 계약서 $n건 — 탈퇴하면 무효 처리되고 사업주에게 알려요',
               final t => t,
             };
           }
@@ -1933,11 +1940,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // [FC-SET-01 OWNERSHIP FIX] _DeleteAccountSheet(StatefulWidget)이 passwordCtrl을
     // 직접 소유하고 State.dispose()에서 해제한다.
     // ThemeProvider.reset() + signOut()은 sheet 종료 후 부모에서 처리.
-    final deleted = await DialogHelper.showSheet<bool>(
-      context,
-      isScrollControlled: true,
-      builder: (ctx) => _DeleteAccountSheet(userProvider: userProvider),
-    );
+    // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정280 B280-02] 카카오(비밀번호 없는) 계정은 비밀번호 시트 대신
+    //   KG 재확인 화면 — 같은 삭제 파이프라인을 증명 뒤에 돈다. 완료면 true 로 닫힌다.
+    final bool? deleted;
+    if (userProvider.currentUser?.isProviderAccount == true) {
+      deleted = await Navigator.of(context).push<bool>(MaterialPageRoute(
+        builder: (_) => const DeletionReauthScreen(intent: DeletionReauthIntent.withdraw),
+      ));
+    } else {
+      deleted = await DialogHelper.showSheet<bool>(
+        context,
+        isScrollControlled: true,
+        builder: (ctx) => _DeleteAccountSheet(userProvider: userProvider),
+      );
+    }
     if (deleted == true) {
       if (context.mounted) context.read<ThemeProvider>().reset();
       // signOut()은 notifyListeners()로 라우팅 처리 — 이후 mounted 체크 불필요 (의도된 설계)
@@ -2207,7 +2223,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableSaveUserSignature')
           .call({'signatureBase64': b64});
-      await userProvider.refreshUserData();
+      // [impl_12 · PERF-L43] users 전체 재적재(전역 로딩·FCM·미서명 계약) 대신 서버가 확정한 값만 반영한다.
+      userProvider.applyConfirmedSignature(uid: uid, signatureBase64: b64);
       if (mounted) ToastHelper.showSuccess('서명이 등록되었습니다');
     } catch (e) {
       if (mounted) ToastHelper.showError('서명 등록에 실패했습니다');
@@ -2231,7 +2248,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableSaveUserSignature')
           .call({'signatureBase64': null});
-      await userProvider.refreshUserData();
+      userProvider.applyConfirmedSignature(uid: uid, signatureBase64: null); // [impl_12 · PERF-L43]
       if (mounted) ToastHelper.showSuccess('서명이 삭제되었습니다');
     } catch (e) {
       if (mounted) ToastHelper.showError('서명 삭제에 실패했습니다');
@@ -2255,7 +2272,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return ValueListenableBuilder<FirstPostingReadinessSnapshot>(
       valueListenable: FirstPostingReadinessStore.current,
       builder: (ctx, snap, _) {
-        final r = snap.isResolved ? snap.value : null;
+        // [PERF-L16 근본 수정] 다시 세는 동안에도 아는 값을 그린다(공용 판단 `displayValue`).
+        final r = snap.displayValue;
 
         late final String title;
         late final String body;
@@ -2439,7 +2457,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     //
     //   바로 옆 서명 카드는 처음부터 `user.signatureBase64` 를 build 때
     //   읽고 있었다. 인감도 같은 규칙으로 맞춘다. 저장 경로가 이미
-    //   `refreshUserData()` 를 부르므로 provider 가 알리면 여기까지 닿는다.
+    //   서버 성공 뒤 provider 에 확정 값을 반영하므로(`applyConfirmedSeal` · impl_12 — 예전 `refreshUserData()`) provider 가 알리면 여기까지 닿는다.
     // [R7-P4.4E.3A] 계약서 사업주란에 들어가는 것은 **사업장 owner 의 날인**
     //   이다(P4.4C). 호출자 자신의 날인이 아니다.
     //
@@ -2638,7 +2656,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .call({'sealBase64': b64, 'sealType': sealType});
   }
 
-  Future<void> _registerSeal(BuildContext context, UserModel? user) async {
+  // [impl_23] 기기 사진 고르기 단일 실행(`ImageHelper.exclusive`) — 출처 시트가 뜨기 전 연타의 두 번째 탭은
+  //   시트·피커를 다시 열지 않는다(진행 중이면 아무것도 하지 않음 = 취소와 같다). 저장까지 한 흐름으로 묶는다.
+  Future<void> _registerSeal(BuildContext context, UserModel? user) =>
+      ImageHelper.exclusive<void>(() => _registerSealLocked(context, user));
+
+  Future<void> _registerSealLocked(BuildContext context, UserModel? user) async {
     if (user == null) return;
 
     final userProvider = context.read<UserProvider>();
@@ -2667,7 +2690,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
         final b64 = base64Encode(bytes);
         await _callSaveSeal(b64, 'stamp');
-        await userProvider.refreshUserData();
+        // [impl_12 · PERF-L43] 서버가 쓴 두 필드(sealBase64·sealType)만 반영 — 전체 재적재 0.
+        userProvider.applyConfirmedSeal(uid: user.uid, sealBase64: b64, sealType: 'stamp');
         if (!mounted) return;
         setState(() {
           _sealType = 'stamp';
@@ -2717,7 +2741,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
       final b64 = base64Encode(bytes);
       await _callSaveSeal(b64, 'signature');
-      await userProvider.refreshUserData();
+      userProvider.applyConfirmedSeal(uid: user.uid, sealBase64: b64, sealType: 'signature'); // [impl_12 · PERF-L43]
       if (!mounted) return;
       setState(() {
         _sealType = 'signature';
@@ -2745,7 +2769,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     try {
       await _callSaveSeal(null, 'stamp');
-      await userProvider.refreshUserData();
+      userProvider.applyConfirmedSeal(uid: user.uid, sealBase64: null, sealType: 'stamp'); // [impl_12 · PERF-L43]
       if (!mounted) return;
       // 화면 값은 provider 에서 다시 읽는다 — 여기서 따로 들고 있지 않는다.
       setState(() => _sealType = 'stamp');
@@ -2785,7 +2809,12 @@ class _DeleteAccountSheetState extends State<_DeleteAccountSheet> {
     super.dispose();
   }
 
-  Future<void> _doDelete() async {
+  /// [I9 · impl_18] 확인 창이 먼저 떠도 터치 차단막은 **다음 프레임**에 덮인다 — 같은 프레임의 두 번째 탭이
+  ///   창을 하나 더 띄우고 탈퇴 준비 단계까지 한 번 더 갈 수 있다. 첫 await 전에 같은 화면·같은 잠금 묶음을 잠근다.
+  Future<void> _doDelete() => ActionGuard.runVoid(
+      ActionGuard.ownerKey('settingsDelete._isLoading', this), () => _doDeleteLocked());
+
+  Future<void> _doDeleteLocked() async {
     FocusManager.instance.primaryFocus?.unfocus();
     final pw = _passwordCtrl.text.trim();
     if (pw.isEmpty) {

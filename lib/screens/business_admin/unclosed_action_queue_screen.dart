@@ -103,6 +103,29 @@ class _UnclosedActionQueueScreenState
   bool _isAvailable                 = true;
   bool _hasChanges                  = false;
 
+  /// [impl_27b · L48 같은 꼴] 읽기 차례 — 마지막에 시작한 읽기만 목록에 앉는다(늦게 끝난 옛 읽기가 처리 뒤 새 목록을 덮지 않게).
+  int _loadGen = 0;
+
+  /// [impl_27b] 한 번이라도 목록을 앉혔는가 — 그 뒤의 다시 읽기(처리 뒤·당겨서 새로고침)는 목록을 지우지 않고
+  ///   얇은 진행 표시 + 누르기 잠금으로 보인다. 첫 읽기는 예전처럼 로딩 화면이다.
+  bool _hasLoadedOnce = false;
+
+  /// [impl_27b] 진행 중인 읽기 수 — 겹친 읽기에서 먼저 끝난 옛 읽기가 로딩(잠금)을 내리지 않게.
+  int _loadsInFlight = 0;
+
+  @override
+  void setLoading(bool val) {
+    if (val) {
+      _loadsInFlight++;
+    } else {
+      if (_loadsInFlight > 0) _loadsInFlight--;
+      if (_loadsInFlight > 0) return;
+    }
+    super.setLoading(val);
+  }
+
+  bool get _reloadingKeepRows => isLoading && _hasLoadedOnce;
+
   // [CROSS-DOMAIN-R5.1F.1] 진입 시점 한 번이 아니라, 머무는 동안에도 본다.
   UserProvider? _userProvider;
   bool _accessRevoked               = false;
@@ -171,12 +194,14 @@ class _UnclosedActionQueueScreenState
   }
 
   Future<void> _load() async {
+    final gen = ++_loadGen;
     await runWithLoading(() async {
       final result = await _svc.fetchQueue();
-      if (!mounted) return;
+      if (!mounted || gen != _loadGen) return; // 더 늦게 시작한 읽기가 있다
       setState(() {
         _isAvailable = result.available;
         _items       = result.rows;
+        _hasLoadedOnce = true;
       });
     });
   }
@@ -259,9 +284,16 @@ class _UnclosedActionQueueScreenState
                 title: '접근 권한이 없습니다',
                 subtitle: '급여 관리 권한이 있는 관리자에게 문의하세요.',
               )
-            : isLoading
+            : isLoading && !_hasLoadedOnce
                 ? const LoadingWidget()
-                : _buildBody(),
+                // [impl_27b] 처리 뒤 다시 읽는 중 — 목록은 그대로, 얇은 진행 표시 + 누르기 잠금.
+                : Column(children: [
+                    if (_reloadingKeepRows)
+                      const LinearProgressIndicator(
+                          key: ValueKey('unclosed-queue-refresh-after-mutation'), minHeight: 2),
+                    Expanded(
+                        child: AbsorbPointer(absorbing: _reloadingKeepRows, child: _buildBody())),
+                  ]),
       ),
     );
   }

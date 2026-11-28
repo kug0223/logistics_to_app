@@ -139,6 +139,19 @@ void main() {
         expect(r, contains('                        slotNoReopenWhenClosed() &&\n'));
       });
       test('AR-13 [${entry.key}] 공고 workDetails 단독 수정은 운영 중 사업장에서만', () {
+        if (entry.key == '작업 트리') {
+          // [impl_29 · J1 · 판정292 C292-02 · 의도된 기대 변경] 작업 트리의 공고 업무 직접 쓰기는 '상태 전용 문'이 됐다
+          //   (workDetails + editRevision+1 · 업무별 상태 키만). 운영 종료 사업장 거절(이 시험의 뜻)은 같은 문 끝에 그대로 있다.
+          final r = entry.value;
+          final at = r.indexOf("affectedKeys().hasOnly(['workDetails', 'editRevision']) &&");
+          expect(at, greaterThan(0));
+          final stmtEnd = r.indexOf('== null);', at);
+          expect(stmtEnd, greaterThan(at));
+          expect(r.substring(at, stmtEnd), contains("get(/databases/\$(database)/documents/businesses/\$(resource.data.businessId))\n"
+              "                      .data.get('deactivatedAt', null)"));
+          expect(r.contains("affectedKeys().hasOnly(['workDetails']) &&"), isFalse, reason: 'workDetails 단독 갈래가 남았다');
+          return;
+        }
         expect(entry.value, contains("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['workDetails']) &&\n"
             "                        get(/databases/\$(database)/documents/businesses/\$(resource.data.businessId))"));
       });

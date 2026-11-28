@@ -106,14 +106,18 @@ void main() {
     final wf = _codeOf(_workforceRoot());
     final wff = _flat(wf);
 
-    test('SL-40 공유 controller 가 비어 있으면 첫 방문에서 로드한다', () {
-      expect(wff, contains('if (_ownsController || !_controller.hasLoadedOnce)'));
-      expect(wff, contains('_controller.load(context)'));
+    // [PERF-L14 갱신] 첫 방문 회귀(영구 스피너)의 원인은 근무 화면이 공고 controller 첫 로드를 기다린 것이었다.
+    //   이제 기다리지 않으므로(운영 화면 gate 제거) 근무 탭은 공고 목록을 부르지 않는다 — 영구 스피너도, 중복 조회도 없다.
+    test('SL-40 근무 첫 방문은 공고 controller 를 기다리지도 부르지도 않는다', () {
+      expect(wff.contains('_controller.load('), isFalse);
+      final ops = File('lib/screens/business_admin/workforce_management/workforce_operational_view.dart')
+          .readAsStringSync();
+      expect(ops.contains('!controller.hasLoadedOnce'), isFalse, reason: '영구 스피너 gate 가 돌아왔다');
     });
 
-    test('SL-41 이미 로드된 뒤에는 다시 돌지 않는다', () {
-      // hasLoadedOnce 가 조건에 포함되어 재방문 중복 조회를 막는다
-      expect(wff, contains('!_controller.hasLoadedOnce'));
+    test('SL-41 재방문 중복 조회 없음(근무 탭에서 공고 목록 load 0)', () {
+      expect(wff.contains('_controller.reload('), isFalse);
+      expect(wff.contains('_controller.load('), isFalse);
     });
 
     test('SL-42 controller 소유권은 그대로 Shell 이다', () {

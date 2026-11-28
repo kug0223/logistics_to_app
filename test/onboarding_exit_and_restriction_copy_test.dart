@@ -99,9 +99,11 @@ void main() {
     });
 
     test('OX-6 AuthWrapper 의 필수 온보딩 분기는 유지된다', () {
+      // [대표 결정 2026-11-25 갱신] 지역 필수 gate 를 없앴다 — 지역이 없어도 홈으로 가고, 홈 「시작 준비」 카드의
+      //   '일할 지역 고르기' 가 같은 지역 화면을 연다(pushed). 화면 자체(선택 · 저장 · 선택 전 저장 비활성)는 유지.
       final c = _code('lib/main.dart');
-      expect(c.contains('if (user.homeRegion == null)'), isTrue);
-      expect(c.contains('_HomeRegionRecoveryScreen()'), isTrue);
+      expect(c.contains('if (user.homeRegion == null)'), isFalse);
+      expect(c.contains('const _HomeRegionRecoveryScreen(pushed: true)'), isTrue);
     });
 
     test('OX-7 작은 화면·큰 배율에서 잘리지 않도록 스크롤한다', () {

@@ -110,7 +110,11 @@ void main() {
 
     test('건수 단위가 건이다', () {
       final block = _rowBlock(rows, '중간정산 요청', '계약 미발송');
-      expect(block.contains("countStr: '\${settlement?.count ?? 0}건'"), isTrue);
+      // [impl_26 · DU_concept_CP04 정밀 사양(2026-11-12) · 코드 [CP04] 표지] 행 레코드의 countStr 필드가 `_TaskRow` 알약(pill)으로 바뀌었다.
+      //   이 행은 알약을 따로 주지 않고, 공용 add() 의 기본 알약이 `'$count건'` 이다 — 단위 `건` 그대로.
+      expect(block.contains('count: settlement?.count ?? 0,'), isTrue);
+      expect(block.contains('pill:'), isFalse, reason: '이 행이 단위를 바꾸는 알약을 따로 주지 않는다');
+      expect(rows.contains("pill: pill ?? '\$count건'"), isTrue, reason: '기본 알약 단위 = 건');
     });
   });
 
@@ -240,7 +244,8 @@ void main() {
     test('목적지 헬퍼도 자체 권한 검증을 유지한다', () {
       final helper = _bodyOf(home, 'Future<void> _toPayrollTabDrilldown(');
       expect(helper.contains("_verified(up, (p) => p.canManageWage)"), isTrue);
-      expect(helper.contains('급여 관리 권한이 없습니다'), isTrue);
+      // [impl_26 · UX Master §150 「앱 전체 문구 정본과 두 홈 표현」(2026-11-11) · 대표 홈 정본 보충 표 · DU 0fa6948] 해요체.
+      expect(helper.contains('급여 관리 권한이 없어요'), isTrue);
     });
   });
 
@@ -353,7 +358,9 @@ void main() {
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
-      expect(titles, {'오늘', '다가오는 7일', '처리할 일'},
+      // [impl_26 · UX Master §150 「앱 전체 문구 정본과 두 홈 표현」(2026-11-11) · 대표 홈 정본 보충 표 · DU 0fa6948] 섹션 제목 = 「오늘의 근무 / 처리할 일 / 다가오는 근무 + 앞으로 7일」.
+      //   집합 크기 3 · 순서 단언은 그대로 — 이름만 정본으로 바뀌었다.
+      expect(titles, {'오늘의 근무', '다가오는 근무', '처리할 일'},
           reason: '섹션이 늘거나 줄지 않았다');
     });
 
@@ -362,9 +369,10 @@ void main() {
     test('staffing·empty copy는 AH-V2-03 계약을 따른다', () {
       // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
 
-      expect(home.contains('향후 인력 현황을 불러오지 못했습니다'), isTrue);
+      // [impl_26 · UX Master §150 「앱 전체 문구 정본과 두 홈 표현」(2026-11-11) · 대표 홈 정본 보충 표 · DU 0fa6948] 해요체 — 같은 상태 문구의 어미만 바뀌었다.
+      expect(home.contains('향후 인력 현황을 불러오지 못했어요'), isTrue);
       expect(home.contains('처리할 업무가 없어요'), isTrue);
-      expect(home.contains('인력 정보를 불러오지 못했습니다'), isTrue);
+      expect(home.contains('인력 정보를 불러오지 못했어요'), isTrue);
     });
 
     test('AH-V2-01의 ERROR≠ZERO 배선이 유지된다', () {

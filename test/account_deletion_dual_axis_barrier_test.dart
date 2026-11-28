@@ -295,7 +295,20 @@ void main() {
       //   을 read-set 에 넣는다(race guard) — 역시 읽기다.
       // [R7-P4.4E.11C.0C.1 갱신] 4 → 5. Final 이 Auth-tail 증거로 tombstone
       //   존재를 **읽는다**. 여전히 읽기이고 write authority 가 아니다.
-      expect(barrierReads, 6,
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 6 → 7. 옛 가입중단(callableAbortForeignRegistration)이 tombstone 이 선 uid 를
+      //   거부하려고 존재를 **읽는다**(Final 이 정리 주인) — 역시 읽기이며 create 를 열지 않는다.
+      expect(_fn(raw, 'callableAbortForeignRegistration'),
+          contains('db.collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).get(),'));
+      // [판정281 서버 확정 갱신 2026-11-26] 7 → 8. 공통 onCall 진입 판정(srvAssertCallerNotInDeletion)이 caller 의
+      //   tombstone 존재를 **읽어 거부만** 한다(fail closed) — create 를 열지 않는 읽기다. 그 사실을 함께 고정한다.
+      final fence = _helper(raw, 'srvAssertCallerNotInDeletion');
+      expect(fence, contains('(await db.collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).get()).exists'));
+      expect(fence, contains('if (frozen) {'));
+      expect(fence, contains('throw new HttpsError("failed-precondition"'));
+      for (final w in ['.set(', '.update(', '.create(', '.delete(', 'runTransaction']) {
+        expect(fence, isNot(contains(w)), reason: '진입 판정은 읽고 거부할 뿐 쓰지 않는다 — $w');
+      }
+      expect(barrierReads, 8,
           reason: 'barrier 문서를 읽는 자리가 늘어났다 — transaction 밖인지 확인해야 한다');
       final recovery = _fn(raw, 'callableGetAccountDeletionRecoveryState');
       expect(recovery, contains('ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).get()'));
@@ -350,7 +363,10 @@ void main() {
       // [R7-P4.4E.11C.1.2 갱신] 9 → 10. 사업장 소유 잔존 gate 의 쿼리 실패
       //   분기가 하나 늘었다(정책 위반은 throw 라 partial 이 아니다).
       //   이 셀이 고정하는 personal·identity gate 자체는 그대로다.
-      expect(_count(fn, 'partial: true'), 10);
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 10 → 12. 새 흐름 계정 identity 정리 실패·잔존 gate 2개(설계 §2.9).
+      expect(fn, contains('if (newIdentityCleanup.failed > 0)'));
+      expect(fn, contains('newIdentityResidual.residual !== 0'));
+      expect(_count(fn, 'partial: true'), 12);
     });
 
     test('DA-REG-03 worker_availability·세무 writer gate 가 그대로다', () {
@@ -361,7 +377,9 @@ void main() {
         'callableRegisterTaxIdentity',
         'callableUpdateTaxIdentity',
         'callableRecoverForeignTaxIdentity',
-        'callableFinalizeForeignIdentity',
+        // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 옛 외국인 가입 finalize 는 닫혔다(본문 = LEGACY_SIGNUP_CLOSED). 등록번호를 받는
+        //   writer 는 새 callableRegisterForeignIdDocument 다 — 같은 freeze gate 를 요구한다.
+        'callableRegisterForeignIdDocument',
       ]) {
         expect(_fn(raw, n), contains('srvAssertNotDeletingAccount('),
             reason: '$n 의 freeze gate 가 사라졌다');
@@ -370,8 +388,16 @@ void main() {
 
     test('DA-REG-04 일정·지급 요청 생성 gate 가 그대로다', () {
       // .0a.1 에서 닫은 post-freeze create 차단.
-      expect(_flat(rules),
-          contains("get(/databases/\$(database)/documents/users/\$(request.auth.uid)).data.get('accountStatus', 'active') != 'deleting'"));
+      // [rules_302 갱신 · rules_297 판정297 §B-4] 일정·지급 요청의 근로자 create 자격은 isValidApplicantRequest
+      //   (지원서 소유·사업장 결속)로 옮겨졌고 freeze 줄은 그 helper 안에서 같은 users 문서(u)를 본다 — 보호 의미는 같다.
+      final h = _flat(rules.substring(
+          rules.indexOf('function isValidApplicantRequest(applicationId, businessId) {'),
+          rules.indexOf('}', rules.indexOf('function isValidApplicantRequest(applicationId, businessId) {'))));
+      expect(h, contains("u.data.get('accountStatus', 'active') != 'deleting'"));
+      expect(h, contains('let u = get(/databases/\$(database)/documents/users/\$(request.auth.uid));'));
+      // 일정변경(SCR)·지급방식(PCR) create 두 곳 모두 그 helper 를 쓴다.
+      expect('isValidApplicantRequest(request.resource.data.applicationId, request.resource.data.businessId)'
+          .allMatches(rules).length, 2);
     });
 
     test('DA-REG-05 notification emitter 는 건드리지 않았다 (§90)', () {

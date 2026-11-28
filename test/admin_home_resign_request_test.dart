@@ -148,7 +148,8 @@ void main() {
     test('탭 시점에도 권한을 재확인한다', () {
       final block = _rowBlock(rows, '퇴사 요청');
       expect(block.contains("_verified(up, (p) => p.canManageWorkers)"), isTrue);
-      expect(block.contains('근로자 관리 권한이 없습니다'), isTrue);
+      // [impl_57 · 홈 A안] 토스트 '근로자 관리 권한이 없습니다' → '근로자 관리 권한이 없어요'
+      expect(block.contains("ToastHelper.showWarning('근로자 관리 권한이 없어요')"), isTrue);
     });
 
     test('승인 callable과 같은 권한 축이다', () {
@@ -226,17 +227,28 @@ void main() {
 
   group('AHV2-02B-07 자동 승인 기한이 스케줄러와 같은 기준', () {
     test('스케줄러는 resignRequestedAt + KST 자정 + 3일을 쓴다', () {
-      expect(cf.contains('const threeDaysAgo = new Date(todayKST.getTime() - 3 * 24 * 60 * 60 * 1000)'),
-          isTrue);
-      expect(cf.contains('.where("resignRequestedAt", "<=", threeDaysAgoUTC)'), isTrue);
+      // [BL284-01 · 판정288] 요청 거래가 접수시각 r 로 저장한 resignAutoApproveAt = ceilKSTMidnight(r+72h) 를
+      //   오늘 KST 자정(T)과 비교한다(ceil(r+3d) <= T ⇔ r <= T−3d — 예전 식과 같은 집합).
+      final d3 = _fnBody(cf, 'async function srvProcessResignAutoApproveD3(');
+      expect(d3.contains('const cutoff = Timestamp.fromMillis(todayKST.getTime() - kstOffsetMs);'), isTrue);
+      expect(d3.contains('.where("resignRetroRequest", "==", false)'), isTrue);
+      expect(d3.contains('.where("resignAutoApproveAt", "<=", cutoff)'), isTrue);
+      expect(cf.contains('await srvProcessResignAutoApproveD3(now, todayKST, KST_OFFSET_MS);'), isTrue);
+      final agg = _src('functions/src/resign_agg.ts');
+      expect(agg.contains('RESIGN_AUTO_APPROVE_DELAY_S = 3 * DAY_S'), isTrue);
     });
 
     test('헬퍼가 같은 필드·같은 KST 자정 기준을 쓴다', () {
+      // [BL284-01] 같은 필드(resignAutoApproveAt) · 홈은 다음 KST 자정(T+1d), 스케줄러는 오늘 KST 자정(T).
+      //   경계 fixture(정각/±1ms·overdue)는 functions/test/resign_agg_1.test.js T01–T02·H01·H03.
       final helper = _fnBody(cf, 'async function srvHomeResignRequest(');
-      expect(helper.contains('"resignRequestedAt", "<="'), isTrue);
-      expect(helper.contains('todayKSTMidnight.getTime() - 2 * 24 * 60 * 60 * 1000'),
+      final d3 = _fnBody(cf, 'async function srvProcessResignAutoApproveD3(');
+      expect(helper.contains('"resignAutoApproveAt", "<=", nextKstMidnight'), isTrue);
+      expect(d3.contains('"resignAutoApproveAt", "<=", cutoff'), isTrue);
+      expect(helper.contains('todayKSTMidnight.getTime() + 24 * 60 * 60 * 1000'),
           isTrue,
-          reason: '스케줄러 −3일 경계보다 하루 앞선 −2일 = 내일 자동 승인 대상');
+          reason: '스케줄러 오늘 자정 경계보다 하루 뒤 = 다음 자정 실행에서 자동 승인될 건');
+      expect(helper.contains('"resignRequestedAt"'), isFalse);
     });
 
     test('Home이 넘기는 기준값이 스케줄러와 동일 시점이다', () {
@@ -247,7 +259,8 @@ void main() {
     test('임박 건수가 badge로 표현된다', () {
       // 배지 문자열은 add( 앞에서 조립한다 — 퇴사 요청 권한 블록 전체를 본다.
       final block = _resignSection(rows);
-      expect(block.contains("'내일 자동 승인 \$soon건'"), isTrue);
+      // [impl_57 · 홈 A안] 배지 '내일 자동 승인 $soon건' → 보조줄 '빠른 검토 필요 $soon건'(CP04 §4 확약 문구 0)
+      expect(block.contains("_TaskSub('빠른 검토 필요 \$soon건'"), isTrue);
       expect(block.contains('soon > 0'), isTrue);
     });
 
@@ -358,9 +371,8 @@ void main() {
     });
 
     test('필요한 복합 인덱스가 이미 존재한다', () {
-      // businessId + resignStatus + resignRequestedAt
-      // count()는 이 인덱스의 prefix(businessId+resignStatus)로도,
-      // soonCount의 범위 조건은 세 번째 필드로 충족된다.
+      // [BL284-01 · 판정288 §5] 기존 businessId+resignStatus+resignRequestedAt(ASC·DESC)는 상세 목록 등
+      //   소비를 위해 보존하고, 새 3 aggregate 쿼리 shape 의 색인을 추가했다(신규 추가 필요로 바뀜).
       final idx = _src(_indexesJson)
           .replaceAll(RegExp(r'\s+'), ' '); // 공백·줄바꿈 정규화
       expect(
@@ -368,14 +380,32 @@ void main() {
             '{ "fieldPath": "resignStatus", "order": "ASCENDING" }, '
             '{ "fieldPath": "resignRequestedAt"'),
         isTrue,
-        reason: '기존 인덱스를 재사용한다 — 신규 추가 불필요',
+        reason: '기존 인덱스 보존',
+      );
+      expect(
+        idx.contains('{ "fieldPath": "businessId", "order": "ASCENDING" }, '
+            '{ "fieldPath": "resignStatus", "order": "ASCENDING" }, '
+            '{ "fieldPath": "resignRetroRequest", "order": "ASCENDING" }, '
+            '{ "fieldPath": "resignAutoApproveAt", "order": "ASCENDING" } ]'),
+        isTrue,
+        reason: 'soon 집계 색인',
+      );
+      expect(
+        idx.contains('{ "fieldPath": "businessId", "order": "ASCENDING" }, '
+            '{ "fieldPath": "resignStatus", "order": "ASCENDING" }, '
+            '{ "fieldPath": "resignRetroRequest", "order": "ASCENDING" } ]'),
+        isTrue,
+        reason: 'manual 집계 색인',
       );
     });
 
     test('문서 전체 fetch 없이 count() aggregation을 쓴다', () {
+      // [BL284-01] 무문서 fetch 계약 유지 · 3 aggregate 를 같은 read-only 거래의 tx.get 으로만 읽는다.
       final helper = _fnBody(cf, 'async function srvHomeResignRequest(');
-      expect(helper.contains('.count()'), isTrue);
-      expect(helper.contains('.get()'), isTrue);
+      expect(RegExp(r'\.count\(\)').allMatches(helper).length, 3);
+      expect(helper.contains('Promise.all([tx.get(qAll), tx.get(qManual), tx.get(qSoon)])'), isTrue);
+      expect(helper.contains('{readOnly: true}'), isTrue);
+      expect(helper.contains('.get()'), isFalse, reason: '거래 밖 독립 get 은 snapshot 이 섞인다');
       expect(helper.contains('.docs'), isFalse, reason: '문서를 받아 세면 안 된다');
     });
   });
@@ -415,7 +445,8 @@ void main() {
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
-      expect(titles, {'오늘', '다가오는 7일', '처리할 일'});
+      // [impl_57 · 홈 A안] {'오늘', '다가오는 7일', '처리할 일'} → {'오늘의 근무', '다가오는 근무', '처리할 일'}
+      expect(titles, {'오늘의 근무', '다가오는 근무', '처리할 일'});
     });
 
     test('AH-V2-01의 ERROR≠ZERO 배선이 유지된다', () {

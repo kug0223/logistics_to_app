@@ -13,7 +13,9 @@ service firebase.storage {
 
     // [SEC-ST01] 이미지 MIME 타입 제한 — HTML/JS 등 악성 파일 업로드 차단
     function isImageType() {
-      return request.resource.contentType.matches('image/.*');
+      // [storage_301 · AUD-6 C3] image/.* 는 image/svg+xml(스크립트 포함 가능)까지 받았다 — 앱이 실제 올리는 형식만 허용
+      //   (storage_service.dart _mimeFromPath: jpeg·png·gif·webp·heic·heif · 기본 image/jpeg · 외국인 등록 화면 동일).
+      return request.resource.contentType.matches('image/(jpeg|png|gif|webp|heic|heif)');
     }
 
     // 계약서 PDF: 10MB 제한
@@ -114,6 +116,18 @@ service firebase.storage {
     // [DOC-PRODUCT-DELETE.8] 서버가 지우기로 한(정리 대기) 이름 — 다시 만들지 못한다. 그래야 늦게 끝나는
     //   정리가 지우는 generation 이 언제나 정리 대기 전에 있던 그 객체다. users 문서는 위와 같은 문서다
     //   (평가당 서로 다른 문서 수는 그대로).
+    // [storage_301 · AUD-6 E4–E7] 서버가 증빙으로 기록하는 통장사본·사업자등록증 이름(서버 술어 srvIsOwnedBankbookStoragePath ·
+    //   callableRegisterBusinessLicense 의 'users/{uid}/businessLicense_' prefix 와 같은 범위).
+    // [storage_304 · F298-03] 통장사본 접두는 서버 판정(srvIsOwnedBankbookStoragePath · /i)과 같게 대소문자 무관
+    //   (BANKBOOK_ · BankBook_ …). 문자 클래스로 쓴다(RE2 플래그 해석 차이 회피). 사업자등록증은 서버도 대소문자 구분.
+    function isEvidenceName(name) {
+      return name.matches('users/[^/]+/([bB][aA][nN][kK][bB][oO][oO][kK]|businessLicense)_[^/]*');
+    }
+    // 지금 서버가 기록한 경로인가 — 삭제 뒤 같은 이름으로 다시 올려 바꿔치는 것을 막는다(신분증 isCurrentIdCard 와 같은 꼴).
+    function isCurrentEvidence(uid, name) {
+      let u = firestore.get(/databases/(default)/documents/users/$(uid)).data;
+      return u.get('bankbookImagePath', '') == name || u.get('businessLicenseImagePath', '') == name;
+    }
     function isRetiringIdCard(uid, name) {
       return name in firestore.get(/databases/(default)/documents/users/$(uid))
           .data.get('idDocumentOrphanPaths', []);
@@ -147,6 +161,8 @@ service firebase.storage {
              (!isIdCardName(request.resource.name) ||
               (resource == null && !isCurrentIdCard(uid, request.resource.name) &&
                !isRetiringIdCard(uid, request.resource.name))) &&
+             (!isEvidenceName(request.resource.name) ||
+              (resource == null && !isCurrentEvidence(uid, request.resource.name))) &&
              isUnder5MB() && isImageType() &&
              !accountDeletionBarrierExists(uid);
       // [FULL13-DOC-INTEGRITY.4] update(같은 이름 덮어쓰기·메타데이터 변경)는 신분증 객체에서
@@ -154,6 +170,7 @@ service firebase.storage {
       allow update:
           if isLoggedIn() && request.auth.uid == uid &&
              !isIdCardName(resource.name) &&
+             !isEvidenceName(resource.name) &&
              isUnder5MB() && isImageType() &&
              !accountDeletionBarrierExists(uid);
     }

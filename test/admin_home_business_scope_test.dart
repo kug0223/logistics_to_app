@@ -351,8 +351,11 @@ void main() {
     });
 
     test('이름 조회는 여전히 businesses 전체 목록을 쓴다', () {
+      // [PERF-P8] 다이얼로그가 사업장 문서를 받는 중일 수 있어(businessesFuture) 이름 조회는
+      //   `_businesses`(처음엔 widget.businesses 전체 · 받은 뒤 그 결과)를 본다 — 선택 사업장 하나로 좁히지 않는다.
       final f = _bodyOf(dialog, 'String _bizName(');
-      expect(f.contains('widget.businesses'), isTrue);
+      expect(f.contains('_businesses'), isTrue);
+      expect(dialog.contains('late List<BusinessModel> _businesses = widget.businesses;'), isTrue);
     });
   });
 

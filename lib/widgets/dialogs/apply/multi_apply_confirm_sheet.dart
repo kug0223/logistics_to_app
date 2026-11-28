@@ -52,6 +52,7 @@ import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/text_layout.dart';
+import '../../../utils/expected_daily_wage.dart';
 import '../../../widgets/common/common_widgets.dart';
 import 'application_relation.dart';
 import 'document_access_consent.dart';
@@ -131,7 +132,15 @@ class MultiApplyConfirmSheet extends StatefulWidget {
 }
 
 class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
-  final _conflictService = ScheduleConflictService();
+  // [L19 · 판정289 탭 분석 §3-6] 시트 한 번 열림 = 내 약속 목록 조회 1회.
+  //   예전에는 근무 날짜마다 `checkConflictsForWorkDetails` 가 같은 목록(확정 200)을 따로 읽었다(D회).
+  //   이제 첫 날짜의 조회 Future 를 나머지 날짜가 함께 받는다 — 시트가 열릴 때 1회라는 신선도는 그대로이고,
+  //   날짜별 겹침 판정·실패 시 '확인하지 못함' 표시는 각 날짜에서 그대로 한다.
+  Future<List<ApplicationModel>>? _commitmentsOnce;
+  late final ScheduleConflictService _conflictService = ScheduleConflictService(
+    commitmentsSource: () =>
+        _commitmentsOnce ??= ScheduleConflictService.fetchMyCommitments(),
+  );
   final _firestoreService = FirestoreService();
 
   late List<_ItemMeta> _metas;
@@ -527,6 +536,32 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
           style: ResponsiveHelper.subtitleStyle(context)
               .copyWith(fontWeight: FontWeight.bold),
         ),
+        // [F293-WAGE-01] 실제로 보낼 근무 집합의 근무별 예상 금액 합(근무별 반올림 뒤 합산) — '하루' 라고 부르지 않는다.
+        //   하나라도 금액이 없으면(일급 · 확인 필요) 합계를 만들지 않는다.
+        if (!_isCheckingConflicts)
+          ...() {
+            final ests = _submitTargets.map((m) => ExpectedDailyWage.forWorkDetail(m.item.work)).toList();
+            final total = ExpectedWageText.selectedTotal(ests);
+            final anyEstimate = ests.any((e) => e.isEstimate);
+            return <Widget>[
+              if (total != null) ...[
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                Text(
+                  TextLayout.keepWords('$total · ${ExpectedWageText.shortNote}'),
+                  semanticsLabel: '$total ${ExpectedWageText.shortNote}',
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+                ),
+              ],
+              // 하루 예상 금액이 있으면 계산 범위 고지(정본 문구 그대로).
+              if (anyEstimate) ...[
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                Text(
+                  ExpectedWageText.disclosure,
+                  style: ResponsiveHelper.tinyStyle(context).copyWith(color: AppColors.textTertiary),
+                ),
+              ],
+            ];
+          }(),
         if (blockedCount > 0 && !_isCheckingConflicts) ...[
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
           Text(
@@ -685,7 +720,8 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
           SizedBox(height: ResponsiveHelper.spacing(context, 3)),
           Text(
             // [DU1-F2] 금액 단위 — 저장 급여 형태 라벨(시급/일급)을 붙인다. 새 계산 없음.
-            '${work.startTime} ~ ${work.endTime}  ·  ${work.wageTypeLabel} ${work.formattedWage}',
+            // [F293-WAGE-01] 시급 업무는 이 날짜·업무 1회의 하루 예상 + 시급.
+            '${work.startTime} ~ ${work.endTime}  ·  ${ExpectedWageText.combined(ExpectedDailyWage.forWorkDetail(work)) ?? '${work.wageTypeLabel} ${ExpectedWageText.rawWage(work.wage)}'}',
             style: ResponsiveHelper.smallStyle(context).copyWith(
               color: isDisabled
                   ? AppColors.grey400

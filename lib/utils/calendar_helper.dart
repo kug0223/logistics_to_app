@@ -1,5 +1,6 @@
 import '../models/core/application_model.dart';
 import '../models/core/attendance_model.dart';
+import 'expected_daily_wage.dart';
 import 'format_helper.dart';
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -19,7 +20,9 @@ import 'format_helper.dart';
 //   · workEndDate=null 장기 확정: 전 시스템(isWorkingOnDate 포함)에서 일관되게 false/0 처리 — "기간 미정" 계약 전용
 //   · getConfirmedCount 장기 제외: 장기는 건수보다 예상수입/실근무일수로 표현하는 것이 의도된 설계
 //   · getActualWorkDays 복수 잡: Set 중복 제거로 같은 날 2개 잡도 1일로 정확히 처리
-//   · 시급 계산 시 휴게시간 미반영: 앱 스펙상 허용 범위 (breakMinutes 필드 application에 없음)
+//   · [AUD-3 M3 · 판정293 §6] 근무 1회 금액은 하루 예상 helper(ExpectedDailyWage)와 같다 — 시급은 약속 휴게를 빼고
+//     (null = 모름 · 종료=시작 = 계산 불가), 일급은 그 금액, 월급·유형 모름은 근무 1회 금액을 만들지 않는다.
+//     월 합계는 근무별 원 단위 반올림 금액의 합이고 계산 불가 근무는 합계에서 빼고 건수로 따로 말한다.
 //   · buildDateIndex start = workDate 기준 (confirmedAt 보정 없음):
 //     isScheduledOnDate 내부에서 효과적으로 필터링되므로 오버인덱싱 없음
 // ══════════════════════════════════════════════════════════════════════════
@@ -166,8 +169,8 @@ class CalendarHelper {
 
   /// 총 예상 수입 계산 (세전)
   ///
-  /// - 단기: _dailyWage(app) — wageType='hourly'이면 시급×근무시간, 'daily'이면 wage 그대로
-  /// - 장기 확정: _dailyWage(app) × 이번 달 근무일수
+  /// - 단기: expectedShiftWage(app) × 1건 — 시급은 약속 휴게를 뺀 하루 예상, 일급은 그 금액
+  /// - 장기 확정: expectedShiftWage(app) × 이번 달 근무일수 · 계산 불가 근무는 합계에서 뺀다(getTotalIncomeDetail)
   ///
   /// ⚠️ 단기도 반드시 _dailyWage 경유: wageType='hourly'인 경우 app.wage는 시급이므로
   ///    app.wage를 그대로 합산하면 실제 예상수입보다 대폭 과소 계산됨.
@@ -241,27 +244,46 @@ class CalendarHelper {
     DateTime focusedDay, {
     List<AttendanceModel> attendances = const [],
     DateTime? now,
+  }) =>
+      getTotalIncomeDetail(applications, focusedDay, attendances: attendances, now: now).total;
+
+  /// [AUD-3 M3] 예상수입 합계 + 금액을 계산할 수 없는 근무 수.
+  ///   합계 = 근무별 [expectedShiftWage] 의 합(근무마다 원 단위 반올림 뒤 더한다).
+  ///   계산할 수 없는 근무(시급 약속 휴게 모름 · 종료=시작 · 누락 단가 · 월급 · 유형 모름)는 합계에 0 으로 넣지 않고
+  ///   [unknownShifts] 로 센다 — 화면은 '금액 확인 필요 N건' 으로 따로 말한다.
+  static ({int total, int unknownShifts}) getTotalIncomeDetail(
+    List<ApplicationModel> applications,
+    DateTime focusedDay, {
+    List<AttendanceModel> attendances = const [],
+    DateTime? now,
   }) {
-    return applications
-        .where((app) => AppStatus.confirmedStatuses.contains(app.status))
-        .fold(0, (sum, app) {
-          final daily = _dailyWage(app);
-          if (!app.isLongTermApplication) {
-            return isScheduledIncome(app, attendances, now: now)
-                ? sum + daily
-                : sum;
-          }
-          // 장기는 날짜 단위로 뺀다 — 계약 전체가 아니라 결근한 그 날만이다.
-          final workDaysCount = _workDaysInMonth(app, focusedDay);
-          final nonEarningDays = attendances
-              .where((att) =>
-                  att.applicationId == app.id &&
-                  FormatHelper.isSameKstMonth(att.workDate, focusedDay) &&
-                  isNonEarning(att))
-              .length;
-          final payable = workDaysCount - nonEarningDays;
-          return sum + daily * (payable > 0 ? payable : 0);
-        });
+    var total = 0;
+    var unknown = 0;
+    for (final app in applications.where((a) => AppStatus.confirmedStatuses.contains(a.status))) {
+      final perShift = expectedShiftWage(app);
+      final int shifts;
+      if (!app.isLongTermApplication) {
+        shifts = isScheduledIncome(app, attendances, now: now) ? 1 : 0;
+      } else {
+        // 장기는 날짜 단위로 뺀다 — 계약 전체가 아니라 결근한 그 날만이다.
+        final workDaysCount = _workDaysInMonth(app, focusedDay);
+        final nonEarningDays = attendances
+            .where((att) =>
+                att.applicationId == app.id &&
+                FormatHelper.isSameKstMonth(att.workDate, focusedDay) &&
+                isNonEarning(att))
+            .length;
+        final payable = workDaysCount - nonEarningDays;
+        shifts = payable > 0 ? payable : 0;
+      }
+      if (shifts == 0) continue;
+      if (perShift == null) {
+        unknown += shifts;
+      } else {
+        total += perShift * shifts;
+      }
+    }
+    return (total: total, unknownShifts: unknown);
   }
 
   /// 출근기록에서 실근무일수·확정수입을 단일 순회로 계산 (O(n) 1회)
@@ -328,29 +350,28 @@ class CalendarHelper {
 
   // ─── Private helpers ──────────────────────────────────────────────────────
 
-  /// 시급/일급을 일당으로 환산
+  /// 근무 1회의 예상 금액(세전) — 호출처: getTotalIncomeDetail(단기·장기) · 홈 · 수입 상세.
   ///
-  /// · wageType='hourly': app.wage=시급, startTime~endTime으로 총 근무시간 계산
-  ///   - endMin <= startMin이면 야간 시프트(22:00~06:00 등) → endMin += 1440(다음날)으로 보정
-  ///   - 휴게시간(breakMinutes) 미반영: ApplicationModel에 필드 없으므로 총 시간으로 계산
-  /// · wageType='daily'(또는 null): app.wage가 이미 일당 → 그대로 반환
-  ///
-  /// 호출처: getTotalIncome (단기·장기 모두), _workDaysInMonth 간접 사용
-  static int _dailyWage(ApplicationModel app) {
-    if (app.wageType == 'hourly') {
-      int toMin(String t) {
-        final p = t.split(':');
-        if (p.length < 2) return 0;
-        // app.startTime/endTime은 DB에 "HH:mm"으로만 저장 — parse 예외 없음
-        return int.parse(p[0]) * 60 + int.parse(p[1]);
-      }
-      final startMin = toMin(app.startTime);
-      var endMin = toMin(app.endTime);
-      if (endMin <= startMin) endMin += 1440; // 야간 시프트 (ex: 22:00~06:00)
-      final hours = (endMin - startMin) / 60.0;
-      return (app.wage * hours).round();
+  /// [AUD-3 M3 · 판정293 §6] 하루 예상 helper 로 정렬했다(예전: 휴게 미차감 · 종료=시작 24시간 · 월급을 하루치로).
+  ///   · hourly: `ExpectedDailyWage.forPromise` — round(시급 × (체류 − 약속 휴게)/60). 휴게 null · 종료=시작 ·
+  ///     형식 오류 · 단가 0 이하는 null(계산 불가). 익일 종료는 종료 < 시작일 때만 +1,440.
+  ///   · daily: 그 금액(양수만 · 0 이하는 null).
+  ///   · monthly · 유형 모름(레거시 null 포함): null — 근무 1회 금액을 만들지 않는다(월급을 근무일마다 더하지 않는다).
+  static int? expectedShiftWage(ApplicationModel app) {
+    switch (app.wageType) {
+      case 'hourly':
+        final e = ExpectedDailyWage.forPromise(
+            wageType: 'hourly',
+            rate: app.wage,
+            startTime: app.startTime,
+            endTime: app.endTime,
+            breakMinutes: app.breakMinutes);
+        return e.isEstimate ? e.amount : null;
+      case 'daily':
+        return app.wage > 0 ? app.wage : null;
+      default:
+        return null;
     }
-    return app.wage; // daily
   }
 
   /// 장기공고의 이번 달 근무 예정 일수

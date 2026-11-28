@@ -11,6 +11,7 @@ import 'package:ALfit/screens/common/onboarding_screen.dart';
 import 'package:ALfit/theme/role_theme.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 Future<({GlobalKey key, int Function() completes, List<String> overflows})> _toPage1(
     WidgetTester t, Size size, double scale, {bool insets = true}) async {
@@ -49,7 +50,7 @@ Future<({GlobalKey key, int Function() completes, List<String> overflows})> _toP
   for (var i = 0; i < 12; i++) {
     await t.pump(const Duration(milliseconds: 100));
   }
-  final next = find.ancestor(of: find.text('다음'), matching: find.byType(GestureDetector)).first;
+  final next = find.ancestor(of: findVisibleText('다음'), matching: find.byType(GestureDetector)).first;
   await t.tapAt(t.getRect(next).center);
   // 400ms 이동 + 600ms scale + 300ms switcher
   for (var i = 0; i < 20; i++) {
@@ -82,7 +83,7 @@ void main() {
     ].join(' · ');
     final title = find.text('지원한 일자리의\n진행 상황을 한눈에');
     final skip = find.widgetWithText(TextButton, '건너뛰기');
-    final next = find.ancestor(of: find.text('다음'), matching: find.byType(GestureDetector)).first;
+    final next = find.ancestor(of: findVisibleText('다음'), matching: find.byType(GestureDetector)).first;
     final rSkip = t.getRect(skip);
     final rNext = t.getRect(next);
     final report = 'mq padding=${mq.padding} viewPadding=${mq.viewPadding} · page=${page.page?.toStringAsFixed(3)} offset=${page.offset.toStringAsFixed(1)} · '

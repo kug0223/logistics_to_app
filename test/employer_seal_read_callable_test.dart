@@ -53,7 +53,20 @@ void main() {
       final i = cf.indexOf('async function assertBizAdmin');
       final gate = cf.substring(i, i + 3000);
       expect(gate.contains('adminIds'), isTrue);
-      expect(gate.contains('subAdminBusinessIds'), isTrue);
+      // [server_299 §8 갱신] 하위 관리자 소속 판정이 공용 helper 로 옮겨졌다(인라인 4곳과 공유).
+      //   assertBizAdmin 은 owner·adminIds 를 직접 보고, 하위 관리자는 srvIsCurrentSubAdminOf 를 부른다.
+      //   그 helper 가 subAdminBusinessIds·subAdminOf 를 **후보**로 읽고(srvAssignedSubAdminBusinessIds),
+      //   그 사업장의 현재 members 행이 있어야 통과시킨다.
+      final hs = cf.indexOf('async function srvIsCurrentSubAdminOf(');
+      expect(hs, greaterThan(-1));
+      final sub = cf.substring(hs, cf.indexOf('\n}\n', hs));
+      final ha = cf.indexOf('function srvAssignedSubAdminBusinessIds(');
+      expect(ha, greaterThan(-1));
+      final cand = cf.substring(ha, cf.indexOf('\n}\n', ha));
+      expect(gate.contains('srvIsCurrentSubAdminOf(callerUid, businessId, callerData)'), isTrue);
+      expect(sub.contains('srvAssignedSubAdminBusinessIds(callerData)'), isTrue);
+      expect(cand.contains('subAdminBusinessIds'), isTrue);
+      expect(sub.contains('collection("members").doc(uid).get()'), isTrue);
     });
 
     test('EMP-SEAL-READ-02b 새 permission 을 만들지 않았다', () {
@@ -228,9 +241,26 @@ void main() {
       final i = cf.indexOf('async function assertBizAdmin');
       final gate = cf.substring(i, i + 2200);
       // 소속은 본다.
-      for (final k in ['adminIds', 'ownerId', 'subAdminBusinessIds']) {
+      for (final k in ['adminIds', 'ownerId']) {
         expect(gate.contains(k), isTrue);
       }
+      // [server_299 §8 갱신] 하위 관리자 소속 판정이 공용 helper 로 옮겨졌다(인라인 4곳과 공유).
+      //   assertBizAdmin 은 owner·adminIds 를 직접 보고, 하위 관리자는 srvIsCurrentSubAdminOf 를 부른다.
+      //   그 helper 가 subAdminBusinessIds·subAdminOf 를 **후보**로 읽고(srvAssignedSubAdminBusinessIds),
+      //   그 사업장의 현재 members 행이 있어야 통과시킨다.
+      final hs = cf.indexOf('async function srvIsCurrentSubAdminOf(');
+      expect(hs, greaterThan(-1));
+      final sub = cf.substring(hs, cf.indexOf('\n}\n', hs));
+      final ha = cf.indexOf('function srvAssignedSubAdminBusinessIds(');
+      expect(ha, greaterThan(-1));
+      final cand = cf.substring(ha, cf.indexOf('\n}\n', ha));
+      expect(gate.contains('srvIsCurrentSubAdminOf(callerUid, businessId, callerData)'), isTrue);
+      for (final k in ['subAdminBusinessIds', 'subAdminOf']) {
+        expect(cand.contains(k), isTrue, reason: '$k 는 후보로 읽는다');
+      }
+      expect(sub.contains('collection("members").doc(uid).get()') && sub.contains('return m.exists;'), isTrue,
+          reason: '후보만으로는 통과시키지 않는다 — 현재 멤버 행');
+      expect(sub.contains('permissions'), isFalse);
       // 세부 권한은 보지 않는다 — 그래서 callable 쪽에 따로 둬야 한다.
       expect(gate.contains('canManageTo'), isFalse);
       expect(gate.contains('canManageContract'), isFalse);
@@ -289,8 +319,25 @@ void main() {
       expect('permissions as Record<string, boolean>'.allMatches(cf).length,
           greaterThan(1),
           reason: '기존 CF 들이 쓰던 같은 패턴을 그대로 썼다');
+      // [server_299 · AUD-9 T1 갱신] assertBizAdmin 은 이제 하위 관리자에게 그 사업장의
+      //   **현재 멤버 행 존재**를 요구한다(해제와 경합해 되살아난 users 배정 차단). 그래도
+      //   capability(permissions) 판정은 여전히 이 callable 안에만 있다 — 전역 gate 는
+      //   멤버 행의 권한 필드를 보지 않는다. 그 계약을 고정한다.
+      //   [server_299 §8] 그 판정은 공용 helper srvIsCurrentSubAdminOf 로 모였다(인라인 판정 4곳과 공유).
       final i = cf.indexOf('async function assertBizAdmin');
-      expect(cf.substring(i, i + 2200).contains('members'), isFalse);
+      final j = cf.indexOf('\n}\n', i);
+      final body = cf.substring(i, j);
+      expect(body.contains('srvIsCurrentSubAdminOf(callerUid, businessId, callerData)'), isTrue,
+          reason: '하위 관리자는 현재 멤버 행이 있어야 한다(공용 판정)');
+      expect(body.contains('permissions'), isFalse,
+          reason: '전역 gate 는 capability 를 보지 않는다');
+      final h = cf.indexOf('async function srvIsCurrentSubAdminOf(');
+      expect(h, greaterThan(-1));
+      final helper = cf.substring(h, cf.indexOf('\n}\n', h));
+      expect(helper.contains('collection("members").doc(uid).get()'), isTrue,
+          reason: '판정 근거는 멤버 행 존재');
+      expect(helper.contains('permissions'), isFalse,
+          reason: '공용 판정도 capability 를 보지 않는다');
     });
 
     test('EMP-SEAL-PERM-11 Home 준비 카드는 하위관리자 소비자가 아니다', () {

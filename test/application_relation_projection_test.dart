@@ -487,9 +487,9 @@ void main() {
 
       expect(find.text('지원완료'), findsOneWidget,
           reason: '지금 관계를 말해야 한다');
-      expect(find.text('선택'), findsNothing,
+      expect(findVisibleText('선택'), findsNothing,
           reason: '이미 지원한 업무를 신규 선택 후보로 표현하지 않는다');
-      expect(find.text('선택됨'), findsNothing);
+      expect(findVisibleText('선택됨'), findsNothing);
 
       // 업무 카드와 상세보기는 그대로 유지한다.
       // [DU591c · 판정175 §3-2] 상세보기 · CTA 글은 keepWords(U+2060) 글 — 보이는 글자 정확 일치(findVisibleText · find.text 와 같은 skipOffstage 기본)로 찾는다.
@@ -512,7 +512,7 @@ void main() {
         myApps: [_app(status: AppStatus.confirmed, wdId: 'wdA')],
       );
       expect(findVisibleText('확정'), findsWidgets);
-      expect(find.text('선택'), findsNothing);
+      expect(findVisibleText('선택'), findsNothing);
     });
 
     testWidgets('ARP-32 INVITED 업무는 초대 확인으로 보여준다', (tester) async {
@@ -523,7 +523,7 @@ void main() {
       );
       expect(find.text('초대 확인'), findsOneWidget,
           reason: '초대는 지원완료와 다른 사건이다');
-      expect(find.text('선택'), findsNothing,
+      expect(findVisibleText('선택'), findsNothing,
           reason: '서버가 초대받은 근무의 재지원을 막는다');
     });
 
@@ -533,7 +533,7 @@ void main() {
         details: [_wd(wdId: 'wdA')],
         myApps: [_app(status: AppStatus.canceled, wdId: 'wdA')],
       );
-      expect(find.text('선택'), findsOneWidget,
+      expect(findVisibleText('선택'), findsOneWidget,
           reason: '서버가 재지원을 허용하는 상태다');
       expect(find.text('지원완료'), findsNothing);
     });
@@ -551,9 +551,9 @@ void main() {
 
       // 지원한 쪽은 상태, 안 한 쪽은 선택 가능.
       expect(find.text('지원완료'), findsOneWidget);
-      expect(find.text('선택'), findsOneWidget);
+      expect(findVisibleText('선택'), findsOneWidget);
 
-      await tester.tap(find.text('선택'));
+      await tester.tap(findVisibleText('선택'));
       await tester.pump(const Duration(milliseconds: 100));
 
       // flex 는 날짜당 1건이므로 1 이 맞다 — 중요한 것은 2 가 아니라는 점이다.
@@ -577,7 +577,7 @@ void main() {
               end: '13:00')
         ],
       );
-      expect(find.text('선택'), findsOneWidget,
+      expect(findVisibleText('선택'), findsOneWidget,
           reason: '업무명이 같아도 wdId 가 다르면 별개 근무다');
     });
 
@@ -611,16 +611,16 @@ void main() {
           myApps: [commitment(status: s)],
         );
 
-        expect(find.text('일정 겹침'), findsOneWidget,
+        expect(findVisibleText('일정 겹침'), findsOneWidget,
             reason: '색만으로 말하지 않는다 — 이유가 글자로 보인다');
-        expect(find.text('선택'), findsNothing);
+        expect(findVisibleText('선택'), findsNothing);
         // [ISG2-CTA] 하나뿐인 업무가 겹쳐서 막혔으면 고를 것이 없다.
-        expect(find.text('지원할 업무를 선택해주세요'), findsNothing);
-        expect(find.text('지금 지원할 수 있는 업무가 없어요'), findsOneWidget);
+        expect(findVisibleText('지원할 업무를 선택해 주세요'), findsNothing);
+        expect(findVisibleText('지금 지원할 수 있는 업무가 없어요'), findsOneWidget);
         // `마감`(정원) 과 다른 상태다.
-        expect(find.text('지원완료'), findsNothing);
+        expect(findVisibleText('지원완료'), findsNothing);
         // 업무 자체는 숨기지 않는다 — 발견은 유지한다.
-        expect(find.text('업무 자세히 보기'), findsOneWidget);
+        expect(findVisibleText('업무 자세히 보기'), findsOneWidget);
       });
     }
 
@@ -634,10 +634,10 @@ void main() {
         myApps: [commitment()],
       );
 
-      expect(find.text('일정 겹침'), findsOneWidget);
-      expect(find.text('선택'), findsOneWidget, reason: '14:00~18:00 은 겹치지 않는다');
+      expect(findVisibleText('일정 겹침'), findsOneWidget);
+      expect(findVisibleText('선택'), findsOneWidget, reason: '14:00~18:00 은 겹치지 않는다');
 
-      await tester.tap(find.text('선택'));
+      await tester.tap(findVisibleText('선택'));
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.textContaining('1개 업무 선택됨'), findsOneWidget);
     });
@@ -648,9 +648,9 @@ void main() {
         details: [_wd(wdId: 'wdA', start: '14:00', end: '18:00')],
         myApps: [commitment(start: '09:00', end: '14:00')],
       );
-      expect(find.text('일정 겹침'), findsNothing,
+      expect(findVisibleText('일정 겹침'), findsNothing,
           reason: '현재 canonical 상 인접은 겹침이 아니다 — buffer 규칙을 넣지 않는다');
-      expect(find.text('선택'), findsOneWidget);
+      expect(findVisibleText('선택'), findsOneWidget);
     });
 
     for (final s in [AppStatus.pending, AppStatus.invited]) {
@@ -661,8 +661,8 @@ void main() {
           details: [_wd(wdId: 'wdA', start: '09:00', end: '13:00')],
           myApps: [commitment(status: s)],
         );
-        expect(find.text('일정 겹침'), findsNothing);
-        expect(find.text('선택'), findsOneWidget);
+        expect(findVisibleText('일정 겹침'), findsNothing);
+        expect(findVisibleText('선택'), findsOneWidget);
       });
     }
   });

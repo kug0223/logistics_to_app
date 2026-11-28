@@ -75,7 +75,8 @@ String _bodyOf(String source, String signature) {
 const rowPermission = <String, String>{
   '퇴사 요청': 'canManageWorkers',
   '지원 검토': 'canManageTo',
-  '스케줄 변경 요청': 'canManageWorkers',
+  // [impl_57 · 홈 A안] '스케줄 변경 요청' → '일정 변경 요청'
+  '일정 변경 요청': 'canManageWorkers',
   '계약 미발송': 'canManageContract',
   '마감 필요': 'canManageWage',
   '중간정산 요청': 'canManageWage',
@@ -85,7 +86,8 @@ const rowPermission = <String, String>{
 };
 
 const canonicalOrder = <String>[
-  '퇴사 요청', '지원 검토', '스케줄 변경 요청', '계약 미발송', '마감 필요',
+  // [impl_57 · 홈 A안] '스케줄 변경 요청' → '일정 변경 요청'
+  '퇴사 요청', '지원 검토', '일정 변경 요청', '계약 미발송', '마감 필요',
   '중간정산 요청', '급여 변경 요청', '이체 대기', '계약 확인 필요',
 ];
 
@@ -120,7 +122,8 @@ List<String> buildRows({
   add('퇴사 요청');
   slot = result.length;
   add('지원 검토');
-  add('스케줄 변경 요청');
+  // [impl_57 · 홈 A안] '스케줄 변경 요청' → '일정 변경 요청'
+  add('일정 변경 요청');
   add('계약 미발송');
   add('마감 필요');
   add('중간정산 요청');
@@ -170,7 +173,8 @@ void main() {
     test('01-c 행 onTap 가드가 canManageContract다', () {
       final seg = makeCode.substring(makeCode.indexOf("label: '계약 확인 필요'"));
       expect(seg, contains("if (!_verified(up, (p) => p.canManageContract)) {"));
-      expect(seg, contains("ToastHelper.showWarning('계약서 관리 권한이 없습니다.')"));
+      // [impl_57 · 홈 A안] 토스트 '계약서 관리 권한이 없습니다.' → '계약서 관리 권한이 없어요'
+      expect(seg, contains("ToastHelper.showWarning('계약서 관리 권한이 없어요')"));
     });
 
     test('01-d 같은 도메인 알림도 canManageContract다', () {
@@ -392,8 +396,11 @@ void main() {
       // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
       //   count 는 여전히 결정 대기 인원 수다. 늦은 건수만 뒤에 덧붙었다.
       expect(seg, contains('count: totalDecisions,'));
-      expect(seg, contains("? '\$totalDecisions건 · 만료 \$expiredCount'"));
-      expect(seg, contains(": '\$totalDecisions건',"));
+      // [impl_57 · 홈 A안] 행 안 삼항 '$totalDecisions건 · 만료 $expiredCount' / '$totalDecisions건'
+      //   → add() 기본 알약 '$count건'(count = totalDecisions) + 보조줄 '만료 후 미결정 $expiredCount건'(판정283 A안)
+      expect(seg, contains("if (expiredCount > 0) _TaskSub('만료 후 미결정 \$expiredCount건', tone: _SubTone.urgent)"));
+      expect(seg.contains('pill:'), isFalse, reason: '계약 확인 필요는 기본 알약(N건)을 쓴다');
+      expect(makeCode, contains("pill: pill ?? '\$count건'"));
       expect(seg, contains('ExpiringContractsScreen('));
       // source 바인딩은 라벨 앞줄에 있다
       expect(makeCode, contains('final expiring = cs?.upcoming.expiringContract;'));
@@ -442,8 +449,10 @@ void main() {
 
     test('07-h visual 무변경', () {
       final w = _codeOf(_bodyOf(home, 'Widget _buildActionRowWidget('));
-      expect(w, contains('color: AppColors.grey600'));
-      expect(w, contains('Divider(height: 1, color: AppColors.grey100)'));
+      // [impl_57 · 홈 A안] grey600 / Divider grey100 → concept 토큰(아이콘 conceptNavy · 꺾쇠 conceptChevron · 구분선 conceptDivider)
+      expect(w, contains('Icon(item.icon, size: 24, color: AppColors.conceptNavy)'));
+      expect(w, contains('Icon(Icons.chevron_right, size: 18, color: AppColors.conceptChevron)'));
+      expect(w, contains('color: AppColors.conceptDivider'));
     });
   });
 }

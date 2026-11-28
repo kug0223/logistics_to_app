@@ -141,7 +141,7 @@ Future<void> _pump(WidgetTester tester, Widget screen) async {
 /// 이 화면의 **실제 요청 버튼**.
 LoadingButton _checkInButton(WidgetTester tester) => tester.widget<LoadingButton>(
     find.ancestor(
-        of: find.text('출근하기'), matching: find.byType(LoadingButton)));
+        of: findVisibleText('출근하기'), matching: find.byType(LoadingButton)));
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));

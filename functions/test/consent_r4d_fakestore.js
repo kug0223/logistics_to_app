@@ -259,7 +259,13 @@ function createFakeFirestore(opts) {
   const STORE = new Map();
   const W = {reads: [], attempts: [], commits: [], aborts: [], direct: [], txSeq: 0, batchSeq: 0};
   // [r4c] afterDirect — 트랜잭션 밖 쓰기(예: 감사 로그 add)가 끝난 직후(시계 이동 반례용).
-  const hooks = {afterGet: null, beforeCommit: null, afterDirect: null};
+  const hooks = {afterGet: null, beforeCommit: null, afterDirect: null, afterQuery: null};
+  // [s296] 선택형 낙관적 동시성(OCC) — occ.enabled=true 일 때만. 거래가 읽은 문서 버전·쿼리 결과가 커밋 시점에 바뀌었으면
+  //   그 시도를 버리고(쓰기 0) 처음부터 다시 한다(최대 5회 · Firestore 거래 재시도 모형). 기본값 false = 기존 시험 동작 불변.
+  const occ = {enabled: false, retries: 0};
+  const VER = new Map();
+  const bump = (p) => VER.set(p, (VER.get(p) || 0) + 1);
+  const TXREADS = new Map();
   let autoSeq = 0;
   const EXT_TOUCHED = [];
   const STORAGE_CALLS = [];
@@ -268,8 +274,9 @@ function createFakeFirestore(opts) {
     STORE.clear();
     W.reads.length = 0; W.attempts.length = 0; W.commits.length = 0;
     W.aborts.length = 0; W.direct.length = 0;
-    hooks.afterGet = null; hooks.beforeCommit = null; hooks.afterDirect = null;
+    hooks.afterGet = null; hooks.beforeCommit = null; hooks.afterDirect = null; hooks.afterQuery = null;
     STORAGE_CALLS.length = 0;
+    occ.enabled = false; occ.retries = 0; VER.clear(); TXREADS.clear();
   }
   function clearLog() {
     W.reads.length = 0; W.attempts.length = 0; W.commits.length = 0;
@@ -287,6 +294,7 @@ function createFakeFirestore(opts) {
     for (const [p, v] of work) {
       if (v === undefined) STORE.delete(p);
       else STORE.set(p, v);
+      bump(p);
     }
   }
 
@@ -306,14 +314,17 @@ function createFakeFirestore(opts) {
   }
   function readDoc(p, txId) {
     W.reads.push({tx: txId, kind: 'doc', path: p});
+    if (txId && TXREADS.has(txId)) TXREADS.get(txId).docs.set(p, VER.get(p) || 0);
     const s = snapOf(p, STORE.get(p));
     if (hooks.afterGet) hooks.afterGet(p, txId);
     return s;
   }
-  function runQuery(q, txId) {
+  function runQuery(q, txId, silent) {
     const sp = q._spec;
-    W.reads.push({tx: txId, kind: 'query', path: sp.group ? '**/' + sp.cp : sp.cp,
-      filters: sp.filters.map((f) => [String(f[0]), f[1], canon(f[2])]), limit: sp.lim});
+    if (!silent) {
+      W.reads.push({tx: txId, kind: 'query', path: sp.group ? '**/' + sp.cp : sp.cp,
+        filters: sp.filters.map((f) => [String(f[0]), f[1], canon(f[2])]), limit: sp.lim});
+    }
     let rows = [];
     for (const [k, v] of STORE) {
       const segs = k.split('/');
@@ -371,6 +382,10 @@ function createFakeFirestore(opts) {
       }
       return snapOf(k, data);
     });
+    if (!silent && txId && TXREADS.has(txId)) {
+      TXREADS.get(txId).queries.push({q, sig: rows.map(([k]) => k + '#' + (VER.get(k) || 0)).join('|')});
+    }
+    if (!silent && hooks.afterQuery) hooks.afterQuery(sp.cp, txId);
     return {docs, size: docs.length, empty: docs.length === 0,
       forEach: (fn) => docs.forEach(fn), query: q, readTime: new Ts(nowMs())};
   }
@@ -454,7 +469,19 @@ function createFakeFirestore(opts) {
   }
 
   async function runTransaction(cb) {
+    if (!occ.enabled) return runTransactionOnce(cb);
+    for (let i = 0; ; i++) {
+      try {
+        return await runTransactionOnce(cb, true);
+      } catch (e) {
+        if (!(e && e.__occConflict) || i >= 4) throw e;
+        occ.retries++;
+      }
+    }
+  }
+  async function runTransactionOnce(cb, track) {
     const txId = ++W.txSeq;
+    if (track) TXREADS.set(txId, {docs: new Map(), queries: []});
     const buf = [];
     let wrote = false;
     const rec = (op, ref, data, wopts) => {
@@ -494,6 +521,21 @@ function createFakeFirestore(opts) {
       throw e;
     }
     try {
+      if (track) {
+        const rs = TXREADS.get(txId);
+        TXREADS.delete(txId);
+        let conflict = false;
+        for (const [p, v] of rs.docs) if ((VER.get(p) || 0) !== v) conflict = true;
+        for (const {q, sig} of rs.queries) {
+          const r = runQuery(q, null, true);
+          if (r.docs.map((d) => d.ref.path + '#' + (VER.get(d.ref.path) || 0)).join('|') !== sig) conflict = true;
+        }
+        if (conflict) {
+          const ce = new Error('ABORTED: 거래 read-set 이 바뀌었다(OCC)');
+          ce.__occConflict = true;
+          throw ce;
+        }
+      }
       if (hooks.beforeCommit) hooks.beforeCommit(txId, buf);
       commitAtomically(buf);
     } catch (e) {
@@ -582,10 +624,11 @@ function createFakeFirestore(opts) {
     db, admin, Ts, FV, FieldValue, FieldPath, isFV, W, hooks, STORE, EXT_TOUCHED, STORAGE_CALLS,
     lenient, canon, deq, clone, reset, clearLog,
     /** 시드 — 계측에 남기지 않는다. */
-    put: (p, data) => { docRef(p); STORE.set(p, clone(data)); },
+    put: (p, data) => { docRef(p); STORE.set(p, clone(data)); bump(p); },
+    occ,
     /** 현재 값(사본) — 계측에 남기지 않는다. */
     get: (p) => (STORE.has(p) ? clone(STORE.get(p)) : undefined),
-    del: (p) => { STORE.delete(p); },
+    del: (p) => { STORE.delete(p); bump(p); },
     has: (p) => STORE.has(p),
     /** 전체 저장소 정규형(비교용). */
     dump: () => {

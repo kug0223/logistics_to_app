@@ -139,7 +139,9 @@ void main() {
     });
 
     test('0명은 무제한이 아니다', () {
-      expect(upd.contains('if (newRequired < 1)'), true);
+      // [AUD-1 A4 · server_296] '1 미만' 비교 → 공용 helper(정수 1–999 · 문자열/소수/Infinity 도 거절). 0명 거절은 그대로다.
+      expect(upd.contains('srvAssertValidRequiredCount(d["requiredCount"]'), true);
+      expect(raw.contains('if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > SRV_REQUIRED_COUNT_MAX) {'), true);
     });
   });
 
@@ -158,10 +160,17 @@ void main() {
 
     test('마감은 대기만 정리하고 확정은 건드리지 않는다', () {
       final close = _flat(_codeOf(_callableOf(raw, 'callableCloseSlots')));
-      expect(close.contains('.where("status", "==", "PENDING")'), true);
-      expect(close.contains('status: "REJECTED", rejectedAt: now,'), true);
+      // [판정295/296 F295-CLOSE-01 · server_296] 대기 정리를 callable·매시 공용 helper 로 옮겼다(예전 핀: 이 본문에 PENDING 질의 ·
+      //   'status: "REJECTED", rejectedAt: now,'). 의미(대기만 거절 · 확정 불변 · 닫힌 PENDING 일괄 자동거절 0 = 사건 표식만)는 같다.
+      expect(close.contains('srvCloseSlotsCleanupFlow('), true);
       expect(close.contains('"CONFIRMED"'), false,
           reason: '마감이 확정자를 정리하면 근무 약속이 사라진다');
+      final s0 = raw.indexOf('async function srvCloseSlotCleanupOne(');
+      final one = _flat(_codeOf(raw.substring(s0, raw.indexOf('async function srvCloseSlotsRecomputeTo(', s0))));
+      expect(one.contains('.where("status", "==", "PENDING")'), true);
+      expect(one.contains('status: "REJECTED", rejectedAt: admin.firestore.FieldValue.serverTimestamp(),'), true);
+      expect(one.contains('freshCheck: (f) => f.exists && f.get("status") === "PENDING"'), true);
+      expect(one.contains('"CONFIRMED"'), false);
     });
 
     test('재개는 전체 종료·FULL 상태를 우회하지 않는다', () {

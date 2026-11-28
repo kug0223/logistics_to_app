@@ -449,7 +449,7 @@ void main() {
               .toList();
       final countF = find.descendant(of: view, matching: find.byWidgetPredicate((w) => w is Text && w.style?.fontSize == 20));
       List<String> summaryCounts() => view.evaluate().isEmpty ? const [] : t.widgetList<Text>(countF).map((w) => w.data ?? '').toList();
-      final dayLoading = find.text('근무 인력을 불러오는 중...');
+      final dayLoading = findVisibleText('근무 인력을 불러오는 중...');
       final errText = findVisibleText('데이터를 불러오지 못했습니다. 다시 시도해 주세요.');
       final emptyToday = findVisibleText('오늘 확정된 인력이 없습니다.'); // [DU604b] 빈 상태 글 keepWords — 보이는 글자로 찾는다(DU255 꼴)
       const hA = '00:00–00:01';
@@ -629,7 +629,7 @@ void main() {
       expect(markerFail, findsOneWidget, reason: 'marker 전용 실패 안내');
       expect(markerDot, findsNothing, reason: '실패 — dot 없음(일 없음 확정이 아니라 모름 + 안내)');
       final failP = t.renderObject<RenderParagraph>(find.descendant(of: markerFail, matching: find.byType(RichText)).first); // [DU255 r1]
-      final retryTextF = find.descendant(of: markerRetry(), matching: find.text('다시 시도'));
+      final retryTextF = find.descendant(of: markerRetry(), matching: findVisibleText('다시 시도'));
       expect(retryTextF, findsOneWidget, reason: '안내 줄의 다시 시도');
       final mb = await bring(markerRetry(), '4f marker 재시도 줄');
       final retryR = t.getRect(markerRetry());

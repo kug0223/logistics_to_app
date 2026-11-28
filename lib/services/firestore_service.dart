@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../utils/format_helper.dart';
+import '../utils/request_relation_error.dart'; // [impl_42] SCR 보류 거절 판정
 import '../models/core/user_model.dart';
 import '../models/core/to_model.dart';
 import '../models/core/slot_model.dart';
@@ -19,6 +20,7 @@ import '../utils/toast_helper.dart';
 import '../utils/period_revision_notice.dart';
 import '../utils/global_loading_controller.dart';
 import '../utils/posting_partial_revoke.dart';
+import '../utils/server_reject_codes.dart'; // [impl_58] 서버 거절 코드 · 공고 입력 경계
 import 'posting_quota_summary.dart';
 import '../models/core/business_work_type_model.dart';
 import 'work_type_guide_resolver.dart';
@@ -35,7 +37,9 @@ import '../utils/week_helper.dart';
 import '../utils/wage_calculator.dart';
 import '../utils/network_checker.dart';
 import '../utils/notification_retention.dart';
-import '../models/core/legal_readiness.dart' show LegalReadinessSignal;
+import '../models/core/legal_readiness.dart' show LegalReadinessSignal, LegalReadiness;
+import '../models/core/employment_contract_model.dart';
+import 'contract_service.dart';
 import '../widgets/dialogs/apply/document_access_consent.dart';
 
 // ═══════════════════════════════════════════════════════════
@@ -49,6 +53,7 @@ part 'firestore/attendance_firestore.dart';
 part 'firestore/notification_firestore.dart';
 part 'firestore/review_firestore.dart';
 part 'firestore/id_card_firestore.dart';
+part 'firestore/worker_home_bundle_firestore.dart'; // [PERF-L9 · impl_15]
 
 /// 배치 처리 결과
 /// failedIds로 부분 실패 시 재처리 대상 applicationId 특정 가능
@@ -329,6 +334,11 @@ class FirestoreService {
     _myAttendanceInFlight.removeWhere((k, _) => k.startsWith('${uid}_'));
     _myAttendanceGeneration[uid] = (_myAttendanceGeneration[uid] ?? 0) + 1;
   }
+
+  /// [PERF-P9 · 판정291 §8] 이 사용자의 지원·근태 캐시가 **무효화된 횟수**(읽기 전용).
+  ///   화면이 마지막으로 읽은 뒤 이 값이 바뀌었으면 그 사이 관련 변경(지원·취소·확정·출퇴근 등)이 있었다는 뜻이다.
+  int myApplicationsGenerationOf(String uid) => _myApplicationsGeneration[uid] ?? 0;
+  int myAttendanceGenerationOf(String uid) => _myAttendanceGeneration[uid] ?? 0;
 
   /// 내 지원 목록 캐시 무효화 (지원·취소·확정 후 호출)
   void invalidateMyApplicationsCache(String uid) {
@@ -954,41 +964,180 @@ class FirestoreService {
   }
 
   /// workDetails 배열에서 특정 업무를 수정하는 공통 헬퍼
-  /// workDetails 배열 수정 후 업데이트된 목록 반환 (실패 시 null)
+  /// workDetails 배열 수정 후 성공 여부 반환 (실패·대상 없음 시 null)
   Future<List<WorkDetailData>?> _updateWorkDetailInArray({
     required String toId,
     String? slotId,
     required String workDetailId,
     required WorkDetailData Function(WorkDetailData d) updater,
   }) async {
+    final r = await _updateWorkDetailsInArrayAtomic(
+      toId: toId,
+      slotId: slotId,
+      workDetailIds: [workDetailId],
+      updater: updater,
+    );
+    return r.applied.contains(workDetailId) ? r.details : null;
+  }
+
+  /// [F291-C03 · 2026-11-26] 같은 문서(슬롯 또는 TO)의 workDetails 배열에서 **여러 업무를 한 트랜잭션으로** 바꾼다.
+  ///
+  ///   예전에는 업무 하나마다 `get → 배열 일부 수정 → 배열 전체 update` 를 따로 했고, 일괄 처리 화면이 이것을
+  ///   N개 동시에 돌렸다. 각 체인이 같은 배열의 옛 사본을 통째로 덮어써 **마지막 쓰기만 남는**(갱신 유실) 구조였고,
+  ///   실패(false)도 화면이 무시했다. 이제 한 번 읽고 대상 업무를 모두 고친 뒤 한 번 쓴다 — 다른 관리자와 겹치면
+  ///   트랜잭션이 최신 문서로 다시 시도한다. 반영된 업무와 반영하지 못한 업무를 나눠 돌려준다.
+  ///   대상이 아닌 항목은 읽은 그대로 되돌려 쓴다(해석하지 못한 항목을 배열에서 떨어뜨리지 않는다).
+  Future<({Set<String> applied, Set<String> failed, List<WorkDetailData>? details})>
+      _updateWorkDetailsInArrayAtomic({
+    required String toId,
+    String? slotId,
+    required List<String> workDetailIds,
+    required WorkDetailData Function(WorkDetailData d) updater,
+  }) async {
+    final requested = workDetailIds.toSet();
     try {
       final docRef = slotId != null
           ? _firestore.collection('tos').doc(toId).collection('slots').doc(slotId)
           : _firestore.collection('tos').doc(toId);
 
-      final snap = await docRef.get(const GetOptions(source: Source.server));
-      if (!snap.exists) return null;
-
-      final raw = (snap.data() as Map<String, dynamic>)['workDetails'] as List? ?? [];
-      final details = raw
-          .map((e) => WorkDetailData.tryFromMap(Map<String, dynamic>.from(e as Map)))
-          .whereType<WorkDetailData>()
-          .toList();
-
-      final idx = details.indexWhere((d) {
-        final compositeId = '${d.workType}_${d.startTime}_${d.endTime}';
-        return compositeId == workDetailId || d.workType == workDetailId;
+      final result = await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(docRef);
+        if (!snap.exists) {
+          return (applied: <String>{}, details: null as List<WorkDetailData>?);
+        }
+        final next = applyWorkDetailUpdates(
+          (snap.data() as Map<String, dynamic>)['workDetails'] as List? ?? const [],
+          requested,
+          updater,
+        );
+        if (next.applied.isNotEmpty && next.changed) {
+          tx.update(docRef, {
+            'workDetails': next.raw,
+            // [impl_21 · Q25] 슬롯 업무의 마감·재오픈·긴급 종료도 슬롯 수정이다 — 수정 토큰을 올린다.
+            //   예전에는 이 쓰기가 editRevision 을 그대로 둬, 그 전에 열린 수정 폼이 저장할 때 서버 STALE-EDIT
+            //   검사(callableUpdateSlotWorkDetails · callableUpdateTO)를 통과해 옛 사본으로 이 마감을 지웠다.
+            // [impl_29 · J1 · 판정292 C292-02] 공고(TO) 문서도 같다 — 공고 업무 마감 뒤 열린 공고 수정 폼의 저장을
+            //   서버(callableUpdateTO `editRevision` 비교)가 거절하게 한다. rules 의 TO 업무 상태 갈래가
+            //   '키 = workDetails + editRevision · editRevision = 이전 + 1 · 업무 수 같음 · 업무별 상태 키 외 변경 0' 을 강제한다.
+            'editRevision': (((snap.data() as Map<String, dynamic>)['editRevision'] as num?)?.toInt() ?? 0) + 1,
+          });
+        }
+        return (applied: next.applied, details: next.details);
       });
-      if (idx == -1) return null;
-
-      details[idx] = updater(details[idx]);
-      await docRef.update({'workDetails': WorkDetailData.listToFirestore(details)});
-      clearCache(toId: toId);
-      return details;
+      if (result.applied.isNotEmpty) clearCache(toId: toId);
+      return (
+        applied: result.applied,
+        failed: requested.difference(result.applied),
+        details: result.details,
+      );
     } catch (e) {
       debugPrint('❌ [WorkDetail] 배열 수정 실패: $e');
-      return null;
+      return (applied: <String>{}, failed: requested, details: null);
     }
+  }
+
+  /// [F291-C03] 읽은 workDetails 배열에 대상 업무 변경을 **한 번에** 적용한 새 배열(순수 함수 · 시험 가능).
+  ///   대상이 아닌 항목·해석하지 못한 항목은 읽은 그대로 둔다. 매칭 규칙은 예전과 같다(복합 id 또는 workType).
+  @visibleForTesting
+  static ({List<dynamic> raw, Set<String> applied, List<WorkDetailData> details, bool changed})
+      applyWorkDetailUpdates(
+    List<dynamic> current,
+    Set<String> workDetailIds,
+    WorkDetailData Function(WorkDetailData d) updater,
+  ) {
+    final raw = List<dynamic>.of(current);
+    final parsed = raw
+        .map((e) => e is Map
+            ? WorkDetailData.tryFromMap(Map<String, dynamic>.from(e))
+            : null)
+        .toList();
+    final applied = <String>{};
+    var changed = false;
+    for (final id in workDetailIds) {
+      final idx = parsed.indexWhere((d) {
+        if (d == null) return false;
+        final compositeId = '${d.workType}_${d.startTime}_${d.endTime}';
+        return compositeId == id || d.workType == id;
+      });
+      if (idx == -1) continue;
+      final next = updater(parsed[idx]!);
+      parsed[idx] = next;
+      // [impl_29 · J1] 상태 키만 바꾼다 — 저장된 나머지 키(서버 `closedReason` · 기본값 표기 등)는 그대로(rules 업무별 검사와 같은 뜻).
+      final before = Map<String, dynamic>.from(raw[idx] as Map);
+      final merged = WorkDetailData.mergeStatusIntoRaw(before, next);
+      // [impl_29 · J1] 이미 그 상태면(같은 마감 재요청 · 열린 업무 재오픈) 쓰지 않는다 — 토큰만 올리는 빈 쓰기 0.
+      if (WorkDetailData.statusKeys.any((k) => before.containsKey(k) != merged.containsKey(k) || before[k] != merged[k])) {
+        changed = true;
+      }
+      raw[idx] = merged;
+      applied.add(id);
+    }
+    return (
+      raw: raw,
+      applied: applied,
+      details: parsed.whereType<WorkDetailData>().toList(),
+      changed: changed,
+    );
+  }
+
+  /// [F291-C03] 여러 업무를 한 번에 마감 — 반영된 id·못한 id 를 돌려준다. 반영이 있으면 cascade 를 **한 번** 다시 본다.
+  Future<({Set<String> applied, Set<String> failed})> closeWorkDetails({
+    required String toId,
+    required List<String> workDetailIds,
+    required String adminUID,
+    String? slotId,
+  }) async {
+    final now = DateTime.now();
+    final r = await _updateWorkDetailsInArrayAtomic(
+      toId: toId,
+      slotId: slotId,
+      workDetailIds: workDetailIds,
+      updater: (d) => d.copyWith(
+        isManualClosed: true,
+        closedAt: now,
+        closedBy: adminUID,
+      ),
+    );
+    if (r.applied.isNotEmpty && slotId != null) {
+      await _syncSlotCascadeStatus(toId, slotId);
+      await _syncTOCascadeStatus(toId);
+    }
+    return (applied: r.applied, failed: r.failed);
+  }
+
+  /// [F291-C03] 여러 업무를 한 번에 재오픈 — 반영된 id·못한 id 를 돌려준다.
+  Future<({Set<String> applied, Set<String> failed})> reopenWorkDetails({
+    required String toId,
+    required List<String> workDetailIds,
+    required String adminUID,
+    String? slotId,
+  }) async {
+    final r = await _updateWorkDetailsInArrayAtomic(
+      toId: toId,
+      slotId: slotId,
+      workDetailIds: workDetailIds,
+      updater: (d) => d.copyWith(clearClosedAt: true),
+    );
+    if (r.applied.isNotEmpty && slotId != null) {
+      await _syncSlotCascadeStatus(toId, slotId);
+      await _syncTOCascadeStatus(toId);
+    }
+    return (applied: r.applied, failed: r.failed);
+  }
+
+  /// [F291-C03] 여러 업무의 긴급모집을 한 번에 종료 — 반영된 id·못한 id 를 돌려준다.
+  Future<({Set<String> applied, Set<String> failed})> stopEmergencyRecruitments({
+    required String toId,
+    required List<String> workDetailIds,
+    String? slotId,
+  }) async {
+    final r = await _updateWorkDetailsInArrayAtomic(
+      toId: toId,
+      slotId: slotId,
+      workDetailIds: workDetailIds,
+      updater: (d) => d.copyWith(clearEmergency: true),
+    );
+    return (applied: r.applied, failed: r.failed);
   }
 
   Future<bool> closeWorkDetail({
@@ -997,23 +1146,13 @@ class FirestoreService {
     required String adminUID,
     String? slotId,
   }) async {
-    final updated = await _updateWorkDetailInArray(
+    final r = await closeWorkDetails(
       toId: toId,
+      workDetailIds: [workDetailId],
+      adminUID: adminUID,
       slotId: slotId,
-      workDetailId: workDetailId,
-      updater: (d) => d.copyWith(
-        isManualClosed: true,
-        closedAt: DateTime.now(),
-        closedBy: adminUID,
-      ),
     );
-    if (updated == null) return false;
-
-    if (slotId != null) {
-      await _syncSlotCascadeStatus(toId, slotId);
-      await _syncTOCascadeStatus(toId);
-    }
-    return true;
+    return r.applied.contains(workDetailId);
   }
 
   Future<bool> reopenWorkDetail({
@@ -1022,19 +1161,13 @@ class FirestoreService {
     required String adminUID,
     String? slotId,
   }) async {
-    final updated = await _updateWorkDetailInArray(
+    final r = await reopenWorkDetails(
       toId: toId,
+      workDetailIds: [workDetailId],
+      adminUID: adminUID,
       slotId: slotId,
-      workDetailId: workDetailId,
-      updater: (d) => d.copyWith(clearClosedAt: true),
     );
-    if (updated == null) return false;
-
-    if (slotId != null) {
-      await _syncSlotCascadeStatus(toId, slotId);
-      await _syncTOCascadeStatus(toId);
-    }
-    return true;
+    return r.applied.contains(workDetailId);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -1288,6 +1421,9 @@ class FirestoreService {
       return true;
     } catch (e) {
       debugPrint('❌ requestTermination 실패: $e');
+      // [impl_58 · server_298] 연결 계약을 끝까지 확인하지 못한 거절(CONTRACT_SCAN_TRUNCATED · 처리 0)은 false 로 뭉개지 않고 올린다 —
+      //   화면이 이유('다시 시도')를 말한다. 그 밖의 실패는 예전처럼 false.
+      if (contractScanTruncatedMessageOf(e) != null) rethrow;
       return false;
     } finally {
       GlobalLoadingController.hide();
@@ -1305,6 +1441,8 @@ class FirestoreService {
       return true;
     } catch (e) {
       debugPrint('❌ cancelTerminationRequest 실패: $e');
+      // [impl_58 · server_298] 위 requestTermination 과 같은 처리.
+      if (contractScanTruncatedMessageOf(e) != null) rethrow;
       return false;
     } finally {
       GlobalLoadingController.hide();
@@ -1346,6 +1484,8 @@ class FirestoreService {
       return true;
     } catch (e) {
       debugPrint('❌ rejectTermination 실패: $e');
+      // [impl_63] 연결 계약을 끝까지 읽지 못한 거절(처리 0)은 일반 실패로 접지 않는다 — 호출자가 '다시 시도' 로 안내한다.
+      if (serverRejectCodeOf(e) == ServerRejectCode.contractScanTruncated) rethrow;
       return false;
     } finally {
       GlobalLoadingController.hide();
@@ -1368,8 +1508,10 @@ class FirestoreService {
       debugPrint('✅ 퇴사 요청 (CF): $applicationId');
       return true;
     } catch (e) {
+      // [AUD-5 ②-2] 실패를 false 하나로 접지 않는다 — 호출자가 서버 사유(이미 요청됨 · 해지 진행 중 · 탈퇴 중)와
+      //   결과를 모르는 실패(시간 초과 · 연결 끊김 — 서버는 이미 PENDING 을 기록했을 수 있다)를 구분해 말해야 한다.
       debugPrint('❌ requestResignation 실패: $e');
-      return false;
+      rethrow;
     } finally {
       GlobalLoadingController.hide();
     }
@@ -1459,7 +1601,8 @@ class FirestoreService {
       return apps;
     } catch (e) {
       debugPrint('❌ getResignRequests 실패: $e');
-      return [];
+      // [impl_54 · AUD-4 H5] 실패를 [] 로 돌려주면 화면이 '퇴사 요청이 없습니다'로 말한다(잘림 StateError 도 삼켰다) — 다시 던진다.
+      rethrow;
     }
   }
 

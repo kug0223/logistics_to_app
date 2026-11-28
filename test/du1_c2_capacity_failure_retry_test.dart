@@ -527,7 +527,7 @@ void main() {
       expect(expandHeldDelta, {'functions callableGetApplicationsByBiz@asia-northeast3': 1}, reason: '펼침 = capacity 1 · 슬롯 재조회 0');
       out('   보류 중 카드 글=${cardTexts()}');
       // 보류(미확인)를 실패로 말하지 않는다 — 감사59 §5.2 통계 해석(보류/미확인 → 정상 empty → 확인된 0 구분)
-      final heldFail = find.descendant(of: card, matching: find.text('지원 현황을 불러오지 못했습니다'));
+      final heldFail = find.descendant(of: card, matching: findVisibleText('지원 현황을 불러오지 못했습니다'));
       final heldLoading = find.descendant(of: card, matching: find.byType(CircularProgressIndicator));
       out('   보류 중 실패 문구=${heldFail.evaluate().length} · 카드 안 spinner=${heldLoading.evaluate().length} · 0 숫자 노출(충원 0 행)=${find.descendant(of: card, matching: find.text('미충원 3')).evaluate().length}');
       if (heldFail.evaluate().isNotEmpty) deferred.add('capacity 보류(요청 진행 중)인데 "지원 현황을 불러오지 못했습니다"+재시도 표시');
@@ -550,7 +550,7 @@ void main() {
         }
         await frames(4);
       }
-      final failText = find.descendant(of: card, matching: find.text('지원 현황을 불러오지 못했습니다'));
+      final failText = find.descendant(of: card, matching: findVisibleText('지원 현황을 불러오지 못했습니다'));
       final retryText = find.descendant(of: card, matching: find.text('재시도'));
       final loadingInCard = find.descendant(of: card, matching: find.text('불러오는 중...'));
       String phase() => '실패문구=${failText.evaluate().length} 재시도=${retryText.evaluate().length} 불러오는중=${loadingInCard.evaluate().length} 미충원3=${find.descendant(of: card, matching: find.text('미충원 3')).evaluate().length}';

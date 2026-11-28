@@ -354,35 +354,13 @@ class TaxDeductionService {
     String? excludeAttendanceId,
   }) async {
     try {
-      // CF 경유: callableGetAdminAttendances yearMonth 모드 (Admin SDK 서버사이드 검증)
-      // wageStatus 3종 병렬 쿼리 → 단일 CF 호출 후 클라이언트 필터로 단순화
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetAdminAttendances',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final cfResult = await callable.call<Map<String, dynamic>>({
-        'businessId': businessId,
-        'yearMonth': yearMonth,
-        'userId': userId,
-      });
-      final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
-      final records = cfItems.map((e) {
-        final m = Map<String, dynamic>.from(e as Map);
-        final id = m.remove('id') as String? ?? '';
-        return AttendanceModel.tryFromMap(m, id);
-      }).whereType<AttendanceModel>()
-          .where((att) => att.id != excludeAttendanceId)
-          .where((att) => att.status != AttendanceModel.statusNoShow)
-          .where((att) => const {'calculated', 'confirmed', 'transferred'}
-              .contains(att.wageStatus))
-          .toList();
-
-      // [TAX-01 수정] workDate 기준으로 날짜 중복 제거
-      // 같은 날 오전·오후 등 복수 attendance 문서가 있으면 단순 length 카운트는
-      // 실제 근무 일수보다 크게 집계되어 8일차 소급 공제가 오작동함.
-      final uniqueDates = records
-          .map((att) => att.workDate.toIso8601String().substring(0, 10))
-          .toSet();
-      return uniqueDates.length;
+      final cfItems = await fetchMonthAttendanceItems(
+        userId: userId,
+        businessId: businessId,
+        yearMonth: yearMonth,
+      );
+      return monthlyWorkDaysFromItems(cfItems,
+          excludeAttendanceId: excludeAttendanceId);
     } catch (e) {
       // 0 반환(silent fail): 조회 실패 시 8일차 소급이 누락되는 방향으로 처리.
       // _getPrevGrossTotal()은 소급 금액 계산에 필수이므로 rethrow(확정 전체 차단)하는 반면,
@@ -390,5 +368,70 @@ class TaxDeductionService {
       debugPrint('⚠️ 월별 근무일수 CF 조회 실패: $e');
       return 0;
     }
+  }
+
+  /// [PERF-L50 · 2026-11-26] 그 근무자·사업장·달의 근태 원장(callableGetAdminAttendances yearMonth+userId).
+  ///   근무일수(8일차 판정)와 이전 세전 합계(소급 금액)가 **같은 응답**으로 계산되도록 한 번만 읽는다
+  ///   (예전에는 같은 조회를 차례로 두 번 불렀다). 실패는 throw — 호출부가 기존 의미대로 처리한다.
+  static Future<List<dynamic>> fetchMonthAttendanceItems({
+    required String userId,
+    required String businessId,
+    required String yearMonth,
+  }) async {
+    // CF 경유: callableGetAdminAttendances yearMonth 모드 (Admin SDK 서버사이드 검증)
+    // wageStatus 3종 병렬 쿼리 → 단일 CF 호출 후 클라이언트 필터로 단순화
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetAdminAttendances',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+    final cfResult = await callable.call<Map<String, dynamic>>({
+      'businessId': businessId,
+      'yearMonth': yearMonth,
+      'userId': userId,
+    });
+    return (cfResult.data['items'] as List<dynamic>? ?? []);
+  }
+
+  /// [PERF-L50] [getMonthlyWorkDays] 의 계산부 — 원장 항목에서 이미 확정 처리된 근무일 수(날짜 중복 제거).
+  static int monthlyWorkDaysFromItems(
+    List<dynamic> cfItems, {
+    String? excludeAttendanceId,
+  }) {
+    final records = cfItems.map((e) {
+      final m = Map<String, dynamic>.from(e as Map);
+      final id = m.remove('id') as String? ?? '';
+      return AttendanceModel.tryFromMap(m, id);
+    }).whereType<AttendanceModel>()
+        .where((att) => att.id != excludeAttendanceId)
+        .where((att) => att.status != AttendanceModel.statusNoShow)
+        .where((att) => const {'calculated', 'confirmed', 'transferred'}
+            .contains(att.wageStatus))
+        .toList();
+
+    // [TAX-01 수정] workDate 기준으로 날짜 중복 제거
+    // 같은 날 오전·오후 등 복수 attendance 문서가 있으면 단순 length 카운트는
+    // 실제 근무 일수보다 크게 집계되어 8일차 소급 공제가 오작동함.
+    final uniqueDates = records
+        .map((att) => att.workDate.toIso8601String().substring(0, 10))
+        .toSet();
+    return uniqueDates.length;
+  }
+
+  /// [PERF-L50] 8일차 소급용 이전 근무일 세전 총액 합계 — 원장 항목에서 계산.
+  ///   wage_confirm_dialog 의 `_getPrevGrossTotal` 계산부와 같은 식이다(그 달 · 자기 자신 제외 ·
+  ///   NO_SHOW 제외 · calculated/confirmed/transferred 의 wageDetail.totalAmount 합).
+  static int prevGrossTotalFromItems(List<dynamic> cfItems, String excludeId) {
+    int total = 0;
+    for (final raw in cfItems) {
+      final m = raw as Map? ?? {};
+      if ((m['id'] as String?) == excludeId) continue;
+      // NO_SHOW 레코드 제외 (소급 기준 금액 부풀림 방지)
+      if ((m['status'] as String?) == 'NO_SHOW') continue;
+      final ws = m['wageStatus'] as String?;
+      if (ws == 'calculated' || ws == 'confirmed' || ws == 'transferred') {
+        final wageDetail = m['wageDetail'] as Map?;
+        total += (wageDetail?['totalAmount'] as num?)?.toInt() ?? 0;
+      }
+    }
+    return total;
   }
 }

@@ -176,8 +176,18 @@ void main() {
       // [PII-B4-R1.4.1] 세무 복구 경로가 네 번째 사용처로 추가됐다.
       //   번호를 받는 문이 늘어날 때마다 이 수가 늘어야 한다 — 늘지 않으면
       //   어딘가가 정규화를 건너뛰었다는 뜻이다.
-      expect('normalizeForeignId('.allMatches(cf).length, 4,
-          reason: '정의 1 + precheck 1 + finalize 1 + 세무 복구 1');
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 4 → 3. 옛 가입 precheck·finalize 는 닫혀 번호를 받지 않는다(본문 = LEGACY_SIGNUP_CLOSED).
+      //   번호를 받는 문은 새 가입 후 등록 writer 하나가 늘었다 — 정의 1 + 등록증 writer 1 + 세무 복구 1.
+      //   닫힌 두 문이 번호를 받지 않는다는 사실도 함께 고정한다(관문을 건너뛴 게 아니다).
+      for (final closed in ['callablePrecheckForeignIdentity', 'callableFinalizeForeignIdentity']) {
+        final body = _flat(_sliceOf(cf, 'export const $closed = onCall(', '\n);'));
+        expect(body, contains('throw srvLegacyClosed("LEGACY_SIGNUP_CLOSED");'));
+        expect(body, isNot(contains('rawForeignId')));
+      }
+      expect(_sliceOf(cf, 'export const callableRegisterForeignIdDocument = onCall(', '\n);'),
+          contains('normalizeForeignId(rawForeignId'));
+      expect('normalizeForeignId('.allMatches(cf).length, 3,
+          reason: '정의 1 + 등록증 writer 1 + 세무 복구 1');
     });
 
     test('13 거부 사유를 사용자에게 설명한다', () {
@@ -190,21 +200,28 @@ void main() {
 
   group('INV-3 — 잘못된 코드로 파생값이 생기지 않는다 (§7·§9)', () {
     test('14 파생은 여전히 서버가 한다', () {
-      expect(cf, contains('birthDate: admin.firestore.Timestamp.fromDate(serverBirthDate)'));
-      expect(cf, contains('const serverGender ='));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 파생은 서버 helper(signup_core.ts deriveFromForeignId)가 하고, 등록증 writer 가 그 값을 쓴다.
+      expect(cf, contains('const derived = normalized ? skDeriveFromForeignId(normalized) : null;'));
+      expect(cf, contains('const bts = srvPassBirthDateToTimestamp(derived.birthDate);'));
+      expect(cf, contains('patch["gender"] = derived.gender;'));
     });
 
     test('15 파생 표는 그대로다 — 5·7 남성 / 6·8 여성', () {
-      expect(_flat(cf), contains(
-          '(genderDigit === 5 || genderDigit === 7) ? "남성" : '
-          '((genderDigit === 6 || genderDigit === 8) ? "여성" : null)'));
-      expect(_flat(cf), contains(
-          'const birthYear = (genderDigit === 7 || genderDigit === 8) ? '
-          '(2000 + yy) : (1900 + yy);'));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 같은 표가 서버 helper 로 옮겨졌다 — 5~8 밖은 null(추측 0), 5·7 남성 / 나머지(6·8) 여성.
+      final core = _flat(_src('functions/src/signup_core.ts'));
+      expect(core, contains('if (code < 5 || code > 8) return null;'));
+      expect(core, contains('gender: (code === 5 || code === 7) ? "남성" : "여성"'));
+      expect(core, contains('const year = (code === 7 || code === 8) ? 2000 + yy : 1900 + yy;'));
     });
 
     test('16 sentinel·fingerprint semantics 회귀 없음', () {
-      expect(cf, contains('foreignIdentityFingerprint: fingerprint'));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] clean cutover(판정278 §1) — 새 등록증 writer 는 옛 가입 sentinel(foreignIdFingerprints)·
+      //   foreignIdentityFingerprint 를 쓰지 않고, 같은 HMAC 으로 **서류 지문**만 남긴다. 옛 문서 판독은 보존.
+      final reg = _flat(_sliceOf(cf, 'export const callableRegisterForeignIdDocument = onCall(', '\n);'));
+      expect(reg, contains('const docFp = computeForeignIdFingerprint(normalized);'));
+      expect(reg, contains('foreignIdDocumentFingerprint: docFp'));
+      expect(reg, isNot(contains('foreignIdFingerprints')));
+      expect(reg, isNot(contains('foreignIdentityFingerprint:')));
       expect(cf, contains('computeForeignIdFingerprint'));
       expect(screen, contains(r"'${rawId.substring(0, 6)}-${rawId[6]}${'*' * 6}'"));
     });

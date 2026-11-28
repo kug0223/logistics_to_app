@@ -49,10 +49,17 @@ class BusinessFormScreen extends StatefulWidget {
   final bool isFromSignUp;
   
 
+  /// 처음 열 단계(0 기본 · 수정 모드에서만 적용). 서류(사업자등록증·대표 이미지)는 [documentsStep].
+  final int initialStep;
+
+  /// 사업자등록증·대표 이미지가 있는 '정보·서류' 단계 번호.
+  static const int documentsStep = 1;
+
   const BusinessFormScreen({
     super.key,
     this.business,
     this.isFromSignUp = false,
+    this.initialStep = 0,
   });
 
   @override
@@ -154,6 +161,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     _isEditMode = widget.business != null;
 
     if (_isEditMode) {
+      // [X0 실기기 2026-11-25] '사업장 서류 관리' 진입은 서류 단계부터 연다(0–2 범위만).
+      _currentStep = widget.initialStep.clamp(0, 2);
       _loadBusinessData();
     } else {
       _loadUserBusinessNumber();

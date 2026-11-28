@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
 import '../../models/core/application_model.dart';
 import '../../services/firestore_service.dart';
@@ -383,14 +384,40 @@ class _LongTermWorkManagementDialogState
       if (success) {
         ToastHelper.showSuccess('퇴사 요청이 완료되었습니다.');
         widget.onChanged();
+        // [PERF-L46] 이 창은 열 때 받은 목록을 그린다 — 남겨 두면 방금 한 요청이 반영되지 않은 버튼이 그대로 보였다.
+        //   닫고, 뒤 화면이 새로 읽은 상태로 보여 준다.
+        Navigator.pop(context);
       } else {
         ToastHelper.showError('퇴사 요청 중 오류가 발생했습니다.');
+      }
+    } on FirebaseFunctionsException catch (e) {
+      // [AUD-5 ②-2] 예전에는 모든 실패가 '퇴사 요청 중 오류' 하나였다 — 응답만 끊기고 서버는 PENDING 을 기록한 경우에도
+      //   실패라고 말했고(3일 뒤 자동 승인), 재시도는 '이미 진행 중' 거절을 같은 오류로 보여 창이 그대로 남았다.
+      if (!mounted) return;
+      final msg = e.message ?? '';
+      if (e.code == 'failed-precondition' && msg.contains('이미 진행 중인 퇴사 요청')) {
+        // 이미 접수돼 있다(앞선 시도가 실제로 기록됐을 수 있다) — 실패가 아니라 현재 상태로 맞춘다.
+        ToastHelper.showSuccess('이미 퇴사 요청이 접수돼 있어요.');
+        _reloadParentAndClose();
+      } else if (const {'deadline-exceeded', 'unavailable', 'internal', 'unknown', 'cancelled'}.contains(e.code)) {
+        // 결과를 모른다 — 요청이 접수됐을 수 있으니 실패로 단정하지 않고, 뒤 화면이 서버 상태를 다시 읽게 한다.
+        ToastHelper.showWarning('응답을 받지 못했어요. 퇴사 요청이 접수됐는지 목록에서 확인해 주세요.');
+        _reloadParentAndClose();
+      } else {
+        // 서버의 거절 사유(해지 진행 중 · 탈퇴 중 · 제재 등)를 그대로 보인다.
+        ToastHelper.showError(msg.isNotEmpty ? msg : '퇴사 요청 중 오류가 발생했습니다.');
       }
     } catch (e) {
       if (mounted) ToastHelper.showError('퇴사 요청 중 오류가 발생했습니다.');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
+  }
+
+  /// [AUD-5 ②-2] 서버 상태가 이 창이 그린 목록과 달라졌을 수 있다 — 뒤 화면이 다시 읽게 하고 닫는다.
+  void _reloadParentAndClose() {
+    widget.onChanged();
+    if (mounted) Navigator.pop(context);
   }
 
   /// 퇴사 요청 취소
@@ -414,6 +441,7 @@ class _LongTermWorkManagementDialogState
       if (success) {
         ToastHelper.showSuccess('퇴사 요청이 취소되었습니다.');
         widget.onChanged();
+        Navigator.pop(context); // [PERF-L46] 위와 같다 — 낡은 목록을 남기지 않는다
       } else {
         ToastHelper.showError('취소 중 오류가 발생했습니다.');
       }

@@ -662,6 +662,15 @@ void main() {
           await waitNoDialog();
           final loading = find.descendant(of: scr, matching: find.byType(LoadingWidget)).evaluate().length == 1;
           final listGone = find.descendant(of: scr, matching: find.byType(ListView)).evaluate().isEmpty;
+          // [impl_27b · 판정291 B8 핀 갱신] 처리 뒤 다시 읽기는 이제 목록을 지우지 않고(Loading frame 0) 잠근다 —
+          //   예전 기대(실제 Loading frame · 목록 분리)는 바뀐 계약의 옛 핀이다. 의도(결과 띠 유지 · 풀면 목록 · offset 복원)는 그대로 본다.
+          final listKeptLocked = !loading &&
+              !listGone &&
+              find.byKey(const ValueKey('business-list-refresh-after-mutation')).evaluate().length == 1 &&
+              t.widgetList<AbsorbPointer>(find.ancestor(
+                      of: find.descendant(of: scr, matching: find.byType(ListView)).first,
+                      matching: find.byType(AbsorbPointer)))
+                  .any((w) => w.absorbing);
           final resDuring = resN() == 1;
           final bandDuring = inside(resText).length;
           r.gate = null;
@@ -681,8 +690,8 @@ void main() {
           _out('D414 $tok reload possible=$possible p0=${p0.toStringAsFixed(1)} loading=$loading listGone=$listGone resDuring=$resDuring '
               'bandDuring=$bandDuring listBack=$listBack resAfter=$resAfter p1=${p1.toStringAsFixed(1)} dy=${dy6 == null ? 'none' : dy6.toStringAsFixed(2)} '
               'restored=$restored6 reads=${r.calls}');
-          must('읽기 보류 중 실제 Loading frame · 목록 분리 · 결과 유지 → 풀면 목록 · 결과 유지', loading && listGone && resDuring && listBack && resAfter,
-              '$loading/$listGone/$resDuring/$listBack/$resAfter');
+          must('읽기 보류 중 목록 유지·잠금(전체 Loading 0) · 결과 유지 → 풀면 목록 · 결과 유지', listKeptLocked && resDuring && listBack && resAfter,
+              '$loading/$listGone/$listKeptLocked/$resDuring/$listBack/$resAfter');
           if (!_before) {
             must('strict Loading 중 띠 1 · 만료 뒤 pixels · anchor ±0.5', bandDuring == 1 && restored6, '$bandDuring $p0→$p1 dy=$dy6');
           }

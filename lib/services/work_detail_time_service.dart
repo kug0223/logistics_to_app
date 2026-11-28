@@ -77,12 +77,22 @@ class WorkDetailTimeService {
 
     try {
       // 슬롯 문서 병렬 조회 (toId당 여러 슬롯 가능)
+      // [PERF-L27] 슬롯 문서와 슬롯 없는 TO 문서는 서로의 결과를 쓰지 않는다 — **함께** 보낸다
+      //   (예전엔 슬롯 왕복이 끝난 뒤 TO 를 읽었다). 맵에 넣는 순서는 그대로(슬롯 → TO)라 결과가 같다
+      //   (복합키는 나중 값 · workType 폴백키는 먼저 값 규칙이 순서에 의존한다).
       final slotFutures = slotPairs.entries.expand((e) =>
           e.value.map((slotId) => FirebaseFirestore.instance
               .collection('tos').doc(e.key)
               .collection('slots').doc(slotId)
               .get()));
-      final slotDocs = await Future.wait(slotFutures);
+      final slotDocsFuture = Future.wait(slotFutures);
+      final toDocsFuture = toIds.isEmpty
+          ? Future.value(<DocumentSnapshot<Map<String, dynamic>>>[])
+          : Future.wait(toIds.map((id) =>
+              FirebaseFirestore.instance.collection('tos').doc(id).get()));
+      // 슬롯 쪽이 먼저 실패해도 TO 쪽 오류가 '처리되지 않은 오류' 로 새지 않게(await 하면 그대로 throw).
+      toDocsFuture.ignore();
+      final slotDocs = await slotDocsFuture;
       for (final doc in slotDocs) {
         if (!doc.exists) continue;
         final raw = doc.data()?['workDetails'] as List<dynamic>?;
@@ -91,9 +101,7 @@ class WorkDetailTimeService {
 
       // slotId 없는 경우 TO 문서 폴백
       if (toIds.isNotEmpty) {
-        final toFutures = toIds.map((id) =>
-            FirebaseFirestore.instance.collection('tos').doc(id).get());
-        final toDocs = await Future.wait(toFutures);
+        final toDocs = await toDocsFuture;
         for (final doc in toDocs) {
           if (!doc.exists) continue;
           final raw = doc.data()?['workDetails'] as List<dynamic>?;

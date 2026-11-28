@@ -5,6 +5,7 @@ import '../../../../models/core/work_detail_model.dart';
 import '../../../../services/schedule_conflict_service.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/format_helper.dart';
+import '../../../../utils/expected_daily_wage.dart';
 import '../../../../utils/text_layout.dart';
 import '../../../../theme/app_colors.dart';
 import '../../work_type_icon.dart';
@@ -414,7 +415,9 @@ class WorkSelectionCard extends StatelessWidget {
                 maxWidth: maxW,
                 texts: [
                   Text(
-                    '${FormatHelper.formatNumber(workDetail.wage)}원/${workDetail.wageTypeLabel}',
+                    // [F293-WAGE-01] 시급 업무는 하루 예상(주) + 시급(보조) — 이 업무 1회 기준.
+                    ExpectedWageText.combined(ExpectedDailyWage.forWorkDetail(workDetail)) ??
+                        '${ExpectedWageText.rawWage(workDetail.wage)}/${workDetail.wageTypeLabel}',
                     style: ResponsiveHelper.smallStyle(context, color: _wageColor)
                         .copyWith(fontWeight: FontWeight.w600),
                   ),

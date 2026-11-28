@@ -175,7 +175,7 @@ void main() {
 
     Future<void> runSeal(WidgetTester t) async {
       // OutlinedButton.icon 은 하위 타입이라 byType 으로 안 잡힌다 — 날인 카드의 버튼 글자로 찾는다.
-      final reg = find.ancestor(of: find.text('등록'), matching: find.byWidgetPredicate((w) => w is OutlinedButton));
+      final reg = find.ancestor(of: findVisibleText('등록'), matching: find.byWidgetPredicate((w) => w is OutlinedButton));
       await _waitFor(t, reg);
       await t.ensureVisible(reg.first);
       await t.tap(reg.first);

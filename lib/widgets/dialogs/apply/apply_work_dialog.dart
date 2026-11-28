@@ -277,6 +277,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       Navigator.pop(context);
       return;
     }
+    // [PERF-L44 · 판정291 §4] 지원 버튼에서 기다리던 세무 축 조회를 시트를 여는 동안 미리 출발시킨다.
+    //   판정은 그대로 — 60초가 지났거나 실패했으면 누를 때 다시 읽고, 최종 판단은 callableApplyToTO 다.
+    _startTaxPrefetch();
 
     // ✅ 장기공고: 희망 시작일 기본값 = null (사용자가 직접 선택해야 함)
     // 🔥 기본값 설정 제거 - 사용자가 캘린더에서 선택 가능한 날짜를 직접 선택해야 함
@@ -321,6 +324,34 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   /// 이 시트에서 기준 변경으로 막힌 지원이 있었는가 — 닫을 때 호출자가
   /// 공고 화면을 새로 읽게 한다(기존 reader 재사용, 새 seam 없음).
   bool _policyChangedDuringSubmit = false;
+
+  // ── [PERF-L44] 세무 축 미리 읽기(공고 상세 `_takeTaxStatus` 와 같은 규칙) ─────────
+  static const Duration _taxPrefetchMaxAge = Duration(seconds: 60);
+  Future<TaxIdentityStatus>? _taxPrefetch;
+  DateTime? _taxPrefetchAt;
+
+  void _startTaxPrefetch() {
+    // 읽기 경계에 세무 축이 없으면(시험 대역) 미리 읽지 않는다 — 누를 때 예전처럼 직접 읽는다.
+    final read = _reads.taxStatus;
+    if (read == null) return;
+    _taxPrefetchAt = DateTime.now();
+    _taxPrefetch = read()
+        .catchError((Object _) => const TaxIdentityStatus.unknown());
+  }
+
+  Future<TaxIdentityStatus> _takeTaxStatus() async {
+    final pending = _taxPrefetch;
+    final at = _taxPrefetchAt;
+    _taxPrefetch = null;
+    _taxPrefetchAt = null;
+    if (pending != null &&
+        at != null &&
+        DateTime.now().difference(at) < _taxPrefetchMaxAge) {
+      final status = await pending;
+      if (!status.loadFailed) return status;
+    }
+    return TaxIdentityService.loadStatus();
+  }
 
   Future<void> _loadPolicyRules() async {
     try {
@@ -2493,7 +2524,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       return;
     }
     // [PII-B4-R1.4 §39] job_posting_screen 경로와 같은 축을 본다.
-    final applyTax = await TaxIdentityService.loadStatus();
+    //   [PERF-L44] 시트를 열 때 미리 출발한 조회를 쓴다(60초 안·성공일 때만).
+    final applyTax = await _takeTaxStatus();
     if (!mounted) {
       return;
     }
@@ -2822,10 +2854,23 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           ) ??
           _conflictService.shouldApplyPenalty(workDateForPenalty);
 
-      await _firestoreService.cancelConfirmedApplication(
+      final canceled = await _firestoreService.cancelConfirmedApplication(
         application.id,
         applyNoShowPenalty: hasPenalty, // [GAP-2] 서버가 무시하고 직접 판정 후 처리
       );
+
+      // [AUD-5 ②-1] 서비스는 실패를 토스트 + false 로 알린다. 예전에는 이 값을 버려, 실패(거절·시간 초과·탈퇴 중)에도
+      //   마지막에 '확정이 취소되었습니다' (· 노쇼 1회) 가 실패 토스트를 덮었다 — 확정이 남았는데 취소된 줄 알고 안 나가면
+      //   실제 노쇼가 된다. 실패면 성공 안내 · 노쇼 수 증가 없이, 서버의 실제 상태만 다시 읽는다(시간 초과 뒤 실제로는
+      //   취소됐을 수도 있다 — 화면은 다시 읽은 상태를 말한다).
+      if (!canceled) {
+        final d = date ?? application.workDate;
+        await Future.wait([
+          _refreshApplicationStatus(d, application.selectedWorkType),
+          _loadMyConfirmedSchedules(d),
+        ]);
+        return;
+      }
 
       if (hasPenalty) {
         _userNoShowCount++;
@@ -2834,10 +2879,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       final targetDate = date ?? application.workDate;
       
       // ✅ 전체 상태 새로고침 (지원상태 + 확정스케줄 + 충돌정보)
-      await _refreshApplicationStatus(targetDate, application.selectedWorkType);
-      await _loadMyConfirmedSchedules(targetDate);
-      await _loadConflictsForDate(targetDate);
-      // 장기공고: 확정 취소 후 기간 내 충돌 날짜 재계산
+      //   [PERF-L46] 서로 독립인 세 읽기(각자 실패를 붙잡고 자기 상태만 바꾼다)를 **동시에** — 예전: 차례로 3 왕복.
+      await Future.wait([
+        _refreshApplicationStatus(targetDate, application.selectedWorkType),
+        _loadMyConfirmedSchedules(targetDate),
+        _loadConflictsForDate(targetDate),
+      ]);
+      // 장기공고: 확정 취소 후 기간 내 충돌 날짜 재계산 — **지원 상태 갱신 뒤**에 한다
+      //   (`_hasActiveApplication` 이 갱신된 지원 상태를 보고 건너뛸지 정한다 · 동시에 돌리면 옛 상태로 건너뛴다).
       if (_isLongTerm) await _loadConfirmedDatesInRange();
 
       if (!mounted) return;
@@ -2861,6 +2910,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     }
   }
 
+  /// [impl_27b · L48 같은 꼴] 날짜별 지원 상태 새로고침 차례 — 같은 날짜의 두 새로고침 중 늦게 끝난 옛 것이 새 상태를 덮지 않게.
+  final Map<DateTime, int> _refreshStatusGen = {};
+
   Future<void> _refreshApplicationStatus(DateTime date, String workType) async {
     if (_currentUserId == null) return;
 
@@ -2880,12 +2932,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
       if (to == null) return;
 
+      final g = (_refreshStatusGen[dateKey] ?? 0) + 1;
+      _refreshStatusGen[dateKey] = g;
       final applications = await _reads.applicationsForTO(
         toId: to.id,
         uid: _currentUserId!,
       );
 
-      if (mounted) {
+      if (mounted && _refreshStatusGen[dateKey] == g) {
         setState(() {
           _applicationsByDate[dateKey] = _buildActiveDateCache(applications, dateKey);
           _scopedAppsByDate[_appsDateKey(date)] =

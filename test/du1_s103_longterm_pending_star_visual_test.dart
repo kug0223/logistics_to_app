@@ -38,6 +38,7 @@ import 'package:ALfit/widgets/calendar/schedule_calendar.dart';
 import 'package:ALfit/widgets/calendar/schedule_card.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake with MockPlatformInterfaceMixin implements FirebaseAppPlatform {
   @override
@@ -354,7 +355,7 @@ void main() {
     }
     await frames(4);
     expect(t.state<ScrollableState>(scroll()).position.pixels, lessThan(0.5), reason: '맨 위로 되돌림');
-    final allTop = t.getRect(find.text('전체').first).top;
+    final allTop = t.getRect(findVisibleText('전체').first).top;
     final chip = find.text('대기').evaluate().map((e) => find.byWidget(e.widget)).firstWhere((f) => (t.getRect(f).top - allTop).abs() <= 2);
     await t.tapAt(t.getRect(chip).center);
     await frames(6);

@@ -249,9 +249,19 @@ void main() {
           'export const callableBatchAdminConfirm');
       expect(fn.contains('`application_confirmed_\${applicationId}`'), isTrue);
       // [0a.5] create 는 canonical helper 내부다 — 호출부는 결정적 id 를 넘긴다.
-      expect(fn.contains('srvPersistNotificationWithId('), isTrue);
+      // [L56 r4] 또는 batch2 의 direct 작업이 같은 결정적 id 를 들고, 실행기가 helper 로 create 하며
+      //   ALREADY_EXISTS(6)를 '이미 만든 알림'으로 받는다.
+      final runner = cf.substring(cf.indexOf('async function srvRunNotificationJob('),
+          cf.indexOf('\n}\n', cf.indexOf('async function srvRunNotificationJob(')));
+      final viaJob = fn.contains('batch2.create(cfJobRef, srvNotificationJobDoc("direct", {') &&
+          fn.contains('notificationId: `application_confirmed_\${applicationId}`,') &&
+          runner.contains('srvPersistNotificationWithId(') && runner.contains('?.code !== 6');
+      // [판정292] 정확히 하나 — 직접 호출(+code 6 처리)과 작업이 함께 있으면 이중 발송 가능.
+      final seatDirect = fn.contains('srvPersistNotificationWithId(');
+      expect(seatDirect || viaJob, isTrue);
+      expect(seatDirect && viaJob, isFalse, reason: '직접 호출과 작업이 함께 있다');
       // ALREADY_EXISTS(6)는 정상
-      expect(fn.contains('?.code !== 6'), isTrue);
+      expect(seatDirect ? fn.contains('?.code !== 6') : viaJob, isTrue);
     });
   });
 

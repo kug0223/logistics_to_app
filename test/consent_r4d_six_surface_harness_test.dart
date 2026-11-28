@@ -948,7 +948,7 @@ void main() {
       await _settle(t);
       expect(findVisibleTextContaining('동의만으로 근무가 확정되지는 않아요'), findsOneWidget, reason: 'S4 위 안내');
       await _consentContract(t, surface: 'S4', c: c, parts: iParts, details: iDetails, cta: '동의하기', sink: sink);
-      await t.tap(find.text('취소'));
+      await t.tap(findVisibleText('취소'));
       await _settle(t);
       expect(find.text('동의하기'), findsNothing, reason: 'S4 취소 = 미전송으로 닫힘');
     });
@@ -962,7 +962,7 @@ void main() {
       await _settle(t);
       await _consentContract(t, surface: 'S5', c: c, parts: iParts, details: iDetails,
           cta: '동의하고 초대 수락', sink: sink);
-      await t.tap(find.text('취소'));
+      await t.tap(findVisibleText('취소'));
       await _settle(t);
       expect(findVisibleText('동의하고 초대 수락'), findsNothing, reason: 'S5 취소 = 미전송');
     });
@@ -1014,7 +1014,7 @@ void main() {
         await _settle(t);
         await _consentContract(t, surface: offer ? 'S6o' : 'S6i', c: c, parts: iParts, details: iDetails,
             cta: label, sink: sink);
-        await t.tap(find.text('취소'));
+        await t.tap(findVisibleText('취소'));
         await _settle(t);
         expect(result, isFalse);
       });

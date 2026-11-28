@@ -73,6 +73,8 @@ import '../../../widgets/admin/contract_attendance_unknown_notice.dart';
 import '../../../widgets/admin/invite_roster_row.dart';
 import '../../../models/ui/work_applicant_split.dart';
 import '../../../utils/staffing_clock.dart';
+import '../../../utils/expected_daily_wage.dart';
+import '../../../utils/server_reject_codes.dart';
 
 /// [BULK-DISPATCH] 서버가 끝까지 처리했는지 **알 수 없는** CF 오류 코드.
 ///
@@ -132,7 +134,12 @@ class WorkApplicantsDialog extends StatefulWidget {
     this.initialApplicationId,
     this.initialDate,
     this.targetPermissions,
+    this.debugReloadHook,
   });
+
+  /// [impl_25 r2 · L48] 시험 전용 — 처리 뒤 다시 읽기(명단 유지)를 시험이 직접 부를 수 있게 넘긴다. 운영은 null.
+  @visibleForTesting
+  final void Function(Future<void> Function() reloadApplicants)? debugReloadHook;
 
   @override
   State<WorkApplicantsDialog> createState() => _WorkApplicantsDialogState();
@@ -407,6 +414,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           .watchBusinessPermissions(widget.toItem.to.businessId);
       _loadCapacity();
     });
+    // 처리 뒤 호출부와 같은 짝(명단 → 정원·통계)으로 넘긴다.
+    widget.debugReloadHook?.call(() async {
+      await _loadApplicants();
+      if (mounted) await _updateLocalStats();
+    });
     _loadApplicants().then((_) {
       if (mounted) _updateLocalStats(markChanged: false);
     });
@@ -449,12 +461,39 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   ///   볼 자격을 잃은 사람이 이름·연락처를 계속 보게 된다.
   bool _loadDenied = false;
 
+  /// [impl_25 r2 · L48] 지원자 읽기 차례 — **마지막에 시작한** 읽기만 화면과 성공/거부 표식에 앉는다.
+  ///   예전에는 겹친 두 읽기가 둘 다 앉아(늦게 끝난 옛 읽기가 새 명단을 덮음) 같은 필드 `_loadOk`/`_loadDenied` 를
+  ///   서로 고쳐, 뒤 읽기의 결과 판정(실패 배너·토스트·권한 지우기)이 앞 읽기의 표식으로 내려질 수 있었다.
+  int _applicantsGen = 0;
+
+  /// [impl_25 r2 · L48] 이번 읽기는 보이는 명단을 유지한다 — 이미 정상 명단을 한 번 앉힌 뒤의 다시 읽기(처리 뒤·새로고침 배너).
+  ///   첫 읽기·읽기 실패 화면에서의 다시 시도는 예전처럼 로딩 화면이다. [setLoading] 이 이 값을 본다.
+  bool _keepRowsVisible = false;
+
+  /// [impl_25 r2 · L48] 명단 유지 다시 읽기 중 — 전체 스피너 없이 얇은 진행 표시 + 누르기 잠금(닫기는 그대로).
+  ///   숫자·확정 표시는 서버에서 다시 읽은 결과만 앉힌다.
+  bool _refreshingAfterMutation = false;
+
+  @override
+  void setLoading(bool val) {
+    if (_keepRowsVisible) {
+      // 로딩 화면으로 바꾸지 않는다 — 시작 때 잠그고, 끝은 [_loadApplicants] 가 결과와 함께 푼다.
+      if (val && mounted && !_refreshingAfterMutation) {
+        setState(() => _refreshingAfterMutation = true);
+      }
+      return;
+    }
+    super.setLoading(val);
+  }
+
   /// 지원자 + 사용자 정보 + 신분증 상태 로드
   Future<void> _loadApplicants() async {
+    final gen = ++_applicantsGen;
+    _keepRowsVisible = _hasLoadedOnce && !_loadFailed;
     _loadOk = false;
     _loadDenied = false;
     await _runLoadApplicants();
-    if (!mounted) return;
+    if (!mounted || gen != _applicantsGen) return; // 더 늦게 시작한 읽기가 있다 — 그 읽기가 결과를 말한다
     final ok = _loadOk;
     final denied = _loadDenied;
     final hadRows = _hasLoadedOnce;
@@ -462,6 +501,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final outcome =
         applicantLoadOutcome(ok: ok, denied: denied, hadRows: hadRows);
     setState(() {
+      _refreshingAfterMutation = false; // [impl_25 r2] 이 읽기의 결과가 앉는다 — 잠금 해제
+      _keepRowsVisible = false;
       _loadFailed = outcome.loadFailed;
       _refreshFailed = outcome.refreshFailed;
       if (ok) {
@@ -537,6 +578,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   }
 
   Future<void> _runLoadApplicants() => runWithLoading(() async {
+      final gen = _applicantsGen; // [impl_25 r2] 이 읽기의 차례(호출 직전에 올렸다)
       final userProvider = context.read<UserProvider>();
       final currentUserId = userProvider.currentUser?.uid ?? '';
 
@@ -560,7 +602,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           purpose: FirestoreService.purposeApplicantReview,
         );
       } catch (e) {
-        _loadDenied = isPermissionDenial(e);
+        if (gen == _applicantsGen) _loadDenied = isPermissionDenial(e);
         rethrow;
       }
 
@@ -644,10 +686,43 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         businessId: widget.toItem.to.businessId, weekStart: ws, weekEnd: we);
       final contractMapFuture = _reads.contractStatusBatch(
         allAppIds, businessId: widget.toItem.to.businessId);
-      final hasWorkedFuture = slotDate != null
-          ? _reads.hasWorkedMap(
-              businessId: widget.toItem.to.businessId, date: slotDate)
-          : Future.value(<String, bool>{});
+      // [PERF-L27] 슬롯 날짜(KST 하루)는 위 주간 창 안에 있다 — 같은 근태 CF 를 하루치로 한 번 더 부르지 않고
+      //   주간 결과에서 그 하루(서버와 같은 workDate ∈ [하루 시작, 다음날 시작))만 골라 같은 판정식으로 낸다.
+      //   주간 조회가 실패하면(배지는 숨김으로 삼킨다) 예전처럼 하루치를 따로 읽는다 — 확정취소 가드의
+      //   실패 의미(throw)는 그대로다. 창 밖이면(방어) 따로 읽는다.
+      final Future<Map<String, bool>> hasWorkedFuture;
+      if (slotDate == null) {
+        hasWorkedFuture = Future.value(<String, bool>{});
+      } else {
+        final (dayStart, dayEnd) = FormatHelper.kstDayRange(slotDate);
+        final (weekStartAt, _) = FormatHelper.kstDayRange(ws);
+        final (_, weekEndAt) = FormatHelper.kstDayRange(we);
+        final inWeek = !dayStart.isBefore(weekStartAt) && !dayEnd.isAfter(weekEndAt);
+        Future<Map<String, bool>> separate() => _reads.hasWorkedMap(
+            businessId: widget.toItem.to.businessId, date: slotDate);
+        hasWorkedFuture = !inWeek
+            ? separate()
+            : weeklyMapFuture.then(
+                (m) => attendanceHasWorkedMap(m.values.expand((l) => l).where((a) =>
+                    !a.workDate.isBefore(dayStart) && a.workDate.isBefore(dayEnd))),
+                onError: (Object _) => separate(),
+              );
+      }
+
+      // [PERF-L27] 신분증 상태 일괄 조회를 지원서(①) 직후에 함께 출발시킨다 — 예전에는 사용자 문서를 다 받은
+      //   뒤에야 출발해 왕복 하나가 직렬로 더 붙었다. 대상(확정·계약대기)은 지원서만으로 정해진다.
+      //   결과는 아래에서 예전과 같은 대상(사용자 문서가 있는 확정자)으로만 남긴다.
+      final idCardFuture = _reads.idCardStatusBatch(
+        requesterId: currentUserId,
+        targetUserIds: filtered
+            .where((app) =>
+                app.status == AppStatus.confirmed || app.status == AppStatus.contractPending)
+            .map((app) => app.uid)
+            .toSet()
+            .toList(),
+      );
+      // 아래에서 await 하기 전에 실패해도 '처리되지 않은 오류' 로 새지 않게 한다(await 하면 그대로 throw).
+      idCardFuture.ignore();
 
       // [NOSHOW-CONTRACT-GUARD] 확정 단기 근무들의 근무일 범위를 한 번에 읽는다.
       //   주간 근무횟수 조회(weeklyAttendance)는 실패를 빈 값으로 삼키고 범위도
@@ -673,6 +748,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         );
       }
 
+      // [ROOT-FUTURE] 위에서 함께 출발시킨 future 들은 아래에서 하나씩 await 한다. 앞의 await 를 기다리는
+      //   사이 뒤의 것이 먼저 실패하면, 그 순간 받을 곳이 없어 '처리되지 않은 오류' 로 보고된다(main 은 이를
+      //   Crashlytics fatal 로 기록한다). ignore() 는 그 보고만 막는다 — await 하는 곳은 그대로 같은 오류를 받는다.
+      userMapFuture.ignore();
+      weeklyMapFuture.ignore();
+      contractMapFuture.ignore();
+      hasWorkedFuture.ignore();
       final userMap = await userMapFuture;
       
       // ✅ 3. 결과 매핑 (추가 조회 없음)
@@ -701,10 +783,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           .map((item) => (item['user'] as UserModel).uid)
           .toList();
       
-      final idCardStatusMap = await _reads.idCardStatusBatch(
-        requesterId: currentUserId,
-        targetUserIds: confirmedUserIds,
-      );
+      final idCardAll = await idCardFuture;
+      final confirmedUserIdSet = confirmedUserIds.toSet();
+      final idCardStatusMap = <String, String>{
+        for (final e in idCardAll.entries)
+          if (confirmedUserIdSet.contains(e.key)) e.key: e.value,
+      };
 
       // [R7-P1-4 §11] 리뷰 작성 여부 조회 제거 — 이 화면은 리뷰를 말하지 않는다.
       //   확정자 1명당 문서 1개를 읽던 N-read 루프이기도 했다.
@@ -786,6 +870,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       }
 
       // 여기까지 왔으면 조회는 끝났다 — unmount 여부와 무관하게 성공이다.
+      //   [impl_25 r2] 단, 더 늦게 시작한 읽기가 있으면 이 결과는 버린다(표식도 명단도 건드리지 않는다).
+      if (gen != _applicantsGen) return;
       _loadOk = true;
       if (!mounted) return;
       setState(() {
@@ -927,6 +1013,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           // [DU528] 통계 · 초대 · 전체 선택 줄과 본문을 한 칸으로 묶어 그 칸의 실제 높이를 잰다(_measuredBody = 남은 칸 + LayoutBuilder).
           ..._headAndBody(context, theme, widget.work != null && !noPermission, (context, box, narrow) {
           final strips = <Widget>[
+          // [impl_25 r2 · L48] 명단 유지 다시 읽기 중 — 얇은 진행 표시.
+          if (!isLoading && _refreshingAfterMutation)
+            const LinearProgressIndicator(
+                key: ValueKey('work-applicants-refresh-after-mutation'), minHeight: 2),
           if (!noPermission) ...[
           if (narrow) _buildHeadInfoRow(context),
           _buildStatsBar(context, pending.length, confirmed.length, compact: narrow),
@@ -988,22 +1078,22 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                 : _buildApplicantList(
                                     context, pending, confirmed, leading: lead);
           // 좁은 창 + 명단: 세 줄은 이미 명단 스크롤 안에 있다(_buildApplicantList 의 leading).
-          if (tight && body is SingleChildScrollView) return body;
+          if (tight && body is SingleChildScrollView) return _lockWhileRefreshing(body);
           // 좁은 창 + 불러오는 중 · 실패 · 빈 상태: 세 줄과 본문을 한 스크롤에 둔다(넘침 대신 스크롤).
           // [DU530] 빈 상태 · 조회 실패 본문(AppEmptyState)은 받은 최대 높이를 최소 높이로 쓴다 — 스크롤 안(높이 제한 없음)에
           //   그대로 두면 무한 높이를 강제한다(감사129 F129-EMPTY-UNBOUNDED). 이 칸의 실측 최대 높이(box.maxHeight · 유한)를 준다.
           //   불러오는 중은 내용만큼(이전과 같다 — 통계 줄 바로 아래).
           if (tight) {
-            return SingleChildScrollView(
+            return _lockWhileRefreshing(SingleChildScrollView(
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
               ...strips,
               if (isLoading) body else SizedBox(height: box.maxHeight, child: body),
-            ]));
+            ])));
           }
           // 그 밖(이전 배치 그대로): 세 줄 고정 + 본문.
-          return Column(
+          return _lockWhileRefreshing(Column(
               mainAxisSize: MainAxisSize.min,
-              children: [...strips, Flexible(child: body)]);
+              children: [...strips, Flexible(child: body)]));
           }),
           // 권한이 없으면 일괄 확정·거절이 있는 하단 바를 세우지 않는다.
           if (noPermission) _buildCloseOnlyBar(context) else _buildBottomBar(context),
@@ -1011,6 +1101,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       ),
     );
   }
+
+  /// [impl_25 r2 · L48] 본문을 늘 같은 모양으로 감싼다 — 명단 유지 다시 읽기 중에만 누르기를 막는다.
+  Widget _lockWhileRefreshing(Widget child) =>
+      AbsorbPointer(absorbing: _refreshingAfterMutation, child: child);
 
   /// [R7-P1-2 DEVICE.1E §8] 이 화면이 다루는 **범위**.
   ///
@@ -1042,16 +1136,42 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       ? '${widget.work!.workType} · 지원·근무 현황'
       : '${widget.toItem.to.title} · 지원·근무 현황';
 
+  /// [F293-WAGE-01] 머리 임금 조각 — 시급이면 '| 하루 예상 N원 · 시급 N원'(+ '예상·세전'), 아니면 예전 '| 일급 N원'.
+  ///   조각 안은 예전처럼 `TextLayout.unit` 으로 묶어 줄은 조각 사이에서만 바뀐다.
+  String _headerWageText() {
+    final w = widget.work!;
+    final e = ExpectedDailyWage.forWorkDetail(w);
+    final c = ExpectedWageText.combined(e);
+    // [F294-WAGE-01 · C294-WAGE-C] 알려진 비시급 단가 누락(0 이하)은 '0원' 대신 '급여 확인 필요'(읽는 이름과 같은 원천).
+    if (c == null) return '${TextLayout.unit('| ${w.wageTypeLabel}')} ${TextLayout.unit(ExpectedWageText.rawWage(w.wage))}';
+    final pieces = c.split(' · ');
+    final head = TextLayout.unit('| ${pieces.first}');
+    final rest = pieces.skip(1).map(TextLayout.unit).join(' · ');
+    final note = e.isEstimate ? ' ${TextLayout.unit(ExpectedWageText.shortNote)}' : '';
+    return rest.isEmpty ? '$head$note' : '$head · $rest$note';
+  }
+
+  /// 머리 임금의 읽는 이름 — 보이는 글과 같은 문구(짧은 말 포함).
+  String _headerWageSemantics() {
+    final w = widget.work!;
+    final e = ExpectedDailyWage.forWorkDetail(w);
+    final c = ExpectedWageText.combined(e);
+    if (c == null) return '${w.wageTypeLabel} ${ExpectedWageText.rawWage(w.wage)}';
+    return e.isEstimate ? '$c ${ExpectedWageText.shortNote}' : c;
+  }
+
   /// 머리 보조 줄(날짜/범위 · 시간 · 임금) — 머리 안과 좁은 창의 본문 첫 항목이 같은 위젯을 쓴다(글 · 읽는 이름 한 곳).
   Widget _headerSub() => Text.rich(
         TextSpan(
+          // [F293-WAGE-01 · 판정293 §8] 머리 임금 = 이 머리가 보여 주는 업무 시간(같은 원천)으로 계산한 하루 예상 + 시급 보조.
+          //   시급이 아니면 예전 '| 일급 N원' 그대로.
           text: widget.work != null
               ? '${TextLayout.phrases('$_headerScope · ${widget.work!.startTime}~${widget.work!.endTime}')} '
-                '${TextLayout.unit('| ${widget.work!.wageTypeLabel}')} ${TextLayout.unit(widget.work!.formattedWage)}'
+                '${_headerWageText()}'
               : TextLayout.phrases('$_headerScope · 업무 ${widget.toItem.workDetails.length}종'),
           semanticsLabel: widget.work != null
             ? '$_headerScope · ${widget.work!.startTime}~${widget.work!.endTime}'
-              ' | ${widget.work!.wageTypeLabel} ${widget.work!.formattedWage}'
+              ' | ${_headerWageSemantics()}'
             : '$_headerScope · 업무 ${widget.toItem.workDetails.length}종',
         ),
         style: const TextStyle(
@@ -2133,7 +2253,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                         .copyWith(fontWeight: FontWeight.bold),
                   ),
                   Text(
-                    '${work.startTime}~${work.endTime}  ${work.formattedWage}',
+                    // [F294-WAGE-01 · C294-WAGE-C] 원시 단가 — 누락(0 이하)은 '0원' 대신 '급여 확인 필요'.
+                    '${work.startTime}~${work.endTime}  ${ExpectedWageText.rawWage(work.wage)}',
                     style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
                   ),
                 ],
@@ -3567,7 +3688,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           ToastHelper.showError(
               blocked.confirmBlockedNotice(canSetUp: canSetUp));
         } else {
-          ToastHelper.showError('확정 처리 중 오류가 발생했습니다');
+          // [impl_58 · server_297] 겹침 확인 미완료(OVERLAP_CHECK_INCOMPLETE · 확정 0)는 다시 시도하라고 말한다.
+          ToastHelper.showError(overlapCheckIncompleteMessageOf(e) ?? '확정 처리 중 오류가 발생했습니다');
         }
       }
     } finally {
@@ -3643,12 +3765,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     return null;
   }
 
+  /// [impl_25 r2] 변경 제안 목록 읽기 차례 — 늦게 끝난 옛 읽기가 새 목록을 덮지 않게.
+  int _proposalsGen = 0;
+
   Future<void> _loadReassignProposals() async {
     final bizId = widget.toItem.to.businessId;
     if (bizId.isEmpty) return;
+    final gen = ++_proposalsGen;
     try {
       final list = await _reads.reassignProposals(bizId);
-      if (!mounted) return;
+      if (!mounted || gen != _proposalsGen) return;
       setState(() => _reassignProposals = list);
     } catch (e) {
       // 읽기 실패를 "제안 없음"으로 바꾸지 않는다 — 이전 목록을 유지한다.
@@ -3764,13 +3890,23 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     try {
       final adminUID = userProvider.currentUser?.uid;
 
-      await _firestoreService.cancelConfirmedApplication(
+      // [impl_59] 결과판 — 서비스는 토스트를 띄우지 않고 사유를 돌려준다(예전: 서비스 사유 토스트를 아래 일반 안내가 덮었다).
+      final cancel = await _firestoreService.cancelConfirmedApplicationWithResult(
         app.id,
         canceledBy: adminUID,
         cancelReason: reason,
       );
 
       if (!mounted) return;
+      // [impl_58] 실패 = 서버 거절 또는 결과 확인 불가 — 성공이라 말하지 않고 서버에서 다시 읽은 뒤 사유를 말한다.
+      if (!cancel.success) {
+        await _loadApplicants();
+        if (!mounted) return;
+        await _updateLocalStats();
+        if (!mounted) return;
+        ToastHelper.showError(cancel.adminToast);
+        return;
+      }
       ToastHelper.showSuccess('${_personLabelOf(user, '근무자')}님의 확정이 취소되었습니다');
       await _loadApplicants();
       if (!mounted) return;
@@ -3873,7 +4009,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       );
     }
 
-    final hasSelection = _selectedIds.isNotEmpty;
+    // [impl_25 r2] 명단 유지 다시 읽기 중에는 일괄 확정·거절을 열지 않는다(처리 전 명단의 선택이다).
+    final hasSelection = _selectedIds.isNotEmpty && !_refreshingAfterMutation;
     // [CSA-02/E] batch approve = 승인+계약 통합 action → canManageContract 필요
     // 거절은 canManageTo만으로 충분 (계약 생성 없음).
     final canApproveWithContract = _canManageContract();

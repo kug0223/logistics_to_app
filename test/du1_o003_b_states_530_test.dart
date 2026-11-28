@@ -561,7 +561,7 @@ void main() {
             final statF = find.text('지원: ');
             final nStat = statF.evaluate().length;
             final nMsg = msgF.evaluate().length;
-            final closeF = find.descendant(of: find.byType(AppModalFooter), matching: find.text('닫기'), skipOffstage: true);
+            final closeF = find.descendant(of: find.byType(AppModalFooter), matching: findVisibleText('닫기'), skipOffstage: true);
             final nClose = closeF.evaluate().length;
             var inScroll = false;
             var msgIn = false;
@@ -764,7 +764,7 @@ void main() {
             // ④ 첫 조회 실패 — 안내 글 · '다시 시도' · '닫기'가 닿는가 → '다시 시도' 한 번 → 재조회 1회 → 명단 5 · 통계 줄 1.
             await shot('1fail', 'fail-top');
             final o = await obs(findVisibleText(_failText), find.byType(AppEmptyState));
-            final retryF = find.descendant(of: find.byType(AppEmptyState), matching: find.text('다시 시도'), skipOffstage: true);
+            final retryF = find.descendant(of: find.byType(AppEmptyState), matching: findVisibleText('다시 시도'), skipOffstage: true);
             final nRetry = retryF.evaluate().length;
             var retryIn = false;
             var retryHit = false;

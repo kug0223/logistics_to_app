@@ -199,7 +199,8 @@ t('S8 지원 직전에 canonical 판정을 소비한다', () => {
   const i = s.indexOf('export const callableApplyToTO');
   assert.ok(i > 0);
   const body = s.slice(i, i + 20000);
-  assert.ok(body.includes('srvLegalReadiness(uid)'), '지원 경로가 판정을 읽지 않는다');
+  // [L57 r2a] 같은 canonical 판정 호출 — users 는 요청 단위 snapshot getter 를 넘길 수 있다(판정 계산은 그대로 srvLegalReadiness).
+  assert.ok(/srvLegalReadiness\(uid(?:\)|, async \(\) => userSnap\))/.test(body), '지원 경로가 판정을 읽지 않는다');
   assert.ok(body.includes('lrAllowsNewCommitment'), '정책을 직접 비교하면 안 된다');
   assert.ok(body.includes('LEGAL_RECONSENT_REQUIRED'));
   // 조회 실패를 미동의로 바꾸지 않는다 — 통과시킨다.
@@ -213,9 +214,13 @@ t('S9 판정 읽기 경로는 인증을 요구하고 실패를 삼키지 않는�
   assert.ok(i > 0, '판정 읽기 callable 이 없다');
   const body = s.slice(i, i + 1500);
   assert.ok(body.includes('if (!request.auth)'));
-  assert.ok(body.includes('srvLegalReadiness(request.auth.uid)'),
+  // [L9 · 판정289] 응답 모양은 srvReadLegalReadiness 로 옮겼다(묶음 callable 과 공유) — 호출자 uid 만 넘기는지 둘 다 본다.
+  assert.ok(body.includes('srvReadLegalReadiness(request.auth.uid)'),
     '호출자 본인 상태만 돌려줘야 한다');
-  assert.ok(!/catch/.test(body), '조회 실패를 삼키면 모름이 정상으로 바뀐다');
+  const hi = s.indexOf('async function srvReadLegalReadiness(');
+  const h = s.slice(hi, s.indexOf('\n}\n', hi));
+  assert.ok(hi > 0 && h.includes('srvLegalReadiness(uid, getUserSnap)'), 'helper 도 받은 uid 만 쓴다');
+  assert.ok(!/catch/.test(body) && !/catch/.test(h), '조회 실패를 삼키면 모름이 정상으로 바뀐다');
 });
 
 t('S10 판정은 한 곳에서만 계산된다', () => {

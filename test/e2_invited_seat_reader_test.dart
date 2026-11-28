@@ -46,6 +46,7 @@ import 'package:ALfit/services/firestore_service.dart';
 import 'package:ALfit/widgets/admin/invite_roster_row.dart';
 import 'package:ALfit/widgets/dialogs/apply/document_access_consent.dart';
 import 'package:ALfit/widgets/dialogs/worker_detail_dialog.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 // ── Firebase 가짜 코어 (기존 하네스와 같은 방식) ─────────────────────────────
 class _FakeApp extends Fake
@@ -535,7 +536,7 @@ void main() {
       expect(s, isNot(contains('확정할 수 있어요')));
       expect(s, contains('근로자가 수락하려면 신분증 확인이 필요해요.'));
       expect(s, contains('[확인 완료]를 누르면 근로자가 10/16 23:00까지 수락할 수 있어요.'));
-      expect(find.text('승인'), findsNothing);
+      expect(findVisibleText('승인'), findsNothing);
       _overflows(t);
     });
 

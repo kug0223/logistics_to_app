@@ -24,6 +24,7 @@ import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/app_search_bar.dart';
 import '../../../theme/app_colors.dart';
 import '../my_applications_screen.dart';
+import '../tab_revisit_watch.dart';
 import '../user_tab_scope.dart';
 
 /// 일자리 탭 — 일자리 찾기 + 내 지원 탭 구조 (Phase 2)
@@ -35,10 +36,13 @@ import '../user_tab_scope.dart';
 /// Phase 1 허브 화면('무엇을 찾으시나요?') 제거.
 /// 공고 데이터 로딩·필터 로직을 담당하는 canonical 일자리 탭.
 class UserJobTab extends StatefulWidget {
-  const UserJobTab({super.key, this.reads});
+  const UserJobTab({super.key, this.reads, this.clock});
 
   /// [R7-P2-2 P22-L] 목록을 만들 때의 읽기 경계. production 은 null.
   final UserJobTabReads? reads;
+
+  /// [PERF-L18·P9] "지금"의 출처(자동 이어읽기 시간 상한·재방문 신선도). production 은 null → `DateTime.now`.
+  final DateTime Function()? clock;
 
   @override
   State<UserJobTab> createState() => _UserJobTabState();
@@ -97,12 +101,99 @@ class _UserJobTabState extends State<UserJobTab>
   bool _populationSucceeded = false;
   bool _myApplicationsLoaded = false;
 
+  DateTime _now() => (widget.clock ?? DateTime.now)();
+
+  // ── [PERF-L18 · 판정291 §1] 빈 결과 자동 이어읽기 예산 ─────────────────────
+  //   화면이 비고 hasMore 면 다음 페이지를 이어 읽는데(날짜 같은 로컬 조건), 예전에는 상한이 없어
+  //   끝까지 직렬로 읽었다. **페이지 수·경과 시간** 두 상한 중 먼저 닿으면 새 자동 요청을 시작하지 않고,
+  //   "여기까지 확인했어요 · 더 찾아보기" 로 사용자가 다음 묶음을 고르게 한다. 정상 0 은 서버가
+  //   끝(hasMore=false)이라고 한 때만이다. 새 조회·필터·검색은 새 예산이다. 빈 프레임·재build·스크롤은 초기화하지 않는다.
+  static const int _autoChainMaxPages = 3;
+  static const Duration _autoChainMaxElapsed = Duration(seconds: 8);
+  int _autoChainPages = 0;
+  DateTime? _autoChainStartedAt;
+
+  /// 예산이 다 됐거나(또는 서버 응답이 진행하지 않아) 자동 이어읽기를 멈췄다 — hasMore 는 그대로다.
+  bool _autoChainStopped = false;
+
+  void _resetAutoChainBudget() {
+    _autoChainPages = 0;
+    _autoChainStartedAt = null;
+    _autoChainStopped = false;
+  }
+
+  /// 화면이 빈 채 남은 페이지가 있을 때의 **자동** 이어읽기 — 예산 안에서만.
+  void _autoLoadMore() {
+    if (!mounted || _autoChainStopped) return;
+    final started = _autoChainStartedAt ??= _now();
+    if (_autoChainPages >= _autoChainMaxPages ||
+        _now().difference(started) >= _autoChainMaxElapsed) {
+      setState(() => _autoChainStopped = true);
+      return;
+    }
+    _autoChainPages++;
+    _loadMoreTOs();
+  }
+
+  /// 사용자가 고른 "더 찾아보기 / 더 많은 공고 보기" — 같은 조건·커서의 다음 묶음을 새 예산으로 시작한다.
+  void _loadMoreByUser() {
+    _resetAutoChainBudget();
+    _loadMoreTOs();
+  }
+
+  // ── [PERF-P9 · 판정291 §8] 재방문 신선도 ─────────────────────────────────
+  //   다시 보이거나(다른 탭·상세에서 돌아옴) 보이는 채로 앱이 복귀하면 데이터별로 본다.
+  //   · 지원 내역: 무효화 세대가 바뀌었거나(지원·취소·확정 등) 1분(서비스 TTL)이 지났으면 다시 읽는다.
+  //   · 공고 목록: 3분이 지났거나 KST 날짜가 바뀌었고, **첫 페이지만** 보고 있을 때 화면을 비우지 않고 다시 읽는다.
+  //     더 불러온 뒤(커서 진행)면 사용자가 본 위치를 지키려고 목록은 다시 읽지 않는다.
+  //   실패는 각 경로의 기존 정책 그대로다(첫 페이지 실패 = DU210 실패 화면 · 지원 내역 실패 = 이전 값 유지).
+  //   이미 신선하면 호출 0. 계정이 바뀌었으면 처음부터 다시 읽는다.
+  static const Duration _appsFreshFor = Duration(minutes: 1);
+  static const Duration _listFreshFor = Duration(minutes: 3);
+  late final TabRevisitWatch _revisit = TabRevisitWatch(onRevisit: _onRevisit);
+  DateTime? _listLoadedAt;
+  DateTime? _appsLoadedAt;
+  int? _appsRevAtLoad;
+  String? _loadedUid;
+  int _pagesLoaded = 0;
+
+  int? _appsRevision(String? uid) =>
+      uid == null ? null : _reads.applicationsRevision?.call(uid);
+
+  void _onRevisit() {
+    if (!mounted || _isLoading || _fetchInProgress) return;
+    final uid = context.read<UserProvider>().currentUser?.uid;
+    if (_loadedUid != null && uid != _loadedUid) {
+      _loadAllTOs(forceRefresh: true);
+      return;
+    }
+    final now = _now();
+    final appsAt = _appsLoadedAt;
+    final appsStale = uid != null &&
+        (appsAt == null ||
+            now.difference(appsAt) >= _appsFreshFor ||
+            _appsRevision(uid) != _appsRevAtLoad);
+    final listAt = _listLoadedAt;
+    final listStale = listAt != null &&
+        !_loadFailed &&
+        _pagesLoaded <= 1 &&
+        (now.difference(listAt) >= _listFreshFor ||
+            FormatHelper.toKstDate(now) != FormatHelper.toKstDate(listAt));
+    if (listStale) {
+      if (appsStale) _myApplicationsLoaded = false;
+      _loadAllTOs(quiet: true);
+    } else if (appsStale) {
+      _refreshMyApplications();
+    }
+  }
+
   // ── 초기화 ──────────────────────────────────────────────────────
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _revisit.attach();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _loadAllTOs();
@@ -119,17 +210,33 @@ class _UserJobTabState extends State<UserJobTab>
   ///
   /// 하단 BottomNavigationBar로 직접 진입한 경우 pendingJobDate는 null이므로
   /// 기존 _filter 상태를 그대로 유지한다.
+  /// [PERF-L5] 첫 didChangeDependencies 를 지났는가 — 첫 생성(= 지연 생성 뒤 첫 방문)과 기방문을 가른다.
+  bool _depsInitialized = false;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _revisit.updateFrom(context);
     final scope = UserTabScope.of(context);
     final pending = scope?.pendingJobDate;
+    final firstMount = !_depsInitialized;
+    _depsInitialized = true;
     if (pending != null) {
       // clearFn을 여기서 캡처한다.
       // postFrameCallback 안에서 UserTabScope.of(context)를 재호출하면
       // 빌드 페이즈 밖에서의 dependOnInheritedWidgetOfExactType 호출로
       // debug assertion이 터져 콜백이 중단되므로, 반드시 클로저로 미리 캡처해야 한다.
       final clearFn = scope!.clearPendingJobDate;
+      if (firstMount) {
+        // [PERF-L5] 첫 생성 — 첫 그리기·첫 조회(initState postFrame `_loadAllTOs`) **전에** 하루 필터를 둔다.
+        //   날짜는 서버 조건이 아니라 로컬 조건이라(`_onFilterChanged` needsServerFetch 제외) 조회 수는 그대로 1이다.
+        //   날짜 미적용 목록이 한 프레임 보였다 바뀌는 일이 없다.
+        _filter = _filter.copyWith(dateRange: DateTimeRange(start: pending, end: pending));
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) clearFn(); // root 상태 소비만
+        });
+        return;
+      }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         clearFn(); // root 상태 소비 — context 조회 없이 직접 호출
@@ -142,6 +249,7 @@ class _UserJobTabState extends State<UserJobTab>
 
   @override
   void dispose() {
+    _revisit.dispose();
     _tabController.dispose();
     _searchDebounce?.cancel();
     _scrollController.dispose();
@@ -173,29 +281,38 @@ class _UserJobTabState extends State<UserJobTab>
 
   // ── 데이터 로딩 ──────────────────────────────────────────────────
 
-  Future<void> _loadAllTOs({bool forceRefresh = false}) async {
+  /// [quiet] — [PERF-P9] 재방문 재검증. 보이는 목록을 비우거나 뼈대로 바꾸지 않고 다시 읽어 성공하면 바꾼다.
+  ///   실패는 일반 조회와 같다(DU210 — 첫 페이지를 못 읽으면 목록을 지우고 실패 화면).
+  Future<void> _loadAllTOs({bool forceRefresh = false, bool quiet = false}) async {
     if (_fetchInProgress) {
       _reloadPending = true;
       return;
     }
     _fetchInProgress = true;
     _generation++;
-    setState(() {
-      _isLoading = true;
-      _lastToId = null;
-      _hasMoreData = true;
-      _populationSucceeded = false;
-      _allTOList = [];
-      _workDetailsCache.clear();
-      _slotsCache.clear();
+    _resetAutoChainBudget(); // [PERF-L18] 새 조회 = 새 예산
+    if (quiet) {
       if (forceRefresh) _myApplicationsLoaded = false;
-    });
+    } else {
+      setState(() {
+        _isLoading = true;
+        _lastToId = null;
+        _hasMoreData = true;
+        _populationSucceeded = false;
+        _allTOList = [];
+        _workDetailsCache.clear();
+        _slotsCache.clear();
+        if (forceRefresh) _myApplicationsLoaded = false;
+      });
+    }
 
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final uid = userProvider.currentUser?.uid;
 
-      final appsFuture = (uid != null && !_myApplicationsLoaded)
+      final fetchApps = uid != null && !_myApplicationsLoaded;
+      final appsRevAtStart = fetchApps ? _appsRevision(uid) : null;
+      final appsFuture = fetchApps
           ? _reads.myApplications(uid)
           : Future.value(_myApplications);
 
@@ -232,7 +349,18 @@ class _UserJobTabState extends State<UserJobTab>
       final regionResult = _computeRegionOptions(toList);
       final displayList = _computeDisplayList(toList);
       _fetchInProgress = false;
+      // [PERF-P9] 신선도 기준점 — 이 조회가 성공한 시각·계정·지원 내역 세대.
+      final loadedAt = _now();
+      _listLoadedAt = loadedAt;
+      _loadedUid = uid;
+      _pagesLoaded = 1;
+      if (fetchApps) {
+        _appsLoadedAt = loadedAt;
+        _appsRevAtLoad = appsRevAtStart;
+      }
       setState(() {
+        _workDetailsCache.clear();
+        _slotsCache.clear();
         _allTOList = toList;
         _lastToId = lastToId;
         _hasMoreData = hasMore;
@@ -261,7 +389,7 @@ class _UserJobTabState extends State<UserJobTab>
       }
       if (displayList.isEmpty && hasMore) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _loadMoreTOs();
+          if (mounted) _autoLoadMore(); // [PERF-L18] 예산 안에서만
         });
       }
     } catch (e) {
@@ -281,6 +409,11 @@ class _UserJobTabState extends State<UserJobTab>
         _displayList = [];
         _hasMoreData = false;
         _loadFailed = true;
+        // [PERF-P9] 조용한 재검증이 실패해도 같다 — 이전 목록을 현재 조건의 성공으로 남기지 않는다.
+        _allTOList = [];
+        _lastToId = null;
+        _populationSucceeded = false;
+        _listLoadedAt = null;
       });
       ToastHelper.showError('공고 목록을 불러오는데 실패했습니다.');
     }
@@ -300,20 +433,36 @@ class _UserJobTabState extends State<UserJobTab>
         filter: _filter,
       );
       final toList = tosResult['items'] as List<TOModel>;
+      final nextCursor = tosResult['lastToId'] as String?;
+      final serverHasMore = tosResult['hasMore'] as bool;
 
       if (!mounted || _generation != gen) {
         _isLoadingMore = false;
         return;
       }
       if (toList.isEmpty) {
+        // [PERF-L18 · 판정291 §1] 빈 페이지를 "끝"으로 단정하지 않는다 — 서버가 끝이라고 할 때만 끝이다.
+        //   서버가 더 있다고 하면 자동 연쇄만 멈추고 hasMore 는 그대로 둔다(정상 0 인증 0 · 사용자가 더 찾아볼 수 있다).
         setState(() {
-          _hasMoreData = false;
+          if (serverHasMore && nextCursor != null && nextCursor != _lastToId) {
+            _lastToId = nextCursor;
+            _autoChainStopped = true;
+          } else if (serverHasMore) {
+            _autoChainStopped = true;
+          } else {
+            _hasMoreData = false;
+          }
           _isLoadingMore = false;
         });
         return;
       }
+      // [PERF-L18] 같은 커서를 다시 받으면(진행 없음) 자동 연쇄를 멈춘다 — 무한 반복 방지 · hasMore 는 서버 값 그대로.
+      final cursorStalled = serverHasMore && nextCursor == _lastToId;
+      // 이미 받은 공고가 다시 오면 겹쳐 그리지 않는다.
+      final seen = {for (final t in _allTOList) t.id};
+      final fresh = toList.where((t) => !seen.contains(t.id)).toList();
 
-      final mergedList = [..._allTOList, ...toList];
+      final mergedList = [..._allTOList, ...fresh];
       final newRegionResult = _computeRegionOptions(toList);
       final mergedCities =
           {..._availableCities, ...newRegionResult.cities}.toList()..sort();
@@ -324,18 +473,20 @@ class _UserJobTabState extends State<UserJobTab>
         mergedDistricts[city] = ({...existing, ...added}).toList()..sort();
       }
       final displayList = _computeDisplayList(mergedList);
+      _pagesLoaded++;
       setState(() {
         _allTOList = mergedList;
-        _lastToId = tosResult['lastToId'] as String?;
-        _hasMoreData = tosResult['hasMore'] as bool;
+        _lastToId = nextCursor;
+        _hasMoreData = serverHasMore;
         _availableCities = mergedCities;
         _districtMap = mergedDistricts;
         _displayList = displayList;
         _isLoadingMore = false;
+        if (cursorStalled) _autoChainStopped = true;
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _displayList.isEmpty && _hasMoreData && !_isLoadingMore) {
-          _loadMoreTOs();
+          _autoLoadMore(); // [PERF-L18] 예산 안에서만
         }
       });
     } catch (e) {
@@ -479,13 +630,14 @@ class _UserJobTabState extends State<UserJobTab>
       setState(() {
         _filter = newFilter;
         _displayList = _computeDisplayList(_allTOList);
+        _resetAutoChainBudget(); // [PERF-L18] 새 조건 = 새 예산
       });
       // [R7-P2-2 P22-L] 서버에 다시 묻지 않는 조건(날짜 등)이라도, 그 조건이
       //   **이미 받아 온 페이지**를 모두 걸러 냈다면 남은 페이지를 이어 읽는다.
-      //   `_loadMoreTOs` 가 이미 같은 방식으로 꼬리를 문다(빈 결과면 계속).
+      //   `_loadMoreTOs` 가 이미 같은 방식으로 꼬리를 문다(빈 결과면 계속) — 예산 안에서만.
       if (_displayList.isEmpty && _hasMoreData && !_isLoadingMore && !_isLoading) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _loadMoreTOs();
+          if (mounted) _autoLoadMore();
         });
       }
     }
@@ -496,8 +648,13 @@ class _UserJobTabState extends State<UserJobTab>
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final uid = userProvider.currentUser?.uid;
       if (uid != null) {
+        final rev = _appsRevision(uid);
         final myApps = await _reads.myApplications(uid);
-        if (mounted) setState(() => _myApplications = myApps);
+        if (mounted) {
+          _appsLoadedAt = _now(); // [PERF-P9] 신선도 기준점
+          _appsRevAtLoad = rev;
+          setState(() => _myApplications = myApps);
+        }
       }
     } catch (e) {
       debugPrint('❌ 지원 내역 새로고침 실패: $e');
@@ -688,8 +845,16 @@ class _UserJobTabState extends State<UserJobTab>
       children: [
         // 검색바 + 빠른필터 — 스크롤 고정
         _buildSearchHeader(context),
-        // 결과 요약 라인 — 로딩 완료 후 표시
-        if (!_isLoading) _buildResultSummary(context),
+        // 결과 요약 라인 — 로딩 완료 후 표시.
+        //   [PERF-P11] 자리는 처음부터 잡아 둔다 — 응답 뒤 한 줄이 끼어들며 목록이 밀리던 흔들림 0.
+        //   로딩 중에는 보이지 않고(이전·0 숫자를 말하지 않는다) 읽기 보조에도 나오지 않는다.
+        Visibility(
+          visible: !_isLoading,
+          maintainSize: true,
+          maintainAnimation: true,
+          maintainState: true,
+          child: _buildResultSummary(context),
+        ),
         // TO 목록
         Expanded(child: _buildList(context)),
       ],
@@ -1161,7 +1326,7 @@ class _UserJobTabState extends State<UserJobTab>
               return Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                 child: OutlinedButton.icon(
-                  onPressed: _loadMoreTOs,
+                  onPressed: _loadMoreByUser,
                   icon: const Icon(Icons.expand_more, size: 18),
                   label: const Text('더 많은 공고 보기'),
                   style: OutlinedButton.styleFrom(
@@ -1236,19 +1401,24 @@ class _UserJobTabState extends State<UserJobTab>
     //   `N개 이상` 이라고 말하는데 본문은 없다고 말하는 상태였다.
     //   읽을 것이 남아 있는 동안에는 **찾는 중**이라고 말하고 길을 연다.
     if (_hasMoreData) {
+      // [PERF-L18 · 판정291 §1] 자동 이어읽기 예산이 다 됐으면 "여기까지 확인했다"고 말하고 다음 묶음을 사용자에게 맡긴다.
+      //   "없다"·"0개"라고 하지 않는다(서버가 끝이라고 하지 않았다). 읽는 중이 아니면 스피너를 두지 않는다.
+      final stopped = _autoChainStopped && !_isLoadingMore;
       return AppEmptyState(
         icon: Icons.manage_search_rounded,
         title: '아직 이 조건의 공고를 찾지 못했어요',
-        subtitle: '더 불러와서 확인할 수 있어요',
+        subtitle: stopped
+            ? '여기까지 확인했어요 · 더 찾아볼 수 있어요'
+            : '더 불러와서 확인할 수 있어요',
         action: _isLoadingMore
             ? const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
                 child: LoadingWidget(),
               )
             : OutlinedButton.icon(
-                onPressed: _loadMoreTOs,
+                onPressed: _loadMoreByUser,
                 icon: const Icon(Icons.expand_more, size: 18),
-                label: const Text('더 많은 공고 보기'),
+                label: Text(stopped ? '더 찾아보기' : '더 많은 공고 보기'),
               ),
       );
     }

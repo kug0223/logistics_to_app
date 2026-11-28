@@ -234,11 +234,28 @@ void main() {
     });
 
     test('OWN-17 지원서 확인은 CF 전용이다', () {
-      expect(
-          rules.contains("hasAny(['uid', 'attendancePolicySnapshot',"),
-          isTrue);
-      expect(rules.contains("'attendancePolicyAcknowledgement'])"), isTrue,
+      // [BL284-01 후속 · 판정291 지시] 원문 문자열(닫는 `])` 까지) 대신 **applications 외곽 금지목록 안에 필드가 있는지**를 본다.
+      //   같은 목록에 다른 서버 전용 필드(resignRetroRequest 등)가 이어 붙으면 닫는 괄호 위치가 바뀌어 의도와 무관하게 깨졌다.
+      //   의도(클라이언트가 이 필드를 쓰면 거부)는 그대로 — 목록에 'uid'·'attendancePolicySnapshot'·이 필드가 모두 있어야 한다.
+      final denyStart = rules.indexOf("hasAny(['uid', 'attendancePolicySnapshot',");
+      expect(denyStart, greaterThan(0));
+      final denyList = rules.substring(denyStart, rules.indexOf('])', denyStart) + 2);
+      expect(denyList.contains("'attendancePolicyAcknowledgement'"), isTrue,
           reason: '클라이언트가 쓰면 조건 소급변경과 증거 위조가 모두 가능하다');
+      // [판정292 Q43] 금지목록은 필수키 포함 + **인가 경계**까지 본다: applications update 의 부정(!) 외곽 조건이고
+      //   역할 분기(isSuperAdmin)보다 앞이어야 역할로 우회되지 않는다.
+      final appMatch = rules.indexOf('match /applications/{applicationId}');
+      final nextMatch = rules.indexOf('\n    match /', appMatch + 10);
+      expect(appMatch, greaterThan(0));
+      expect(denyStart > appMatch && (nextMatch < 0 || denyStart < nextMatch), isTrue,
+          reason: '금지목록이 applications 규칙 밖에 있다');
+      final neg = rules.lastIndexOf('!request.resource.data.diff(resource.data).affectedKeys()', denyStart);
+      const negText = '!request.resource.data.diff(resource.data).affectedKeys()';
+      final between = neg < 0 ? 'x' : rules.substring(neg + negText.length, denyStart);
+      expect(neg > appMatch && RegExp(r'^\s*\.$').hasMatch(between), isTrue,
+          reason: '금지목록이 부정(!) affectedKeys 외곽 조건이 아니다');
+      final sa = rules.indexOf('isSuperAdmin()', denyStart);
+      expect(sa > denyStart + denyList.length, isTrue, reason: '금지목록이 역할 분기 뒤에 있다');
       // 클라이언트 모델은 이 필드를 쓰지 않는다.
       final model = _code(_src('lib/models/core/application_model.dart'));
       expect(model.contains("'attendancePolicyAcknowledgement': "), isFalse);

@@ -104,8 +104,23 @@ void main() {
       // NO_SHOW를 쓰는 writer: 관리자 수동 경로 2곳 + 자동 노쇼 1곳.
       //   [NOSHOW-ATOMICITY 2026-10-27] 자동 노쇼는 예전에도 있었으나 정렬 공백 서식이라 이 문자열에 안 잡혔다.
       //   단일 writer 로 모이며 표준 서식이 됐다 — 새 writer 가 아니다. 그 미래 차단은 아래 창·종료 단언이 고정한다.
-      expect('status: "NO_SHOW",'.allMatches(code).length, 3,
+      // [서버 병합 2026-11-26 갱신] 3 → 5. 장기 근무일 재판정(srvReconcileLongTermNoShowDay · merge_report_1 §2)이
+      //   면제 보관 복원 1 + 보관 없는 지난 근무일 생성 1 을 더했다. 다시 판단한 결과 둘 다 **지난 근무일만**이다 —
+      //   같은 분기 조건 `dayOver`(그 근무일 시작 + 30시간 = 다음 날 06:00 KST 이후)가 앞에 있고, 둘 다 그 분기 안에 있다.
+      //   그 근거를 아래에서 함께 고정한다(숫자만 올리지 않는다).
+      expect('status: "NO_SHOW",'.allMatches(code).length, 5,
           reason: 'NO_SHOW writer가 늘면 미래 날짜 가능성을 다시 판단해야 한다');
+      final rc = _flat(code.substring(code.indexOf('async function srvReconcileLongTermNoShowDay(')));
+      // 주석 줄은 _codeOf 가 지운다 — 다음 구간 경계는 코드 문장으로 잡는다.
+      final rcBody = rc.substring(0, rc.indexOf('const noShowIds'));
+      expect(rcBody.contains('const dayOver = nowMs >= day.startMs + 30 * 60 * 60 * 1000;'), true,
+          reason: '재판정의 NO_SHOW 는 그 근무일이 끝난 뒤(다음 날 06:00 KST)에만');
+      final gate = rcBody.indexOf('} else if (atts.size === 0 && elig.eligible && dayOver) {');
+      expect(gate, greaterThan(0), reason: '두 NO_SHOW writer 를 감싸는 dayOver 분기');
+      expect('status: "NO_SHOW",'.allMatches(rcBody.substring(gate)).length, 2,
+          reason: '재판정의 NO_SHOW 두 자리는 모두 dayOver 분기 안');
+      expect('status: "NO_SHOW",'.allMatches(rcBody.substring(0, gate)).length, 0,
+          reason: 'dayOver 분기 밖 NO_SHOW 0');
       // 관리자 수동 경로는 미래 날짜를 skip한다.
       expect(_flat(code).contains('if (workDateMs > todayKSTStartMs) { skippedSet.add(resolvedId); return undefined; }'),
           true, reason: '[NS-02-FIX] 미래 NO_SHOW 선제 생성 차단이 사라졌다');

@@ -223,9 +223,13 @@ void main() {
 
   group('건드리지 않은 것', () {
     test('11 V3 가입 완료 게이트는 fingerprint만 본다 (다른 질문)', () {
-      final consent = _codeOf(_sliceOf(
-          rawCf, 'const hasFingerprint =', 'accountStatus: "active"'));
-      expect(consent, contains('foreignIdentityFingerprint'));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 옛 가입 완료 게이트(callableRecordTermsConsent 의 pending→active 블록)는 판정278 §2 로
+      //   제거됐다. 이 셀이 막던 것("helper 로 레거시 외국인을 active 로 승격")은 이제 승격 경로 자체가 없어
+      //   더 강하게 성립한다 — 동의 writer 에 active 쓰기도 fingerprint 판정도 남지 않았는지 확인한다.
+      final consent = _codeOf(_sliceOf(rawCf,
+          'export const callableRecordTermsConsent', '\n);'));
+      expect(consent, isNot(contains('accountStatus: "active"')));
+      expect(consent, isNot(contains('const hasFingerprint =')));
       expect(consent, isNot(contains('srvIsForeignIdentity')),
           reason: '이 helper를 쓰면 레거시 외국인이 active로 승격돼 버린다');
     });

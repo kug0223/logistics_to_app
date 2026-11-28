@@ -38,6 +38,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/users_create_rule.dart';
+
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('소스를 찾지 못했다: $p');
@@ -153,10 +155,13 @@ void main() {
     });
 
     test('DEL-FREEZE-A08 전역 deleting→active 전환 0 (§18)', () {
-      // accountStatus 를 active 로 쓰는 CF 는 하나뿐이고 compare-and-set 이다.
-      expect('accountStatus: "active"'.allMatches(cf).length, 1);
-      expect(cf, contains(
-          'if (freshStatus === "registration_pending" || freshStatus === "pending") {'));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 옛 pending→active 전환(callableRecordTermsConsent)은 판정278 §2 로 제거됐다 —
+      //   index.ts 에서 accountStatus 를 active 로 쓰는 곳은 0 이다(전환 경로 자체가 없어 더 강하다).
+      //   새 계정의 active 는 문서 **생성**(tx.create) 때 한 번 정해진다 — 기존 문서의 상태 전환이 아니므로
+      //   deleting 을 active 로 되돌릴 수 없다.
+      expect('accountStatus: "active"'.allMatches(cf).length, 0);
+      expect(_src('functions/src/signup_core.ts'), contains('accountStatus: "active",'));
+      expect(_src('functions/src/auth_kakao.ts'), contains('tx.create(userRef, userDoc);'));
       // 그 guard 가 deleting 을 배제한다 — 두 값 중 하나일 때만 active.
       expect(cf, isNot(contains('freshStatus !== "active"')));
     });
@@ -325,7 +330,8 @@ void main() {
       final f = fin();
       expect(f, contains('srvSweepAccountOwnedStorage(uid)'));
       expect(f, contains('srvAccountStorageCleared(accSweep)'));
-      expect(f, contains('return {success: true};'));
+      // [판정280 갱신] Final 성공 반환이 카카오 연결 해제 범위(providerUnlink · server_api_1 §5A)를 함께 싣게 됐다 — 같은 명시적 성공 반환.
+      expect(f, contains('return providerUnlink === null ? {success: true} : {success: true, providerUnlink};'));
     });
 
     test('DEL-CLEAN-A45 raw application id 를 응답에 담지 않는다 (§20)', () {
@@ -351,24 +357,28 @@ void main() {
     test('DEL-STATUS-RULE-01·02 owner set/clear DENY', () {
       // self-update denylist 에 있다.
       expect(rules, contains("'name', 'legalName', 'koreanName',"));
+      // [판정281 갱신] users 본인 update 는 fence 예외형 `(callerNotDeleting() || <로그인 시각·FCM 토큰만>) && (` — 안쪽 조건 단언은 그대로.
       final selfBlock = rules.substring(
-          rules.indexOf('allow update: if isLoggedIn() &&'),
+          rules.indexOf('allow update: if (callerNotDeleting() ||'),
           rules.indexOf('allow delete:',
-              rules.indexOf('allow update: if isLoggedIn() &&')));
+              rules.indexOf('allow update: if (callerNotDeleting() ||')));
       expect(selfBlock, contains("'accountStatus'"));
     });
 
     test('DEL-STATUS-RULE-03·04 SUPER_ADMIN client set/clear DENY', () {
+      // [판정281 갱신] users 본인 update 는 fence 예외형 `(callerNotDeleting() || <로그인 시각·FCM 토큰만>) && (` — 안쪽 조건 단언은 그대로.
       final sa = rules.substring(
-          rules.indexOf('allow update: if isSuperAdmin() &&'),
-          rules.indexOf('allow update: if isLoggedIn() &&'));
+          rules.indexOf('allow update: if callerNotDeleting() && (isSuperAdmin() &&'),
+          rules.indexOf('allow update: if (callerNotDeleting() ||'));
       expect(sa, contains("'accountStatus',"),
           reason: '여기 없으면 슈퍼어드민이 deleting 을 해제할 수 있다');
     });
 
     test('DEL-STATUS-RULE-05 create 허용 집합에 deleting 을 넣지 않았다 (§27)', () {
-      expect(rules, contains(
-          "in ['active', 'pending', 'registration_pending'] &&"));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] users create 가 전면 거부(판정278 C278-3) — 클라이언트는 어떤 accountStatus 도 지정할 수 없다.
+      //   다시 열리면 옛 허용 집합(deleting 없음)을 요구한다.
+      expect(usersCreateClosed(rules) ||
+          rules.contains("in ['active', 'pending', 'registration_pending'] &&"), isTrue);
       // [R7-P4.4E.11C.0C.0a.1 갱신] 예전에는 rules 전체에 `'deleting'` 이
       //   없다는 것으로 확인했다. 이제 두 request create 규칙이 `deleting`
       //   을 **거부 조건으로** 참조한다 — 그건 허용이 아니라 차단이다.

@@ -710,7 +710,8 @@ void main() {
       expect(colAt, greaterThan(-1));
       expect(ihAt, greaterThan(colAt), reason: 'IntrinsicHeight 가 바깥에 있다');
       // 이미지는 위 덩이 안에 있고, 급여 줄은 그 바깥이다.
-      final imgAt = b.indexOf('width: 96 * s');
+      // [대표 지적 2026-11-26 갱신] 이미지 폭은 문턱 결과(96*s 또는 72*s)를 담은 imageW 다 — 위치 계약(위 덩이 안)은 그대로.
+      final imgAt = b.indexOf('width: imageW,');
       final payAt = b.indexOf('[RECRUITABLE-CARD-OVERFLOW]');
       expect(imgAt, greaterThan(ihAt));
       expect(payAt, greaterThan(imgAt));

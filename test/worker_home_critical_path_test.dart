@@ -228,6 +228,12 @@ void main() {
       final args = (const StandardMessageCodec().decodeMessage(data) as List).first as Map;
       final r = _Req(args['functionName'] as String, _now);
       reqs.add(r);
+      // [impl_15 의도적 갱신] 이 대역은 개별 endpoint 경로(진행 중 공유·횟수)를 잰다 — 묶음 함수는 '구서버(없음)'로 답해
+      //   앱이 같은 호출 안에서 개별 호출로 폴백하게 한다(묶음 경로 자체는 perf_l9_bundle_test WHB-* 가 맡는다).
+      if (r.name == 'callableGetWorkerHomeBundle') {
+        r.end = _now;
+        return const StandardMessageCodec().encodeMessage(<Object?>['NOT_FOUND', 'no bundle', {'code': 'not-found', 'message': 'no bundle'}]);
+      }
       await Future<void>.delayed(const Duration(milliseconds: lat));
       r.end = _now;
       return _emptyOk();

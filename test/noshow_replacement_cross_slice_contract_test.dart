@@ -232,8 +232,13 @@ void main() {
 
     test('거절 사유가 그대로 관리자에게 전달된다', () {
       final s = _flat(_codeOf(_src('lib/services/firestore/application_firestore.dart')));
-      expect(s.contains("ToastHelper.showError(e.message ?? '빈자리 다시 모집 처리 결과를 확인하지 못했어요');"),
+      // [impl_59 · 판정] 원래 의도 = 서버 거절 사유가 관리자에게 전달된다(일반 문구로 덮지 않는다).
+      //   전달 방식이 공용 안내(adminActionErrorMessage: 보여도 되는 서버 문구는 그대로 · 개발 문장·결과 모름만 기본 안내)로 바뀌었다.
+      //   '재오픈해주세요' 같은 사유 문장이 그대로 나가는지는 test/impl59_admin_residual_fixes_test.dart 가 값으로 본다.
+      expect(s.contains('ToastHelper.showError(adminActionErrorMessage(e, fallback: releaseFallback));'),
           true, reason: 'generic 문구로 덮으면 재오픈하면 된다는 것을 알 수 없다');
+      expect(s.contains("ToastHelper.showError(e.message ?? '빈자리 다시 모집 처리 결과를 확인하지 못했어요');"), false,
+          reason: '서버 문구를 거르지 않고 그대로 띄우지 않는다(개발 문장 노출)');
       expect(s.contains("if (e.code == 'already-exists')"), true);
     });
   });
@@ -285,8 +290,12 @@ void main() {
   group('마감과 재개가 기록을 건드리지 않는다', () {
     test('마감은 대기만 정리한다', () {
       final c = _flat(_codeOf(_callableOf(raw, 'callableCloseSlots')));
-      expect(c.contains('.where("status", "==", "PENDING")'), true);
-      expect(c.contains('staffingReleased'), false,
+      // [판정295/296 F295-CLOSE-01 · server_296] 대기 정리는 callable·매시 공용 helper 로 옮겼다 — 그 helper 를 본다(의미 동일).
+      final s0 = raw.indexOf('async function srvCloseSlotCleanupOne(');
+      final one = _flat(_codeOf(raw.substring(s0, raw.indexOf('async function srvCloseSlotsRecomputeTo(', s0))));
+      expect(c.contains('srvCloseSlotsCleanupFlow('), true);
+      expect(one.contains('.where("status", "==", "PENDING")'), true);
+      expect(c.contains('staffingReleased') || one.contains('staffingReleased'), false,
           reason: '마감이 좌석을 자동 반납하면 관리자가 하지 않은 결정을 하게 된다');
     });
 

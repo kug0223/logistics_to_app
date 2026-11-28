@@ -58,6 +58,7 @@ import '../../../widgets/dialogs/alternative_work_offer_sheet.dart';
 import 'available_workers_bottom_sheet.dart';
 import 'invite_method_sheet.dart';
 import 'invite_worker_dialog.dart';
+import '../../../utils/server_reject_codes.dart';
 
 // ─── 그룹 데이터 (업무 단위) ────────────────────────────────────────────────
 /// [UI-SCREEN-CONSISTENCY.1] 행 버튼의 역할 — _actionButton 참고.
@@ -280,7 +281,20 @@ class DayApplicantsDialog extends StatefulWidget {
     required this.businesses,
     this.filterToId,
     this.reads,
+    this.businessesFuture,
+    this.debugReloadHook,
   });
+
+  /// [impl_25 · L48] 시험 전용 — 처리 뒤 다시 읽기(명단 유지)를 시험이 직접 부를 수 있게 넘긴다.
+  ///   운영 호출부는 주지 않는다(null).
+  @visibleForTesting
+  final void Function(Future<void> Function() reloadAfterMutation)? debugReloadHook;
+
+  /// [PERF-P8] 사업장 문서를 아직 받는 중이면 여기로 넘긴다 — 다이얼로그는 **바로 열리고** 명단을 읽기 시작한다.
+  ///   이 future 가 끝나기 전에는 사업장 문서가 필요한 행동(계약서 작성·신분증 요청·대체 근무 등)을
+  ///   실행하지 않는다(확인 중 안내). 실패하면 빈 목록 — 예전 '사업장 정보를 불러올 수 없습니다' 경로 그대로.
+  ///   null 이면 [businesses] 가 이미 확정된 목록이다(기존 호출부).
+  final Future<List<BusinessModel>>? businessesFuture;
 
   @override
   State<DayApplicantsDialog> createState() => _DayApplicantsDialogState();
@@ -295,6 +309,19 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   bool _isLoading = true;
   bool _isProcessing = false;
+
+  /// [PERF-P8] 이 다이얼로그가 쓰는 사업장 문서 — 처음엔 [DayApplicantsDialog.businesses], future 가 있으면 그 결과.
+  late List<BusinessModel> _businesses = widget.businesses;
+
+  /// [PERF-P8] 사업장 문서를 아직 받는 중(사업장 문서가 필요한 행동 잠금).
+  late bool _businessesPending = widget.businessesFuture != null;
+
+  /// 사업장 문서가 필요한 행동의 공통 문턱 — 받는 중이면 안내하고 false.
+  bool _businessesReadyOrHint() {
+    if (!_businessesPending) return true;
+    ToastHelper.showInfo('사업장 정보를 확인하고 있어요. 잠시 후 다시 눌러 주세요');
+    return false;
+  }
 
   /// [BULK-PROGRESS] 일괄 처리 진행 상황 — null이면 진행 중 아님.
   /// 순차 처리라 인원에 비례해 걸리므로 몇 명째인지 보여 준다.
@@ -468,6 +495,18 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   // BUG-3 수정: 동일 이유로 전역 bool → 그룹 key 스코프화.
   String? _contractBatchGroupKey;      // null = 처리 중 없음
 
+  /// [impl_25 · L48] 지원명단 읽기 차례 — **마지막에 시작한** 읽기만 화면에 앉는다.
+  ///   예전에는 사업장이 같으면 겹친 두 읽기가 둘 다 앉아, 늦게 끝난 옛 읽기가 새 결과를 덮었다.
+  int _loadGen = 0;
+
+  /// [impl_25 · L48] 마지막으로 **성공해 앉은** 명단의 사업장 — 처리 뒤 다시 읽을 때 명단을 유지해도 되는가의 기준.
+  String? _loadedOkBizId;
+
+  /// [impl_25 · L48] 처리 뒤 다시 읽는 중 — 명단을 지우지 않고(전체 스피너 0) 누르기만 잠근다.
+  ///   보이는 명단은 처리 **전** 읽기라 방금 처리한 행이 아직 버튼을 달고 있다 — 새 명단이 앉을 때까지 쓰기 0.
+  ///   숫자·확정 표시를 미리 바꾸지 않는다(서버에서 다시 읽은 결과만 앉힌다).
+  bool _refreshingAfterMutation = false;
+
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   @override
@@ -478,6 +517,20 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     // 호출부가 신뢰할 수 없는 출처의 ID를 전달하면 크로스-사업장 쿼리가 실행된다.
     _selectedBusinessId =
         widget.businessIds.isNotEmpty ? widget.businessIds.first : null;
+    final bizFuture = widget.businessesFuture;
+    if (bizFuture != null) {
+      bizFuture.then((list) {
+        if (!mounted) return;
+        setState(() {
+          _businesses = list;
+          _businessesPending = false;
+        });
+      }, onError: (Object e) {
+        debugPrint('⚠️ DayApplicantsDialog 사업장 정보 로드 실패: $e');
+        if (!mounted) return;
+        setState(() => _businessesPending = false);
+      });
+    }
     _applySavedBusinessThenLoad();
   }
 
@@ -490,7 +543,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       }
     }
     if (!mounted) return;
-    _load();
+    widget.debugReloadHook?.call(() => _load());
+    _load(keepVisible: false);
   }
 
   // [CROSS-DOMAIN-R5.1F.2] 이 다이얼로그가 보고 있는 사업장은 selected와 다를
@@ -517,37 +571,57 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   String _bizName(String? bizId) {
     if (bizId == null) return '';
-    for (final b in widget.businesses) {
+    for (final b in _businesses) {
       if (b.id == bizId) return b.name;
     }
     return bizId;
   }
 
-  Future<void> _load() async {
+  /// [impl_25 · L48] [keepVisible] 기본 true = 처리(확정·거절·취소·계약 발송 등) 뒤 다시 읽기 — 지금 같은 사업장의 정상
+  ///   명단을 보이는 중이면 그 명단을 유지한 채 잠그고, 새 결과가 앉을 때 한 번에 바꾼다. 첫 읽기·사업장 바꿈은 false
+  ///   (예전처럼 비우고 로딩). 어느 쪽이든 **이번 읽기의 결과는 지역 값([_DayLoadAcc] 포함)으로 모아 차례 확인 뒤 한 번에**
+  ///   앉힌다 — 예전에는 하위 읽기가 `_capacityUnknown`·`_slotWorkDetailIds`·`_toCache` 를 읽는 도중에 직접 고쳐,
+  ///   겹친 읽기가 서로의 값을 섞었다.
+  Future<void> _load({bool keepVisible = true}) async {
     final bizId = _selectedBusinessId;
     // 사업장이 정해지는 유일한 길목이다 — 여기서 구독 대상을 맞춘다.
     _watchPermsFor(bizId);
+    final gen = ++_loadGen;
     if (bizId == null) {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _refreshingAfterMutation = false;
+        });
+      }
       return;
     }
+    final keep = keepVisible && !_isLoading && _loadedOkBizId == bizId;
     setState(() {
-      _isLoading = true;
+      // 선택·일괄 모드는 언제나 끈다 — 처리 대상이 바뀌었다(예전과 같다).
       _selectedIds.clear();
-      _starredIds.clear();
-      _idCardStatusMap = {};
-      _hasWorkedMap = {}; // [BUG-CANCEL-01] 로드 시작 시 초기화 — 이전 날짜 잔류 방지
-      _capacityUnknown = false; // [R8-P7.3] 이번 로드의 판정으로 다시 정한다
-      _slotWorkDetailIds = {}; // [UI-APPLICANTS-AND-INVITATIONS.2] 이번 로드의 응답으로만
-      _noShowApplicationIds = {}; // [R5.1] 초기화
-      _contractBlockedAppIds = null; // [NOSHOW-CONTRACT-GUARD] 이번 로드가 다시 읽는다
       _contractAttRetrying = false;
-      _toCache.clear();   // 파트변경 후 재로드 시 TO 캐시 무효화
       _isBatchMode = false;
       _idCardSelectGroupKey = null;
       _selectedIdCardUserIds.clear();
       _contractBatchGroupKey = null;
+      if (keep) {
+        _refreshingAfterMutation = true;
+      } else {
+        _isLoading = true;
+        _loadedOkBizId = null;
+        _starredIds.clear();
+        _idCardStatusMap = {};
+        _hasWorkedMap = {}; // [BUG-CANCEL-01] 로드 시작 시 초기화 — 이전 날짜 잔류 방지
+        _capacityUnknown = false; // [R8-P7.3] 이번 로드의 판정으로 다시 정한다
+        _slotWorkDetailIds = {}; // [UI-APPLICANTS-AND-INVITATIONS.2] 이번 로드의 응답으로만
+        _noShowApplicationIds = {}; // [R5.1] 초기화
+        _contractBlockedAppIds = null; // [NOSHOW-CONTRACT-GUARD] 이번 로드가 다시 읽는다
+        _toCache.clear();   // 파트변경 후 재로드 시 TO 캐시 무효화
+      }
     });
+    // 이번 읽기의 부수 결과 — 화면 상태가 아니라 여기 모았다가 커밋 때 한 번에 옮긴다.
+    final acc = _DayLoadAcc();
 
     try {
       // Phase 1: 지원자 + 확정자 병렬 조회
@@ -635,7 +709,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         confirmed = confirmed.where((a) => a.toId == widget.filterToId).toList();
       }
 
-      if (!mounted || _selectedBusinessId != bizId) return;
+      if (!mounted || _selectedBusinessId != bizId || gen != _loadGen) return;
 
       // Phase 2: 유저 프로필 + 계약서 상태 + 주간 근무횟수 병렬 조회
       final allApps = [...pending, ...confirmed];
@@ -675,6 +749,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         // [R5.1] NO_SHOW applicationId 집합 선제 시작 (Phase 2와 병렬)
         final noShowFuture = _reads.noShowApplicationIds(
           businessId: bizId, date: widget.date);
+        // [ROOT-FUTURE] 나중에 await 하는(또는 앞에서 return 하면 아예 await 하지 않는) future — 먼저 실패해도 '처리되지 않은 오류'(Crashlytics fatal)로 새지 않게. await 하는 곳은 그대로 같은 오류를 받는다.
+        idCardFuture.ignore();
+        hasWorkedFuture.ignore();
+        noShowFuture.ignore();
 
         // [NOSHOW-CONTRACT-GUARD] 계약 발행 판정용 근태(실패·상한 도달은 던지는 읽기).
         //   실패해도 화면 전체를 실패로 만들지 않는다. 대신 근태를 모른다고 두고 안내한다.
@@ -694,9 +772,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               purpose: FirestoreService.purposeWorkerDirectory),
           _reads.contractStatusBatch(allAppIds, businessId: bizId),
           _loadWeeklyCount(bizId),
-          _loadWorkDetailCapacities(allApps),
+          _loadWorkDetailCapacities(allApps, acc),
           // [4J.0C] 대기 중 TO 모델 선제 로드 — canApprovePending UI gate용
-          _fetchToCacheForPending(pending),
+          _fetchToCacheForPending(pending, acc),
         ]);
         userMap = results[0] as Map<String, UserModel>;
         contractMap = results[1] as ContractStatusBatch;
@@ -719,7 +797,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         final starredFromFirestore =
             allApps.where((app) => app.isStarred).map((app) => app.id).toSet();
 
-        if (!mounted || _selectedBusinessId != bizId) return;
+        if (!mounted || _selectedBusinessId != bizId || gen != _loadGen) return;
         setState(() {
           _pendingApps = pending;
           _confirmedApps = confirmed;
@@ -731,10 +809,20 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           _dayStaffingRows = staffingRows;
           _dayInvitations = invitations;
           _idCardStatusMap = idCardMap;
-          _starredIds.addAll(starredFromFirestore);
+          _starredIds
+            ..clear()
+            ..addAll(starredFromFirestore);
           _hasWorkedMap = hasWorkedMap; // [BUG-CANCEL-01]
           _noShowApplicationIds = noShowApplicationIds; // [R5.1]
           _contractBlockedAppIds = contractBlocked; // [NOSHOW-CONTRACT-GUARD]
+          // [impl_25] 하위 읽기가 모은 부수 결과를 이 차례에만 옮긴다.
+          _capacityUnknown = acc.capacityUnknown;
+          _slotWorkDetailIds = acc.slotWorkDetailIds;
+          _toCache
+            ..clear()
+            ..addAll(acc.toCache);
+          _loadedOkBizId = bizId;
+          _refreshingAfterMutation = false;
           _isLoading = false;
           _rebuildGroups();
         });
@@ -758,7 +846,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         }
       }
 
-      if (!mounted || _selectedBusinessId != bizId) return;
+      if (!mounted || _selectedBusinessId != bizId || gen != _loadGen) return;
       setState(() {
         _pendingApps = pending;
         _confirmedApps = confirmed;
@@ -769,14 +857,30 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _dayInvitations = invitations;
         _hasWorkedMap = {}; // [BUG-CANCEL-01] 확정자 없으면 초기화
         _noShowApplicationIds = {}; // [R5.1]
+        // [impl_25] 예전에는 시작 때 비운 값이 그대로 남았다 — 명단을 유지한 채 읽었어도 같은 최종 상태가 되게 여기서 비운다.
+        _idCardStatusMap = {};
+        _starredIds.clear();
+        _capacityUnknown = false;
+        _slotWorkDetailIds = {};
+        _contractBlockedAppIds = null;
+        _toCache.clear();
+        _loadedOkBizId = bizId;
+        _refreshingAfterMutation = false;
         _isLoading = false;
         _rebuildGroups();
       });
     } catch (e) {
       debugPrint('❌ 지원명단 로드 실패: $e');
-      if (!mounted) return;
+      if (!mounted || gen != _loadGen) return; // 더 늦게 시작한 읽기가 있다 — 옛 실패가 새 결과를 지우지 않는다
       setState(() {
         _isLoading = false;
+        _refreshingAfterMutation = false;
+        _loadedOkBizId = null;
+        // [impl_25] 예전에 시작 때 비우던 값 — 명단을 유지한 채 읽다 실패해도 같은 최종 상태(실패 화면)가 되게.
+        _starredIds.clear();
+        _slotWorkDetailIds = {};
+        _contractBlockedAppIds = null;
+        _toCache.clear();
         _pendingApps = [];
         _confirmedApps = [];
         _cachedGroups = [];
@@ -824,18 +928,20 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   ///   지원자 명단은 유효하므로 다이얼로그 전체를 오류로 만들지 않는다 —
   ///   대신 충원/정원 영역만 UNKNOWN 으로 내린다. 예전에는 실패가 빈 맵이 되고
   ///   소비부가 `?? 0` 으로 읽어 "정원 0"이라고 단정했다.
-  Future<Map<String, int>> _loadWorkDetailCapacities(List<ApplicationModel> allApps) async {
+  Future<Map<String, int>> _loadWorkDetailCapacities(
+      List<ApplicationModel> allApps, _DayLoadAcc acc) async {
     try {
-      return await _loadWorkDetailCapacitiesOrThrow(allApps);
+      return await _loadWorkDetailCapacitiesOrThrow(allApps, acc);
     } catch (e) {
       debugPrint('⚠️ 업무별 정원 조회 실패 (충원 영역 UNKNOWN): $e');
-      _capacityUnknown = true;
+      // [impl_25] 화면 상태는 커밋 때 이 값으로 정한다.
+      acc.capacityUnknown = true;
       return {};
     }
   }
 
   Future<Map<String, int>> _loadWorkDetailCapacitiesOrThrow(
-      List<ApplicationModel> allApps) async {
+      List<ApplicationModel> allApps, _DayLoadAcc acc) async {
     final toSlotMap = <String, String>{};
     for (final app in allApps) {
       if (app.toId != null && app.slotId != null && !toSlotMap.containsKey(app.toId!)) {
@@ -863,7 +969,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final result = <String, int>{};
     await Future.wait(toSlotMap.entries.map((e) async {
       final caps = await _reads.slotWorkDetailCapacities(e.key, e.value);
-      _slotWorkDetailIds['${e.key}|${e.value}'] = caps.keys.toSet();
+      acc.slotWorkDetailIds['${e.key}|${e.value}'] = caps.keys.toSet();
       result.addAll(caps);
     }));
     return result;
@@ -872,7 +978,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   /// [4J.0C] 대기 중 지원서의 TO 모델을 _toCache에 선제 로드
   /// 목적: canApprovePending UI gate (승인 버튼 show/hide, _batchApprove guard)
   /// - 캐시 미적중 시 낙관적 허용 처리 (CF가 최종 차단)
-  Future<void> _fetchToCacheForPending(List<ApplicationModel> pending) async {
+  Future<void> _fetchToCacheForPending(
+      List<ApplicationModel> pending, _DayLoadAcc acc) async {
     final toIds = pending
         .map((a) => a.toId)
         .whereType<String>()
@@ -881,7 +988,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     if (toIds.isEmpty) return;
     await Future.wait(toIds.map((id) async {
       final to = await _reads.to(id);
-      if (to != null) _toCache[id] = to;
+      if (to != null) acc.toCache[id] = to;
     }));
   }
 
@@ -1087,13 +1194,20 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           //   비어 있었다(실기기 캡처).
           //
           //   많은 행에서는 그대로 상한까지 자라고 내부 스크롤로 닿는다.
+          // [impl_25 · L48] 처리 뒤 다시 읽는 중 — 명단은 그대로, 얇은 진행 표시 + 누르기 잠금(닫기·사업장 선택은 그대로).
+          if (!_isLoading && _refreshingAfterMutation)
+            const LinearProgressIndicator(
+                key: ValueKey('day-applicants-refresh-after-mutation'), minHeight: 2),
           Flexible(
             child: _isLoading
                 ? const Padding(
                     padding: EdgeInsets.all(40),
                     child: LoadingWidget(message: '지원·근무 현황 불러오는 중...'),
                   )
-                : _buildStatsAndBody(context),
+                : AbsorbPointer(
+                    absorbing: _refreshingAfterMutation,
+                    child: _buildStatsAndBody(context),
+                  ),
           ),
           if (!_isLoading && _selectedIds.isNotEmpty)
             _buildBatchActionBar(context),
@@ -1178,10 +1292,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               onChanged: (value) {
                 if (value != null && value != _selectedBusinessId) {
                   setState(() => _selectedBusinessId = value);
+                  // [impl_25] 다른 사업장의 명단이다 — 아래 _load 는 명단을 유지하지 않는다(keepVisible: false).
                   SharedPreferences.getInstance().then(
                     (prefs) => prefs.setString('alfit_last_business_id', value),
                   );
-                  _load();
+                  _load(keepVisible: false);
                 }
               },
             )
@@ -1980,12 +2095,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       choice = picked;
     }
     if (!mounted) return;
+    // [PERF-P8] 초대 문구에 사업장명이 들어간다 — 사업장 문서를 받는 중이면 기다리게 한다.
+    if (!_businessesReadyOrHint()) return;
 
     // 사업장명 취득
-    final biz = widget.businesses.where((b) => b.id == _selectedBusinessId)
+    final biz = _businesses.where((b) => b.id == _selectedBusinessId)
         .isNotEmpty
-        ? widget.businesses.firstWhere((b) => b.id == _selectedBusinessId)
-        : (widget.businesses.isNotEmpty ? widget.businesses.first : null);
+        ? _businesses.firstWhere((b) => b.id == _selectedBusinessId)
+        : (_businesses.isNotEmpty ? _businesses.first : null);
     final businessName = biz?.name ?? '';
 
     if (choice == 'availability' && slotId != null) {
@@ -3183,16 +3300,17 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       ToastHelper.showError('로그인이 필요합니다');
       return;
     }
+    if (!_businessesReadyOrHint()) return;
     final bizId = _selectedBusinessId ?? '';
-    if (bizId.isEmpty || widget.businesses.isEmpty) {
+    if (bizId.isEmpty || _businesses.isEmpty) {
       ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
       return;
     }
-    // [특이사항] orElse 폴백 제거 — bizId가 widget.businesses에 없으면 중단.
+    // [특이사항] orElse 폴백 제거 — bizId가 _businesses에 없으면 중단.
     // 폴백으로 첫 번째 사업장을 사용하면 잘못된 사업장 명의로 신분증 요청이 생성된다.
-    final bizIdx = widget.businesses.indexWhere((b) => b.id == bizId);
+    final bizIdx = _businesses.indexWhere((b) => b.id == bizId);
     if (bizIdx < 0) return;
-    final business = widget.businesses[bizIdx];
+    final business = _businesses[bizIdx];
 
     // 선택된 사용자 정보 수집 — 확정 앱 우선, uid 중복 스킵
     final targets = <Map<String, String>>[];
@@ -3325,15 +3443,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       return;
     }
     if (_contractBatchGroupKey != null) return;
+    if (!_businessesReadyOrHint()) return;
     final bizId = _selectedBusinessId ?? '';
-    if (bizId.isEmpty || widget.businesses.isEmpty) {
+    if (bizId.isEmpty || _businesses.isEmpty) {
       ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
       return;
     }
     // [특이사항] orElse 폴백 제거 — 잘못된 bizId 시 첫 번째 사업장 명의로 계약서가 생성되는 것을 방지.
-    final bizIdx = widget.businesses.indexWhere((b) => b.id == bizId);
+    final bizIdx = _businesses.indexWhere((b) => b.id == bizId);
     if (bizIdx < 0) return;
-    final business = widget.businesses[bizIdx];
+    final business = _businesses[bizIdx];
 
     // 계약서 미작성 또는 무효 확정자 수집
     final toProcess = g.confirmedApps.where((app) {
@@ -3694,17 +3813,27 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       );
       if (reason == null || !mounted) return;
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
-      await _svc.cancelConfirmedApplication(
+      // [impl_59] 결과판 — 서비스는 토스트를 띄우지 않고 사유를 돌려준다(예전: 서비스 사유 토스트를 아래 일반 안내가 덮었다).
+      final cancel = await _svc.cancelConfirmedApplicationWithResult(
         app.id,
         canceledBy: adminUID,
         cancelReason: reason,
       );
       _hasChanges = true;
       if (!mounted) return;
+      // [impl_58] 실패 = 서버 거절 또는 결과 확인 불가 — 성공이라 말하지 않고 서버에서 다시 읽은 뒤 사유를 말한다.
+      if (!cancel.success) {
+        await _load();
+        if (!mounted) return;
+        ToastHelper.showError(cancel.adminToast);
+        return;
+      }
       ToastHelper.showSuccess('확정이 취소되었습니다');
       await _load();
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리 실패: $e');
+      // [impl_58] 예외 문자열을 붙이지 않는다.
+      debugPrint('❌ 확정 취소 실패: $e');
+      if (mounted) ToastHelper.showError('확정을 취소하지 못했어요');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -3748,7 +3877,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         await _load();
       }
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리 실패: $e');
+      // [impl_59] 예외 문자열 0. (서비스 실패는 서비스가 false + 안내 — 여기는 그 밖의 예외)
+      debugPrint('❌ 빈자리 다시 모집 실패: $e');
+      if (mounted) ToastHelper.showError(adminActionErrorMessage(e, fallback: noshowReleaseFailedMessage));
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -3792,12 +3923,13 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   Future<void> _createContractForOne(ApplicationModel app,
       {Future<void>? listRefresh}) async {
     if (_isProcessing) return;
+    if (!_businessesReadyOrHint()) return;
     final bizId = _selectedBusinessId ?? '';
-    if (bizId.isEmpty || widget.businesses.isEmpty) return;
+    if (bizId.isEmpty || _businesses.isEmpty) return;
     // [특이사항] orElse 폴백 제거 — 잘못된 bizId 시 첫 번째 사업장 명의로 계약서가 생성되는 것을 방지.
-    final bizIdx = widget.businesses.indexWhere((b) => b.id == bizId);
+    final bizIdx = _businesses.indexWhere((b) => b.id == bizId);
     if (bizIdx < 0) return;
-    final business = widget.businesses[bizIdx];
+    final business = _businesses[bizIdx];
     var user = _userMap[app.uid];
     if (user == null && listRefresh != null) {
       setState(() => _isProcessing = true);
@@ -3947,7 +4079,13 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       _hasChanges = true;
       setState(() => _contractStatusMap = _contractStatusMap.withStatus(app.id, 'pending_worker'));
     } catch (e) {
-      if (mounted) ToastHelper.showError('계약서 발송 실패: $e');
+      // [impl_59] 예외 문자열 0. 서명 결과 모름은 그 안내(계약서 목록에서 확인)를 그대로 쓴다.
+      debugPrint('❌ 계약서 발송 실패: $e');
+      if (mounted) {
+        ToastHelper.showError(e is SignatureOutcomeUnknown
+            ? (e.message ?? contractSendFailedMessage)
+            : adminActionErrorMessage(e, fallback: contractSendFailedMessage));
+      }
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -4148,7 +4286,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               context,
               application: app,
               workerName: _userMap[app.uid]?.name ?? '근무자',
-              currentBusinessRules: widget.businesses
+              currentBusinessRules: _businesses
                   .where((b) => b.id == app.businessId)
                   .firstOrNull
                   ?.attendanceRules,
@@ -4166,7 +4304,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         } else if (_isAmbiguousConfirmError(e.code)) {
           await _reloadAfterAmbiguousConfirm();
         } else {
-          ToastHelper.showError(e.message ?? '확정 처리 중 오류가 발생했습니다');
+          // [impl_58 · server_297] 겹침 확인 미완료(OVERLAP_CHECK_INCOMPLETE · 확정 0)는 다시 시도하라고 말한다.
+          ToastHelper.showError(overlapCheckIncompleteMessageOf(e) ?? e.message ?? '확정 처리 중 오류가 발생했습니다');
         }
       }
     } catch (e) {
@@ -4302,7 +4441,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       ToastHelper.showSuccess('거절 처리되었습니다');
       await _load();
     } catch (e) {
-      if (mounted) ToastHelper.showError('거절 실패: $e');
+      debugPrint('❌ 지원 거절 실패: $e');
+      if (mounted) ToastHelper.showError(adminActionErrorMessage(e, fallback: applicantRejectFailedMessage)); // [impl_59] 예외 문자열 0
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -4418,6 +4558,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       //   [보안] PERMISSION_DENIED 포함 실패 로그 유지 — 크로스-사업장 접근 감지용.
       int successCount = 0;
       int processed = 0;
+      int overlapIncompleteCount = 0; // [impl_58 · server_297] OVERLAP_CHECK_INCOMPLETE 로 확정하지 않은 건
       for (final appId in ids) {
         // [BULK-PROGRESS] 순차 처리라 인원에 비례해 걸린다 — DEV 실측 기준
         //   한 건에 약 0.26초, 60명이면 16초다. 그동안 버튼만 잠겨 있으면
@@ -4439,6 +4580,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           confirmedIds.add(appId);
         } catch (e) {
           debugPrint('❌ [_batchApprove] 확정 실패 [$appId]: $e');
+          // [impl_58 · server_297] 겹침 확인 미완료는 '상태 확인'이 아니라 '다시 시도'가 할 일이다 — 따로 센다.
+          if (overlapCheckIncompleteMessageOf(e) != null) overlapIncompleteCount++;
         }
         processed++;
       }
@@ -4448,10 +4591,13 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       // [4J.1] 부분 실패 피드백 — 성공/전체 카운트 표시
       // 실패 원인: network 오류 외에 TO 정원 초과(동시 확정)·Application 취소 등
       // 재시도로 해결되지 않는 케이스 포함 → "상태를 확인" 권장
+      final overlapNote = overlapIncompleteCount > 0 ? '\n${overlapIncompleteBatchNote(overlapIncompleteCount)}' : '';
       if (successCount == 0) {
-        ToastHelper.showError('확정에 실패했습니다. 지원자 상태를 확인해 주세요.');
+        ToastHelper.showError(overlapIncompleteCount == total
+            ? overlapCheckIncompleteMessage
+            : '확정에 실패했습니다. 지원자 상태를 확인해 주세요.$overlapNote');
       } else if (successCount < total) {
-        ToastHelper.showWarning('$successCount/$total명 확정 완료. 실패한 지원자의 상태를 확인해 주세요.');
+        ToastHelper.showWarning('$successCount/$total명 확정 완료. 실패한 지원자의 상태를 확인해 주세요.$overlapNote');
       } else {
         ToastHelper.showSuccess('$successCount명이 확정되었습니다');
       }
@@ -4528,4 +4674,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     return '$label $rel';
   }
 
+}
+
+/// [impl_25 · L48] 한 번의 지원명단 읽기가 하위 읽기에서 모으는 부수 결과 — 커밋 때만 화면 상태로 옮긴다.
+class _DayLoadAcc {
+  bool capacityUnknown = false;
+  final Map<String, Set<String>> slotWorkDetailIds = {};
+  final Map<String, TOModel> toCache = {};
 }

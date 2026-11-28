@@ -17,6 +17,7 @@ import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/common/app_empty_state.dart';
 import '../../../utils/text_layout.dart';
+import '../../../utils/worker_reject_messages.dart';
 import '../../../theme/app_colors.dart';
 
 /// 통합 알림 아이템 타입
@@ -53,7 +54,12 @@ class MyRequestsDialog extends StatefulWidget {
     required this.applicantUid,
     required this.onChanged,
     this.reads,
+    this.debugReloadHook,
   });
+
+  /// [impl_27a] 시험 전용 — 처리 뒤 다시 읽기를 시험이 직접 부르게 넘긴다. 운영은 null.
+  @visibleForTesting
+  final void Function(Future<void> Function() reload)? debugReloadHook;
 
   /// 공용 진입 helper.
   ///
@@ -94,18 +100,28 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   /// [DU267] 읽기 실패 — 빈 목록과 구별한다(이전에는 실패해도 '알림이 없습니다'를 보였다).
   bool _loadFailed = false;
 
+  /// [impl_27a · L48 같은 꼴] 읽기 차례 — 마지막에 시작한 읽기만 앉는다(늦게 끝난 옛 읽기가 처리 뒤 새 목록을 덮지 않게).
+  int _loadGen = 0;
+
+  /// [impl_27a] 정상 목록을 보이는 중의 다시 읽기(응답·처리 뒤) — 목록을 지우지 않고 얇은 진행 표시 + 누르기 잠금.
+  bool _keepRowsWhileLoading = false;
+
   @override
   void initState() {
     super.initState();
+    widget.debugReloadHook?.call(() => _loadAllNotifications());
     _loadAllNotifications();
   }
 
   /// 모든 알림 로드 (3가지 타입 통합)
   Future<void> _loadAllNotifications() async {
     if (!mounted) return;
+    final gen = ++_loadGen;
+    final keep = _keepRowsWhileLoading || (!_isLoading && !_loadFailed);
     setState(() {
       _isLoading = true;
       _loadFailed = false;
+      _keepRowsWhileLoading = keep;
     });
 
     try {
@@ -174,19 +190,21 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       // 최신순 정렬
       notifications.sort((a, b) => b.requestedAt.compareTo(a.requestedAt));
 
-      if (!mounted) return;
+      if (!mounted || gen != _loadGen) return; // 더 늦게 시작한 읽기가 있다
       setState(() {
         _allNotifications = notifications;
         _isLoading = false;
+        _keepRowsWhileLoading = false;
       });
 
       debugPrint('✅ 알림 로드 완료: ${notifications.length}건');
     } catch (e) {
       debugPrint('❌ 알림 로드 실패: $e');
-      if (mounted) {
+      if (mounted && gen == _loadGen) {
         setState(() {
           _isLoading = false;
           _loadFailed = true;
+          _keepRowsWhileLoading = false;
         });
         ToastHelper.showError('알림을 불러오는데 실패했습니다.');
       }
@@ -262,9 +280,14 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
 
             Divider(height: ResponsiveHelper.spacing(context, 24)),
 
+            // [impl_27a] 처리 뒤 다시 읽는 중 — 목록은 그대로, 얇은 진행 표시 + 누르기 잠금.
+            if (_isLoading && _keepRowsWhileLoading)
+              const LinearProgressIndicator(key: ValueKey('my-requests-refresh-after-mutation'), minHeight: 2),
             // 알림 목록
             Expanded(
-              child: _isLoading
+              child: AbsorbPointer(
+                absorbing: _isLoading && _keepRowsWhileLoading,
+                child: _isLoading && !_keepRowsWhileLoading
                   ? const LoadingWidget(message: '알림 로딩 중...')
                   : _loadFailed
                       ? _buildErrorState()
@@ -276,6 +299,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
                             return _buildNotificationCard(_allNotifications[index]);
                           },
                         ),
+              ),
             ),
           ],
         ),
@@ -764,7 +788,10 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       }
     } catch (e) {
       debugPrint('❌ 계약해지 거절 오류: $e');
-      if (mounted) ToastHelper.showError('처리 중 오류가 발생했습니다');
+      // [impl_63] CONTRACT_SCAN_TRUNCATED — 처리하지 않았다(해지 요청 그대로). 다시 시도하면 되는 일이라고 말하고, 목록은 서버 상태로 다시 읽는다.
+      final known = terminationRejectMessageOf(e);
+      if (mounted) ToastHelper.showError(known ?? '처리 중 오류가 발생했습니다');
+      if (known != null && mounted) await _loadAllNotifications();
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }

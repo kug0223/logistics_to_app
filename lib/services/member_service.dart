@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
@@ -102,19 +103,24 @@ class MemberService {
     await ref.set(invMap);
 
     // 초대받은 사람에게 알림
-    try {
-      await _firestoreService.createNotification(
-        NotificationModel.createMemberInvitation(
-          targetUid: targetUid,
-          businessName: businessName,
-          businessId: businessId,
-          invitedByName: invitedByName,
-          invitationId: ref.id,
-        ),
-      );
-    } catch (e) {
+    // [PERF-L52] 알림 callable(최대 10초)을 기다리지 않는다 — 초대 문서는 위에서 이미 저장됐고, 알림은
+    //   예전에도 실패를 삼키는 부가 동작이었다(초대 성공 여부를 바꾸지 않았다). 결과 실패는 로그로만 남긴다.
+    //   알림 영속/FCM 전달 계약 자체(L56)는 서버 몫이라 여기서 바꾸지 않는다.
+    unawaited(_firestoreService
+        .createNotification(
+          NotificationModel.createMemberInvitation(
+            targetUid: targetUid,
+            businessName: businessName,
+            businessId: businessId,
+            invitedByName: invitedByName,
+            invitationId: ref.id,
+          ),
+        )
+        .then((id) {
+      if (id == null) debugPrint('멤버 초대 알림 발송 실패(결과 없음)');
+    }, onError: (Object e) {
       debugPrint('멤버 초대 알림 발송 실패: $e');
-    }
+    }));
   }
 
   // ── 초대 수락/거절 ─────────────────────────────────────────────

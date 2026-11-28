@@ -16,7 +16,7 @@ import '../../utils/toast_helper.dart';
 // Services
 import '../../controllers/workforce_controller.dart';
 import '../../services/firestore_service.dart';
-import '../../utils/attendance_list_pdf.dart';
+import '../../utils/perf_log.dart';
 import '../../utils/attendance_review_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/work_detail_helper.dart';
@@ -146,6 +146,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   // isApproved + (canonical license OR owner legacy) + active workTypes >= 1
   bool _readinessLoaded = false;
 
+  /// [impl_21 · Q18 · 2026-11-26] 준비 상태 계산이 **현재 세대에서 실패했다.**
+  ///   예전에는 실패 갈래가 store 에만 failed 를 남기고 `_readinessLoaded` 를 false 로 두어,
+  ///   Hero 가 다음 재조회 전까지 계속 '로딩'(뼈대)으로 보였다 — 인력·근태가 멀쩡해도.
+  ///   이제 실패도 '끝난 상태'로 친다(`_readinessLoaded = true`). 준비 값은 비우고(모름 ≠ 이전 값),
+  ///   Hero 는 준비 판단 없이 운영 상태를 말하며, 준비 칸만 '확인하지 못했어요 · 다시 시도' 한 줄을 보인다
+  ///   (HOME-V2-08D.5 의 데이터 상태 줄과 같은 공용 표시 `_todayOpsErrorRow`).
+  bool _readinessFailed = false;
+
   /// [FP-01] 첫 공고까지 남은 준비 — CreateTO와 같은 canonical fact에서 derive.
   FirstPostingReadiness? _firstPosting;
 
@@ -226,7 +234,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     WorkforceController.dataRevision.addListener(_onAdminMutation);
     // [P4.2C-READY-01] 관리 탭에서 돌아왔을 때 준비 상태를 다시 읽는다.
     AdminTabSwitcher.instance.registerHomeReactivation(_onHomeReactivated);
-    AttendanceListPdf.preloadFonts();
+    // [PERF-L6] 출근부 PDF 한글 폰트 미리 읽기를 뺐다 — 근로자 홈 .23 과 같은 판정.
+    //   NotoSansKR 두 개(각 약 6.2MB)를 홈 진입마다 메인 isolate 에서 해석해 첫 화면 직후를 막았다.
+    //   PDF 를 실제로 만들 때 `AttendanceListPdf.generatePdf` 가 `_loadFonts` 로 스스로 읽는다.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // [PH1C] 사업장 전환 감지 초기화 — 최초 렌더 전 기준값 확정
       _cachedUp = context.read<UserProvider>();
@@ -242,16 +252,21 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       //   끝나지 않는 spinner 로 남고 재시도 버튼도 나오지 않는다(각 재시도는
       //   loader 가 한 번은 돌아 error 상태가 돼야 그려진다).
       //
-      //   그래서 순서를 데이터 의존만으로 정한다: 사업장 → 네 loader.
-      //   (`_loadPostingReadiness` 는 `_businesses` 를 읽으므로 이 순서가 필요하다.
-      //    나머지 셋은 `_getBusinesses()` 로 자체 조회한다.)
+      //   그래서 순서를 데이터 의존만으로 정한다.
+      //   [PERF-L7] 요약(GetAdminHomeSummary)·인력(GetStaffingReadiness)은 `_businesses` 를
+      //   읽지 않는다 — 서버가 uid·선택 사업장으로 집계한다. 그래서 사업장 읽기와 **동시에**
+      //   출발한다(예전에는 사업장 왕복 1회를 기다린 뒤 출발했다). 늦은 응답·사업장 전환은
+      //   각 loader 의 seq 가드가 그대로 막는다.
+      //   사업장 → 두 loader 순서는 유지한다: `_loadPostingReadiness` 는 `_businesses` 를
+      //   읽고, `_loadTodayAttendance` 는 `_getBusinesses()` 캐시를 쓴다(먼저 돌면 사업장을
+      //   한 번 더 읽는다).
       //   투어는 그 뒤에 **독립적으로** 확인하고, 실패는 삼켜서 데이터·화면을
       //   막지 않는다. 실패·timeout 을 완료로 저장하지 않는다 —
       //   `markCompleted` 는 투어를 실제로 끝낸 뒤에만 호출된다(아래 그대로).
+      unawaited(_loadCanonicalSummary());   // [PHASE-2C] canonical actions
+      unawaited(_loadStaffingReadiness()); // [PHASE-2C] D0~D+7 인력 현황
       await _loadApprovedBusinessStatus();
       if (mounted) {
-        unawaited(_loadCanonicalSummary());   // [PHASE-2C] canonical actions
-        unawaited(_loadStaffingReadiness()); // [PHASE-2C] D0~D+7 인력 현황
         unawaited(_loadTodayAttendance());   // [PHASE-2C] 오늘 출근 현황
         unawaited(_loadPostingReadiness());   // [5D.2] compact setup checklist
       }
@@ -434,6 +449,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final summary = await _reads.summary(
         selectedBusinessId: selectedBizId,
       );
+      PerfLog.mark('admin.summary.done', () => {'ok': true});
       if (!mounted || seq != _summarySeq) return;
       setState(() {
         _canonicalSummary = summary;
@@ -490,6 +506,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       //   사업장이 있는 관리자에게 '사업장을 등록하세요' 배너가 뜬다.
       //   throw하면 아래 catch가 _hasApprovedBusiness를 null로 유지 → 배너 미표시.
       final businesses = await _reads.businessesByIds(ids);
+      PerfLog.mark('admin.businesses.done', () => {'n': businesses.length});
       if (mounted) {
         setState(() {
           _hasApprovedBusiness = businesses.any((b) => b.isApproved);
@@ -535,6 +552,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         _readinessMap = const {};
         _firstPosting = null;
         _readinessLoaded = gate != PermissionCheck.unknown;
+        _readinessFailed = false;
       });
       return;
     }
@@ -555,6 +573,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       debugPrint('❌ [readiness] 준비 상태 계산 실패: ');
       if (seq != _readinessSeq) return;
       FirstPostingReadinessStore.markFailed(uid: uid, scopeKey: scopeKey);
+      // [impl_21 · Q18] 실패도 끝난 상태다 — Hero 를 로딩에 묶어 두지 않는다. 준비 값은 모름이라 비운다.
+      if (!mounted) return;
+      setState(() {
+        _readinessMap = const {};
+        _firstPosting = null;
+        _readinessLoaded = true;
+        _readinessFailed = true;
+      });
       return;
     }
 
@@ -563,6 +589,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       _readinessMap = result.readinessMap;
       _firstPosting = result.readiness;
       _readinessLoaded = true;
+      _readinessFailed = false;
     });
 
     // 공고 root·CreateTO 가 같은 값을 본다. 누구의·어느 사업장 집합에 대한
@@ -643,6 +670,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final result = await _reads.staffingReadiness(
         selectedBusinessId: selectedBizId,
       );
+      PerfLog.mark('admin.staffing.done', () => {'ok': true});
       if (!mounted || seq != _staffingSeq) return;
       setState(() {
         _staffingReadiness = result;
@@ -741,6 +769,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           date: today, businessId: b.id)),
       );
 
+      // [ROOT-FUTURE] 나중에 await 하는(또는 앞에서 return 하면 아예 await 하지 않는) future — 먼저 실패해도 '처리되지 않은 오류'(Crashlytics fatal)로 새지 않게. await 하는 곳은 그대로 같은 오류를 받는다.
+      rosterFuture.ignore();
       final allAttendance = (await attFuture).expand((l) => l).toList();
       final allConfirmed  = (await rosterFuture).expand((l) => l).toList();
 
@@ -1268,6 +1298,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                     //   에게도 그대로 보인다. 해당 없으면 스스로 사라진다.
                     // [CP04] 법적·준비 상태는 Hero(운영 상태) 앞에 둔다(정밀 §9 순서).
                     LegalTaskCard(scale: s, loadReadiness: _reads.legalReadiness),
+                    // [impl_21 · Q18] 준비 상태를 확인하지 못했을 때만 — 준비 칸의 자리(Hero 앞)에 한 줄.
+                    _buildReadinessFailedRow(s, up),
                     // [HOME-V2-08D.2] Adaptive Hero — 지금 가장 먼저 알아야
                     //   하는 상태 하나를 해석한다. 준비 미완료 카드도 여기로
                     //   들어왔다(state = setup).
@@ -2302,6 +2334,25 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   //
   // 표시 조건: BUSINESS_ADMIN + readiness 로드 완료 + 미완료 ≥ 1
   //   사업장이 0개여도 보여준다 — 신규 관리자에게 가장 필요한 정보다.
+  /// [impl_21 · Q18 · 2026-11-26] 준비 상태 계산 실패 — 준비 칸만 '확인하지 못했어요 · 다시 시도'.
+  ///   Hero 전체를 오류로 바꾸지 않는다(인력·근태는 정상일 수 있다). 준비 카드와 같은 대상에게만 보인다
+  ///   (하위관리자·전 사업장 운영 종료에는 준비 카드 자체가 없다). 어떤 준비가 빠졌는지는 말하지 않는다 —
+  ///   모르는 것을 '미완료'로 바꿔 말하지 않는다. 재시도는 같은 loader 를 그대로 쓴다(세대 가드가 겹침을 정리).
+  Widget _buildReadinessFailedRow(double s, UserProvider up) {
+    if (!_readinessLoaded || !_readinessFailed) return const SizedBox.shrink();
+    if (up.currentUser?.isSubAdmin == true) return const SizedBox.shrink();
+    if (_allBusinessesClosed) return const SizedBox.shrink();
+    return Padding(
+      key: const ValueKey('admin-home-readiness-failed'),
+      padding: const EdgeInsets.only(bottom: 8),
+      child: _todayOpsErrorRow(s,
+        message: '공고 준비 상태를 확인하지 못했어요',
+        onRetry: () => unawaited(_loadPostingReadiness()),
+        partial: true,
+      ),
+    );
+  }
+
   Widget _buildPostingSetupCard(BuildContext context, double s, ThemeData theme) {
     // SUB_ADMIN은 사업장 소유 설정(등록증·인감)을 수행할 수 없다 — 기존 정책 유지
     if (context.read<UserProvider>().currentUser?.isSubAdmin == true) {
@@ -2688,7 +2739,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final canOpenRoster = canSeeAttendance;
 
     return Column(children: [
-      // [HOME-V2-08D.4] `오늘 운영` → `오늘`. 옆에 `당일 명단`이 붙은 뒤로
+      // [HOME-V2-08D.4] `오늘 운영` → `오늘`(→ UX Master §150 정본 `오늘의 근무` · impl_26 주석 정정). 옆에 `당일 명단`이 붙은 뒤로
       //   `운영`은 헤더를 길게만 만들고 아무것도 구분해 주지 않는다.
       _sectionHeader(context, s, '오늘의 근무',
           action: canOpenRoster ? '명단 보기' : null,
@@ -3648,7 +3699,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
     // [AH-V2-05B.3] atIndex는 '이체 대기' 연체 상향 한 곳에만 쓴다.
     //   행 목록을 점수로 재정렬하는 구조가 아니라, 정해진 자리에 넣는 것이다.
-    // [CP04] 정밀 §5 — 제목·정확 일반 설명(동일 canonical N)·숫자 알약(기본 숫자만, 마감은 `N일`)·보조줄(실제 metadata).
+    // [CP04] 정밀 §5 — 제목·정확 일반 설명·수량 알약·보조줄(실제 metadata).
+    // [판정283 A안 · 대표 결정 2026-11-26] 수량 알약 = canonical 총수+단위(`N건`, 마감은 `N일`) 한 번 — 제목 옆에 둔다.
+    //   일반 설명은 같은 총수를 되풀이하지 않는다(알약과 의미 이름이 말한다). 값·조건·권한·순서·목적지는 그대로다.
     //   색은 행 종류로 칠하지 않는다: 제목·숫자·아이콘 공통색, 실제 긴급·연체·만료 보조줄만 errorDark(§4).
     void add({
       required IconData icon, required String label, required String desc,
@@ -3670,7 +3723,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       // **조회 실패와 권한 없음이 같은 false**로 내려온다(aggSimple). 그 값 하나로
       // 사용자에게 오류를 주장할 수 없다. UNKNOWN은 section-level notice가 말한다.
       if (!available || count == 0) return;
-      final row = _TaskRow(icon: icon, label: label, desc: desc, pill: pill ?? '$count',
+      final row = _TaskRow(icon: icon, label: label, desc: desc, pill: pill ?? '$count건',
           subs: subs, count: count, onTap: onTap);
       if (atIndex != null) {
         result.insert(atIndex, row);
@@ -3692,7 +3745,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final resignN = resign?.count ?? 0;
       add(
         icon: Icons.logout_outlined, label: '퇴사 요청',
-        desc: '퇴사 요청 $resignN건을 검토해 주세요',
+        desc: '퇴사 요청을 검토해 주세요',
         // [CP04 §4] soon 은 자동승인 제외가 완결되지 않은 집계 — `빠른 검토 필요 N건`/warning(확약 문구 0). 수동 검토는 가용값일 때만.
         subs: [
           if (manual != null && manual > 0) _TaskSub('수동 검토 $manual건'),
@@ -3742,7 +3795,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final approvalN = approval?.count ?? 0;
       add(
         icon: Icons.assignment_late_outlined, label: '지원 검토',
-        desc: '대기 중인 지원 $approvalN건을 확인해 주세요',
+        desc: '대기 중인 지원을 확인해 주세요',
         subs: [
           if ((approval?.overdueCount ?? 0) > 0) _TaskSub('긴급 ${approval!.overdueCount}건', tone: _SubTone.urgent),
         ],
@@ -3789,7 +3842,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final sched = cs?.actions.scheduleChangeRequest;
       add(
         icon: Icons.edit_calendar_outlined, label: '일정 변경 요청',
-        desc: '근로자의 일정 변경 요청 ${sched?.count ?? 0}건이 있어요',
+        desc: '근로자의 일정 변경 요청이 있어요',
         count: sched?.count ?? 0,
         available: sched?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
@@ -3828,7 +3881,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final unsent = cs?.actions.unsentContract;
       add(
         icon: Icons.folder_off_outlined, label: '계약 미발송',
-        desc: '발송이 필요한 계약 ${unsent?.count ?? 0}건이 있어요',
+        desc: '발송이 필요한 계약이 있어요',
         // [R7-P1-4 H1] 단위는 **건**이다 — 서버는 좌석을 가진 지원서를 순회하며
         //   `아직 발송되지 않은 계약서`를 센다(`CONTRACT_SEAT_STATUSES`).
         //   한 사람이 두 자리를 확정받으면 보낼 계약서도 두 건이다.
@@ -3867,8 +3920,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final unclosedN = unclosed?.count ?? 0;
       add(
         icon: Icons.lock_open_outlined, label: '마감 필요',
-        // [CP04 §5] 사업장×KST 근무일 합계 — 단위 `일`(알약도 `N일`). 같은 날짜여도 사업장별로 각각 센다.
-        desc: '사업장별 미마감 근무일 합계 $unclosedN일이에요',
+        // [CP04 §5] 사업장×KST 근무일 합계 — 단위 `일`(알약 `N일`). 같은 날짜여도 사업장별로 각각 센다.
+        desc: '사업장별 미마감 근무일 합계',
         // [ADMIN-HOME.31] ISO('2026-10-05') 대신 앱의 날짜 표기 — 값·기준은 그대로(연도 보존).
         subs: [
           if (unclosed?.oldestDate != null) _TaskSub('가장 오래된 날 ${_dotDate(unclosed!.oldestDate!)}'),
@@ -3890,7 +3943,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final settlement = cs?.actions.settlementRequest;
       add(
         icon: Icons.payments_outlined, label: '중간정산 요청',
-        desc: '대기 중인 중간정산 요청 ${settlement?.count ?? 0}건이 있어요',
+        desc: '대기 중인 중간정산 요청이 있어요',
         count: settlement?.count ?? 0,
         available: settlement?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
@@ -3920,7 +3973,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       add(
         icon: Icons.edit_calendar_outlined, label: '급여 변경 요청',
         // [CP04 §5] 지급방식(주기) 변경 — 지급액 변경이라고 쓰지 않는다.
-        desc: '지급방식 변경 요청 ${wageChange?.count ?? 0}건을 확인해 주세요',
+        desc: '지급방식 변경 요청을 확인해 주세요',
         count: wageChange?.count ?? 0,
         available: wageChange?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
@@ -3963,8 +4016,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final wageOverdue = wage?.available == true && (wage?.overdueCount ?? 0) > 0;
       add(
         icon: Icons.account_balance_wallet_outlined, label: '이체 대기',
-        // [CP04 §5] N = count + missingDueDateCount 처리카드 단위. 은행 입금·실지급 완료로 확약하지 않는다.
-        desc: '이체 확인이 필요한 급여 $wageTotal건이 있어요',
+        // [CP04 §5] N = count + missingDueDateCount 처리카드 단위(알약 `N건`). 은행 입금·실지급 완료로 확약하지 않는다.
+        desc: '이체 확인이 필요한 급여가 있어요',
         subs: wageParts,
         count: wageTotal,
         available: wage?.available ?? false,
@@ -4009,7 +4062,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         //   결정이 필요한 **장기 지원서(관계)**를 센다. 한 사람이 같은 사업장에서
         //   두 관계를 가지면 결정도 두 건이다.
         // [CP04 §5] 주 알약 N(같은 집합)과 `만료 후 미결정 M건` 보조줄(expired>0)로 숫자와 사유를 나눈다.
-        desc: '연장·종료를 정할 계약 $totalDecisions건을 확인해 주세요',
+        desc: '연장·종료를 정할 계약을 확인해 주세요',
         subs: [
           if (expiredCount > 0) _TaskSub('만료 후 미결정 $expiredCount건', tone: _SubTone.urgent),
         ],
@@ -4105,9 +4158,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   }
 
   /// [CP04] 처리할 일 한 행(정밀 §5). 상자 없는 Material outlined 아이콘 24(진남색) · 제목 17/700 · 정확 일반 설명 14 ·
-  ///   보조줄(실제 metadata, 긴급·연체·만료만 errorDark) · 숫자 알약(#E3EAFE, 기본 숫자만·99+ 없음) · 꺾쇠 18(#45474E).
-  ///   행 min 68·H16/V10, 내용이 크면 자연 확장. 뒤(알약·꺾쇠)가 본문을 압박하면 아래 오른쪽 줄(_rowWithTrailing) — [DU585b] 이웃 두 낱말이 한 줄에 못 들 때도(pairWords).
-  ///   행 전체가 receiver 하나 — 의미 이름 `제목, 설명[, 보조줄], 열기`(아이콘·알약 장식, 같은 콜백). 색은 행 종류로 칠하지 않는다.
+  ///   보조줄(실제 metadata, 긴급·연체·만료만 errorDark) · 수량 알약(#E3EAFE, 총수+단위 `N건`/`N일`·99+ 없음 · [판정283 A안] 제목 옆, 못 들면 다음 줄) · 꺾쇠 18(#45474E · 오른쪽엔 꺾쇠만).
+  ///   행 min 68·H16/V10, 내용이 크면 자연 확장. 뒤(꺾쇠)가 본문을 압박하면 아래 오른쪽 줄(_rowWithTrailing · 공용 판정식 그대로) — [DU585b] 이웃 두 낱말이 한 줄에 못 들 때도(pairWords).
+  ///   행 전체가 receiver 하나 — 의미 이름 `제목, 총수+단위, 설명[, 보조줄], 열기`(아이콘·알약·꺾쇠 장식, 같은 콜백). 색은 행 종류로 칠하지 않는다.
   Widget _buildActionRowWidget(
     BuildContext context, double s,
     _TaskRow item,
@@ -4117,8 +4170,26 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     //   보조줄(운영 판단) = R-3 본문 16/1.5 · tone 색과 400/700 그대로 · 설명 → 보조줄 4(R-7 · 이전 2) · 알약 = 짧은 카운트 14/1.3/700(이전 14/1.2) · 폭 측정(bodyTexts)도 같은 스타일.
     TextStyle subStyle(_TaskSub sub) =>
         AppTextStyles.roleBody(color: sub.color).copyWith(fontWeight: sub.tone == _SubTone.neutral ? FontWeight.w400 : FontWeight.w700);
+    // [판정283 A안 · 대표 결정 2026-11-26 · X1 실기기 '빡빡함'] 수량 알약(총수+단위)을 오른쪽 뒤에서 제목 옆으로 옮긴다 —
+    //   오른쪽엔 꺾쇠만 남겨 본문 열 폭을 되찾는다. 제목+알약이 한 줄에 못 들면 Wrap 이 알약을 본문 열 안 다음 줄 왼쪽으로 내린다
+    //   (글자 축소·말줄임·고정 높이 0). 알약 모양(바탕·패딩·최소 크기)·글 스타일은 이전과 같다.
+    final pillStyle = AppTextStyles.roleBadge(color: AppColors.brand);
+    final pill = Container(
+      constraints: const BoxConstraints(minWidth: 36, minHeight: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      decoration: ConceptSurface.count(),
+      child: Center(widthFactor: 1, heightFactor: 1, child: Text(item.pill, style: pillStyle)),
+    );
     final body = Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-      Text(TextLayout.keepWords(item.label), semanticsLabel: item.label, style: AppTextStyles.roleCardTitle()),
+      Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Text(TextLayout.keepWords(item.label), semanticsLabel: item.label, style: AppTextStyles.roleCardTitle()),
+          pill,
+        ],
+      ),
       const SizedBox(height: 4),
       Text(TextLayout.keepWords(item.desc), semanticsLabel: item.desc, style: AppTextStyles.roleBody()),
       for (final sub in item.subs) ...[
@@ -4126,19 +4197,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         Text(TextLayout.keepWords(sub.text), semanticsLabel: sub.text, style: subStyle(sub)),
       ],
     ]);
-    final pillStyle = AppTextStyles.roleBadge(color: AppColors.brand);
-    final pillW = _oneLineWidth(context, item.pill, pillStyle) + 20;
-    final trailing = Row(mainAxisSize: MainAxisSize.min, children: [
-      Container(
-        constraints: const BoxConstraints(minWidth: 36, minHeight: 24),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-        decoration: ConceptSurface.count(),
-        child: Center(widthFactor: 1, heightFactor: 1, child: Text(item.pill, style: pillStyle)),
-      ),
-      const SizedBox(width: 8),
-      const Icon(Icons.chevron_right, size: 18, color: AppColors.conceptChevron),
-    ]);
-    final semanticsLabel = [item.label, item.desc, for (final sub in item.subs) sub.text, '열기'].join(', ');
+    const trailing = Icon(Icons.chevron_right, size: 18, color: AppColors.conceptChevron);
+    // [판정283 A안] 의미 이름 = `제목, 총수+단위, 설명[, 보조줄], 열기` — 보이는 순서(제목 → 알약 → 설명) 그대로, 총수+단위는 한 번.
+    //   설명이 총수를 되풀이하지 않으므로 알약 글을 여기 넣어야 수량이 읽힌다. 행 하나·버튼 하나·같은 콜백은 그대로.
+    final semanticsLabel = [item.label, item.pill, item.desc, for (final sub in item.subs) sub.text, '열기'].join(', ');
     return Column(children: [
       Semantics(
         container: true,
@@ -4160,11 +4222,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 body: body,
                 bodyTexts: [
                   (TextLayout.keepWords(item.label), AppTextStyles.roleCardTitle()),
+                  // [판정283 A안] 알약이 본문 열(제목 묶음)로 들어왔으니 그 글도 본문 측정에 넣는다(실제 스타일·글자 배율 — _oneLineWidth).
+                  (item.pill, pillStyle),
                   (TextLayout.keepWords(item.desc), AppTextStyles.roleBody()),
                   for (final sub in item.subs) (TextLayout.keepWords(sub.text), subStyle(sub)),
                 ],
                 trailing: trailing,
-                trailingWidth: (pillW < 36 ? 36 : pillW) + 8 + 18,
+                trailingWidth: 18,
                 // [DU585b] 판정148 F148-B-TASK-READING — 낱말이 한 줄에 하나씩 쌓이면 알약·꺾쇠를 아래 줄로(본문 폭 확보 · 행 탭/의미 이름/순서 그대로).
                 pairWords: true,
               ),
@@ -4195,9 +4259,9 @@ class _TaskRow {
   });
   final IconData icon;
   final String label;
-  /// 정밀 §5 의 정확 일반 설명(같은 canonical N).
+  /// 정밀 §5 의 일반 설명 — [판정283 A안] 총수 없음(알약이 말한다).
   final String desc;
-  /// 숫자 알약 — 기본 숫자만(마감은 `N일`). 단위는 설명·의미 이름에 남는다.
+  /// 수량 알약 — canonical 총수+단위(`N건`, 마감은 `N일`) · 99+ 같은 상한 없음. [판정283 A안] 단위는 알약과 의미 이름이 말한다(설명은 총수를 되풀이하지 않는다).
   final String pill;
   final List<_TaskSub> subs;
   final int count;

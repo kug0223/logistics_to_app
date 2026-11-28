@@ -52,7 +52,7 @@ void main() {
     PageController ctl() => t.widget<PageView>(find.byType(PageView)).controller!;
     expect((ctl().page! - 0).abs() < 0.001 && completes == 0, isTrue, reason: 'page0 출발');
     Future<void> tapNext() async {
-      final n = find.ancestor(of: find.text('다음'), matching: find.byType(GestureDetector)).first;
+      final n = find.ancestor(of: findVisibleText('다음'), matching: find.byType(GestureDetector)).first;
       await t.tapAt(t.getRect(n).center);
       for (var i = 0; i < 20; i++) {
         await t.pump(const Duration(milliseconds: 100));

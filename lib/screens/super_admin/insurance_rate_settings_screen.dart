@@ -16,6 +16,8 @@ import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
+import '../../utils/keep_content_refresh.dart';
+import '../../widgets/common/keep_content_body.dart';
 
 /// 연도별 4대보험·소득세 요율 관리 화면 (슈퍼관리자)
 ///
@@ -33,7 +35,7 @@ class InsuranceRateSettingsScreen extends StatefulWidget {
 }
 
 class _InsuranceRateSettingsScreenState
-    extends State<InsuranceRateSettingsScreen> {
+    extends State<InsuranceRateSettingsScreen> with KeepContentRefreshMixin {
   bool _isLoading = true;
   bool _isSaving = false;
   /// [.59] 저장값을 읽지 못했다 — 내장값을 현재값처럼 보이거나 저장하지 않는다.
@@ -69,19 +71,32 @@ class _InsuranceRateSettingsScreenState
   }
 
   Future<void> _load() async {
-    setState(() { _isLoading = true; _loadError = null; });
+    // [L48 · impl_28] 처리 뒤 다시 읽기는 목록을 유지한다(잠금 + 얇은 진행 표시 · KeepContentRefreshMixin) — 첫 읽기·실패 화면만 전체 로딩 · 늦은 옛 응답 착지 0.
+    //   값 미리 표시 0: 유지하는 동안 입력칸은 **마지막으로 읽은 값**(_rates)으로 되돌린다 — 서버가 받지 않은 입력값을
+    //   다시 읽는 동안 그대로 보이지 않게(저장 충돌·결과 불명 뒤 다시 읽기).
+    final t = beginContentLoad(canKeep: _loadError == null);
+    if (t.keep) {
+      setState(_updateControllers);
+    } else {
+      setState(() { _isLoading = true; _loadError = null; });
+    }
+    var shown = false;
     try {
       final stored = await (widget.loadStored ?? InsuranceRateService.fetchStored)();
-      if (!mounted) return;
+      if (!isCurrentContentLoad(t.gen)) return;
       _stored = Map.of(stored);
       _rates = {...InsuranceRateService.builtinDefaults, ...stored};
       // 현재 연도가 없으면 기본값 추가(저장값 없음 안내와 함께 보인다)
       _rates.putIfAbsent(_selectedYear, InsuranceRateModel.defaults2026);
       _updateControllers();
+      shown = true;
     } catch (e) {
-      if (mounted) setState(() => _loadError = e);
+      if (isCurrentContentLoad(t.gen)) setState(() => _loadError = e);
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (isCurrentContentLoad(t.gen)) {
+        setState(() => _isLoading = false);
+        finishContentLoad(t.gen, shown: shown);
+      }
     }
   }
 
@@ -168,10 +183,12 @@ class _InsuranceRateSettingsScreenState
           icon: const Icon(Icons.add, color: Colors.white),
           tooltip: '연도 추가',
           // 저장 중 탭 시 _selectedYear 변경 → 저장 데이터 덮어쓰기 방지
-          onPressed: _isSaving || _isLoading || _loadError != null ? null : _addYear,
+          onPressed: _isSaving || _isLoading || refreshingKeep || _loadError != null ? null : _addYear,
         ),
       ],
-      body: _isLoading
+      body: KeepContentBody(
+        refreshing: refreshingKeep,
+        child: _isLoading
           ? const LoadingWidget()
           : _loadError != null
               // [.59] 읽지 못했으면 내장값을 현재값처럼 보이거나 저장 버튼을 열지 않는다.
@@ -203,6 +220,7 @@ class _InsuranceRateSettingsScreenState
                         Expanded(child: _buildEditor(theme)),
                       ],
                     ),
+      ),
     );
   }
 

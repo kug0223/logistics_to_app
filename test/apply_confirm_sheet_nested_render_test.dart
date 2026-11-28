@@ -41,6 +41,7 @@ import 'package:ALfit/widgets/dialogs/apply/apply_confirm_dialog.dart';
 import 'package:ALfit/widgets/dialogs/apply/apply_work_dialog.dart';
 import 'package:ALfit/widgets/dialogs/apply/apply_work_reads.dart';
 import 'package:ALfit/widgets/dialogs/apply/apply_work_submit.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake
     with MockPlatformInterfaceMixin
@@ -276,12 +277,12 @@ void main() {
 
       // 승인·취소 두 CTA 가 모두 도달 가능해야 한다.
       // 확인 시트가 열리면 '지원하기' 가 2개 — 시트의 승인 버튼은 마지막이다.
-      final ok = find.text('지원하기');
+      final ok = findVisibleText('지원하기');
       expect(ok, findsWidgets, reason: '승인 버튼이 없다');
       await tester.ensureVisible(ok.last);
       await tester.pump();
 
-      final cancel = find.text('취소');
+      final cancel = findVisibleText('취소');
       expect(cancel, findsWidgets, reason: '취소 버튼이 없다');
       await tester.ensureVisible(cancel.last);
       await tester.pump();
@@ -358,7 +359,7 @@ void main() {
           reason: '근무시간이 사라졌다');
       expect(find.textContaining('12,000'), findsWidgets,
           reason: '급여가 사라졌다');
-      expect(find.textContaining('모집'), findsWidgets,
+      expect(findVisibleTextContaining('모집'), findsWidgets,
           reason: '모집 인원이 사라졌다');
 
       await tester.pump(const Duration(seconds: 5));

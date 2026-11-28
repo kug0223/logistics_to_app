@@ -243,7 +243,8 @@ void main() {
       final bl = _after(cf, 'callableBlacklistUser = onCall', 3000);
       expect(bl.contains('revokeRefreshTokens'), isTrue);
 
-      final pw = _after(cf, 'resetPasswordWithCode', 4000);
+      // [AUD-7 M-2 · server_298] 이력 저장이 서버 전용 scrypt 로 바뀌며 본문이 길어져 창만 4000 → 6500(같은 callable 안).
+      final pw = _after(cf, 'resetPasswordWithCode', 6500);
       expect(pw.contains('revokeRefreshTokens'), isTrue);
 
       final self = _after(cf, 'export const revokeUserSession', 600);
@@ -280,8 +281,18 @@ void main() {
     // 측정된 실제 span (주석 제거 기준)
     final approveTerm = _after(cf, 'callableApproveTermination = onCall', 6200);
     final approveResign = _after(cf, 'callableApproveResignation = onCall', 4150);
-    final autoResign =
-        _after(cf, '.where("resignRequestedAt", "<=", threeDaysAgoUTC)', 3200);
+    // [BL284-01 · 판정288 → L57 r5] D+3 자동 퇴사 승인은 스케줄러 본문의 인라인 쿼리에서
+    //   `srvProcessResignAutoApproveD3`(후보 쿼리·거래 fresh 재검증)로 옮겨졌다. 예전 앵커(인라인
+    //   `.where("resignRequestedAt", "<=", threeDaysAgoUTC)`)가 사라져 이 파일 전체가 로드되지 않았다.
+    //   같은 판정(멤버십을 건드리지 않는다)을 새 정본 **함수 전체**에 건다(고정 길이 span 대신 끝까지).
+    final autoResign = () {
+      const a = 'async function srvProcessResignAutoApproveD3(';
+      final i = cf.indexOf(a);
+      if (i < 0) throw StateError('$a 를 찾지 못함');
+      final j = cf.indexOf('\n}\n', i);
+      if (j < 0) throw StateError('$a 의 끝을 찾지 못함');
+      return cf.substring(i, j);
+    }();
     final autoTerm = _autoTermBlock(cf);
     final transition =
         _after(cf, 'async function processExitEffectiveTransition', 11350);

@@ -34,6 +34,7 @@ import 'package:ALfit/theme/role_theme.dart';
 import 'package:ALfit/utils/navigation_key.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake with MockPlatformInterfaceMixin implements FirebaseAppPlatform {
   @override
@@ -654,8 +655,8 @@ void main() {
             // ② 사례별 카드 요소.
             if (c.id == 'RENEW') {
               // 결정 필요 띠의 '연장'(주요) · '종료'(확인창을 여는 진입) — 누르지 않는다.
-              final extF = find.text('연장');
-              final endF = find.text('종료');
+              final extF = findVisibleText('연장');
+              final endF = findVisibleText('종료');
               final nExt = extF.evaluate().length;
               final nEnd = endF.evaluate().length;
               var extBg = '-';

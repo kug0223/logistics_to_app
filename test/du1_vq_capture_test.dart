@@ -258,9 +258,10 @@ Finder _promiseTimeFinder(String start, String end) => find.byElementPredicate((
       return seen.contains(start) && seen.contains('–$end');
     });
 // [DU383] CP03 UH086 — 질문 `언제 일하고 싶으세요?` 시각 삭제, 날짜 띠 그룹 의미 `일할 날짜 선택`
-Finder _dateExplorerGroup() => find.byWidgetPredicate((w) => w is Semantics && w.properties.label == '일할 날짜 선택');
+// [판정285 갱신] 날짜 그룹 의미 이름 '일할 날짜 선택' → '날짜별 일정과 일자리'.
+Finder _dateExplorerGroup() => find.byWidgetPredicate((w) => w is Semantics && w.properties.label == '날짜별 일정과 일자리');
 // [DU383] CP03 UH089 — 홈 행동과 날짜 시트 제목이 같은 `날짜 선택` 이다. 시트 쪽은 BottomSheet 안의 것만.
-Finder _dateSheetTitle() => find.descendant(of: find.byType(BottomSheet), matching: find.text('날짜 선택'));
+Finder _dateSheetTitle() => find.descendant(of: find.byType(BottomSheet), matching: findVisibleText('날짜 선택'));
 
 // [DU383 r2] 소급 19 (a) — CP03 순서(날짜 띠 → 필수응답 → Hero)와 2.0 배율을 그대로 두고, 새 확정 Hero 의 날짜 · 시간 · 사업장 · 업무를
 //   각각 실제 스크롤(Scrollable.ensureVisible)로 들여 본문 Scrollable 표시 영역(고정 머리 아래 · clip) 안에 전문이 들어오는지 본다.
@@ -576,23 +577,23 @@ void main() {
     String ctaText() => t.widgetList<Text>(find.descendant(of: find.byType(ElevatedButton), matching: find.byType(Text)))
         .map((w) => w.data ?? w.textSpan?.toPlainText() ?? '').where((s) => s.contains('지원')).join('|');
     final before = ctaText();
-    await t.tap(find.text('선택').first);
+    await t.tap(findVisibleText('선택').first);
     for (var i = 0; i < 5; i++) {
       await t.pump(const Duration(milliseconds: 100));
     }
-    expect(find.text('선택됨'), findsOneWidget, reason: '11/6 피킹 선택');
+    expect(findVisibleText('선택됨'), findsOneWidget, reason: '11/6 피킹 선택');
     final afterSelect = ctaText();
     final d1 = _kstMid(1).add(const Duration(hours: 9)); final d3 = _kstMid(3).add(const Duration(hours: 9));
     await t.tap(find.text('${d3.month}/${d3.day}'));
     for (var i = 0; i < 8; i++) {
       await t.pump(const Duration(milliseconds: 100));
     }
-    final otherDaySelected = find.text('선택됨').evaluate().length;
+    final otherDaySelected = findVisibleText('선택됨').evaluate().length;
     await t.tap(find.text('${d1.month}/${d1.day}'));
     for (var i = 0; i < 8; i++) {
       await t.pump(const Duration(milliseconds: 100));
     }
-    expect(find.text('선택됨'), findsOneWidget, reason: '재방문 — 11/6 피킹 선택 유지');
+    expect(findVisibleText('선택됨'), findsOneWidget, reason: '재방문 — 11/6 피킹 선택 유지');
     final revisit = ctaText();
     // ignore: avoid_print
     print('S041-SEL cta before="$before" afterSelect="$afterSelect" otherDay선택됨=$otherDaySelected revisit="$revisit"');
@@ -669,7 +670,7 @@ void main() {
       for (var i = 0; i < 5; i++) {
         await t.pump(const Duration(milliseconds: 100));
       }
-      expect(find.descendant(of: s041Card('상하차'), matching: find.text('선택됨')), findsOneWidget, reason: '상하차 선택됨');
+      expect(find.descendant(of: s041Card('상하차'), matching: findVisibleText('선택됨')), findsOneWidget, reason: '상하차 선택됨');
       expect(overflows, isEmpty, reason: overflows.join(' | '));
     });
   });
@@ -828,7 +829,7 @@ void main() {
     final b = t.getRect(find.ancestor(of: btnLabel.first, matching: find.byWidgetPredicate((w) => w is ButtonStyleButton)).first);
     await t.tapAt(b.center);
     await settle();
-    expect(find.descendant(of: s041Card('상하차'), matching: find.text('선택됨')), findsOneWidget, reason: '상하차 선택됨(화면 상태만)');
+    expect(find.descendant(of: s041Card('상하차'), matching: findVisibleText('선택됨')), findsOneWidget, reason: '상하차 선택됨(화면 상태만)');
     frame('상하차 선택 뒤');
     await vqCapture(t, key, 'S041-SCR_3_selected', conditions: cond('상하차 선택 실제 탭 뒤(같은 offset)'));
     var e = 0;
@@ -1770,7 +1771,7 @@ void main() {
     final b = t.getRect(find.ancestor(of: btnLabel.first, matching: find.byWidgetPredicate((w) => w is ButtonStyleButton)).first);
     await t.tapAt(b.center);
     await settle();
-    expect(find.descendant(of: s041Card('상하차'), matching: find.text('선택됨')), findsOneWidget, reason: '상하차 선택됨(화면 상태만)');
+    expect(find.descendant(of: s041Card('상하차'), matching: findVisibleText('선택됨')), findsOneWidget, reason: '상하차 선택됨(화면 상태만)');
     log('[$tag 선택 뒤] off=${pos.pixels.toStringAsFixed(1)}/${pos.maxScrollExtent.toStringAsFixed(1)}');
     await vqCapture(t, key, 'S041-LOC-${tag}_3_selected', conditions: sidecar('상하차 선택 실제 탭 뒤(같은 offset)'));
     var e = 0;
@@ -2237,14 +2238,14 @@ void main() {
       final cta = findVisibleText('지원 준비하기');
       expect(cta, findsOneWidget, reason: '고정 CTA');
       final ctaTop = t.getRect(cta).top;
-      final select = find.text('선택').first;
+      final select = findVisibleText('선택').first;
       await t.scrollUntilVisible(select, 80, scrollable: find.byType(Scrollable).first, maxScrolls: 60);
       await t.pump(const Duration(milliseconds: 100));
       await t.tap(select);
       for (var i = 0; i < 5; i++) {
         await t.pump(const Duration(milliseconds: 100));
       }
-      final selected = find.text('선택됨');
+      final selected = findVisibleText('선택됨');
       expect(selected, findsOneWidget, reason: '선택 → 선택됨');
       final sr = t.getRect(selected);
       expect(sr.top >= 0 && sr.bottom <= ctaTop, isTrue, reason: '선택됨이 고정 CTA 위 화면 안 $sr / ctaTop=$ctaTop');
@@ -2593,7 +2594,7 @@ void main() {
     await _capture(t, UserHomeScreen(reads: _reads(const []), clock: () => _clock), 'H35-E_user_home_empty_390x1', beforeShot: () async {
       // [DU383] CP03 UH086 질문 시각 삭제 → 날짜 띠 그룹 의미 · UH089 '날짜 더보기' → '날짜 선택'(시트 닫힘 — 홈 행동 하나)
       expect(_dateExplorerGroup(), findsOneWidget);
-      expect(find.text('날짜 선택'), findsOneWidget);
+      expect(findVisibleText('날짜 선택'), findsOneWidget);
       expect(overflows, isEmpty, reason: overflows.join(' | '));
     });
   });
@@ -2617,8 +2618,11 @@ void main() {
     final lastDay = '${_day(6).day}';
     expect(find.text(firstDay), findsWidgets);
     expect(find.text(lastDay), findsWidgets);
-    expect(find.textContaining('일자리 '), findsNothing, reason: '선택 전 날짜 CTA 없음');
-    await t.tap(find.text('날짜 선택')); // [DU383] UH089 — 시트 열기 전에는 홈 행동 하나
+    expect(findVisibleTextContaining('일 일자리 보기'), findsNothing, reason: '선택 전 날짜 CTA 없음(기본 "일자리 더 보기" 는 있다 · [impl_21] 예전 정확 finder 는 보이지 않는 문자 때문에 늘 0 이라 이 단언이 비어 있었다)');
+    // [판정285] 날짜 영역이 시작 준비 아래로 내려왔다 — 화면 안으로 가져온 뒤 누른다.
+    await t.ensureVisible(findVisibleText('날짜 선택'));
+    await t.pump(const Duration(milliseconds: 200));
+    await t.tap(findVisibleText('날짜 선택')); // [DU383] UH089 — 시트 열기 전에는 홈 행동 하나
     for (var i = 0; i < 10; i++) {
       await t.pump(const Duration(milliseconds: 100));
     }
@@ -2631,7 +2635,7 @@ void main() {
     expect(_dateSheetTitle(), findsNothing, reason: '시트 닫힘');
     expect(find.text(firstDay), findsWidgets, reason: '스트립 시작일 그대로');
     expect(find.text(lastDay), findsWidgets);
-    expect(find.textContaining('일자리 '), findsNothing, reason: '취소 — 선택 날짜 생기지 않음');
+    expect(findVisibleTextContaining('일 일자리 보기'), findsNothing, reason: '취소 — 선택 날짜 생기지 않음');
     expect(t.takeException(), isNull);
     // ignore: avoid_print
     print('H35-DATE ok strip=$firstDay..$lastDay');
@@ -2680,7 +2684,7 @@ void main() {
     final out = <String>['본문 세로 Scrollable ${cands.length}개 중 최대 $vp max=${pos.maxScrollExtent.toStringAsFixed(1)} off=${pos.pixels.toStringAsFixed(1)}'];
     Rect? rectOf(Finder f) => f.evaluate().isEmpty ? null : t.getRect(f.first);
     final marks = <String, Finder>{
-      '지원 준비': find.textContaining('지원 준비'),
+      '지원 준비': findVisibleTextContaining('지원 준비'),
       // [DU383] CP03 — UH086 질문 시각 삭제(그룹 의미) · UH144 · UH150 · UH151 · UH098 · UH101, 섹션 제목은 낱말 조판
       '날짜 띠 그룹': _dateExplorerGroup(),
       '날짜 숫자(첫 칸)': find.text('${_day(0).day}'),
@@ -2688,7 +2692,7 @@ void main() {
       '공고0 제목': find.text('지금 표시할 일자리가 없어요'),
       '공고0 설명': find.text('새 일자리가 등록되면 여기에서 확인할 수 있어요'),
       '지원 현황 제목': findVisibleText('내 지원 현황'),
-      '지원0 제목': find.text('아직 지원한 일자리가 없어요'),
+      '지원0 제목': findVisibleText('아직 지원한 일자리가 없어요'),
       '지원0 설명': find.text('원하는 날짜의 일자리를 찾아보세요'),
     };
     for (final e in marks.entries) {
@@ -2700,9 +2704,9 @@ void main() {
       //   원래 대상(지원 현황 빈 안내의 링크)으로 범위를 좁힌다.
       final links = <String, Finder>{
         '일자리 찾기': find.descendant(
-            of: find.ancestor(of: find.text('아직 지원한 일자리가 없어요'), matching: find.byType(Column)).first,
+            of: find.ancestor(of: findVisibleText('아직 지원한 일자리가 없어요'), matching: find.byType(Column)).first,
             matching: find.text('일자리 찾기')),
-        '날짜 선택': find.text('날짜 선택'),
+        '날짜 선택': findVisibleText('날짜 선택'),
         '전체 보기': find.text('전체 보기'),
       };
       for (final MapEntry(key: label, value: txt) in links.entries) {
@@ -2749,7 +2753,8 @@ void main() {
       print('$id $l');
     }
     expect(atEnd, isTrue, reason: '말단');
-    expect(find.text('지금 표시할 일자리가 없어요'), findsOneWidget, reason: '공고 0 빈 안내(UH150)');
+    // [판정286 갱신 2026-11-26] 빈 안내는 keepWords 로 그린다 — 보이는 글자로 찾는다.
+    expect(findVisibleText('지금 표시할 일자리가 없어요'), findsOneWidget, reason: '공고 0 빈 안내(UH150)');
     // [구현99 C99-2] 세 링크 모두 바깥 receiver 48×48 이상·center hit·viewport 4방향 포함(단언), 서로 겹치지 않음(단언)
     for (final label in const ['일자리 찾기', '날짜 선택', '전체 보기']) {
       final v = recv[label];
@@ -2977,8 +2982,9 @@ void main() {
       expect(z.width >= 48 && z.height >= 48, isTrue, reason: '$tok 칸 $i receiver local ≥48 $z');
       expect(inV, isTrue, reason: '$tok 칸 $i ensureVisible 뒤 본문 · 가로 viewport · 화면 안 $r');
       expect(hit, isTrue, reason: '$tok 칸 $i 가운데 hit');
-      expect(gw.onTap != null, on, reason: '$tok 칸 $i 활성 = 확정(공고 0)');
-      expect(sw.properties.enabled, on, reason: '$tok 칸 $i 의미 enabled');
+      // [판정285 C285-01 갱신] 모든 날짜가 선택 가능 — 활성은 확정/공고 유무와 무관(옛 기대: 확정 날만).
+      expect(gw.onTap != null, isTrue, reason: '$tok 칸 $i 활성(모든 날짜 · 확정 ${on ? '있음' : '없음'})');
+      expect(sw.properties.enabled, isTrue, reason: '$tok 칸 $i 의미 enabled');
       expect(sw.properties.selected, isFalse, reason: '$tok 칸 $i 미선택');
     }
     await vqCapture(t, key2, '${id}_base', conditions: {
@@ -2991,8 +2997,9 @@ void main() {
       if (row != null) expect(_ymd394(target), row['select'], reason: '$tok 확정 선택일 = 계약표');
       final ix = want.indexOf(target);
       expect(ix, 3, reason: '$tok _day(3) = 7칸 중 4번째');
-      final ctaText = '${target.month}월 ${target.day}일 일자리 0개 보기';
-      final ctaRe = RegExp(r'^\d{1,2}월 \d{1,2}일 일자리 \d+개 보기$');
+      // [판정285 갱신 2026-11-26] 선택일 CTA 글자 = 「M월 D일 일자리 보기」(공고 수는 버튼 밖) · 같은 칸 재탭 = 선택 유지 · `날짜 해제` 로 해제.
+      final ctaText = '${target.month}월 ${target.day}일 일자리 보기';
+      final ctaRe = RegExp(r'^\d{1,2}월 \d{1,2}일 일자리 보기$');
       Finder ctaF() => find.byWidgetPredicate((w) => w is Text && w.data != null && visibleText(w.data!) == ctaText, skipOffstage: false);
       Finder anyCta() => find.byWidgetPredicate((w) => w is Text && w.data != null && ctaRe.hasMatch(visibleText(w.data!)), skipOffstage: false);
       Future<void> tapCell(String what) async {
@@ -3020,15 +3027,31 @@ void main() {
       await vqCapture(t, key2, '${id}_base_selected', conditions: {
         'viewport': '${size.width.toInt()}x${size.height.toInt()}', 'textScaler': scale, 'scroll': '${labels[ix]} 칸 실제 탭(선택 — 화면 상태만)',
         'measure': 'selected=$sel1 cta=$c1'});
-      await tapCell('해제');
+      await tapCell('재탭');
+      final selRe = [for (var i = 0; i < 7; i++) semAt(i).properties.selected == true];
+      final cRe = anyCta().evaluate().length;
+      rec('재탭 → selected=$selRe · 전체 CTA $cRe (유지)');
+      final clearF = find.byWidgetPredicate((w) => w is Semantics && w.properties.label == '날짜 해제', skipOffstage: false);
+      expect(clearF, findsOneWidget, reason: '$tok 날짜 해제 1');
+      await t.ensureVisible(clearF);
+      for (var k = 0; k < 4; k++) {
+        await t.pump(const Duration(milliseconds: 100));
+      }
+      taps++;
+      await t.tapAt(t.getCenter(clearF));
+      for (var k = 0; k < 6; k++) {
+        await t.pump(const Duration(milliseconds: 100));
+      }
       final sel2 = [for (var i = 0; i < 7; i++) semAt(i).properties.selected == true];
       final c2 = anyCta().evaluate().length;
-      rec('해제 탭 → selected=$sel2 · 전체 CTA $c2 (0→1→0)');
+      rec('날짜 해제 → selected=$sel2 · 전체 CTA $c2 (0→1→1→0)');
+      expect(selRe, sel1, reason: '$tok 같은 칸 재탭 → 선택 유지');
+      expect(cRe, 1, reason: '$tok 재탭 뒤 CTA 유지');
       expect(c0, 0, reason: '$tok 탭 전 CTA 0');
       expect(sel1, [for (var i = 0; i < 7; i++) i == ix], reason: '$tok 선택 flag = 탭한 칸만');
       expect(c1, 1, reason: '$tok 정확 CTA "$ctaText" 1');
       expect(c1any, 1, reason: '$tok CTA 전체 1');
-      expect(sel2.every((x) => !x), isTrue, reason: '$tok 다시 탭 → 선택 해제');
+      expect(sel2.every((x) => !x), isTrue, reason: '$tok 날짜 해제 → 선택 해제');
       expect(c2, 0, reason: '$tok 해제 뒤 CTA 0');
     }
     expect(overflows, isEmpty, reason: overflows.join(' | '));
@@ -3058,6 +3081,8 @@ void main() {
   //   점·범례 글자의 rect 를 따로 남겨 PNG 대비를 문자 / 비문자로 나눠 잰다. 탭·쓰기 없음(본문 drag 만).
   // [DU394] 메타는 실제 값(기준일 · _day(1) · clock)으로 적는다(원 '11/7 · 2026-11-06T01:00Z' 하드코딩 교정 — 원문은 orig 에 보존).
   //   이번 주 확정 +1 표식 = 표시 주 ∩ {_day(1)}: 그 칸의 successDark 점 1개(교집합이 비면 0) · 범례 점 2 — 계약표 h100w 와 대조.
+  // [판정285 갱신 2026-11-26] `이번 주 일정` 섹션을 지웠다(같은 7칸 줄 중복 — 판정285 §3) — 이 시험의 대상 표면이 없다.
+  //   확정·지원 중 점·범례는 위 날짜띠가 말하고 worker_home_285_test WH-2·WH-3·WH-5 가 본다. 옛 관측 기록 보존을 위해 지우지 않고 건너뛴다.
   testWidgets('H100-W 홈 390×844@1.0 — 이번 주 확정 1건: 날짜 줄·이번 주 일정 표식·범례 · 기준일 주 교집합 · D394DATE', (t) async {
     const tok = 'H100-W';
     _d394(_start394(tok));
@@ -3145,7 +3170,7 @@ void main() {
     expect(t.takeException(), isNull);
     await t.pumpWidget(const SizedBox.shrink());
     _d394('D394 $tok done base=${_ymd394(_today)} taps=0 moves=$moves');
-  });
+  }, skip: true);
 
   // [DU1 후속101 C101-3] 홈 이번 주 대기 표식 — H100-W 와 같은 조건(clock·workerTheme·_loadFonts 근사·DPR1·inset0)에
   //   기존 LOCAL helper 로 대기 2건을 더한다: 오늘(+0, brand 채운 오늘 상자 아래 점) · +2. 확정 +1 은 H100-W 와 같다.
@@ -3153,6 +3178,8 @@ void main() {
   //   점 색·rect 는 출력 관찰, 단언은 범례 1쌍·이번 주 점 3개·overflow 0·예외 없음. 탭·쓰기 없음(본문 drag 만).
   // [DU394] 1부 = 고정 평일 표본 11-04(오늘 · +1 · +2 가 같은 주 — 원 3점 조판 단언 그대로 + 칸별 점) · 2부 = 기준일 주(계약표 h101:
   //   11-06 3점 · 11-08 1점 · 11-30 3점)를 칸별 점 색으로 대조한다(확정 #166534 · 대기 #E65100). 범례 점 2 · 넘침 0 · 예외 없음은 두 부 모두.
+  // [판정285 갱신 2026-11-26] `이번 주 일정` 섹션을 지웠다(같은 7칸 줄 중복 — 판정285 §3) — 이 시험의 대상 표면이 없다.
+  //   확정·지원 중 점·범례는 위 날짜띠가 말하고 worker_home_285_test WH-2·WH-3·WH-5 가 본다. 옛 관측 기록 보존을 위해 지우지 않고 건너뛴다.
   testWidgets('H101-W 홈 390×844@1.0 — 이번 주 확정 1·대기 2: 이번 주 표식·범례 · 고정 평일 11-04 + 기준일 주 · D394DATE', (t) async {
     const tok = 'H101-W';
     _d394(_start394(tok));
@@ -3318,7 +3345,7 @@ void main() {
     expect(t.takeException(), isNull);
     await t.pumpWidget(const SizedBox.shrink());
     _d394('D394 $tok done base=${_ymd394(_today)} taps=0 moves=$moves');
-  });
+  }, skip: true);
 
   testWidgets('VQ-01b 지원자 홈 — 빈 상태(확정·지원 없음)', (t) async {
     await _capture(t, UserHomeScreen(reads: _reads(const []), clock: () => _clock), 'VQ-01b_user_home_empty');
@@ -3522,7 +3549,7 @@ void main() {
     }
 
     Future<void> openSheet(String id, ({GlobalKey key, ScrollPosition pos, Rect vp}) o) async {
-      final more = find.text('날짜 선택'); // [DU383 r2] UH089 — 시트 열기 전에는 홈 행동 하나(시트 제목은 열린 뒤)
+      final more = findVisibleText('날짜 선택'); // [DU383 r2] UH089 — 시트 열기 전에는 홈 행동 하나(시트 제목은 열린 뒤)
       one(more, '$id 날짜 선택(홈 행동)');
       await center(o.pos, o.vp, more);
       recv(more, '$id 날짜 선택(홈 행동)');
@@ -4318,6 +4345,8 @@ void main() {
   // [DU397] 이번 주 일정 가로 스크롤 분기 — 320×640@3.0, 기준일 = DU1_VQ_DATE(배정 11-16). 분기 발생(필요 칸 폭 × 7 > 가용 · 가로 최대 이동 > 0)부터
   //   단언해 빈 통과를 막는다. 일곱 칸을 실제 가로 스크롤로 하나씩 들여 full date(요일 · 숫자) · 순서 · 고유 · 오늘 채움 정확 1 · 점 귀속/색 ·
   //   숫자 한 줄 · 말줄임 0 · 상자/칸/가로 viewport/화면/본문 안 · 이웃 칸 비겹침. 첫/끝 위치 PNG. 탭 · 쓰기 없음.
+  // [판정285 갱신 2026-11-26] `이번 주 일정` 섹션을 지웠다(같은 7칸 줄 중복 — 판정285 §3) — 이 시험의 대상 표면이 없다.
+  //   확정·지원 중 점·범례는 위 날짜띠가 말하고 worker_home_285_test WH-2·WH-3·WH-5 가 본다. 옛 관측 기록 보존을 위해 지우지 않고 건너뛴다.
   testWidgets('DU397-WEEK-OVERFLOW-B 이번 주 일정 숫자 폭 가로 스크롤 320×640@3.0 · 기준일 11-16 · D397FB', (t) async {
     const tok = 'DU397-WEEK-OVERFLOW-B';
     _d394(_start394(tok));
@@ -4461,5 +4490,5 @@ void main() {
     expect(t.takeException(), isNull);
     await t.pumpWidget(const SizedBox.shrink());
     _d394('D394 $tok done base=${_ymd394(_today)} taps=0 moves=$moves');
-  });
+  }, skip: true);
 }

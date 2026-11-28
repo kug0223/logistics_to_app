@@ -394,8 +394,8 @@ void main() {
               .toList();
       const errMsg = '데이터를 불러오지 못했습니다. 다시 시도해 주세요.';
       final errText = findVisibleText(errMsg);
-      final retryText = find.text('다시 시도');
-      final dayLoading = find.text('근무 인력을 불러오는 중...');
+      final retryText = findVisibleText('다시 시도');
+      final dayLoading = findVisibleText('근무 인력을 불러오는 중...');
       final rootLoading = find.text('인력 정보를 불러오는 중...');
       const noBizTitle = '아직 근무를 관리할 사업장이 없어요';
       final emptyToday = findVisibleText('오늘 확정된 인력이 없습니다.'); // [DU604b] 빈 상태 글 keepWords — 보이는 글자로 찾는다(DU255 꼴)

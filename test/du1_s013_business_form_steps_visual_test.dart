@@ -263,7 +263,7 @@ Future<void> _cell(WidgetTester t, {required String id, required Size size, requ
   expect(find.text('이전'), findsWidgets, reason: 'step1 진입');
   await walk('step1', _step1Titles);
   await action('step1', '다음', tapIt: true);
-  expect(find.text('저장하기'), findsWidgets, reason: 'step2 진입');
+  expect(findVisibleText('저장하기'), findsWidgets, reason: 'step2 진입');
   await walk('step2', _step2Titles);
   await action('step2', '저장하기', tapIt: false);
   out.add('섹션 제목 관측: ${titleSeen.entries.map((e) => '${e.key} ${e.value}').join(' · ')}');

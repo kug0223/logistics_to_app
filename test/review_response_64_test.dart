@@ -146,8 +146,8 @@ void main() {
       expect(find.byWidgetPredicate((w) => w is Text && (w.data ?? '').replaceAll('⁠', '').contains('상세 코멘트와 재고용 의사는')), findsOneWidget);
       expect(t.takeException(), isNull);
       // 창을 닫아 정적 _pendingKeys 를 비운다(다음 크기 실행에서 다시 뜨게).
-      await t.ensureVisible(find.text('확인'));
-      await t.tap(find.text('확인'));
+      await t.ensureVisible(findVisibleText('확인'));
+      await t.tap(findVisibleText('확인'));
       await t.pump(const Duration(milliseconds: 300));
     });
   }

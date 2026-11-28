@@ -124,18 +124,24 @@ String _vt(Widget w) => w is Text ? visibleText(w.data ?? w.textSpan?.toPlainTex
 Finder _el(Element e) => find.byElementPredicate((x) => identical(x, e), skipOffstage: false);
 
 // 단계별 기대(strict = 후보 · before = 현행 관측). 값은 출력 그대로.
+// [판정285 갱신 2026-11-26 — C285-01 · CP03 Q6 대체] 모든 날짜가 선택 가능하다(비활성 날 0 → offNum '-' · tEn true) ·
+//   같은 날 재탭은 선택 유지('retap') · 해제는 `날짜 해제` 로만('clear') · 데이터 0 인 오늘도 선택된다('off') ·
+//   선택일 CTA 글자는 「M월 D일 일자리 보기」(공고 수는 버튼 밖). 오늘 외곽선/채움·범위 밖 오늘 표시 없음은 그대로.
 const _strict = <String, Map<String, String>>{
-  'init': {'tIx': '0', 'tDeco': 'outline', 'tNum': 'brand', 'tEn': 'true', 'tSem': 'true', 'selIx': '-', 'selN': '0', 'offNum': 'secondary', 'opac': '0', 'cta': '0'},
-  'todaysel': {'tIx': '0', 'tDeco': 'fill', 'tNum': 'white', 'tEn': 'true', 'tSem': 'true', 'selIx': '0', 'selN': '1', 'offNum': 'secondary', 'opac': '0', 'cta': '1'},
-  'clear': {'tIx': '0', 'tDeco': 'outline', 'tNum': 'brand', 'tEn': 'true', 'tSem': 'true', 'selIx': '-', 'selN': '0', 'offNum': 'secondary', 'opac': '0', 'cta': '0'},
-  'other': {'tIx': '0', 'tDeco': 'outline', 'tNum': 'brand', 'tEn': 'true', 'tSem': 'true', 'selIx': '2', 'selN': '1', 'offNum': 'secondary', 'opac': '0', 'cta': '1'},
-  'off': {'tIx': '0', 'tDeco': 'outline', 'tNum': 'brand', 'tEn': 'false', 'tSem': 'true', 'selIx': '-', 'selN': '0', 'offNum': 'secondary', 'opac': '0', 'cta': '0'},
-  'range': {'tIx': '-', 'tDeco': '-', 'tNum': '-', 'tEn': '-', 'tSem': '-', 'selIx': '0', 'selN': '1', 'offNum': 'secondary', 'opac': '0', 'cta': '1'},
-  'data0': {'tIx': '0', 'tDeco': 'fill', 'tNum': 'white', 'tEn': 'false', 'tSem': 'true', 'selIx': '0', 'selN': '1', 'offNum': 'secondary', 'opac': '0', 'cta': '1'},
+  'init': {'tIx': '0', 'tDeco': 'outline', 'tNum': 'brand', 'tEn': 'true', 'tSem': 'true', 'selIx': '-', 'selN': '0', 'offNum': '-', 'opac': '0', 'cta': '0'},
+  'todaysel': {'tIx': '0', 'tDeco': 'fill', 'tNum': 'white', 'tEn': 'true', 'tSem': 'true', 'selIx': '0', 'selN': '1', 'offNum': '-', 'opac': '0', 'cta': '1'},
+  'retap': {'tIx': '0', 'tDeco': 'fill', 'tNum': 'white', 'tEn': 'true', 'tSem': 'true', 'selIx': '0', 'selN': '1', 'offNum': '-', 'opac': '0', 'cta': '1'},
+  'clear': {'tIx': '0', 'tDeco': 'outline', 'tNum': 'brand', 'tEn': 'true', 'tSem': 'true', 'selIx': '-', 'selN': '0', 'offNum': '-', 'opac': '0', 'cta': '0'},
+  'other': {'tIx': '0', 'tDeco': 'outline', 'tNum': 'brand', 'tEn': 'true', 'tSem': 'true', 'selIx': '2', 'selN': '1', 'offNum': '-', 'opac': '0', 'cta': '1'},
+  'off': {'tIx': '0', 'tDeco': 'fill', 'tNum': 'white', 'tEn': 'true', 'tSem': 'true', 'selIx': '0', 'selN': '1', 'offNum': '-', 'opac': '0', 'cta': '1'},
+  'range': {'tIx': '-', 'tDeco': '-', 'tNum': '-', 'tEn': '-', 'tSem': '-', 'selIx': '0', 'selN': '1', 'offNum': '-', 'opac': '0', 'cta': '1'},
+  'data0': {'tIx': '0', 'tDeco': 'fill', 'tNum': 'white', 'tEn': 'true', 'tSem': 'true', 'selIx': '0', 'selN': '1', 'offNum': '-', 'opac': '0', 'cta': '1'},
 };
 const _beforeWant = <String, Map<String, String>>{
   'init': {'tIx': '0', 'tDeco': 'none', 'tNum': 'primary', 'tEn': 'true', 'tSem': 'false', 'selIx': '-', 'selN': '0', 'offNum': 'primary', 'cta': '0'},
   'todaysel': {'tIx': '0', 'tDeco': 'fill', 'tNum': 'white', 'tEn': 'true', 'tSem': 'false', 'selIx': '0', 'selN': '1', 'offNum': 'primary', 'cta': '1'},
+  // [판정285] before(옛 코드)는 재탭이 해제였다 — 관측 기록용 키만 더한다.
+  'retap': {'tIx': '0', 'tDeco': 'none', 'tNum': 'primary', 'tEn': 'true', 'tSem': 'false', 'selIx': '-', 'selN': '0', 'offNum': 'primary', 'cta': '0'},
   'clear': {'tIx': '0', 'tDeco': 'none', 'tNum': 'primary', 'tEn': 'true', 'tSem': 'false', 'selIx': '-', 'selN': '0', 'offNum': 'primary', 'cta': '0'},
   'other': {'tIx': '0', 'tDeco': 'none', 'tNum': 'primary', 'tEn': 'true', 'tSem': 'false', 'selIx': '2', 'selN': '1', 'offNum': 'primary', 'cta': '1'},
   'off': {'tIx': '0', 'tDeco': 'none', 'tNum': 'primary', 'tEn': 'false', 'tSem': 'false', 'selIx': '-', 'selN': '0', 'offNum': 'primary', 'cta': '0'},
@@ -156,8 +162,8 @@ void main() {
 
   const views = [(id: 'W', w: 390.0, h: 844.0, s: 1.0), (id: 'B', w: 320.0, h: 640.0, s: 2.0)];
   const states = [
-    (key: 'TODAY', title: '오늘 · 모레 확정 — 오늘 미선택 외곽선 · 오늘 선택 채움 · 해제 · 다른 날 선택'),
-    (key: 'OFF', title: '오늘 데이터 없음 — 오늘 탭 불가 · 외곽선 · 탭 무반응'),
+    (key: 'TODAY', title: '오늘 · 모레 확정 — 오늘 미선택 외곽선 · 오늘 선택 채움 · 재탭 유지 · 날짜 해제 · 다른 날 선택'),
+    (key: 'OFF', title: '오늘 데이터 없음 — 그래도 선택 가능(판정285 C285-01) · 선택 채움 · CTA'),
     (key: 'RANGE', title: '날짜 시트로 오늘 더하기 8 선택 — 띠 범위 밖 오늘 표시 없음'),
   ];
   for (final v in views) {
@@ -224,7 +230,8 @@ void main() {
         ));
         await settle(25);
 
-        final group = find.byWidgetPredicate((w) => w is Semantics && w.properties.label == '일할 날짜 선택', skipOffstage: false);
+        // [판정285] 날짜 그룹 의미 이름 '일할 날짜 선택' → '날짜별 일정과 일자리'.
+        final group = find.byWidgetPredicate((w) => w is Semantics && w.properties.label == '날짜별 일정과 일자리', skipOffstage: false);
         must('날짜 탐색 묶음 1', group.evaluate().length == 1, '${group.evaluate().length}');
         final dateRe = RegExp(r'^\d{1,2}월 \d{1,2}일 ');
         List<Element> cells() => find
@@ -300,7 +307,11 @@ void main() {
               .descendant(of: group, matching: find.byWidgetPredicate((w) => w is Opacity && w.opacity < 1.0, skipOffstage: false), skipOffstage: false)
               .evaluate()
               .length;
-          final cta = find.byWidgetPredicate((w) => w is Text && _vt(w).contains('일자리 0개 보기'), skipOffstage: false).evaluate().length;
+          // [판정285] 선택일 CTA = 「M월 D일 일자리 보기」(공고 수는 버튼 밖).
+          final cta = find
+              .byWidgetPredicate((w) => w is Text && RegExp(r'^\d{1,2}월 \d{1,2}일 일자리 보기$').hasMatch(_vt(w)), skipOffstage: false)
+              .evaluate()
+              .length;
           return {'tIx': tIx, 'tDeco': tDeco, 'tNum': tNum, 'tEn': tEn, 'tSem': tSem, 'selIx': selIx, 'selN': '$selN', 'offNum': offNum, 'opac': '$opac', 'cta': '$cta'};
         }
 
@@ -356,7 +367,14 @@ void main() {
           await shot('1init', '오늘 미선택(오늘 · 모레 확정)');
           await tapCell(_today);
           line('todaysel', probe());
-          await tapCell(_today);
+          await tapCell(_today); // [판정285] 같은 날 재탭 = 선택 유지
+          line('retap', probe());
+          final clearAct = find.byWidgetPredicate((w) => w is Semantics && w.properties.label == '날짜 해제', skipOffstage: false);
+          must('날짜 해제 1', clearAct.evaluate().length == 1, '${clearAct.evaluate().length}');
+          await t.ensureVisible(clearAct);
+          await settle(4);
+          await t.tapAt(t.getCenter(clearAct));
+          await settle(6);
           line('clear', probe());
           await tapCell(_day(2));
           line('other', probe());
@@ -376,15 +394,16 @@ void main() {
           line('data0', m0);
           final semT = t.widget<Semantics>(cellF(_today));
           final gdT = find.descendant(of: cellF(_today), matching: find.byType(GestureDetector, skipOffstage: false), skipOffstage: false);
-          must('data0 오늘 Semantics · GestureDetector tap 콜백 0', semT.properties.onTap == null && gdT.evaluate().isNotEmpty && t.widget<GestureDetector>(gdT.first).onTap == null);
-          await tapCell(_today); // 비활성 오늘 실제 재탭 — 선택/CTA 불변
+          // [판정285 C285-01] 데이터 0 이 된 오늘도 선택 가능 — 의미·GestureDetector 가 같은 콜백을 가진다.
+          must('data0 오늘 Semantics · GestureDetector tap 콜백 있음', semT.properties.onTap != null && gdT.evaluate().isNotEmpty && t.widget<GestureDetector>(gdT.first).onTap != null);
+          await tapCell(_today); // 같은 날 재탭 — 선택/CTA 유지
           final m1 = probe();
-          must('data0 비활성 오늘 재탭 뒤 선택 · CTA 불변', m1['selIx'] == m0['selIx'] && m1['selN'] == m0['selN'] && m1['cta'] == m0['cta'], '$m0 → $m1');
+          must('data0 오늘 재탭 뒤 선택 · CTA 유지', m1['selIx'] == m0['selIx'] && m1['selN'] == m0['selN'] && m1['cta'] == m0['cta'], '$m0 → $m1');
         } else if (st.key == 'OFF') {
-          await tapCell(_today); // 탭 불가 — 무반응이어야 한다(선택 0 · CTA 0)
+          await tapCell(_today); // [판정285 C285-01] 데이터가 없어도 선택된다(선택 1 · CTA 1)
           line('off', probe());
-          await ready([_today], '오늘(탭 불가)');
-          await shot('1off', '오늘 탭 불가(데이터 없음)');
+          await ready([_today], '오늘(데이터 없음 · 선택)');
+          await shot('1off', '오늘 선택(데이터 없음)');
         } else {
           final act = find.byWidgetPredicate((w) => w is Text && _vt(w) == '날짜 선택', skipOffstage: false);
           must('홈 행동 날짜 선택 1', act.evaluate().length == 1, '${act.evaluate().length}');

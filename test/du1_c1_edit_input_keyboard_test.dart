@@ -25,6 +25,7 @@ import 'package:ALfit/theme/role_theme.dart';
 import 'package:ALfit/utils/navigation_key.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake with MockPlatformInterfaceMixin implements FirebaseAppPlatform {
   @override
@@ -212,7 +213,7 @@ void main() {
       final edit = find.byWidgetPredicate((w) => w is EditableText && identical(w.controller, ctl));
       final cta = find.byType(TOActionButton);
       final ctaInk = find.descendant(of: cta, matching: find.byType(InkWell)).first;
-      final ctaLabel = find.descendant(of: cta, matching: find.text('저장하기'));
+      final ctaLabel = find.descendant(of: cta, matching: findVisibleText('저장하기'));
       EditableTextState es() => t.state<EditableTextState>(edit);
       Rect caretRect() {
         final re = es().renderEditable;

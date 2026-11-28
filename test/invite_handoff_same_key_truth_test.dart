@@ -30,6 +30,7 @@ import 'package:ALfit/screens/business_admin/dialogs/day_applicants_dialog.dart'
 import 'package:ALfit/screens/business_admin/dialogs/day_applicants_reads.dart';
 import 'package:ALfit/screens/user/my_applications_reads.dart';
 import 'package:ALfit/screens/user/my_applications_screen.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake
     with MockPlatformInterfaceMixin
@@ -389,21 +390,21 @@ void main() {
 
     // 관리자가 보낸 그 사건이 지원자 쪽에도 같은 이름으로 온다.
     expect(find.textContaining(kBizName), findsWidgets);
-    expect(find.text('근무 초대'), findsOneWidget);
+    expect(findVisibleText('근무 초대'), findsOneWidget);
     expect(find.text('근무 초대가 도착했어요'), findsOneWidget);
     // 날짜는 fixture 가 미는 값이라 문자열을 못박지 않는다 — 시간대만 고정.
     expect(find.textContaining('09:00~18:00'), findsOneWidget);
 
     // 자리가 있다고 **서버가 확인해 준** 경우에만 수락 CTA 가 뜬다.
     expect(find.text('수락하기'), findsOneWidget);
-    expect(find.text('거절'), findsOneWidget);
+    expect(findVisibleText('거절'), findsOneWidget);
 
     // 탭해도 즉시 확정되지 않는다 — 화면에 확정이 선언되지 않는다.
     await tester.tap(find.text('수락하기'));
     for (var i = 0; i < 20; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
-    expect(find.textContaining('확정되었습니다'), findsNothing);
+    expect(findVisibleTextContaining('확정되었습니다'), findsNothing);
     expect(find.textContaining('출근 예정이에요'), findsNothing);
 
     // ── 여기서 멈춘다. `_acceptInvite` 는 확인창을 띄우기 전에
@@ -426,7 +427,7 @@ void main() {
     // 모르는 것을 "가능"으로 바꾸지 않는다.
     expect(find.text('수락하기'), findsNothing);
     // 거절은 자리 상태와 무관한 자기 결정이라 남는다.
-    expect(find.text('거절'), findsOneWidget);
+    expect(findVisibleText('거절'), findsOneWidget);
   });
 
   testWidgets('[IHK-3] 내가 거절한 초대와 관리자가 거절한 지원이 섞이지 않는다',

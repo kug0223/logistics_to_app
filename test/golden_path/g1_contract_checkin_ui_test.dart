@@ -30,6 +30,7 @@ import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/user/attendance_check_reads.dart';
 import 'package:ALfit/screens/user/attendance_check_screen.dart';
 import 'package:ALfit/widgets/common/loading_button.dart';
+import '../support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake with MockPlatformInterfaceMixin implements FirebaseAppPlatform {
   @override
@@ -126,7 +127,7 @@ void main() {
   }
 
   LoadingButton btn(WidgetTester t) =>
-      t.widget<LoadingButton>(find.ancestor(of: find.text('출근하기'), matching: find.byType(LoadingButton)));
+      t.widget<LoadingButton>(find.ancestor(of: findVisibleText('출근하기'), matching: find.byType(LoadingButton)));
 
   // (지원서 상태, 계약 상태) — 계약 상태 null = 계약 문서 없음
   final cases = <(String, String, ContractStatus?)>[
@@ -146,10 +147,10 @@ void main() {
       final contracts = cs == null ? <EmploymentContractModel>[] : [base.copyWith(status: cs)];
       await pump(t, app, pending, contracts);
       final enabled = btn(t).onPressed != null;
-      final warn = find.text('계약서 확인하고 동의하기').evaluate().isNotEmpty;
+      final warn = findVisibleText('계약서 확인하고 동의하기').evaluate().isNotEmpty;
       // ignore: avoid_print
       print('   $id app=$appStatus contract=${cs?.value ?? '-'} → 출근 버튼 ${enabled ? '활성' : '비활성'} · 서명 안내 ${warn ? '표시' : '없음'}');
-      expect(find.text('출근하기'), findsOneWidget);
+      expect(findVisibleText('출근하기'), findsOneWidget);
       expect(enabled, cs == ContractStatus.completed,
           reason: '양측 서명 완료만 출근을 연다(2026-10-25 사용자 지시) — a713dbc 의 "막지 않는다"는 폐기');
       expect(warn, cs == ContractStatus.pendingWorker);

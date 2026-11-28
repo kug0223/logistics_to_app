@@ -483,7 +483,8 @@ async function cell(id, name, fn) {
   });
   await cell('PA-39', '목록 reader 는 수락과 같은 판정 함수를 쓰고, 모르면 필드를 싣지 않는다', () => {
     const i = SRC.indexOf('export const callableGetMyApplications = onCall(');
-    const body = SRC.slice(i, balancedFrom(SRC, SRC.indexOf('(', i + 40), '(', ')'));
+    const fnBodyL9 = (src, sig) => { const i = src.indexOf(sig); assert.ok(i >= 0, sig); return src.slice(i, src.indexOf('\n}\n', i)); }; // [L9 · 판정289] handler → helper 위임 추종
+    const body = SRC.slice(i, balancedFrom(SRC, SRC.indexOf('(', i + 40), '(', ')')) + fnBodyL9(SRC, 'async function srvReadMyApplications(');
     assert.ok(body.includes('srvInviteAcceptReadiness(d.data(), userSnap.data(), rv.data())'));
     assert.ok(body.includes('...(readiness ? {inviteAcceptReadiness: readiness} : {})'));
   });

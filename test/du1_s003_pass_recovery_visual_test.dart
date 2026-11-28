@@ -13,6 +13,7 @@ import 'package:ALfit/screens/auth/pass_auth_recovery_screen.dart';
 import 'package:ALfit/theme/role_theme.dart';
 
 import 'support/du1_vq_capture.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 void main() {
   testWidgets('S003-N 본인인증 복구 초기 안내 392×851@1.0 — 전체·행동 실측', (t) async {
@@ -53,7 +54,7 @@ void main() {
       return hit.path.any((e) => e.target == t.renderObject(f));
     }
     final close = find.byIcon(Icons.close);
-    final passText = find.textContaining('휴대폰 본인인증').last;
+    final passText = findVisibleTextContaining('휴대폰 본인인증').last;
     final pass = find.ancestor(of: passText, matching: find.byWidgetPredicate((w) => w is ButtonStyleButton || w is InkWell)).first;
     final later = find.widgetWithText(TextButton, '나중에 하기');
     final rPass = t.getRect(pass);
@@ -113,7 +114,7 @@ void main() {
       return hit.path.any((e) => e.target == t.renderObject(f));
     }
     final later = find.widgetWithText(TextButton, '나중에 하기');
-    final pass = find.ancestor(of: find.textContaining('휴대폰 본인인증').last, matching: find.byType(InkWell)).first;
+    final pass = find.ancestor(of: findVisibleTextContaining('휴대폰 본인인증').last, matching: find.byType(InkWell)).first;
     final before = pos.pixels;
     final rPass0 = t.getRect(pass);
     await t.scrollUntilVisible(later, 80, scrollable: scroll);

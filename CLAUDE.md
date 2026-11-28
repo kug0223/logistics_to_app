@@ -250,11 +250,11 @@ HH:MM 포맷 검증만 유지.
 ### [DESIGN-A-M4] 퇴사 D+3 자동 승인 + D+1/D+2 알림
 D+3 자동 승인 유지 (민법상 1개월 기준보다 관대). 관리자에게 D+1(2일 경고), D+2(긴급) FCM 알림.
 
-### [DESIGN-A-M5] callableApplyNoShowPenalty 2단계 구조 — 클라이언트 자발적 호출
-당일 취소 후 노쇼 패널티는 클라이언트가 `callableCancelConfirmedApplication` → `callableApplyNoShowPenalty` 순으로 별도 호출하는 2단계 구조.
-클라이언트가 2번째 호출을 건너뛰면 TrustScore 패널티 없이 취소 가능하나, CF 내부에서 workDate 서버 재검증(48시간 이내)이 있어 시간 우회 불가.
-불리한 것은 근로자 TrustScore이므로 사용자가 자신에게 패널티 미부과하는 것이 경미한 이슈.
-관리자 물리 노쇼(`callableBatchSetNoShow`)는 별도 경로로 status=NO_SHOW + finalWage=0만 처리 — TrustScore 연동은 의도적 미구현.
+### [DESIGN-A-M5] 확정 취소 노쇼 벌점 — 서버 권위 · 취소와 같은 거래 (2026-11-26 판정291 F291-C07 문서 교정)
+- **CURRENT**: 당일(벌점 대상) 확정 취소의 노쇼 벌점은 `callableCancelConfirmedApplication` **안에서** 서버가 결정하고, 취소 전이와 원장/카운터를 **같은 거래**로 적용한다(`index.ts` 취소 핸들러 · `applyPenaltyInTx` · 같은 날 이미 부과면 중복 0 · 마커 소유·보류·멱등 조건 포함). 클라이언트가 보내는 `applyNoShowPenalty` 는 호환성용이며 서버 결정에 쓰지 않는다.
+- 앱(lib)에는 `callableApplyNoShowPenalty` 호출부가 없다 — 옛 '클라이언트 자발적 2단계 · 2번째 호출 생략 시 벌점 없이 취소 가능' 설명은 **역사 설계**이며 현재 동작이 아니다. 후속 callable 을 새로 붙이지 않는다.
+- 대기(PENDING) 취소와 확정 취소를 혼동하지 않는다(대기 취소 서버 단일화는 별도 L55 판정).
+- 관리자 물리 노쇼(`callableBatchSetNoShow`)는 별도 경로로 status=NO_SHOW + finalWage=0 처리 — 신뢰도 연동은 트리거·원장 경로를 따른다(이 항목에서 바꾸지 않음).
 
 ### [DESIGN-TO-T1] TO 레벨 minTrustScore 지원 차단 — 미구현 (의도적)
 TO에 신뢰도 최솟값 필드를 추가해 미달 근로자의 지원을 시스템에서 차단하는 기능은 구현하지 않는다.
@@ -331,16 +331,38 @@ PENDING 자체가 대기 상태이며, 관리자가 PENDING 인원 중에서 선
 - 동일인이 USER 1개 + BUSINESS_ADMIN 1개를 동시에 보유하는 것은 허용
 - phone/authPhone/contactPhone은 uniqueness key가 아님
 
-**CURRENT IMPLEMENTATION:**
+**CURRENT — 새 세대 (카카오 가입 · 2026-11-25 구현1 · 판정282 반영):**
+- `identities/{ciKey}`(versioned domain-separated HMAC · Secret `CI_HMAC_KEY_V1`) × canonical role 슬롯
+- `authLinks` 양방향(provider·app·subject·role ↔ uid) · 같은 카카오의 두 역할 = 같은 identity · 별도 UID · 자동 병합·교체 0
+- writer = CF 전용
+- KG CI 는 **요구 계약**이며 실 KG 결과로 검증된 것은 아님 (**미검증** · 실 MID 표본 전)
+
+**CURRENT — 옛 QA 세대 (보존만 · 새 흐름 미조회 · 신규 생성 경로 서버 닫힘):**
 - 내국인: `nativeIdentityFingerprints/{ciHash}_{role}` sentinel (Firestore transaction, atomic)
 - 외국인: `foreignIdFingerprints/{HMAC-SHA256}_{role}` sentinel (동일 패턴, 대칭)
 - sentinel key는 CF Admin SDK로만 생성/삭제 — 클라이언트 직접 조작 불가
+- 옛 QA 와 새 가입이 같은 사람일 수 있음 — 세대 간 중복 0 을 주장하지 않는다
+
+**FUTURE:** 이메일 가입은 같은 identity·authLinks·가입 세션 계약을 재사용 (방식 미정)
 
 ---
 
-### 2. 내국인/외국인 가입 (Registration)
+### 2. 가입 (Registration)
 
-**CONFIRMED:**
+**CONFIRMED (2026-11-25 대표 · 새 세대):**
+- 내·외국인 선택 없는 하나의 흐름 — 카카오 → 이용 목적 → 시행본 필수 동의 → KG이니시스 본인확인(공통 · 계약 = 간편인증) → 회원 완료 → 역할별 첫 화면·시작 준비
+- 국적은 가입 시 `unknown`(미분류) · 가입 후 서류(신분증/외국인등록증)로 **서류 분류** (법적 국적·진위·취업자격 검증 아님)
+- 30일(정확 경계) · 영구 블랙
+- KG 불가 외국인 예외 경로는 만들지 않음 (재결정 대상)
+
+**미검증:** KG V1 실제 응답 필드 · 외국인 인증 가능 범위 · KG 창 카카오 인증서의 CI 수신(별도 서류 필요 · 미수신 시 `KG_CI_MISSING` 거부 유지) — X1 실기기 표본 대기
+
+**CURRENT (서버 계약):**
+- `verifyPassAuth` 목적 = `signup` · `account_deletion` (세션·세대·requestId·역할·기한 결합 · imp_uid 같은 세션 멱등/다른 세션 거부 · 실 CI 없으면 실패)
+- 옛 `register`/`reauth`/`resetPasswordWithPass` 및 옛 신규 가입 writer 는 닫힘
+- QA 아이디 로그인 유지는 **로그인만** — 옛 가입·PASS 재인증/재설정은 닫히고, 구 QA 비밀번호 OTP 복구·관리자 초기화만 구 QA 전용으로 남음
+
+**옛 QA 세대 (역사 계약 · 신규 가입 경로 닫힘):**
 - 내국인: PASS 본인인증 (KG이니시스/PortOne V1) 필수 → CI 기반 uniqueness
 - 외국인: 외국인등록번호 직접 입력 → HMAC fingerprint 기반 uniqueness
 - 탈퇴 후 30일 재가입 불가 (`deleted_accounts` 컬렉션 기준)
@@ -401,12 +423,12 @@ PENDING 자체가 대기 상태이며, 관리자가 PENDING 인원 중에서 선
 
 ### 5. Application 지원 Prerequisite
 
-**CONFIRMED (Phase 6 업데이트):**
-- bankName + accountNumber + (bankbookImagePath 또는 bankbookImageUrl) 미등록 → 지원 불가
+**CONFIRMED/CURRENT (2026-11-25 판정282 반영):**
+- 모든 세대 공통: `accountStatus == active` · 신분증 열람 동의 · 신분증 경로/URL 존재(장기 포함) · `bankName + accountNumber + accountHolder` 3필드 + 통장사본(bankbookImagePath 또는 URL) · 블랙/제재 중 불가 · 기존 법적 재동의 · 세무(수집 ON 일 때만 · 현재 OFF)
 - 단기(슬롯) 공고: `isIdVerified == true` 추가 필요
-- 내국인: `passVerifiedAt` 존재 필요
-- 외국인: `accountStatus == 'active'` 필요
-- 블랙리스트/제재 중 계정: 지원 불가
+- 근무 확정·초대 수락 등 신원 판정이 적용되는 단계에서는 현재 문서/객체 근거에 대한 자동 MATCHED 또는 해당 사업장의 현재 문서 버전 수동 REVIEWED_OK 라는 기존 OR 를 보존한다. 지원 제출의 서류 준비 조건과 동일한 단계로 쓰지 않는다.
+- 본인확인: 옛 QA 세대 = 내국인 `passVerifiedAt` / 외국인 `accountStatus == 'active'` 계약 그대로 · 새 세대 = 가입 시 공통 KG 근거
+- 새 세대 `nationalityStatus == unknown` 은 지원·TO 초대 수락·재배치 수락에서 `NATIONALITY_UNCONFIRMED`(서류 등록으로 해소) — 미분류를 내국인으로 접지 않는 방어선이며 새 국적 업무 gate 아님
 - [Phase 6 삭제됨] `bankVerificationStatus === 'mismatch'` gate — V3에서 해당 상태 값 미발급이므로 gate 제거
 - [Phase 6 삭제됨] `bankVerificationStatus`(review_required/verified/mismatch) 기반 게이팅 전면 제거
 
@@ -466,20 +488,37 @@ PENDING 자체가 대기 상태이며, 관리자가 PENDING 인원 중에서 선
 ### 8. 탈퇴 / 30일 재가입
 
 **CONFIRMED:**
-- 탈퇴 후 30일간 동일 CI(내국인) / 동일 외국인등록번호(외국인)로 재가입 불가
-- 블랙리스트 계정은 재가입 영구 차단
-- 탈퇴 시 양쪽 sentinel 모두 삭제 + `deleted_accounts` 기록
+- 30일 재가입 불가 (정확 경계 · 기준 = 탈퇴 freeze 시각 · 기존 cooldown 과 max) · 영구 블랙 우선
 
-**CURRENT IMPLEMENTATION:**
+**CURRENT — 새 세대 (2026-11-25 판정282 C282-01 반영):**
+- PreData(freeze) = identity 슬롯을 `deleting` 으로 보존 · **Final 이 제한 기록과 슬롯 해제를 같은 거래로** 처리
+- 비밀번호 없는 계정 탈퇴 = uid·용도 결합 KG 재확인 증명(10분) · cert 용도·요청·만료는 거래 시점 재판정
+- 탈퇴 진행 중(tombstone) 계정의 새 비허용 callable 진입은 공통 서버 판정으로 거부한다(허용16 유지). Firestore 클라이언트 업무 쓰기도 `callerNotDeleting()`으로 거부하며, 본인 로그인 시각·FCM 갱신 예외1과 기존 읽기 규칙은 유지한다. 앱은 PreData 성공 뒤 실패하면 삭제 재개 화면으로 전환한다. 공통 진입 판정은 freeze 전에 이미 입장한 요청의 후속 commit까지 차단한다는 보장이 아니다.
+- 카카오 링크는 Auth 삭제 뒤 삭제 UID 소유분만 정리 (생존 역할 링크 보존)
+- rules 에뮬레이터 의미평가 313셀 통과(DG282-01 · rules SHA 4246c2b3 · `records/work/auth-kakao-1/rules_emu_1.md`) → 11-26 원장 동기화 필드 차단 4줄 추가본(SHA 1f7929b8) 324셀 통과(`records/work/server-merge-1/rules_emu_2/logs/p2`) — 에뮬레이터 ≠ 운영. 실제 연동은 **미검증**
+
+**CURRENT — 옛 QA 세대 (기존 sentinel 삭제·`deleted_accounts.canReregisterAt` 경로 그대로):**
+- 탈퇴 후 30일간 동일 CI(내국인) / 동일 외국인등록번호(외국인)로 재가입 불가
+- 탈퇴 시 양쪽 sentinel 모두 삭제 + `deleted_accounts` 기록
 - `callableDeleteAccountPreData`: sentinel 삭제 + `deleted_accounts.canReregisterAt = 탈퇴일 + 30일`
 - 내국인 재가입: `callableVerifyPassAuth`에서 `deleted_accounts.ciHash` 조회
 - 외국인 재가입: `callableFinalizeForeignIdentity`에서 `deleted_accounts.foreignIdentityFingerprint` 조회
 
 ---
 
-### 9. 외국인 Document-First 가입 (V3 — 2026-08-21 확정)
+### 9. 외국인 가입 (Document-First → 2026-11-25 공통 흐름으로 대체)
 
-**CONFIRMED:**
+**CONFIRMED (2026-11-25):**
+- 외국인 별도 가입 마법사는 신규 가입에서 닫힘 · 외국인도 공통 흐름(정책 2)
+- 외국인등록증은 **가입 후 서류 등록** (`callableRegisterForeignIdDocument` · 가입 sentinel 과 분리 · 옛 HMAC sentinel 미사용)
+
+**CURRENT:**
+- 서버 회원 완료(identity 슬롯 · 제한 통과 · 시행본 필수 동의 사건 · 유효 KG · users 생성) 시 `accountStatus: active`(homeRegion 없음) · **가입 완료 → 짧은 앱 소개 → Home 직행**(대표 11-25 · 지역 미설정 USER 도 Home 진입 · 일자리는 전체 지역 · 홈 「시작 준비」 카드가 지역 → 신분증/외국인등록증 → 급여 계좌 순으로 안내 · 지원 시점 서버 gate 불변)
+- 등록증은 active 조건이 아니라 지원 gate 에서 요구
+- 아래 보존 항목(OCR 역할 · 원문 미저장 · 이름 독립 · 승인 단계 금지 · 클라 active 쓰기 금지 · resume 중 signUp/`users.set` 금지 · 수집 OFF·법무 HOLD)은 그대로 유효
+- 이력: 아래 'active 완료 조건 4가지' · 'registration_pending 복구 CASE A–E' 는 **옛 QA 세대 역사 계약** — 현재 복구 경로의 pending→active 승격은 닫힘 (구 pending 자동 active 0)
+
+**옛 V3 (2026-08-21) 계약:**
 - 외국인 가입 = "외국인등록증 이미지 업로드 → OCR → 사용자 확인 → 서버 검증" 순서
 - OCR = 입력 보조수단 ONLY. "진위확인/취업자격인증" 절대 표현 금지
 - OCR 실패 → 수동 입력으로 대체 (가입 차단 없음)

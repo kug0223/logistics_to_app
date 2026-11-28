@@ -13,6 +13,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/users_create_rule.dart';
+
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('$p 를 찾지 못함');
@@ -127,10 +129,9 @@ void main() {
         expect(rules, contains("'$f'"), reason: '$f denylist 누락');
       }
       // 가입 시점 주입도 막는다.
-      expect(rules,
-          contains("request.resource.data.get('idCardMatchStatus', null) == null"));
-      expect(rules,
-          contains("request.resource.data.get('bankbookMatchStatus', null) == null"));
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정278 C278-3] users create 가 전면 거부(if false)가 됐다 — 같은 결론(주입 불가)을 더 강하게 확인한다. 다시 열리면 옛 null 조건을 요구한다(support/users_create_rule.dart).
+      expect(usersCreateDeniesField(rules, 'idCardMatchStatus'), isTrue);
+      expect(usersCreateDeniesField(rules, 'bankbookMatchStatus'), isTrue);
     });
 
     test('09 toMap에 canonical 필드가 없다', () {

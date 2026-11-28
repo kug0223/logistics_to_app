@@ -6,7 +6,6 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
-import 'package:cloud_functions/cloud_functions.dart';
 import '../../models/core/legal_terms_model.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
@@ -17,9 +16,11 @@ import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/text_layout.dart';
 import '../../utils/toast_helper.dart';
+import '../../utils/withdraw_preview.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../widgets/common/terms_read_only_screen.dart';
 import '../common/help_screen.dart';
+import '../common/deletion_reauth_screen.dart';
 import '../common/tour_screen.dart';
 
 /// 사용자 전용 설정 화면
@@ -204,6 +205,16 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
     if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정280 B280-02] 카카오(비밀번호 없는) 계정 — 비밀번호를 묻지 않고
+      //   KG 재확인 화면(서버 차단 사유 확인 → 확인창 → 본인확인 → 같은 삭제 파이프라인)으로 간다.
+      if (context.read<UserProvider>().currentUser?.isProviderAccount == true) {
+        final deleted = await Navigator.of(context).push<bool>(MaterialPageRoute(
+          builder: (_) => const DeletionReauthScreen(intent: DeletionReauthIntent.withdraw),
+        ));
+        if (!mounted) return;
+        if (deleted == true) await context.read<UserProvider>().signOut();
+        return;
+      }
       final confirmed = await showDialog<bool>(
         context: context,
         barrierDismissible: false,
@@ -228,13 +239,45 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
       );
       if (confirmed != true || !mounted) return;
 
+      // [impl_64 · 판정296 P2] 비밀번호를 묻기 **전에** 서버 미리보기를 읽는다.
+      //   차단(hard)이면 그 이유로 멈춘다. 경고(warnings)가 있으면 — 서명하지 않은 계약(무효 처리 · 사업주 알림),
+      //   진행 중 장기 근무(퇴사 신청 권장) — 먼저 보여 주고 다시 묻는다. 예전에는 경고를 버려 근로자가 모른 채 탈퇴했다.
+      //   미리보기를 못 읽으면 진행하지 않는다(최종 판정은 서버 PreData · Final 이 다시 한다).
+      final WithdrawPreview preview;
+      try {
+        preview = await fetchWithdrawPreview();
+      } catch (e) {
+        if (mounted) ToastHelper.showError('탈퇴 전 확인을 하지 못했어요. 잠시 후 다시 시도해 주세요.');
+        return;
+      }
+      if (!mounted) return;
+      if (preview.hardBlocks.isNotEmpty) {
+        ToastHelper.showError(withdrawHardBlockMessage(preview.hardBlocks.first));
+        return;
+      }
+      if (preview.warnings.isNotEmpty) {
+        // ignore: use_build_context_synchronously
+        final proceed = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => StyledDialog(
+            title: '탈퇴 전 확인',
+            subtitle: '아래 내용을 확인해 주세요',
+            icon: Icons.warning_amber_rounded,
+            headerColor: AppColors.warningDark,
+            content: StyledDialogInfoCard.warning(preview.warningLines.map((l) => '• $l').join('\n')),
+            actions: [
+              StyledDialogButton.cancel(onPressed: () => Navigator.pop(ctx, false)),
+              StyledDialogButton.danger(text: '계속 탈퇴', onPressed: () => Navigator.pop(ctx, true)),
+            ],
+          ),
+        );
+        if (proceed != true || !mounted) return;
+      }
+
       // 비밀번호 확인 다이얼로그
       // [FC-01 OWNERSHIP FIX] _WithdrawPasswordDialog(StatefulWidget)이 controller를
       // 직접 소유하고 State.dispose()에서 해제한다.
-      // Dialog lifecycle ↔ controller lifecycle 완전 일치:
-      //   State 생성 → _ctrl 생성 → 사용 → Navigator.pop → route 종료 → State.dispose() → _ctrl.dispose()
-      // 부모 메서드가 controller를 소유하면 showDialog 완료 직후 dispose하게 되고,
-      // Dialog 종료 애니메이션 중 DFSA deactivate()가 dispose된 controller에 접근해 크래시 발생.
       // ignore: use_build_context_synchronously
       final password = await showDialog<String>(
         context: context,
@@ -244,27 +287,7 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
       if (password == null || password.isEmpty || !mounted) return;
 
       try {
-        // [F-15-1(B) FIX] SubAdmin 탈퇴 차단 — settings_screen.dart와 동일 방어 적용
-        // SubAdmin은 사업장에서 직책 해제 후 탈퇴해야 함
-        final blockerResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-            .httpsCallable('callableGetWithdrawBlockers',
-                options: HttpsCallableOptions(timeout: const Duration(seconds: 25)))
-            .call<Map<String, dynamic>>({});
-        if (!mounted) return;
-
-        final hardBlocks = (blockerResult.data['hardBlocks'] as List<dynamic>? ?? [])
-            .cast<Map<String, dynamic>>();
-        // [NEW-QA-02 FIX] 서버가 반환하는 모든 hardBlock 처리 — SUBADMIN_MEMBERSHIP만 체크하던 버그 수정.
-        // 탈퇴 가능 여부의 최종 진실 소스는 서버(callableDeleteAccountFinal)이며,
-        // 클라이언트는 서버 결과 전체를 그대로 사용자에게 안내한다.
-        if (hardBlocks.isNotEmpty) {
-          final first = hardBlocks.first;
-          final type = first['type'] as String? ?? '';
-          final count = first['count'] as int? ?? 0;
-          ToastHelper.showError(_hardBlockMessage(type, count));
-          return;
-        }
-
+        // 탈퇴 가능 여부의 최종 진실 소스는 서버(callableDeleteAccountFinal)다 — 미리보기 뒤 바뀐 차단도 서버가 막는다.
         final err = await AuthService().deleteAccountWithPassword(password);
         if (!mounted) return;
         if (err != null) {
@@ -277,19 +300,6 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  // ── hardBlock 안내 메시지 ─────────────────────────────────────────
-  // [NEW-QA-02] 서버 callableGetWithdrawBlockers 반환 type별 사용자 안내
-  String _hardBlockMessage(String type, int count) {
-    switch (type) {
-      case 'SUBADMIN_MEMBERSHIP':
-        return '서브관리자로 등록된 사업장($count곳)에서 직책 해제 후 탈퇴해주세요.';
-      case 'UNSIGNED_CONTRACT':
-        return '미서명 계약서($count건)를 먼저 서명해주세요.';
-      default:
-        return '탈퇴 전 처리해야 할 항목($count건)이 있습니다. 해결 후 다시 시도해주세요.';
     }
   }
 

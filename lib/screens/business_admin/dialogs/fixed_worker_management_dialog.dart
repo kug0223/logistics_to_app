@@ -24,6 +24,7 @@ import '../../../services/contract_service.dart';
 import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
+import '../../../utils/request_relation_error.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/renewal_decision_state.dart';
@@ -44,6 +45,7 @@ import '../../../widgets/common/app_search_bar.dart';
 import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/adaptive_action_row.dart';
 import '../../contract/contract_sign_screen.dart';
+import '../../../utils/server_reject_codes.dart';
 
 /// 근무자의 특정 날짜 근무 상태
 enum _WorkerDayStatus {
@@ -103,6 +105,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// [DU539] 조회 세대 — 응답은 요청한 사업장과 이 번호가 지금도 최신일 때만 화면에 반영한다
   ///   (늦게 온 옛 성공 · 옛 실패 · 옛 로딩 해제가 새 화면을 덮지 않게).
   int _loadGen = 0;
+
+  /// [impl_27a · L48] 마지막으로 성공해 앉은 명단의 사업장 — 같은 사업장의 다시 읽기(처리 뒤)는 명단을 지우지 않는다.
+  String? _rowsBizId;
+
+  /// [impl_27a · L48] 이번 읽기는 보이는 명단을 유지한다 — 로딩 화면 대신 얇은 진행 표시 + 누르기 잠금.
+  ///   행동 버튼은 예전처럼 `isLoading` 으로 잠긴다(읽는 동안 처리 전 명단으로 쓰기 0).
+  bool _keepRowsWhileLoading = false;
 
   /// [DU543] 이전 명단을 보여 주는 채 같은 사업장 재조회가 실패했다 — 다시 불러오기 성공까지 상태변경 행동 · 일괄처리 · 상세 진입을 막는다(버튼 null + 기존 비활성 짝 · 시트 행 · 열린 창은 실행 진입과 첫 writer 직전 재확인).
   bool get _showingStale => _loadFailed && _fixedWorkers.isNotEmpty;
@@ -270,6 +279,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     final businessId = _selectedBusinessId;
     bool isCurrent() =>
         mounted && gen == _loadGen && businessId == _selectedBusinessId;
+    _keepRowsWhileLoading =
+        _rowsBizId != null && _rowsBizId == businessId && !_loadFailed;
     setLoading(true);
     try {
       await _readFixedWorkers(businessId, isCurrent);
@@ -277,7 +288,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       debugPrint('❌ 고정근무자 로드: $e');
       if (isCurrent()) _loadFailed = true;
     } finally {
-      if (isCurrent()) setLoading(false);
+      if (isCurrent()) {
+        _keepRowsWhileLoading = false;
+        setLoading(false);
+      }
     }
   }
 
@@ -303,13 +317,22 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           )
         : null;
 
+    // [PERF-L27] 갱신 제안 조회(②)는 지원서(①)의 결과를 쓰지 않는다 — 함께 출발시킨다
+    //   (예전엔 사업장 지원서 전체(≤50쪽 직렬)가 끝난 뒤에야 출발했다). 실패 의미는 그대로(던진다).
+    final proposalsFuture = _firestoreService.getPendingRenewalProposals(businessId);
+    // [ROOT-FUTURE] 함께 출발시켜 나중에 await 하는 future — 앞의 await 중 먼저 실패해도 '처리되지 않은
+    //   오류'(Crashlytics fatal)로 새지 않게 한다. await 하는 곳은 그대로 같은 오류를 받는다.
+    proposalsFuture.ignore();
+    workTypesFuture.ignore();
+    scheduleRequestsFuture?.ignore();
+
     final allApps = await appsFuture;
 
     // [RENEWAL-PROPOSAL-COMMITMENT] 근로자의 응답을 기다리는 건.
     //   읽지 못한 것을 "제안 없음"으로 말하면 관리자가 같은 제안을
     //   또 보내게 된다 — 실패하면 던진다.
     final waitingProposals =
-        (await _firestoreService.getPendingRenewalProposals(businessId))
+        (await proposalsFuture)
             .where((p) => p.isActionableAt(DateTime.now()))
             .map((p) => p.oldApplicationId)
             .toSet();
@@ -423,6 +446,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       setState(() {
         _fixedWorkers = results;
         _loadFailed = false;
+        _rowsBizId = businessId; // [impl_27a] 이 사업장의 정상 명단이 앉았다
         // [LATE-RENEW-EFFECTIVE-DATE-POLICY]
         //   "다음 계약" 배너가 기간을 **다시 계산**하고 있었다. 만료 뒤
         //   연장은 시작일이 오늘이라 그 계산이 틀린 날짜를 말한다.
@@ -476,7 +500,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         _buildStatsBar(context),
 
         // 계약 만료 임박 경고 배너
-        if (!_isDateMode && !isLoading)
+        if (!_isDateMode && (!isLoading || _keepRowsWhileLoading))
           Builder(builder: (context) {
             final expiring = _expiringWorkers;
             return expiring.isNotEmpty
@@ -505,7 +529,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     final theme = Theme.of(context);
     // [DU580b r1 · 판정171 §3] 큰 글자(배율 1.3 초과 — 같은 창 조회 실패 배치 DU537 · 지원자 창 DU517 과 같은 기준)에서는 목록 위 내용이 목록 칸을 거의 다
     //   차지해 카드가 극소 띠로만 보였다(320×640 · 2.0). 명단이 있으면 그 내용을 목록과 한 스크롤로 둔다 — 제목 · 닫기(머리) · 하단 닫기는 고정 그대로.
-    final bigList = MediaQuery.textScalerOf(context).scale(1) > 1.3 && !isLoading && _fixedWorkers.isNotEmpty;
+    final bigList = MediaQuery.textScalerOf(context).scale(1) > 1.3 &&
+        (!isLoading || _keepRowsWhileLoading) &&
+        _fixedWorkers.isNotEmpty;
 
     return AppModalShell(
       children: [
@@ -515,17 +541,23 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         // 목록 위 내용 — 큰 글자 명단이면 아래 목록 스크롤의 첫 칸으로 간다.
         if (!bigList) ..._buildTopArea(context),
 
+        // [impl_27a] 처리 뒤 다시 읽는 중 — 명단은 그대로, 얇은 진행 표시.
+        if (isLoading && _keepRowsWhileLoading)
+          const LinearProgressIndicator(key: ValueKey('fixed-worker-refresh-after-mutation'), minHeight: 2),
         // 목록
         Expanded(
           // [DU580b r1] 큰 글자 명단 = 목록 위 내용 + 목록 한 스크롤. 그 밖(기본 글자 · 로딩 · 조회 실패 · 빈 상태)은 이전 그대로.
-          child: bigList
+          child: AbsorbPointer(
+            absorbing: isLoading && _keepRowsWhileLoading,
+            child: bigList
               ? _scrollWithTop(_buildTopArea(context), _buildWorkerList(context))
-              : isLoading
+              : isLoading && !_keepRowsWhileLoading
               ? const LoadingWidget(message: '고정근무자 로딩 중...')
               : _fixedWorkers.isEmpty
                   // [DU537] 읽지 못한 것과 없는 것은 다르다 — 빈 상태 문구는 조회에 성공한 0명에만 쓴다.
                   ? (_loadFailed ? _buildLoadErrorState(context) : _buildEmptyState(context))
                   : _buildWorkerList(context),
+          ),
         ),
 
         // 하단 버튼
@@ -676,7 +708,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             ],
           )),
           // 통계 행 (근무자 로드 완료 후만 표시)
-          if (!isLoading && hasStats) ...[
+          if ((!isLoading || _keepRowsWhileLoading) && hasStats) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             Wrap(
               spacing: ResponsiveHelper.spacing(context, 6),
@@ -931,7 +963,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       }
     } catch (e) {
       debugPrint('❌ 요청 승인 오류: $e');
-      if (mounted) ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
+      // [impl_42] 요청-지원서 불일치 보류 안내
+      final held = requestHeldMessageOf(e);
+      if (mounted) {
+        held != null ? ToastHelper.showWarning(held) : ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
+      }
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -960,7 +996,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       }
     } catch (e) {
       debugPrint('❌ 요청 거절 오류: $e');
-      if (mounted) ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
+      final held = requestHeldMessageOf(e);
+      if (mounted) {
+        held != null ? ToastHelper.showWarning(held) : ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
+      }
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -2253,6 +2292,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       // 미래 종료일인 경우 Cloud Functions D-0 처리에 위임(현재 설계 유지).
       // cancelConfirmedApplication 내부에서 _decrementTOConfirmed도 함께 처리됨.
       final endDate = app.workEndDate;
+      // [impl_59] 즉시 취소가 실패한 사유 — 예전: 서비스 사유 토스트를 아래 '계약 종료가 통보되었습니다'가 덮었다.
+      ConfirmCancelResult? immediateCancel;
       if (endDate != null) {
         final today = DateTime.now();
         final endDateOnly = FormatHelper.toKstDate(endDate);
@@ -2260,12 +2301,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         if (!endDateOnly.isAfter(todayOnly)) {
           // 이미 만료됐거나 오늘이 종료일인 경우 — 즉시 CANCELED 처리
           // [C-H4-FIX] 반환값 체크 — false 반환 시(이미 취소됨·찾을 수 없음) 후속 처리 스킵
-          final canceled = await _firestoreService.cancelConfirmedApplication(
+          final cancel = await _firestoreService.cancelConfirmedApplicationWithResult(
             app.id,
             canceledBy: adminUID,
             cancelReason: '계약 종료 (만료일 도달)',
           );
-          if (canceled) {
+          immediateCancel = cancel;
+          if (cancel.success) {
             // [CRITICAL-005 수정] 만료일 당일 즉시 처리 시 terminationCompletionNotifiedAt 설정
             // Flutter에서 이미 "계약 종료 통보" 알림을 발송했으므로, Functions D-0 처리에서
             // 이 필드가 없으면 "계약 종료 완료" 알림을 이중 발송하는 버그 방지
@@ -2279,7 +2321,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       }
 
       if (mounted) {
-        ToastHelper.showSuccess('계약 종료가 통보되었습니다');
+        // [impl_59] 통보는 됐고 즉시 종료만 안 됐다 — 성공 한 줄로 덮지 않고 사유를 함께 말한다(토스트 1개).
+        if (immediateCancel != null && !immediateCancel.success) {
+          ToastHelper.showWarning('계약 종료는 통보했지만 바로 종료하지 못했어요 · ${immediateCancel.message}');
+        } else {
+          ToastHelper.showSuccess('계약 종료가 통보되었습니다');
+        }
         _loadFixedWorkers();
         widget.onChanged();
       }
@@ -3010,7 +3057,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     } catch (e) {
       debugPrint('❌ 계약해지 요청 실패: $e');
       if (mounted) {
-        ToastHelper.showError('계약해지 요청 중 오류가 발생했습니다');
+        // [impl_58 · server_298] 연결 계약 확인 미완료(CONTRACT_SCAN_TRUNCATED · 요청 0)는 다시 시도하라고 말한다.
+        ToastHelper.showError(contractScanTruncatedMessageOf(e) ?? '계약해지 요청 중 오류가 발생했습니다');
       }
     }
   }
@@ -3046,7 +3094,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     } catch (e) {
       debugPrint('❌ 해지 요청 취소 실패: $e');
       if (mounted) {
-        ToastHelper.showError('해지 요청 취소 중 오류가 발생했습니다');
+        // [impl_58 · server_298] 위와 같은 처리(취소 0).
+        ToastHelper.showError(contractScanTruncatedMessageOf(e) ?? '해지 요청 취소 중 오류가 발생했습니다');
       }
     }
   }

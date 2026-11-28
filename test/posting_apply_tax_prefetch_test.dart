@@ -37,6 +37,7 @@ import 'package:ALfit/screens/common/job_posting_screen.dart';
 import 'package:ALfit/services/tax_identity_service.dart';
 import 'package:ALfit/utils/identity_identifier.dart';
 import 'package:ALfit/widgets/dialogs/apply/multi_apply_confirm_sheet.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 class _FakeApp extends Fake
     with MockPlatformInterfaceMixin
@@ -277,12 +278,12 @@ class _Tax {
 
 /// 업무 하나를 고르고 CTA 를 누른 뒤, 확인 시트가 보일 때까지의 가짜 시간(ms).
 Future<int> _tapApplyAndWaitSheet(WidgetTester t) async {
-  final pick = find.text('선택'); // OutlinedButton.icon 은 하위 타입이라 widgetWithText 로 안 잡힌다
+  final pick = findVisibleText('선택'); // OutlinedButton.icon 은 하위 타입이라 widgetWithText 로 안 잡힌다
   if (pick.evaluate().isNotEmpty) {
     await t.tap(pick.first);
     await t.pump();
   }
-  final cta = find.textContaining('지원하기');
+  final cta = findVisibleTextContaining('지원하기');
   expect(cta, findsWidgets, reason: 'CTA 가 보여야 한다');
   await t.tap(cta.last);
   var ms = 0;
@@ -331,7 +332,7 @@ void main() {
   testWidgets('TP-2 첫 렌더는 세무 조회를 기다리지 않는다(끝나지 않아도 CTA 가 보인다)', (t) async {
     final tax = _Tax(const Duration(days: 1))..clock.start();
     await _pump(t, _reads(details: [_wd()], taxStatus: tax.call));
-    expect(_texts(t), contains('지원할 업무를 선택해주세요'));
+    expect(_texts(t), contains('지원할 업무를 선택해 주세요'));
     await t.pump(const Duration(days: 1)); // 매달린 타이머 정리
   });
 

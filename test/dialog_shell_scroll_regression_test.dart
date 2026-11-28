@@ -27,6 +27,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ALfit/theme/app_colors.dart';
 import 'package:ALfit/utils/dialog_helper.dart';
+import 'support/visible_text.dart'; // [impl_21] TextLayout 문구는 보이는 글자로 찾는다
 
 const _widths = <double>[320, 360, 411];
 const _scales = <double>[1.0, 1.3, 2.0];
@@ -119,7 +120,7 @@ void main() {
       expectTappable(t, '취소', 'showConfirm 320×2.0');
 
       // 닫기 동작 — 취소는 false 를 돌려준다.
-      await t.tap(find.text('취소'));
+      await t.tap(findVisibleText('취소'));
       await _settle(t);
       expect(result, isFalse, reason: '취소가 false 를 돌려주지 않는다');
     });
@@ -130,7 +131,7 @@ void main() {
       DialogHelper.showConfirm(ctx, title: '확정', message: '진행할까요?')
           .then((v) => result = v);
       await _settle(t);
-      await t.tap(find.text('확인'));
+      await t.tap(findVisibleText('확인'));
       await _settle(t);
       expect(result, isTrue);
     });
@@ -180,7 +181,7 @@ void main() {
 
       expect(t.takeException(), isNull);
       expectTappable(t, '확인', 'showAlert 320×2.0');
-      await t.tap(find.text('확인'));
+      await t.tap(findVisibleText('확인'));
       await _settle(t);
       expect(closed, isTrue, reason: '확인이 다이얼로그를 닫지 않는다');
     });
@@ -357,7 +358,7 @@ void main() {
       await t.enterText(find.byType(TextField).first, '단말기 오류로 미기록');
       await t.pump();
       expectTappable(t, '확인', 'showTextInput 키보드 OFF');
-      await t.tap(find.text('확인'));
+      await t.tap(findVisibleText('확인'));
       await _settle(t);
       expect(reason, '단말기 오류로 미기록');
     });
@@ -382,7 +383,7 @@ void main() {
       await t.enterText(find.byType(TextField).first, '계좌 정보 확인 중');
       await t.pump();
       expectTappable(t, '확인', 'showTextInput 키보드 ON 320×2.0');
-      await t.tap(find.text('확인'));
+      await t.tap(findVisibleText('확인'));
       await _settle(t);
       expect(reason, '계좌 정보 확인 중');
     });
@@ -398,7 +399,7 @@ void main() {
       await _settle(t);
       await t.enterText(find.byType(TextField).first, '쓰다가 취소');
       await t.pump();
-      await t.tap(find.text('취소'));
+      await t.tap(findVisibleText('취소'));
       await _settle(t);
       expect(called, isTrue);
       expect(reason, isNull, reason: '취소했는데 입력이 돌아왔다');
@@ -414,7 +415,7 @@ void main() {
 
       await t.enterText(find.byType(TextField).first, '짧음');
       await t.pump();
-      await t.tap(find.text('확인'));
+      await t.tap(findVisibleText('확인'));
       await _settle(t);
       expect(closed, isFalse, reason: '검증 실패인데 닫혔다');
       expect(t.takeException(), isNull);
@@ -422,7 +423,7 @@ void main() {
       // 고쳐 넣으면 닫힌다.
       await t.enterText(find.byType(TextField).first, '충분히 긴 사유');
       await t.pump();
-      await t.tap(find.text('확인'));
+      await t.tap(findVisibleText('확인'));
       await _settle(t);
       expect(closed, isTrue);
     });

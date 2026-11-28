@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'app_version_service.dart';
+import '../utils/perf_log.dart';
+import 'cold_start_readiness.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -163,22 +165,37 @@ class FCMService {
     }
     _pendingUserId = null;
     _isInitializing = true;
+    // [PERF-L2 · 판정289 §2] 이 초기화의 세션 번호. 로그아웃(clearToken)·다음 초기화가 올리면
+    //   아래 각 await 뒤의 늦은 continuation 은 권한·등록·리스너·payload 를 **아무것도 쓰지 않고** 멈춘다.
+    //   홈이 이 초기화를 더는 기다리지 않으므로(UserProvider._runAuxInit) 로그아웃이 그 사이에 올 수 있다.
+    final session = ++_session;
+    bool stale() => session != _session;
+    _coldStart.begin(session);
 
     try {
       _currentUserId = userId;
 
       // 1. 알림 권한 요청
       final authorized = await _requestPermission();
+      PerfLog.mark('fcm.permission.done', () => {'granted': authorized});
+      if (stale()) return;
 
       // 2. 로컬 알림 초기화 (포그라운드용)
       await _initializeLocalNotifications();
+      if (stale()) return;
 
       // 3. FCM 토큰 저장 — 권한 거부 시 저장하지 않음 (불필요한 FCM 발송 비용 방지)
       //   [.69] 이전 계정의 기기 토큰 폐기가 남아 있으면 먼저 끝낸다 — 못 끝내면 이번에는 등록하지 않는다
       //   (같은 토큰이 두 계정에 붙으면 이전 계정 알림이 이 기기로 온다). 다음 로그인·앱 시작이 다시 시도한다.
       final revokeSettled = await _revoker.settle(timeout: _kRevokeWait);
+      PerfLog.mark('fcm.revoke.settled', () => {'ok': revokeSettled});
+      if (stale()) return;
       if (!revokeSettled) debugPrint('⚠️ FCM 이전 토큰 폐기 미완료 — 이번 로그인은 토큰 등록을 미룬다');
-      if (authorized && revokeSettled && _currentUserId == userId) await _saveToken();
+      if (authorized && revokeSettled && _currentUserId == userId) {
+        await _saveToken(expectUid: userId, session: session);
+        PerfLog.mark('fcm.token.done');
+      }
+      if (stale()) return;
 
       // 4. 토큰 갱신 리스너
       _tokenRefreshSub?.cancel();
@@ -202,19 +219,21 @@ class FCMService {
       );
 
       // 7. cold-start pending payload 감지 (Phase 9D)
-      // 즉시 navigate하지 않고 저장 — role root(initState)에서 정확히 1회 소비.
+      // 즉시 navigate하지 않고 저장 — role root 가 [consumeColdStartPayloadWhenReady] 로 준비 완료 뒤 정확히 1회 소비.
       // 7a. FCM terminated notification tap
       final initialMessage = await _messaging.getInitialMessage();
+      if (stale()) return;
       if (initialMessage != null) {
         debugPrint('🔔 FCM cold-start tap: ${initialMessage.notification?.title}');
         _pendingColdStartPayload = Map<String, dynamic>.from(initialMessage.data);
         debugPrint('📌 FCM cold-start payload 저장: $_pendingColdStartPayload');
       }
-      // 7b. Local notification terminated tap (포���라운드 수신 후 앱 종료, 이후 탭)
+      // 7b. Local notification terminated tap (포그라운드 수신 후 앱 종료, 이후 탭)
       // FCM payload가 이미 있으면 건너뜀 — 둘은 mutually exclusive이지만 방어 처리
       if (_pendingColdStartPayload == null) {
         try {
           final launchDetails = await _localNotifications.getNotificationAppLaunchDetails();
+          if (stale()) return;
           if (launchDetails?.didNotificationLaunchApp == true) {
             final lpayload = launchDetails!.notificationResponse?.payload;
             if (lpayload != null && lpayload.isNotEmpty) {
@@ -232,23 +251,65 @@ class FCMService {
       debugPrint('✅ FCM 초기화 완료: $userId');
     } catch (e) {
       debugPrint('❌ FCM 초기화 실패: $e');
-      _currentUserId = null;
-      await _tokenRefreshSub?.cancel();
-      await _onMessageSub?.cancel();
-      await _onMessageOpenedAppSub?.cancel();
-      _tokenRefreshSub = null;
-      _onMessageSub = null;
-      _onMessageOpenedAppSub = null;
+      // [PERF-L2] 낡은 세션의 실패가 지금 세션의 상태·구독을 지우지 않는다.
+      if (!stale()) {
+        _currentUserId = null;
+        await _tokenRefreshSub?.cancel();
+        await _onMessageSub?.cancel();
+        await _onMessageOpenedAppSub?.cancel();
+        _tokenRefreshSub = null;
+        _onMessageSub = null;
+        _onMessageOpenedAppSub = null;
+      }
     } finally {
-      _isInitializing = false;
-      // [118] 초기화 중 계정 전환 요청이 있었으면 재초기화
-      final pending = _pendingUserId;
-      _pendingUserId = null;
-      if (pending != null && pending != _currentUserId) {
-        debugPrint('🔄 FCM 계정 전환 재초기화: $pending');
-        await initialize(pending);
+      // [PERF-L2] cold-start 준비는 성공·실패·세션 취소 모두 **끝난 상태**다 — 기다리는 root 를 붙들지 않는다.
+      if (_coldStart.settle(session)) {
+        PerfLog.mark('fcm.coldstart.ready', () => {'payload': _pendingColdStartPayload != null});
+      }
+      // 낡은 세션은 지금 세션의 초기화 플래그·대기 전환을 건드리지 않는다.
+      if (!stale()) {
+        _isInitializing = false;
+        // [118] 초기화 중 계정 전환 요청이 있었으면 재초기화
+        final pending = _pendingUserId;
+        _pendingUserId = null;
+        if (pending != null && pending != _currentUserId) {
+          debugPrint('🔄 FCM 계정 전환 재초기화: $pending');
+          await initialize(pending);
+        }
       }
     }
+  }
+
+  // ── [PERF-L2 · 판정289 §2] cold-start payload 준비 ─────────────────────────
+  //
+  //   예전에는 UserProvider 가 FCM 초기화를 다 기다린 뒤 홈을 열었고, role root 가 첫 프레임에
+  //   payload 를 꺼냈다. 이제 홈이 먼저 열리므로 root 가 payload 저장 전에 꺼내면 알림 탭이 사라진다.
+  //   그래서 (uid, session) 에 묶인 준비 future 를 두고, root 는 그 완료 뒤 재검사하고 1회 소비한다.
+  //   timeout 은 두지 않는다 — 준비는 성공·실패·로그아웃 모두에서 반드시 끝난다(finally · clearToken).
+
+  /// 초기화 세션 번호 — initialize 시작·clearToken 마다 증가.
+  int _session = 0;
+  final ColdStartReadiness _coldStart = ColdStartReadiness();
+
+  /// role root(UserRootScreen · BusinessAdminShell · super_admin AdminHomeScreen)가 부른다.
+  ///
+  ///   준비가 끝난 뒤 ① root 가 아직 살아 있고([isActive]) ② 세션이 그대로이며 ③ 현재 FCM 사용자가
+  ///   [uid] 이고 ④ 버전 차단이 아닐 때만 [consumePendingColdStartPayload] 로 **1회** 소비한다.
+  ///   준비 중 세션이 바뀌면(계정 전환 재초기화) 새 준비를 한 번 더 기다린다. 로그아웃이면 소비 0.
+  ///   payload 없음 · 조회 실패 · 세션 취소는 모두 끝(terminal)이다 — 홈 로딩을 붙들지 않는다.
+  Future<void> consumeColdStartPayloadWhenReady({
+    required String? uid,
+    required bool Function() isActive,
+  }) async {
+    if (uid == null) return;
+    final ok = await _coldStart.waitFor(
+      stillValid: (session) =>
+          isActive() &&
+          session == _session && // 로그아웃(clearToken)이면 세션이 올라가 있다
+          _currentUserId == uid &&
+          !AppVersionService.entryBlocked,
+    );
+    if (ok) consumePendingColdStartPayload();
   }
 
   /// 알림 권한 요청 — authorized/provisional이면 true 반환
@@ -299,10 +360,13 @@ class FCMService {
   }
 
   /// FCM 토큰 저장
-  Future<void> _saveToken() async {
+  Future<void> _saveToken({required String expectUid, required int session}) async {
     if (_currentUserId == null) return;
 
     final token = await _messaging.getToken();
+    // [PERF-L2] getToken 을 기다리는 사이 로그아웃·계정 전환이 오면 등록하지 않는다(.69 순서 보존 —
+    //   새 계정은 자기 초기화에서 폐기 settle 뒤 등록한다).
+    if (session != _session || _currentUserId != expectUid) return;
     if (token != null) {
       await _updateToken(token);
     }
@@ -414,9 +478,35 @@ class FCMService {
   }
 
   /// 알림 탭 처리
-  void _onNotificationTap(NotificationResponse response) {
-    debugPrint('🔔 알림 탭: ${response.payload}');
-    final payload = response.payload;
+  void _onNotificationTap(NotificationResponse response) => _handleTapPayload(response.payload);
+
+  /// [AUD-5 ①-1 · impl_61] 시험용 진입 — 로컬 알림 탭과 같은 처리.
+  @visibleForTesting
+  void debugHandleTapPayload(String? payload) => _handleTapPayload(payload);
+
+  /// [AUD-5 ①-1 · impl_61] 시험용 — 로그인 상태(FCM 현재 사용자)를 직접 둔다.
+  @visibleForTesting
+  set debugCurrentUserId(String? uid) => _currentUserId = uid;
+
+  /// [AUD-5 ①-1 · impl_61] 이 payload 로 지금 이동해도 되는가.
+  ///   로그아웃(현재 사용자 없음) → 이동 0 — 트레이에 남은 로컬 알림을 누르면 로그인 화면 위로 근로자 화면이 열렸다.
+  ///   payload 에 받는 사람(`recipientUid`)이 있고 현재 사용자와 다르면 → 이동 0(계정 전환 뒤 이전 계정 알림).
+  ///   `recipientUid` 가 없으면(구서버) 기존 동작 그대로.
+  @visibleForTesting
+  static bool payloadNavigable(Map<String, dynamic> data, String? currentUid) {
+    if (currentUid == null) return false;
+    final recipient = data['recipientUid'];
+    if (recipient is String && recipient.isNotEmpty && recipient != currentUid) return false;
+    return true;
+  }
+
+  void _handleTapPayload(String? payload) {
+    debugPrint('🔔 알림 탭: $payload');
+    // [AUD-5 ①-1] 로그아웃 상태면 어디로도 이동하지 않는다(알림 목록 폴백 포함).
+    if (_currentUserId == null) {
+      debugPrint('⛔ 로그인 전 알림 탭 — 이동하지 않는다');
+      return;
+    }
     if (payload != null && payload.isNotEmpty) {
       try {
         final data = Map<String, dynamic>.from(jsonDecode(payload) as Map);
@@ -464,6 +554,11 @@ class FCMService {
   /// FCM data payload 기반 딥링크 라우팅
   void _navigateByPayload(Map<String, dynamic> data) {
     if (_navigatorKey?.currentState == null) return;
+    // [AUD-5 ①-1 · impl_61] 모든 진입(로컬 탭 · 백그라운드 열기 · cold start 소비)의 공통 문 — 로그아웃 · 다른 수신자면 이동 0.
+    if (!payloadNavigable(data, _currentUserId)) {
+      debugPrint('⛔ 현재 사용자의 알림이 아니다 — 이동하지 않는다');
+      return;
+    }
     // [CROSS-DOMAIN-R5.1A] 권한이 걸린 알림의 판정 기준은 언제나 type이다.
     //
     //   아래 switch는 screen을 먼저 본다. 인앱 dispatcher는 type을 먼저 본다.
@@ -1008,8 +1103,17 @@ class FCMService {
     _currentUserId = null;
     _isInitialized = false;
     _isInitializing = false;
+    // [PERF-L2] 진행 중 초기화의 늦은 continuation 을 무효화하고, cold-start 대기자를 끝낸다(다음 계정으로 넘기지 않음).
+    _session++;
+    _coldStart.cancel();
     _notificationScreenVisible = false; // 로그아웃 시 리셋 — 재로그인 후 알림 화면 진입 가능하도록
     _pendingColdStartPayload = null;    // [Phase 9D] cross-account replay 방지
+    // [AUD-5 ①-1 · impl_61] 트레이에 남은 이전 계정의 로컬 알림을 지운다 — 다음 계정이 눌러 이전 계정 목적지로 가지 않게.
+    try {
+      await _localNotifications.cancelAll().timeout(const Duration(seconds: 2));
+    } catch (e) {
+      debugPrint('⚠️ 로컬 알림 정리 실패 (무시): $e');
+    }
     // _fcmKeyStack 제거됨 — AppNavigatorObserver가 실제 top route 추적 (NAV.3-FIX-A)
     Future<T> bounded<T>(Future<T> f) => networkTimeout == null ? f : f.timeout(networkTimeout);
     String? currentToken;

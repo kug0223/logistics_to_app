@@ -15,6 +15,7 @@ import '../../models/ui/invitation_projection.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/light_app_bar_style.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/expected_daily_wage.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/text_layout.dart';
 import '../common/keep_words_text.dart';
@@ -53,10 +54,13 @@ class InvitationPromiseCard extends StatelessWidget {
                   size: ResponsiveHelper.iconSize(context, 18),
                   color: AppColors.brand),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                projection.isAlternativeOffer ? '제안받은 근무' : '내가 초대받은 근무',
-                style: ResponsiveHelper.bodyStyle(context, color: AppColors.brand)
-                    .copyWith(fontWeight: FontWeight.bold),
+              // [impl_33 · F294 실측] 320×640@2.0 에서 머리글이 83px 넘쳤다(기존 · before 사본 재현) — 남는 폭 안에서 줄을 바꾼다.
+              Flexible(
+                child: Text(
+                  projection.isAlternativeOffer ? '제안받은 근무' : '내가 초대받은 근무',
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.brand)
+                      .copyWith(fontWeight: FontWeight.bold),
+                ),
               ),
             ],
           ),
@@ -84,24 +88,62 @@ class InvitationPromiseCard extends StatelessWidget {
 
           // ── 급여 — 결정의 primary truth ───────────────────────────
           //   공고의 현재 금액을 같은 수준으로 나란히 놓지 않는다.
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              if (app.wageTypeLabel.isNotEmpty) ...[
-                Text(
-                  app.wageTypeLabel,
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.grey600),
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              ],
-              Text(
-                app.formattedWage,
-                style: ResponsiveHelper.titleStyle(context)
-                    .copyWith(fontWeight: FontWeight.bold),
+          // [F293-WAGE-01] 시급 제안은 **제안 지원서 자체의** 시간·휴게·금액으로 하루 예상(주) + 시급(보조).
+          //   제안 휴게 null 은 모름 → 확인 필요(임의 0 금지). live 공고와의 차이 안내는 아래 그대로.
+          ...() {
+            final e = ExpectedDailyWage.forPromise(
+                wageType: app.wageType,
+                rate: app.wage,
+                startTime: app.startTime,
+                endTime: app.endTime,
+                breakMinutes: app.breakMinutes);
+            // [F294-WAGE-01 · C294-WAGE-A/C] 큰 자리에는 확정된 금액만 — 시급 계산 불가면 '예상 금액 확인 필요'(유효 시급만 보조) ·
+            //   모르는 유형/누락 단가는 '급여 확인 필요'. 누락 0 을 '0원' 으로 · 모르는 유형을 '시급' 으로 말하지 않는다.
+            final label = e.isEstimate ? '하루 예상' : (e.typeUnknown ? '급여' : app.wageTypeLabel);
+            final String? amountText = e.isEstimate
+                ? FormatHelper.formatWage(e.amount!)
+                : (!e.isHourly && !e.typeUnknown && app.wage > 0)
+                    ? app.formattedWage
+                    : null;
+            final amount = amountText ??
+                (e.isHourly ? ExpectedWageText.needsCheck : ExpectedWageText.wageUnknown);
+            final sub = !e.isHourly
+                ? null
+                : e.isEstimate
+                    ? '${ExpectedWageText.rate(e)} · ${ExpectedWageText.shortNote}'
+                    : ExpectedWageText.rate(e);
+            return <Widget>[
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.end,
+                spacing: ResponsiveHelper.spacing(context, 6),
+                children: [
+                  if (label.isNotEmpty)
+                    Text(
+                      label,
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                    ),
+                  Text(
+                    amount,
+                    style: amountText != null
+                        ? ResponsiveHelper.titleStyle(context).copyWith(fontWeight: FontWeight.bold)
+                        : ResponsiveHelper.bodyStyle(context)
+                            .copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                  ),
+                ],
               ),
-            ],
-          ),
+              if (sub != null) ...[
+                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                Text(sub, style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary)),
+              ],
+              if (e.isEstimate) ...[
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                Text(
+                  ExpectedWageText.disclosure,
+                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.textTertiary),
+                ),
+              ],
+            ];
+          }(),
           if (projection.hasIndividualCompensation) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Text(
@@ -241,7 +283,11 @@ class InvitationPromiseCard extends StatelessWidget {
   String _sourceLine(ApplicationModel app) {
     final src = sourceApplication;
     if (src != null) {
-      final wage = src.wage > 0 ? ' · ${src.formattedWage}' : '';
+      // [F293-WAGE-01] 기존 지원도 그 지원서 자체의 약속 조건으로 하루 예상(시급일 때만).
+      final expected = ExpectedWageText.combined(ExpectedDailyWage.forPromise(
+          wageType: src.wageType, rate: src.wage, startTime: src.startTime,
+          endTime: src.endTime, breakMinutes: src.breakMinutes));
+      final wage = expected != null ? ' · $expected' : (src.wage > 0 ? ' · ${src.formattedWage}' : '');
       return '${src.selectedWorkType} · ${src.startTime}~${src.endTime}$wage';
     }
     return app.sourceWorkType ?? '기존 지원';

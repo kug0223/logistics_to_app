@@ -223,8 +223,13 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('03. 서명 lifecycle', () {
     // [NOSHOW-CONTRACT-GUARD] 발행 PREAUTH·트랜잭션에 근태 판정이 들어가 본문이 길어졌다.
-    final emp = _after(cf, 'export const callableFinalizeEmployerSignature', 12000);
-    final wrk = _after(cf, 'export const callableFinalizeWorkerSignature', 9000);
+    // [L56 r4] 고정 길이 span → 함수 끝까지(거래 안 알림 작업 생성으로 본문이 길어졌다 · 보는 표지는 그대로).
+    final emp = _after(cf, 'export const callableFinalizeEmployerSignature',
+        cf.indexOf('\nexport const ', cf.indexOf('export const callableFinalizeEmployerSignature') + 10) -
+            cf.indexOf('export const callableFinalizeEmployerSignature'));
+    // [server_296 §2-5] 근로자 서명 거래에 freeze·사업장·활성 세대 fence 가 앞에 더해져 본문이 길어졌다 — 같은 callable 안을
+    //   보도록 창만 넓힌다(9000 → 13000 · 다음 export 를 넘지 않음). 아래 핀의 문자열·의미는 그대로.
+    final wrk = _after(cf, 'export const callableFinalizeWorkerSignature', 13000);
 
     test('03-a 사업주 서명 → pending_worker', () {
       expect(emp.contains('status: "pending_worker",'), true);
@@ -275,7 +280,10 @@ void main() {
   group('04. 중복과 권한', () {
     // [ARCHIVE-SEQ-FENCE] 운영 종료 판정(두 트랜잭션)이 들어가 실패 정리 catch 가 뒤로 밀렸다 —
     //   검사 내용은 그대로, 창만 넓힌다.
-    final emp = _after(cf, 'export const callableFinalizeEmployerSignature', 12000);
+    // [L56 r4] 고정 길이 span → 함수 끝까지(거래 안 알림 작업 생성으로 본문이 길어졌다 · 보는 표지는 그대로).
+    final emp = _after(cf, 'export const callableFinalizeEmployerSignature',
+        cf.indexOf('\nexport const ', cf.indexOf('export const callableFinalizeEmployerSignature') + 10) -
+            cf.indexOf('export const callableFinalizeEmployerSignature'));
     // [SERVER-INTEGRITY] 클라이언트가 보낼 수 있는 필드 목록.
     final _allowlist = _after(cf, 'const CONTRACT_CLIENT_OWNED_FIELDS = [', 400);
 

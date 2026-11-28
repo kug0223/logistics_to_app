@@ -4,6 +4,7 @@
 // - 온디바이스 생성 (Firebase Storage 비용 없음)
 // - 한글 NotoSansKR 폰트 (번들 에셋, 오프라인 가능)
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -12,8 +13,10 @@ import '../../models/core/attendance_model.dart';
 import '../../models/core/insurance_rate_model.dart';
 import '../../models/core/wage_detail_model.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/pdf_font_cache.dart';
 import '../../utils/wage_calculation_lines.dart';
 import 'payslip_period_helper.dart';
+import '../../utils/off_main.dart';
 
 /// 임금명세서 생성에 필요한 데이터 묶음
 class PayslipData {
@@ -108,28 +111,35 @@ class PayslipData {
 // ─── PDF 빌더 ────────────────────────────────────────────────────
 
 class PayslipPdfBuilder {
-  // [PERF-4] 폰트 static 캐시 — 앱 세션 내 최초 1회만 ByteData 파싱
-  static pw.Font? _cachedFontR;
-  static pw.Font? _cachedFontB;
+  // [PERF-4 → L30] 폰트는 앱 세션 공용 캐시(PdfFontCache) 하나 — 계약서·근태 명단 PDF 와 같은 Font 를 쓴다.
 
   // [PERF-9] 천단위 콤마 정규식 — 매 _fmtWon() 호출마다 생성 방지
   static final _commaRe = RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))');
 
+  /// 시험용 비압축(무작위 ID·생성 시각만 빼고 바이트 비교) — 기본은 예전 그대로 `pw.Document()`.
+  static pw.Document _newDocument(bool debugUncompressed) => debugUncompressed
+      ? pw.Document(compress: false, version: PdfVersion.pdf_1_4)
+      : pw.Document();
+
   /// 폰트 사전 로드 및 캐시 — 호출 측에서 존재 확인 + build() 캐시 히트 보장
   static Future<(pw.Font, pw.Font)> loadFonts() async {
-    _cachedFontR ??= pw.Font.ttf(
-        await rootBundle.load('assets/fonts/NotoSansKR-Regular.ttf'));
-    _cachedFontB ??= pw.Font.ttf(
-        await rootBundle.load('assets/fonts/NotoSansKR-Bold.ttf'));
-    return (_cachedFontR!, _cachedFontB!);
+    final fonts = await Future.wait([PdfFontCache.regular(), PdfFontCache.bold()]);
+    return (fonts[0], fonts[1]);
   }
 
   /// 임금명세서 PDF 바이트 생성
   /// [data] - 표시할 급여 정보
   /// Returns: PDF 바이트 (share / print / download에 사용)
-  static Future<Uint8List> build(PayslipData data) async {
-    // ── 폰트 로드 (캐시 사용) ──────────────────────────────────
-    final (fontR, fontB) = await loadFonts();
+  ///
+  /// [PERF impl_19] [offMain] — 폰트 해석·글꼴 부분집합·저장을 **다른 isolate** 에서 한다(`OffMain.buildPdf`).
+  ///   같은 입력이면 같은 문서다(같은 함수 · 같은 인자). 실패·시간 초과면 이 isolate 에서 예전과 똑같이 만든다.
+  ///   기본값 false — 다른 호출자·시험(FakeAsync) 동작은 그대로다. [debugUncompressed] 는 시험 전용(바이트 비교).
+  static Future<Uint8List> build(PayslipData data,
+          {bool offMain = false, @visibleForTesting bool debugUncompressed = false}) =>
+      OffMain.buildPdf('Payslip', (r, b) => _buildDoc(data, r, b, debugUncompressed), offMain: offMain);
+
+  static Future<Uint8List> _buildDoc(
+      PayslipData data, pw.Font fontR, pw.Font fontB, bool debugUncompressed) async {
 
     // ── 스타일 헬퍼 ─────────────────────────────────────────────
     pw.TextStyle ts(double size, {bool bold = false, PdfColor? color}) =>
@@ -146,7 +156,7 @@ class PayslipPdfBuilder {
     final wd = data.wageDetail;
 
     // ── 문서 생성 ───────────────────────────────────────────────
-    final doc = pw.Document();
+    final doc = _newDocument(debugUncompressed);
 
     // 계산 기준 줄 목록 — 섹션 유무 분기용으로 미리 계산
     final calcLines = buildWageCalculationLines(wd);
@@ -803,9 +813,14 @@ class PayslipPdfBuilder {
 
   /// 월간·주간 임금명세서 PDF 생성
   /// 1페이지: 집계 요약, 2페이지: 일별 상세 테이블
-  static Future<Uint8List> buildAggregated(AggregatedPayslipData data) async {
-    // ── 폰트 로드 (캐시 사용) ──────────────────────────────────
-    final (fontR, fontB) = await loadFonts();
+  ///   [PERF impl_19] [offMain] · [debugUncompressed] 는 [build] 와 같다.
+  static Future<Uint8List> buildAggregated(AggregatedPayslipData data,
+          {bool offMain = false, @visibleForTesting bool debugUncompressed = false}) =>
+      OffMain.buildPdf('PayslipAggregated', (r, b) => _buildAggregatedDoc(data, r, b, debugUncompressed),
+          offMain: offMain);
+
+  static Future<Uint8List> _buildAggregatedDoc(
+      AggregatedPayslipData data, pw.Font fontR, pw.Font fontB, bool debugUncompressed) async {
 
     pw.TextStyle ts(double size, {bool bold = false, PdfColor? color}) =>
         pw.TextStyle(font: bold ? fontB : fontR, fontSize: size, color: color);
@@ -813,7 +828,7 @@ class PayslipPdfBuilder {
     final primary = PdfColor.fromHex('#1565C0');
     final grey    = PdfColor.fromHex('#9E9E9E');
 
-    final doc = pw.Document();
+    final doc = _newDocument(debugUncompressed);
 
     // ── 1페이지: 합산 요약 ────────────────────────────────────────
     doc.addPage(
@@ -1144,7 +1159,8 @@ class PayslipPdfBuilder {
     final amberBorder = PdfColor.fromHex('#FCD34D');
 
     final lines = d.memoRecords.map((r) {
-      final dateStr = '${r.workDate.month}/${r.workDate.day}';
+      // [impl_53 · AUD-4 H8] PDF 일자도 KST 달력일(UTC 기기에서 D-1 이던 것)
+      final dateStr = '${FormatHelper.toKstDate(r.workDate).month}/${FormatHelper.toKstDate(r.workDate).day}';
       return '$dateStr  —  ${r.memo}';
     }).join('\n');
 
@@ -1190,7 +1206,8 @@ class PayslipPdfBuilder {
     ));
 
     for (final r in d.dailyRecords) {
-      final dateStr = '${r.workDate.month}/${r.workDate.day}';
+      // [impl_53 · AUD-4 H8] PDF 일자도 KST 달력일(UTC 기기에서 D-1 이던 것)
+      final dateStr = '${FormatHelper.toKstDate(r.workDate).month}/${FormatHelper.toKstDate(r.workDate).day}';
       rows.add(pw.TableRow(children: [
         _cell(dateStr, ts),
         _cell(r.checkIn ?? '-', ts),

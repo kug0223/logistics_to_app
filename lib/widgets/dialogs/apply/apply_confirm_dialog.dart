@@ -6,6 +6,7 @@ import '../../../models/core/business_model.dart' show AttendanceRules;
 import '../../../utils/attendance_policy_disclosure.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
+import '../../../utils/expected_daily_wage.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/text_layout.dart';
 import '../../../theme/app_colors.dart';
@@ -414,6 +415,15 @@ class ApplyConfirmDialog extends StatelessWidget {
             valueColor: AppColors.brand, // [DU264] 초록(2.66) → 대표색(시안의 급여 강조)
             valueBold: true,
           ),
+          // [F293-WAGE-01] 하루 예상 금액의 계산 범위 고지(정본 문구 그대로) — 금액이 있을 때만.
+          if (ExpectedDailyWage.forWorkDetail(work).isEstimate)
+            Padding(
+              padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+              child: Text(
+                ExpectedWageText.disclosure,
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+              ),
+            ),
           if (work.payScheduleLabel.isNotEmpty) ...[
             _buildDivider(),
             _buildInfoRow(
@@ -492,7 +502,11 @@ class ApplyConfirmDialog extends StatelessWidget {
   }
 
   String _getWageDisplay() {
-    final wageStr = FormatHelper.formatWage(work.wage);
+    // [F293-WAGE-01] 시급 업무는 하루 예상(주) + 시급(보조) — 이 확인창이 보여 주는 업무·시간 그대로 계산.
+    final line = ExpectedWageText.combined(ExpectedDailyWage.forWorkDetail(work));
+    if (line != null) return line;
+    // [C294-WAGE-C] 알려진 비시급 유형만 여기로 온다 — 누락 단가는 '급여 확인 필요'.
+    final wageStr = ExpectedWageText.rawWage(work.wage);
     final typeStr = work.wageType == 'hourly' ? '시급' : work.wageType == 'daily' ? '일급' : '월급';
     return '$wageStr/$typeStr';
   }

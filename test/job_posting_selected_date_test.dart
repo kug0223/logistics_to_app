@@ -367,7 +367,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     // [INVITE-CAPACITY] FULL ≠ DONE — 자리가 찬 것은 모집 종료가 아니다(취소가 나오면 다시 열린다).
-    expect(find.text('모집 인원이 찼어요'), findsWidgets,
+    expect(findVisibleText('모집 인원이 찼어요'), findsWidgets,
         reason: 'FULL 이면 지원 CTA 가 닫혀야 한다');
     expect(find.text('마감된 공고입니다'), findsNothing);
   });

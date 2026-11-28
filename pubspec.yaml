@@ -60,6 +60,11 @@ dependencies:
   # 포트원(PortOne) 본인인증 SDK
   iamport_flutter: ^0.10.21
 
+  # 카카오 로그인 SDK (ALFIT-AUTH-KAKAO-ONBOARDING.1)
+  # 정확 버전 고정: 2.x 는 Flutter >=3.38 요구 → 로컬 Flutter 3.35.6 호환 마지막 판 1.10.0
+  # (pub.dev environment: sdk >=3.4.0 <4.0.0 · flutter >=3.22.0). 업그레이드는 별도 범위.
+  kakao_flutter_sdk_user: 1.10.0
+
   # 캘린더
   table_calendar: ^3.1.2
 

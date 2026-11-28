@@ -114,7 +114,7 @@ void main() {
     expect(findVisibleTextContaining('전체 동의'), findsNothing, reason: '못 읽었으면 동의 체크를 그리지 않는다');
     final retry = find.widgetWithText(TextButton, '다시 시도').evaluate().isNotEmpty
         ? find.widgetWithText(TextButton, '다시 시도')
-        : find.ancestor(of: find.text('다시 시도'), matching: find.byWidgetPredicate((w) => w is ButtonStyleButton)).first;
+        : find.ancestor(of: findVisibleText('다시 시도'), matching: find.byWidgetPredicate((w) => w is ButtonStyleButton)).first;
     await _scrollTo(t, retry);
     await t.tap(retry);
     for (var i = 0; i < 8; i++) {

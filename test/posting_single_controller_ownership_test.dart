@@ -226,14 +226,13 @@ void main() {
     //   hasLoadedOnce를 기다리므로 영구 스피너가 된다.
     //
     //   변하지 않은 계약: **무조건 로드하지 않는다.** 비어 있을 때만 낸다.
-    test('02-e WorkforceRoot의 초기 load는 조건부다 — standalone 또는 빈 controller (§3, §5)', () {
-      final body = _flat(_codeOf(_bodyOf(_src(_wfPath), 'void initState()')));
-      expect(body.contains('if (_ownsController || !_controller.hasLoadedOnce)'), true,
-          reason: 'Shell 경로에서는 controller가 비어 있을 때만 로드한다');
-      final condAt = body.indexOf('if (_ownsController || !_controller.hasLoadedOnce)');
-      final loadAt = body.indexOf('_controller.load(context);');
-      expect(loadAt, greaterThan(condAt),
-          reason: '조건 없는 load가 아니다 — 가드 뒤에서만 호출된다');
+    // [PERF-L14 갱신] R8-P1A 의 예외(빈 controller 면 근무 탭이 로드)는 근무 화면이 controller 를
+    //   기다렸기 때문이었다. 이제 근무 화면은 controller 를 기다리지 않고 머리말 이름도 자기 조회로 받는다 —
+    //   근무 탭은 공고 목록 로드를 **출발시키지 않는다**. 공고 탭만 소유한다(03O.1).
+    test('02-e WorkforceRoot는 공고 목록 로드를 출발시키지 않는다 (§3 · L14)', () {
+      final code = _flat(_codeOf(_src(_wfPath)));
+      expect(code.contains('_controller.load('), false,
+          reason: '근무 탭을 먼저 열어도 GetAdminTOs + FLEX 슬롯 preload 를 부르지 않는다');
     });
 
     test('02-f WorkforceRoot는 controller를 소비만 한다 (§3)', () {

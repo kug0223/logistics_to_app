@@ -123,7 +123,7 @@ void main() {
 
     test('CN2-31 계약무효 서비스에 알림 호출이 없다', () {
       final m = _sliceOf(conSvc, 'Future<void> voidContract(String contractId) async {',
-          'Future<void> retryVoidFailedApps(');
+          'Future<RetryVoidFailedResult> retryVoidFailedApps(' /* [impl_52] 반환형 변경(서버 1회 처리 결과) — 끝 표지만 */);
       expect(m.contains('createNotification'), false);
       expect(m.contains('createContractVoided'), false);
     });

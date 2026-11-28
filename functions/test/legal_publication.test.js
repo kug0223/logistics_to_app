@@ -62,7 +62,8 @@ t('P1 발행본은 고쳐 쓸 수 없다 — rules 가 전면 차단', () => {
     'legal_revisions 에 다른 쓰기 경로가 있다');
   // projection 도 클라이언트가 직접 못 고친다 — 발행과 한 묶음이어야 한다.
   const app = rulesBlock('match /app_settings/{docId} {');
-  assert.ok(app.includes("allow write: if docId != 'legal_terms' && isSuperAdmin();"),
+  // [판정281] 모든 클라 쓰기 규칙 앞에 탈퇴 freeze fence(callerNotDeleting) 가 붙었다 — 안쪽 조건은 그대로다.
+  assert.ok(/allow write: if (?:callerNotDeleting\(\) && \()?docId != 'legal_terms' && isSuperAdmin\(\)\)?;/.test(app),
     'legal_terms 직접 쓰기가 남아 있다');
 });
 

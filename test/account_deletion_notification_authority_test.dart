@@ -201,7 +201,10 @@ void main() {
       //   삭제 재개 상태 질의(읽기 전용) = 4. 알림 생성 경로는 여전히
       //   in-tx helper 하나만 쓴다.
       // [R7-P4.4E.11C.0C.1 갱신] + Final 의 Auth-tail 증거 읽기 = 5.
-      expect(_count(code, 'ACCOUNT_DELETION_TOMBSTONE_COL'), 6);
+      // [ALFIT-AUTH-KAKAO-ONBOARDING.1 갱신] 6 → 7. + 옛 가입중단의 tombstone 존재 **읽기**(거부용). 알림 경로와 무관.
+      // [판정281 서버 확정 갱신 2026-11-26] 7 → 8. + 공통 onCall 진입 판정의 caller tombstone **읽기**(거부 전용 · 알림 경로와 무관).
+      expect(_count(code, 'ACCOUNT_DELETION_TOMBSTONE_COL'), 8);
+      expect(_helper(raw, 'srvAssertCallerNotInDeletion'), isNot(contains('srvPersistNotification')));
       expect(_fn(raw, 'callableGetAccountDeletionRecoveryState'),
           isNot(contains('srvPersistNotification')));
       final h = _helper(raw, 'srvDeletionBarrierExistsInTx');
@@ -292,9 +295,35 @@ void main() {
         'callableAcceptInvitation': 'srvPersistNotification(',
         'callableInviteWorker': 'srvPersistNotification',
       };
+      // [L56 r3 · L57 r5] 알림 쓰기는 둘 중 하나로 canonical helper 를 거친다.
+      //   ① 본문에서 직접 `srvPersistNotification(` · ② 같은 트랜잭션 안에서 `direct` 알림 작업을
+      //   만들고(`tx.create(…, srvNotificationJobDoc("direct", …)`), 작업 실행기가
+      //   `srvPersistNotificationWithId(` 로 쓴다(응답 뒤 fire-and-forget 유실 제거 · 판정291 L56).
+      //   지키려던 것은 "raw writer 가 아니라 정본 helper 를 거친다" 이므로 경로만 넓힌다.
+      // [판정292 시험 핀] '둘 중 하나' 는 **정확히 하나**다 — 둘 다 없으면(누락) 실패, 둘 다 있으면(같은 사건 이중 발송 가능) 실패.
+      //   job 경로는 실행기 결속까지 본다: direct 분기가 작업의 수신자·결정적 id 로 canonical helper 를 부르고
+      //   이미 있는 알림(ALREADY_EXISTS=6)은 skip 한다.
+      final runner = _helper(raw, 'srvRunNotificationJob');
+      final runnerDirect = runner.contains('job.kind === "direct"') &&
+          runner.contains('const recipientUid = job.recipientUid as string;') &&
+          runner.contains('srvPersistNotificationWithId(recipientUid, job.notificationId as string,') &&
+          runner.contains('?.code !== 6');
+      expect(runnerDirect, isTrue, reason: '작업 실행기의 direct 분기가 canonical helper 와 결속되지 않았다');
+      // [L56 r5] 거래 변수 이름은 함수마다 다르다(tx · invTx …) — 작업을 만든 그 거래가 앞에서 열렸는지 본다.
+      final txJob = RegExp(r'\b(\w*[tT]x)\.create\(\w+, srvNotificationJobDoc\("direct", \{');
       reps.forEach((fnName, needle) {
-        expect(_fn(raw, fnName), contains(needle),
-            reason: '$fnName 이 canonical helper 를 거치지 않는다');
+        final body = _fn(raw, fnName);
+        final m = txJob.firstMatch(body);
+        final viaJob = m != null && (() {
+          final open = body.indexOf('runTransaction(async (${m.group(1)}) => {');
+          final rec = body.indexOf('recipientUid:', m.end);
+          return open >= 0 && open < m.start && rec > m.end && rec - m.end < 400;
+        })();
+        final direct = body.contains(needle);
+        expect(direct || viaJob, isTrue,
+            reason: '$fnName 이 canonical helper 를 거치지 않는다(직접 호출도 같은 거래 작업도 없다)');
+        expect(direct && viaJob, isFalse,
+            reason: '$fnName 에 직접 호출과 같은 거래 작업이 함께 있다 — 같은 사건 이중 발송 가능');
       });
     });
 
@@ -378,7 +407,9 @@ void main() {
       //   transaction 에 쓴다 — 마감 자동취소 helper 1 · 장기 게시 만료 1 · 리컨펌 H-2 1 ·
       //   D+3 퇴사(근로자·관리자) 2 · D+3 계약해지(근로자·관리자) 2 ·
       //   자정 퇴사 경고(D+1·D+2) 공용 claim helper 1.
-      expect(callers, 11, reason: '정의 1 + 호출 10 — 새 호출자는 barrier 를 증명해야 한다');
+      // [SERVER-MERGE-1 §6차 2026-11-26] 호출자 +1: 노쇼 원장 보류 경보(srvNsDeliverPendingAlert) —
+      //   같은 transaction 읽기 구간에서 srvDeletionBarrierExistsInTx 를 읽은 뒤 helper 를 부른다(아래 루프가 증명).
+      expect(callers, 12, reason: '정의 1 + 호출 11 — 새 호출자는 barrier 를 증명해야 한다');
       // 모든 호출자: 감싸는 transaction 안에서 helper 호출 **앞**에 barrier 를 읽는다.
       //   예외는 좌석 계약 쓰기 단계 하나 — barrier 를 읽기 단계 함수에서 읽어 plan 으로 넘긴다(아래).
       final fnHead = RegExp(r'\n(?:async function|function|export const) ');
@@ -398,7 +429,7 @@ void main() {
             reason: '$fnName — 같은 transaction 에서 barrier 를 helper 앞에 읽지 않았다');
         checked++;
       }
-      expect(checked, 9, reason: 'H-1 1 + 스케줄러 사건 8');
+      expect(checked, 10, reason: 'H-1 1 + 스케줄러 사건 8 + 노쇼 원장 보류 경보 1(§6차)');
 
       // 리컨펌 H-1 — 같은 transaction 의 읽기 구간에서 barrier 를 읽고, 막힌 수신자는
       //   건너뛴 뒤에만 helper 를 부른다. 발송 표식도 같은 transaction 에서 쓴다.

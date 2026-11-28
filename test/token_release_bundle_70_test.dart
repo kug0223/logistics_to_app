@@ -20,9 +20,14 @@ void main() {
 
   test('[T70-b] 로그인 등록은 남은 폐기를 먼저 끝낸 뒤에만(.69)', () {
     final i = fcm.indexOf('final revokeSettled = await _revoker.settle(');
-    final j = fcm.indexOf('if (authorized && revokeSettled && _currentUserId == userId) await _saveToken();');
+    // [PERF-L2 · 판정289 §2] 등록 호출이 세션·uid 를 함께 넘기는 꼴로 바뀌었다 — 계약(폐기 settle 뒤 ·
+    //   권한·폐기 완료·같은 사용자일 때만 등록)은 그대로다.
+    final j = fcm.indexOf('if (authorized && revokeSettled && _currentUserId == userId) {');
+    final save = fcm.indexOf('await _saveToken(expectUid: userId, session: session);');
     expect(i, greaterThan(-1));
     expect(j, greaterThan(i));
+    expect(save, greaterThan(j));
+    expect(save - j, lessThan(200), reason: '등록이 같은 조건 블록 안에 있다');
   });
 
   test('[T70-c] 앱 시작에서 폐기 대기를 이어받는다(.69)', () {

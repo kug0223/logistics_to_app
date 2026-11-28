@@ -664,12 +664,12 @@ void main() {
   group('11. Workforce 운영 화면 소스', () {
     final src = _src(_opsPath);
 
-    test('11-a gate는 hasLoadedOnce 기준이다', () {
-      expect(
-        _flat(_codeOf(src)).contains(
-            'if (!controller.hasLoadedOnce && controller.loadError == null)'),
-        true,
-      );
+    // [PERF-L14 · analysis_2_tabs §6 #1] 근무 운영 화면은 공고 controller 를 **기다리지 않는다**(구독도 하지 않는다).
+    //   예전 계약(첫 로드 gate · 03P.1)의 뜻 — Jobs 새로고침이 이 탭을 비우지 않는다 — 은 gate 를 없애 더 강하게 지킨다.
+    test('11-a 공고 controller 첫 로드 gate 가 없다(L14)', () {
+      final code = _flat(_codeOf(src));
+      expect(code.contains('if (!controller.hasLoadedOnce && controller.loadError == null)'), false);
+      expect(code.contains('context.watch<WorkforceController>()'), false);
     });
 
     test('11-b isLoading 단독 gate가 사라졌다', () {
@@ -681,8 +681,9 @@ void main() {
       );
     });
 
-    test('11-c 로딩 문구는 그대로다', () {
-      expect(src.contains("LoadingWidget(message: '인력 정보를 불러오는 중...')"), true);
+    test('11-c 화면 자체 로딩 문구는 그대로다(공고 대기 문구는 사라짐 · L14)', () {
+      expect(src.contains("LoadingWidget(message: '근무 인력을 불러오는 중...')"), true);
+      expect(src.contains("LoadingWidget(message: '인력 정보를 불러오는 중...')"), false);
     });
   });
 

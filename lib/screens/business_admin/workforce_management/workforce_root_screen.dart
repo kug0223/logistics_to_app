@@ -22,10 +22,12 @@
 //     — 근무 명단은 그 한 곳만 읽는다(OperationalView._ensureBusinesses). [DU236 J4]
 //   미로드 시: '내 사업장' fallback
 //
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../controllers/workforce_controller.dart';
+import '../../../models/core/business_model.dart';
 import '../../../providers/user_provider.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/admin_business_scope_label.dart';
@@ -76,15 +78,19 @@ class _WorkforceRootScreenState extends State<WorkforceRootScreen> {
   ///   영원히 스피너로 남는다.
   ///   이미 로드된 뒤에는 돌지 않으므로 재방문 시 중복 조회는 없고,
   ///   Jobs와 거의 동시에 열려도 controller가 진행 중 사이클로 접는다.
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (_ownsController || !_controller.hasLoadedOnce) {
-        _controller.load(context);
-      }
-    });
+  ///
+  /// [PERF-L14] 그 예외를 거둔다. 이 화면은 이제 controller 를 기다리지 않고(운영 화면 gate 제거),
+  ///   머리말 사업장 이름도 운영 화면의 `_ensureBusinesses` 결과로 받는다. 그래서 근무 탭을 먼저 열어도
+  ///   공고 목록 전체(GetAdminTOs + FLEX 슬롯 preload)를 부르지 않는다 — 공고 탭이 열릴 때 그 탭이
+  ///   **혼자** 부른다(03O.1 소유권 그대로 · 이 화면은 소비만).
+  /// 운영 화면이 읽은 사업장 이름(머리말용). null = 아직 모름.
+  List<String>? _viewBusinessNames;
+
+  void _onBusinessesResolved(List<BusinessModel> list) {
+    final names = list.map((b) => b.name).toList(growable: false);
+    if (_viewBusinessNames != null && listEquals(_viewBusinessNames, names)) return;
+    if (!mounted) return;
+    setState(() => _viewBusinessNames = names);
   }
 
   @override
@@ -100,8 +106,10 @@ class _WorkforceRootScreenState extends State<WorkforceRootScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _buildHeader(s),
-              const Expanded(
-                child: WorkforceOperationalView(),
+              Expanded(
+                child: WorkforceOperationalView(
+                  onBusinessesResolved: _onBusinessesResolved,
+                ),
               ),
             ],
           ),
@@ -191,9 +199,13 @@ class _WorkforceRootScreenState extends State<WorkforceRootScreen> {
       subAdminBusinessIds:
           selected != null ? [selected] : (user?.subAdminBusinessIds ?? const []),
       subAdminBusinessNames: up.subAdminBusinessNames,
-      loadedBusinessNames: controller.items.isNotEmpty
-          ? controller.items.map((g) => g.businessName).toList()
-          : controller.knownBusinessNames,
+      // [PERF-L14] 이 화면이 직접 읽은 사업장(운영 화면 `_ensureBusinesses`)이 먼저다 — 공고 controller 가
+      //   아직 로드되지 않아도 이름이 나온다. 없으면 예전처럼 controller 가 마지막으로 본 이름.
+      loadedBusinessNames: (_viewBusinessNames != null && _viewBusinessNames!.isNotEmpty)
+          ? _viewBusinessNames!
+          : controller.items.isNotEmpty
+              ? controller.items.map((g) => g.businessName).toList()
+              : controller.knownBusinessNames,
     );
   }
 

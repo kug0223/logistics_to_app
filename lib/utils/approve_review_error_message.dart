@@ -14,6 +14,7 @@
 import 'package:cloud_functions/cloud_functions.dart';
 
 import 'posting_readiness_reason.dart';
+import 'server_reject_codes.dart';
 
 class ApproveReviewError {
   const ApproveReviewError(this.message, {required this.reload});
@@ -44,6 +45,10 @@ class ApproveReviewError {
     }
     switch (error.code) {
       case 'failed-precondition':
+        // [impl_58 · server_297] 확정 이력이 많아 겹침 확인을 끝내지 못함 — 확정 0 · 서버 문구('관리자에게 문의')는 관리자에게 맞지 않다.
+        if (overlapCheckIncompleteMessageOf(error) case final overlapMsg?) {
+          return ApproveReviewError(overlapMsg, reload: false);
+        }
         final blocked = PostingNotReady.parse(error);
         if (blocked != null) {
           return ApproveReviewError(blocked.confirmBlockedNotice(canSetUp: canSetUp), reload: false);

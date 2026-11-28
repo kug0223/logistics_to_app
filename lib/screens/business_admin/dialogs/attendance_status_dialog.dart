@@ -67,6 +67,8 @@ import '../../../controllers/workforce_controller.dart';
 import 'attendance_reads.dart';
 // [REISSUE-RECOVERY] 계약 상태 조회 결과(모름/없음 구별) 타입.
 import '../../../services/contract_service.dart';
+import '../../../utils/action_guard.dart';
+import '../../../utils/server_reject_codes.dart';
 
 /// [ROUNDING-PREVIEW.27] 근태 기준 적용 확인 창의 한 줄 — 근로자 · 근무 시간대 · 입력 시각 · 적용 시 시각.
 ///   같은 사람이 같은 날 두 근무를 하면 이름만으로는 줄이 갈리지 않아 시간대를 함께 둔다.
@@ -342,6 +344,26 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   ///   성공한 행만 골라 갱신하지 않고 그 날 근태를 통째로 다시 읽는다.
   ///   어차피 조회는 한 번이고, 그래야 같은 시간에 다른 관리자가 바꾼 행도
   ///   함께 최신이 된다. 서버 응답을 근거로 상태를 추측하지 않는다.
+  /// [impl_58] 서버가 일괄 처리를 **거절**한 뒤(처리 0) 근태만 다시 읽는다. [_refreshAttendanceOnly] 와 달리
+  ///   읽기 실패에 '처리는 완료됐어요'를 말하지 않는다(처리된 것이 없다) — 거절 안내는 이미 떠 있다.
+  Future<void> _reloadAttendanceAfterReject() async {
+    if (!mounted) return;
+    final appIds = _confirmedWorkers.map((a) => a.id).toList();
+    if (appIds.isEmpty) return;
+    final seq = ++_attRefreshSeq;
+    try {
+      final map = await _getAttendanceRecords(appIds);
+      if (!mounted || seq != _attRefreshSeq) return;
+      setState(() {
+        _attendanceMap = map;
+        _rebuildStatusCache();
+        _rebuildTabWorkers();
+      });
+    } catch (e) {
+      debugPrint('⚠️ 거절 뒤 근태 재조회 실패: $e');
+    }
+  }
+
   Future<void> _refreshAttendanceOnly() async {
     if (!mounted) return;
     final appIds = _confirmedWorkers.map((a) => a.id).toList();
@@ -423,6 +445,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         }(),
         () async {
           if (!needsRules) return null;
+          // [PERF-L27] 여는 쪽이 이미 읽은 사업장 문서를 넘겼으면 그 반올림 정책을 쓴다 — 같은 문서를
+          //   다시 읽지 않는다(예전엔 받은 목록이 있어도 businessById 를 한 번 더 불렀다).
+          final given = widget.businesses?.where((b) => b.id == bizIdForLoad).firstOrNull;
+          if (given != null) {
+            _attendanceRules = given.attendanceRules;
+            _rulesLoadedForBusinessId = bizIdForLoad;
+            return null;
+          }
           try {
             final business = await _reads.businessById(bizIdForLoad);
             _attendanceRules = business?.attendanceRules;
@@ -2777,7 +2807,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   }
 
   /// [R5.2] NO_SHOW 좌석 반납 → seat release CF 호출 → 성공 시 DayApplicantsDialog(오늘)
-  Future<void> _releaseNoshowSeat(ApplicationModel app) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_releaseNoshowSeatLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _releaseNoshowSeat(ApplicationModel app) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('attendanceStatus._isSeatReleasing', this), () => _releaseNoshowSeatLocked(app));
+
+  Future<void> _releaseNoshowSeatLocked(ApplicationModel app) async {
     if (_isSeatReleasing) return;
 
     // [DU618b · 장부067 · 판정160 :50–:54] O002 확인창과 같은 제목 · 본문 · 확인 글(이름 = 이 창의 근로자 이름 · 없으면 해당 근무자). 셸 기본 brand · 뒤 실행 · 가드 그대로.
@@ -3303,7 +3338,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   // 실제 서비스에서 단일 파트에 500명이 동시에 근무하는 경우는 현실적으로 불가능하다.
   // (일반 아르바이트 사업장 최대 규모 기준 파트당 50~100명 수준)
   // 따라서 단순 batch 1개 사용으로 충분하다. 분할 처리 불필요.
-  Future<void> _batchGroupConfirm(List<ApplicationModel> confirmable) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_batchGroupConfirmLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _batchGroupConfirm(List<ApplicationModel> confirmable) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('attendanceStatus._isLoading', this), () => _batchGroupConfirmLocked(confirmable));
+
+  Future<void> _batchGroupConfirmLocked(List<ApplicationModel> confirmable) async {
     if (_isLoading) return;
     final ok = await DialogHelper.showConfirm(
       context,
@@ -3344,7 +3384,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     }
   }
 
-  Future<void> _batchGroupCancelConfirm(List<ApplicationModel> cancellable) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_batchGroupCancelConfirmLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _batchGroupCancelConfirm(List<ApplicationModel> cancellable) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('attendanceStatus._isLoading', this), () => _batchGroupCancelConfirmLocked(cancellable));
+
+  Future<void> _batchGroupCancelConfirmLocked(List<ApplicationModel> cancellable) async {
     if (_isLoading) return;
     final ok = await DialogHelper.showConfirm(
       context,
@@ -3576,6 +3621,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       final appIds = _confirmedWorkers.map((w) => w.id).toList();
       final attendanceFuture = _getAttendanceRecords(appIds);
       final workDetailFuture = _getWorkDetailTimes();
+      // [ROOT-FUTURE] 나중에 await 하는(또는 앞에서 return 하면 아예 await 하지 않는) future — 먼저 실패해도 '처리되지 않은 오류'(Crashlytics fatal)로 새지 않게. await 하는 곳은 그대로 같은 오류를 받는다.
+      workDetailFuture.ignore();
       _attendanceMap = await attendanceFuture;
       if (!mounted) return;
       _workDetailTimeMap = await workDetailFuture;
@@ -3673,7 +3720,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       );
 
       // ✅ PDF 생성 (폰트는 generatePdf 내부에서 자동 로드)
-      pdfBytes = await AttendanceListPdf.generatePdf(data);
+      // [PERF impl_19] 문서 만들기는 별도 isolate(로딩 창이 도는 동안 화면이 멈칫하지 않게 · 실패 시 이 자리)
+      pdfBytes = await AttendanceListPdf.generatePdf(data, offMain: true);
     } catch (e, stack) {
       debugPrint('❌ 명단 출력 실패: $e\n$stack');
       if (mounted) ToastHelper.showError('명단 출력 실패');
@@ -3792,7 +3840,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   // 노쇼 대상은 당일 단일 사업장의 '미출근(pending)' 인원에 한정된다.
   // 레코드가 없는 경우 set(), 있는 경우 update() 1 op씩이므로 targets.length개의 op가 발생한다.
   // 현실적 최대 규모(하루 수백 명)는 단일 batch(500 ops)로 충분하다.
-  Future<void> _showBatchNoShowDialog(List<ApplicationModel> targets) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_showBatchNoShowDialogLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _showBatchNoShowDialog(List<ApplicationModel> targets) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('attendanceStatus._isLoading', this), () => _showBatchNoShowDialogLocked(targets));
+
+  Future<void> _showBatchNoShowDialogLocked(List<ApplicationModel> targets) async {
     if (_isLoading) return; // 중복 실행 방어
     final names = targets.map((a) => _getIdentifiedName(a.uid)).join(', ');
     final confirmed = await DialogHelper.showDangerConfirm(
@@ -3851,7 +3904,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   // [F-33/A03 설계 검토] 노쇼 취소 배치 WriteBatch 500 ops 제한:
   // 노쇼 취소 대상은 status == 'NO_SHOW'인 인원만이며, 1인당 1 op.
   // 현실적 규모(하루 수백 명)로 단일 batch 범위 내이다.
-  Future<void> _showBatchCancelNoShowDialog(List<ApplicationModel> targets) async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_showBatchCancelNoShowDialogLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _showBatchCancelNoShowDialog(List<ApplicationModel> targets) =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('attendanceStatus._isLoading', this), () => _showBatchCancelNoShowDialogLocked(targets));
+
+  Future<void> _showBatchCancelNoShowDialogLocked(List<ApplicationModel> targets) async {
     if (_isLoading) return; // 중복 실행 방어
     final names = targets.map((a) => _getIdentifiedName(a.uid)).join(', ');
     final confirmed = await DialogHelper.showConfirm(
@@ -3899,7 +3957,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   // 당일 단일 사업장 전체 인원 대상이며, 리셋은 출근 기록이 있는 인원(checkIn != null)
   // 또는 결근(statusAbsent) 처리된 인원을 대상으로 한다. 일반 아르바이트 사업장
   // 최대 규모 기준 하루 수백 명 수준으로 단일 batch(500 ops) 내에서 충분히 처리 가능하다.
-  Future<void> _showBatchResetDialog() async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_showBatchResetDialogLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _showBatchResetDialog() =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('attendanceStatus._isLoading', this), () => _showBatchResetDialogLocked());
+
+  Future<void> _showBatchResetDialogLocked() async {
     if (_isLoading) return;
     final targets = _selectedIds
         .map((id) => _workerIdMap[id])
@@ -5543,6 +5606,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     } catch (e) {
       debugPrint('❌ 일괄 출근 처리 실패: $e');
       if (!mounted) return;
+      // [impl_58 · server_296 A9] 같은 근태에 내용이 다른 두 항목 → 서버가 요청 전체를 거절(처리 0). 이유를 말하고 최신 근태를 다시 읽는다.
+      if (batchCheckInRejectMessageOf(e) case final conflictMsg?) {
+        ToastHelper.showError(conflictMsg);
+        await _reloadAttendanceAfterReject();
+        return;
+      }
       ToastHelper.showError('일괄 출근 처리 실패');
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -5736,7 +5805,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       await _refreshAttendanceOnly();
     } catch (e) {
       debugPrint('❌ 파트별 일괄 출근 처리 실패: $e');
-      if (mounted) ToastHelper.showError('일괄 출근 처리 실패');
+      if (!mounted) return;
+      // [impl_58 · server_296 A9] 위 일괄 출근과 같은 거절 처리.
+      if (batchCheckInRejectMessageOf(e) case final conflictMsg?) {
+        ToastHelper.showError(conflictMsg);
+        await _reloadAttendanceAfterReject();
+        return;
+      }
+      ToastHelper.showError('일괄 출근 처리 실패');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -5852,7 +5928,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   // 1인당 attendance + users 2 ops → 249명까지 단일 batch로 처리 가능.
   // 마감 취소는 선택된 wageConfirmed 근무자 대상으로 관리자가 수동 선택 후 실행하므로
   // 한 번에 수백 명을 선택하는 경우는 현실적으로 없다.
-  Future<void> _batchCancelFinal() async {
+  // [I9 · impl_16] 확인·선택 창(첫 await) **전에** 같은 화면의 같은 잠금 묶음을 잠근다 — 창이 뜨기 전 연타의
+  //   두 번째 진입이 창·mutation 을 한 번 더 내지 않게(본문 `_batchCancelFinalLocked` 은 그대로 · 화면 플래그는 진행 표시로 유지).
+  Future<void> _batchCancelFinal() =>
+      ActionGuard.runVoid(ActionGuard.ownerKey('attendanceStatus._isLoading', this), () => _batchCancelFinalLocked());
+
+  Future<void> _batchCancelFinalLocked() async {
     // PERM-02: 마감취소 권한 확인 — 급여 관련이므로 canManageWage
     if (context.read<UserProvider>().checkCurrentBusiness((p) => p.canManageWage) != PermissionCheck.allowed) {
       ToastHelper.showWarning('마감취소 권한이 없습니다.');

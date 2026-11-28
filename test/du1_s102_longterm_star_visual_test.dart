@@ -175,7 +175,13 @@ void main() {
       });
       rj.writeAsStringSync({...c, 'dpr': dpr, 'capturePixelRatio': dpr}.entries.map((e) => '${e.key}=${e.value}').join('\n'));
     }
-    expect(dE.month == dT.month, isTrue, reason: 'T~E 같은 표시 월');
+    // [impl_63 · 날짜 의존] 오늘(T)~E(오늘+3)가 한 달 안에 있어야 같은 표시월 달력에서 표식을 잰다. 오늘은 화면이 기기 시계로 정하므로
+    //   (제품 시계 주입 없음 · 제품 코드 0) 월말 3일 구간에서는 이 조건을 만들 수 없다 — 실패가 아니라 생략으로 기록한다
+    //   (같은 꼴 선례: du1_c1_create_failure_toast_test '그 달 마지막 날').  11-28 전체 대사에서 이 단언이 날짜로만 실패했다(impl_62).
+    if (dE.month != dT.month) {
+      markTestSkipped('월말 — 오늘~오늘+3 이 같은 표시 월이 아니다(T=${dT.day}일 · E=${dE.month}/${dE.day})');
+      return;
+    }
     await t.pumpWidget(MultiProvider(
       providers: [
         ChangeNotifierProvider<UserProvider>(create: (_) => _Worker()),

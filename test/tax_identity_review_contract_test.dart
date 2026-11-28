@@ -215,7 +215,8 @@ void main() {
       // 쓰되, 클라이언트가 그 필드를 다시 쓸 수 없게 해 재암호화를 없앤다.
       final rules = _src('firestore.rules');
       final ownerBlock = _sliceOf(rules,
-          'allow update: if isLoggedIn() &&', 'allow delete:');
+          // [판정281 갱신] users 본인 update 는 fence 예외형 `(callerNotDeleting() || <로그인 시각·FCM 토큰만>) && (` — 안쪽 조건 단언은 그대로.
+          'allow update: if (callerNotDeleting() ||', 'allow delete:');
       expect(ownerBlock, contains("'residentNumber'"));
       final uf = _src('lib/services/firestore/user_firestore.dart');
       final guard = _sliceOf(uf, '_protectedUserFields = {', '};');

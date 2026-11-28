@@ -433,9 +433,9 @@ void main() {
               .toList();
       final countF = find.descendant(of: view, matching: find.byWidgetPredicate((w) => w is Text && w.style?.fontSize == 20));
       List<String> summaryCounts() => view.evaluate().isEmpty ? const [] : t.widgetList<Text>(countF).map((w) => w.data ?? '').toList();
-      final dayLoading = find.text('근무 인력을 불러오는 중...');
+      final dayLoading = findVisibleText('근무 인력을 불러오는 중...');
       final errText = find.text('데이터를 불러오지 못했습니다. 다시 시도해 주세요.');
-      final emptyToday = find.text('오늘 확정된 인력이 없습니다.');
+      final emptyToday = findVisibleText('오늘 확정된 인력이 없습니다.');
       const hA = '00:00–00:01';
       const hB = '00:02–00:03';
       Finder headerF(String h) => find.descendant(of: view, matching: find.byWidgetPredicate((w) => w is Text && visibleText(w.data ?? w.textSpan?.toPlainText() ?? '').contains(h)));

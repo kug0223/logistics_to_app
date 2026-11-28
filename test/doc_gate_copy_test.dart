@@ -24,14 +24,14 @@ void main() {
   group('CC 확정 취소 창', () {
     testWidgets('CC-1 확정 취소 의미로 통일 — 거절 문구·버튼이 없다', (t) async {
       await _open(t, (c) => DialogHelper.showConfirmCancelReasonPicker(c, message: '홍길동님의 확정된 근무를 취소합니다.'));
-      expect(find.text('확정 취소'), findsNWidgets(2), reason: '제목 + 확인 버튼');
-      expect(find.text('닫기'), findsOneWidget, reason: '창 닫기 버튼');
-      expect(find.text('거절'), findsNothing);
+      expect(findVisibleText('확정 취소'), findsNWidgets(2), reason: '제목 + 확인 버튼');
+      expect(findVisibleText('닫기'), findsOneWidget, reason: '창 닫기 버튼');
+      expect(findVisibleText('거절'), findsNothing);
       expect(findVisibleTextContaining('거절'), findsNothing);
       for (final r in ['경력/경험 부족', '다른 지원자 확정', '서류 미비']) {
         expect(find.text(r), findsNothing, reason: '지원 거절 사유를 쓰지 않는다: $r');
       }
-      await t.tap(find.text('기타'));
+      await t.tap(findVisibleText('기타'));
       await t.pump();
       final field = t.widget<TextField>(find.byType(TextField));
       expect(field.controller!.text.contains('인연'), isFalse, reason: '지원 거절 기본 문구 재사용 금지');
@@ -42,22 +42,22 @@ void main() {
       await _open(t, (c) async => got = await DialogHelper.showConfirmCancelReasonPicker(c));
       await t.tap(find.text('근무 일정 변경'));
       await t.pump();
-      await t.tap(find.text('확정 취소').last); // 확인 버튼(제목은 first)
+      await t.tap(findVisibleText('확정 취소').last); // 확인 버튼(제목은 first)
       await t.pumpAndSettle();
       expect(got, '근무 일정 변경');
       await t.tap(find.text('열기'));
       await t.pumpAndSettle();
-      await t.tap(find.text('닫기'));
+      await t.tap(findVisibleText('닫기'));
       await t.pumpAndSettle();
       expect(got, isNull);
     });
 
     testWidgets('CC-3 대조 — 지원 거절 창은 그대로(거절 버튼·기존 사유·기본 문구)', (t) async {
       await _open(t, (c) => DialogHelper.showRejectReasonPicker(c, title: '지원 거절', message: '거절 사유를 선택해주세요.'));
-      expect(find.text('거절'), findsOneWidget);
-      expect(find.text('취소'), findsOneWidget);
+      expect(findVisibleText('거절'), findsOneWidget);
+      expect(findVisibleText('취소'), findsOneWidget);
       expect(find.text('경력/경험 부족'), findsOneWidget);
-      await t.tap(find.text('기타'));
+      await t.tap(findVisibleText('기타'));
       await t.pump();
       expect(t.widget<TextField>(find.byType(TextField)).controller!.text.contains('인연'), isTrue);
     });
@@ -67,11 +67,11 @@ void main() {
     testWidgets('ID-1 확인은 `초대 거절`, 창만 닫는 버튼은 `닫기` — `취소하기` 없음', (t) async {
       bool? got;
       await _open(t, (c) async { got = await DialogHelper.showDeclineInviteConfirm(c); return null; });
-      expect(find.text('초대를 거절하시겠습니까?'), findsOneWidget);
+      expect(findVisibleText('초대를 거절하시겠습니까?'), findsOneWidget);
       expect(find.text('초대 거절'), findsNWidgets(2), reason: '제목 + 확인 버튼');
-      expect(find.text('닫기'), findsOneWidget);
+      expect(findVisibleText('닫기'), findsOneWidget);
       expect(find.text('취소하기'), findsNothing);
-      await t.tap(find.text('닫기'));
+      await t.tap(findVisibleText('닫기'));
       await t.pumpAndSettle();
       expect(got, isFalse, reason: '닫기는 거절하지 않는다');
       await t.tap(find.text('열기'));

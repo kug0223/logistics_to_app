@@ -29,7 +29,7 @@ export type ActiveLegalItem = {
 export type IncomingConsent = {agreed?: unknown; version?: unknown};
 
 /** 이미 저장돼 있는 한 건. */
-export type StoredConsent = {agreed?: unknown; version?: unknown};
+export type StoredConsent = {agreed?: unknown; version?: unknown; revisionId?: unknown};
 
 /** 저장이 확정된 한 건. */
 export type ConsentUpdate = {
@@ -112,8 +112,22 @@ export function sanitizeConsentEntries(input: {
       staleVersions.push(rawKey);
       continue;
     }
-    // 이미 동의한 것을 취소로 뒤집지 않는다(기존 writer 의 보호를 유지).
-    if (existing[rawKey]?.agreed === true && !agreed) {
+    // [.54] 같은 발행본에 대한 기록인가. 1B 이전 기록(revisionId 없음)은 버전으로만 견준다.
+    const target = item.revisionId ?? `${item.id}__${item.version}`;
+    const prev = existing[rawKey];
+    const prevRev = typeof prev?.revisionId === "string" && prev.revisionId !== "" ?
+      prev.revisionId : null;
+    const sameRevision = prevRev !== null ? prevRev === target :
+      prev?.version === item.version;
+    // [.54] 같은 발행본에 같은 값 — 다시 쓰지 않는다(재전송이 동의 시각을 밀고 증거를 겹쳐 쓰지 않게).
+    //   revisionId 가 있는 기록만 해당한다. 1B 이전 기록은 다시 받아 발행본을 가리키게 해야 한다.
+    if (prevRev !== null && prevRev === target && prev?.agreed === agreed) {
+      dropped.push(rawKey);
+      continue;
+    }
+    // 이미 동의한 것을 취소로 뒤집지 않는다 — **같은 발행본 안에서만**(.54).
+    //   옛 판 동의는 새 판 동의가 아니므로, 새 판의 거부를 버리면 옛 판 동의가 새 판의 선택처럼 남는다.
+    if (sameRevision && prev?.agreed === true && !agreed) {
       dropped.push(rawKey);
       continue;
     }

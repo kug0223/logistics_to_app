@@ -15,7 +15,12 @@ class UserJobTabReads {
     required this.publishedTOsPaged,
     required this.myApplications,
     required this.tosByIds,
+    this.applicationsRevision,
   });
+
+  /// [PERF-P9 · 판정291 §8] 이 사용자의 지원 내역이 마지막으로 무효화된 세대(지원·취소·확정 등 뒤 증가).
+  ///   탭이 다시 보일 때 읽은 때와 다르면 지원 내역을 다시 읽는다. null(시험 대역)이면 시간 기준만 쓴다.
+  final int Function(String uid)? applicationsRevision;
 
   /// 서버 페이지 한 장. `{items, lastToId, hasMore}` 모양을 그대로 돌려준다.
   final Future<Map<String, dynamic>> Function({
@@ -34,6 +39,7 @@ class UserJobTabReads {
           svc.getPublishedTOsPaged(lastToId: lastToId, filter: filter),
       myApplications: svc.getMyApplications,
       tosByIds: svc.getTOsByIds,
+      applicationsRevision: svc.myApplicationsGenerationOf,
     );
   }
 }

@@ -7,14 +7,15 @@ import 'package:flutter_test/flutter_test.dart';
 String visibleText(String s) =>
     s.replaceAll('\u2060', '').replaceAll('\u200B', '').replaceAll('\u00A0', ' ');
 
-Finder findVisibleText(String text) => find.byWidgetPredicate((w) {
+/// [impl_21] `skipOffstage` 는 `find.text(…, skipOffstage:)` 와 같은 뜻(기본 true) — 정확 finder 를 그대로 옮겨 쓸 수 있게.
+Finder findVisibleText(String text, {bool skipOffstage = true}) => find.byWidgetPredicate((w) {
       if (w is! Text) return false;
       final s = w.data ?? w.textSpan?.toPlainText();
       return s != null && visibleText(s) == text;
-    });
+    }, skipOffstage: skipOffstage);
 
-Finder findVisibleTextContaining(String part) => find.byWidgetPredicate((w) {
+Finder findVisibleTextContaining(String part, {bool skipOffstage = true}) => find.byWidgetPredicate((w) {
       if (w is! Text) return false;
       final s = w.data ?? w.textSpan?.toPlainText();
       return s != null && visibleText(s).contains(part);
-    });
+    }, skipOffstage: skipOffstage);

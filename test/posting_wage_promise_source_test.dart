@@ -404,7 +404,9 @@ void main() {
       // 초대 다이얼로그는 모집 조건 표시이므로 그대로다
       final invite = _codeOf(
           _src('lib/screens/business_admin/dialogs/invite_worker_dialog.dart'));
-      expect(invite.contains('FormatHelper.formatWage(wd.wage)'), true);
+      // [impl_36 · F294-WAGE-01] 같은 원천(wd.wage = 현재 모집 조건)을 공용 원시 단가 표시로 — 누락 0 은 '급여 확인 필요'.
+      expect(invite.contains('ExpectedWageText.rawWage(wd.wage)'), true);
+      expect(invite.contains('app.wage'), false, reason: '초대 업무 줄은 지원서 스냅샷이 아니라 모집 조건');
     });
 
     test('07-b worker-specific 화면은 이미 스냅샷을 쓴다 (§7)', () {

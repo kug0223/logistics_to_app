@@ -60,13 +60,42 @@ void main() {
   });
 
   // ───────────────────────────────────────────────────────────
-  // SURFACE-01 elevation 제거
+  // SURFACE-01 elevation — [impl_26 §추가] 옛 이름("그림자 0")은 CP04 정밀 §6 뒤로 실제와 달랐다.
+  //   홈 소스 문자열만 세서, 토큰(`ConceptSurface.raised()`)이 그리는 그림자를 보지 못했다.
+  //   지금 실제: 그림자는 오늘·처리할 일·다가오는 최상위 그룹 raised 6 곳에만, 약한 그림자 1개.
+  //   Hero·공고 준비(평면 `_groupSurface`) · 안쪽 항목 · 다른 Concept 표면에는 없다.
   // ───────────────────────────────────────────────────────────
   group('SURFACE-01 Home elevation', () {
-    test('Home에 그림자가 남아 있지 않다', () {
+    test('홈 그림자는 최상위 그룹 raised 토큰에만 있다(직접 그림자 · elevation 0)', () {
+      // 홈이 직접 그리는 그림자·elevation 은 0 — 깊이는 토큰만 만든다.
       expect('BoxShadow'.allMatches(home).length, 0);
       expect('boxShadow'.allMatches(home).length, 0);
       expect(home.contains('elevation:'), isFalse);
+
+      final tok = _codeOf(_src('lib/theme/concept_tokens.dart'));
+      String decl(String sig) {
+        final at = tok.indexOf(sig);
+        expect(at, greaterThan(-1), reason: sig);
+        final end = tok.indexOf('static ', at + sig.length);
+        return tok.substring(at, end < 0 ? tok.length : end);
+      }
+
+      // 실제 그림자의 출처: raised 가 약한 그림자 1개를 갖는다(설계값 그대로).
+      expect(decl('static BoxDecoration raised()').contains('boxShadow: _shadow,'), isTrue);
+      final shadow = decl('static const List<BoxShadow> _shadow');
+      expect('BoxShadow('.allMatches(shadow).length, 1);
+      expect(shadow.contains('offset: Offset(0, 2)'), isTrue);
+      expect(shadow.contains('blurRadius: 8'), isTrue);
+
+      // 홈에서 그 토큰을 쓰는 곳 = 최상위 그룹 6 곳뿐. 함께 쓰는 다른 Concept 표면은 그림자가 없다.
+      expect('ConceptSurface.raised()'.allMatches(home).length, 6);
+      final used = RegExp(r'ConceptSurface\.(\w+)\(').allMatches(home).map((m) => m.group(1)!).toSet();
+      expect(used, {'raised', 'count', 'staffingNeed'});
+      for (final v in ['count', 'staffingNeed']) {
+        expect(decl('static BoxDecoration $v()').contains('boxShadow'), isFalse, reason: v);
+      }
+      // Hero·공고 준비의 평면 표면에는 그림자가 없다.
+      expect(_bodyOf(home, 'static final BoxDecoration _groupSurface').contains('boxShadow'), isFalse);
     });
 
     test('관리자 참조 화면과 같은 depth', () {
@@ -93,10 +122,11 @@ void main() {
       expect(t.contains('_buildTodayAttendanceLine(s, theme)'), isTrue);
       expect(t.contains('_buildTodayIssueRows(context, s, up,'), isTrue);
       final m = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
-      expect(m.contains('인력 정보를 불러오지 못했습니다'), isTrue);
+      // [impl_26 · UX Master §150 「앱 전체 문구 정본과 두 홈 표현」(2026-11-11) · 대표 홈 정본 보충 표 · DU 0fa6948] 해요체.
+      expect(m.contains('인력 정보를 불러오지 못했어요'), isTrue);
       expect(m.contains('boxShadow'), isFalse);
       final a = _bodyOf(home, 'Widget? _buildTodayAttendanceLine(');
-      expect(a.contains('출근 현황을 불러오지 못했습니다'), isTrue);
+      expect(a.contains('출근 현황을 불러오지 못했어요'), isTrue); // [impl_26 · UX Master §150] 해요체
       expect(a.contains('boxShadow'), isFalse);
     });
 
@@ -105,7 +135,7 @@ void main() {
       expect(f.contains('boxShadow'), isFalse);
       // 상태 분기가 모두 살아 있는지 확인 (없애지 않았다)
       for (final marker in [
-        '향후 인력 현황을 불러오지 못했습니다', // error
+        '향후 인력 현황을 불러오지 못했어요', // error — [impl_26 · UX Master §150 「앱 전체 문구 정본과 두 홈 표현」(2026-11-11) · 대표 홈 정본 보충 표 · DU 0fa6948] 해요체
         // [HOME-V2-08D.2] no-target 분기는 제거됐다 — gate가 섹션 자체를
         //   숨기고 그 상태는 Hero가 설명한다.
         // [HOME-V2-08D.4] 전부충원 분기도 사라졌다 — 그 날짜들이 이제
@@ -117,8 +147,11 @@ void main() {
       }
       // [HOME-V2-08D.1] 컨테이너 decoration이 상태마다 동일 — 이제 같은
       //   토큰 하나를 공유하므로 "동일"이 값 비교가 아니라 참조로 보장된다.
-      expect('decoration: _groupSurface,'.allMatches(f).length, 3,
+      // [impl_26 · DU_concept_CP04 정밀 사양(2026-11-12) · 코드 [CP04] 표지] 정밀 §6 — 오늘/할 일/다가오는 최상위 그룹은 `ConceptSurface.raised()` 하나를 공유한다
+      //   (Hero 만 평면 `_groupSurface`). 상태마다 같은 토큰 하나라는 뜻 그대로 — 개수 3 그대로.
+      expect('decoration: ConceptSurface.raised(),'.allMatches(f).length, 3,
           reason: '로딩 · 에러 · 날짜목록');
+      expect(f.contains('decoration: _groupSurface,'), isFalse, reason: '한 섹션 안에서 두 표면이 섞이지 않는다');
     });
 
     test('처리할 일 — 로딩·빈 상태·행 목록 전부 평면', () {
@@ -138,8 +171,10 @@ void main() {
       final d = _bodyOf(home, 'Widget _buildActionDashboard(');
       expect(d.contains('_taskHealthNotice(s, total: summaryFailed)'), isTrue);
       expect(d.contains('boxShadow'), isFalse);
-      expect('decoration: _groupSurface,'.allMatches(d).length, 2,
+      // [impl_26 · DU_concept_CP04 정밀 사양(2026-11-12) · 코드 [CP04] 표지] 정밀 §6 — 처리할 일 그룹 = `ConceptSurface.raised()`(개수 2 그대로).
+      expect('decoration: ConceptSurface.raised(),'.allMatches(d).length, 2,
           reason: '로딩 1 + 본문 1 — 상태가 달라도 같은 토큰');
+      expect(d.contains('decoration: _groupSurface,'), isFalse);
     });
   });
 
@@ -165,8 +200,13 @@ void main() {
         isTrue,
       );
       // [HOME-V2-08D.2] Hero shell·skeleton이 같은 토큰을 재사용해 11곳.
-      expect('decoration: _groupSurface,'.allMatches(home).length, 9,
-          reason: 'Hero(2)·오늘·처리할 일(3)·다가오는(4)·공고 준비');
+      // [impl_26 · DU_concept_CP04 정밀 사양(2026-11-12) · 코드 [CP04] 표지] 정밀 §6 — 표면이 두 단계로 나뉘었다: Hero·준비(평면 `_groupSurface`) 3 +
+      //   오늘·처리할 일·다가오는 최상위 그룹(`ConceptSurface.raised()`) 6 = 예전과 같은 9 자리.
+      //   각 단계 안에서는 토큰 하나를 공유한다(값 비교가 아니라 참조).
+      expect('decoration: _groupSurface,'.allMatches(home).length, 3,
+          reason: 'Hero(2) · 공고 준비');
+      expect('decoration: ConceptSurface.raised(),'.allMatches(home).length, 6,
+          reason: '오늘 · 처리할 일(2) · 다가오는(3)');
       // radius가 s에 곱해져 기기마다 달라지던 것이 사라졌다
       expect(home.contains('BorderRadius.circular(12 * s)'), isFalse);
     });
@@ -182,19 +222,27 @@ void main() {
 
     test('§12 spacing 불변', () {
       // [HOME-V2-08D.2] Hero shell·skeleton·섹션 조립이 같은 gutter를 쓴다.
-      expect('EdgeInsets.symmetric(horizontal: 16 * s)'.allMatches(home).length, 11);
-      // 섹션 사이 16은 이제 _buildSections 한 곳이 소유한다
-      expect('SizedBox(height: 16 * s)'.allMatches(home).length, 1);
-      expect('SizedBox(height: 20 * s)'.allMatches(home).length, 1);
+      // [impl_26 · DU_concept_CP04 정밀 사양(2026-11-12) · 코드 [CP04] 표지] 좌우 여백은 `_gutter(context)`(= ConceptSpace.gutter · 폭 360 미만 16 · 그 외 20),
+      //   섹션 사이는 `ConceptSpace.sectionGap` 이다(배율 s 를 곱하던 값 폐기). 소유 위치 단언은 그대로다.
+      expect('EdgeInsets.symmetric(horizontal: _gutter(context))'.allMatches(home).length, 8);
+      expect(home.contains('double _gutter(BuildContext context) => ConceptSpace.gutter('), isTrue);
+      // 섹션 사이 간격은 이제 _buildSections 한 곳이 소유한다
+      final sections = _bodyOf(home, 'List<Widget> _buildSections(');
+      expect('ConceptSpace.sectionGap'.allMatches(home).length, 2);
+      expect('ConceptSpace.sectionGap'.allMatches(sections).length, 2);
+      expect('SizedBox(height: 16 * s)'.allMatches(home).length, 0, reason: '옛 배율 간격 재도입 0');
     });
 
     test('§13 typography', () {
       // [HOME-V2-08D.3] 18px w800 KPI 5개가 사라졌다 — 화면 최대 텍스트는
       //   이제 Hero(17)이고, Today는 issue 15 > 보조 13 > scope 12로 읽힌다.
       expect(home.contains('fontSize: 18'), isFalse, reason: 'KPI 수치 폐기');
-      expect('fontSize: 15'.allMatches(home).length, 5,
-          reason: 'Hero 이름 · 오늘 issue · 다가오는 날짜 · task label · task count');
-      expect('fontSize: 13'.allMatches(home).length, 9);
+      // [impl_26 · PP-TYPOGRAPHY(DU555 · DU586b · DU639a)] 크기는 역할 스타일(AppTextStyles.role*)이 정한다 —
+      //   화면이 직접 15/13 을 쓰던 자리는 모두 역할로 옮겨졌다. 위계 규칙(18 금지 · 11 금지)은 그대로다.
+      expect('fontSize: 15'.allMatches(home).length, 0);
+      expect('fontSize: 13'.allMatches(home).length, 0);
+      expect(home.contains('AppTextStyles.roleHomeHero()'), isTrue, reason: 'Hero 26');
+      expect(home.contains('AppTextStyles.roleCardTitle()'), isTrue, reason: '카드 · 목록 제목 17');
       // [R7-P1-4 후속] 17 → 18: 부족 행의 범위 보조 줄(grey 12) 한 개가 늘었다.
       //   위계 규칙은 그대로다 — 18 금지 · 11 금지 · 15 는 다섯 자리.
       // [R7-P4.4E.2] 18 → 19: 계약서 템플릿 준비 행에 목적 설명 줄이 붙었다.
@@ -206,7 +254,10 @@ void main() {
       //   두 번 두면 정작 다음 행동이 늦게 보이고, 좁은 화면에서는 제목을
       //   밀어냈다. 크기 체계는 그대로다(새 scale 없음).
       // [DU-VQ-03 · 후속13 §2] 18 → 19: 부족 통합 시 오늘 확정 근무의 업무·시간 보조 줄(12) 하나. 새 크기 없음.
-      expect('fontSize: 12'.allMatches(home).length, 19);
+      // [impl_26] 19 → 4: 나머지는 역할 스타일로 옮겨졌다. 남은 직접 12 네 자리는 impl_26 보고서의 후보 목록이다
+      //   (역할표 보조 14 하한과 다름 — 판정 전 고정). 새 직접 크기가 생기면 실패한다.
+      expect('fontSize: 12'.allMatches(home).length, 4);
+      expect('fontSize:'.allMatches(home).length, 4, reason: '직접 크기는 위 12 네 자리뿐');
       expect(home.contains('fontSize: 11'), isFalse, reason: 'TYPO-50 하한 유지');
     });
 
@@ -222,7 +273,10 @@ void main() {
       //   위치가 issue row 문장 안으로 들어갔다. 대신 두 issue의 semantic icon이 있다.
       expect(home.contains('Icons.place_outlined'), isFalse);
       final i = _bodyOf(home, 'List<Widget> _buildTodayIssueRows(');
-      expect(i.contains('Icons.error_outline'), isTrue);
+      // [impl_26 · DU_concept_CP04 정밀 사양(2026-11-12) · 코드 [CP04] 표지] 정밀 §4 — 부족 숫자는 요약의 `N명 추가 필요` 알약이 한 번 말하고, 이 목록의 부족 행은
+      //   같은 숫자를 다시 쓰지 않는 `_shortageDetailRow`(행동 · 범위 context)로 바뀌었다 — 그래서 error_outline 행이 없다.
+      expect(i.contains('Icons.error_outline'), isFalse);
+      expect(i.contains('_shortageDetailRow('), isTrue);
       expect(i.contains('Icons.schedule_outlined'), isTrue);
     });
 
@@ -275,7 +329,9 @@ void main() {
     });
 
     test('재시도 버튼 유지', () {
-      expect('재시도'.allMatches(home).length >= 2, isTrue);
+      // [impl_26 · UX Master §150 「앱 전체 문구 정본과 두 홈 표현」(2026-11-11) · 대표 홈 정본 보충 표 · DU 0fa6948] 행동 문구 `재시도` → `다시 시도`.
+      expect('다시 시도'.allMatches(home).length >= 2, isTrue);
+      expect(home.contains("'재시도'"), isFalse);
       final e = _bodyOf(home, 'Widget _todayOpsErrorRow(');
       expect(e.contains('onRetry'), isTrue);
       expect(home.contains('onRefresh: _refresh'), isTrue);
@@ -306,7 +362,9 @@ void main() {
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
-      expect(titles, {'오늘', '다가오는 7일', '처리할 일'});
+      // [impl_26 · UX Master §150 「앱 전체 문구 정본과 두 홈 표현」(2026-11-11) · 대표 홈 정본 보충 표 · DU 0fa6948] 섹션 제목 = 「오늘의 근무 / 처리할 일 / 다가오는 근무 + 앞으로 7일」.
+      //   집합 크기 3 · 순서 단언은 그대로 — 이름만 정본으로 바뀌었다.
+      expect(titles, {'오늘의 근무', '다가오는 근무', '처리할 일'});
     });
 
     test('§16 05B.3 연체 우선순위 유지', () {
@@ -324,7 +382,8 @@ void main() {
     test('처리할 일 9종 + 05B 순서 유지', () {
       final rows = _bodyOf(home, '_makeActionRows(BuildContext context');
       const order = [
-        '퇴사 요청', '지원 검토', '스케줄 변경 요청', '계약 미발송', '마감 필요',
+        // [impl_26 · UX Master §150 「앱 전체 문구 정본과 두 홈 표현」(2026-11-11) · 대표 홈 정본 보충 표 · DU 0fa6948] 할 일 제목 `스케줄 변경 요청` → `일정 변경 요청`(9종 · 순서 그대로).
+        '퇴사 요청', '지원 검토', '일정 변경 요청', '계약 미발송', '마감 필요',
         '중간정산 요청', '급여 변경 요청', '이체 대기', '계약 확인 필요',
       ];
       var prev = -1;
@@ -358,9 +417,10 @@ void main() {
 
     test('§17/§18 error·empty 문구 불변', () {
       for (final c in [
-        '인력 정보를 불러오지 못했습니다',
-        '출근 현황을 불러오지 못했습니다',
-        '향후 인력 현황을 불러오지 못했습니다',
+        // [impl_26 · UX Master §150 「앱 전체 문구 정본과 두 홈 표현」(2026-11-11) · 대표 홈 정본 보충 표 · DU 0fa6948] 해요체로 바뀐 세 문구(같은 상태 · 어미만).
+        '인력 정보를 불러오지 못했어요',
+        '출근 현황을 불러오지 못했어요',
+        '향후 인력 현황을 불러오지 못했어요',
         '처리할 업무가 없어요',
         // [HOME-V2-08D.2] 두 no-target 문구는 Hero로 역할이 넘어갔다.
         // [HOME-V2-08D.4] `모두 충원됐어요`도 사라졌다 — 그 날짜들이 행이 됐다.

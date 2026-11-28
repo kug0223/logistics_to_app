@@ -10,6 +10,7 @@ import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/expected_daily_wage.dart';
 import '../dialogs/schedule_detail_dialog.dart';
 import '../dialogs/wage/wage_detail_dialog.dart';
 import '../../theme/app_colors.dart';
@@ -389,20 +390,29 @@ class ScheduleCard extends StatelessWidget {
       return;
     }
 
+    // [L35 · 탭 분석 §3-5] 이름 두 개(근로자·사업장) 때문에 탭 뒤 화면이 반응 없이 기다렸다(직렬 2회).
+    //   이제 바로 열고, 두 읽기는 함께 출발해 다이얼로그 안에서 채운다. 금액은 이미 가진 근태로 그린다.
     final firestoreService = FirestoreService();
-    final user = await firestoreService.getUser(application.uid);
-    final business = await firestoreService.getBusinessById(application.businessId);
-
-    if (!context.mounted) return;
-
     await WageDetailDialog.show(
       context: context,
       app: application,
-      user: user,
+      user: null,
+      // 실패는 바로 잡아 둔다 — 다이얼로그가 붙기 전에 실패해도 처리되지 않은 오류가 되지 않게.
+      //   실패면 예전 기본 표기(이름 없음 · 사업장 생략)로 그린다.
+      userLoader: firestoreService.getUser(application.uid).catchError((Object e) {
+        debugPrint('⚠️ 급여 명세 근로자 조회 실패: $e');
+        return null;
+      }),
+      businessNameLoader: firestoreService
+          .getBusinessById(application.businessId)
+          .then<String?>((b) => b?.name)
+          .catchError((Object e) {
+        debugPrint('⚠️ 급여 명세 사업장 조회 실패: $e');
+        return null;
+      }),
       attendance: attendance!,
       wage: attendance!.wageDetail!,
       mode: WageDialogMode.confirmed,
-      businessName: business?.name,
       scheduledBreakMinutes: attendance!.wageDetail!.scheduledBreakMinutes,
     );
   }
@@ -413,7 +423,11 @@ class ScheduleCard extends StatelessWidget {
       context,
       isScrollControlled: true,
       useRootNavigator: true,  // BottomNav까지 dim — modal 계층 명확화
-      builder: (context) => ScheduleDetailDialog(application: application),
+      // [C294-WAGE-D] 상세의 급여 행도 이 카드와 같은 단계 판정(예상 단계일 때만 하루 예상) — 새 조회 0.
+      builder: (context) => ScheduleDetailDialog(
+        application: application,
+        showExpectedWage: ExpectedDailyWage.isExpectedStage(attendance),
+      ),
     );
   }
 
@@ -571,11 +585,25 @@ class ScheduleCard extends StatelessWidget {
       return '${FormatHelper.formatWage(attendance!.finalWage!)}${wageTypeLabel.isNotEmpty ? ' ($wageTypeLabel)' : ''}';
     }
 
+    // [F293-WAGE-01] 예상 단계(근태 급여가 아직 산정 전 · 노쇼/결근 아님)에서 시급 약속이면 하루 예상 + 시급.
+    //   시각은 이 카드가 보여 주는 application.startTime/endTime(표시 시각 = 계산 입력) · 휴게는 약속 그대로(null = 모름).
+    //   산정·확정 단계는 예전 표시 그대로(HB3 미공개 금액을 예상액으로 대신하지 않는다).
+    if (ExpectedDailyWage.isExpectedStage(attendance)) {
+      final line = ExpectedWageText.combined(ExpectedDailyWage.forPromise(
+          wageType: application.wageType,
+          rate: application.wage,
+          startTime: application.startTime,
+          endTime: application.endTime,
+          breakMinutes: application.breakMinutes));
+      if (line != null) return line;
+    }
+
     // 2. 기본 - application의 wageType 우선 사용
     final wageTypeLabel = application.wageTypeLabel.isNotEmpty
         ? application.wageTypeLabel
         : (attendance?.wageDetail?.wageTypeLabel ?? '');
-    final formattedWage = FormatHelper.formatWage(application.wage);
+    // [C294-WAGE-C] 누락 단가(모델 0)를 '0원' 으로 말하지 않는다.
+    final formattedWage = ExpectedWageText.rawWage(application.wage);
 
     return wageTypeLabel.isNotEmpty ? '$formattedWage ($wageTypeLabel)' : formattedWage;
   }

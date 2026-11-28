@@ -31,14 +31,27 @@ class DeviceTokenRevoker {
   bool get isInFlight => _inFlight != null;
 
   Future<void> _run() {
-    return _inFlight ??= () async {
+    final cur = _inFlight;
+    if (cur != null) return cur;
+    // [impl_24 · Q31 같은 꼴] 예전: `_inFlight ??= () async { … finally { _inFlight = null; } }();`
+    //   deleteToken/writePending 이 **동기로** 던지면 async 본문이 반환 전에 끝나(finally 가 먼저 돈다) 끝난(실패한)
+    //   future 가 `??=` 로 남았다 → isInFlight 가 계속 true · 이후 settle/revoke 가 같은 실패 future 만 돌려받아
+    //   폐기를 다시 시도하지 않고, 새 토큰 등록이 앱을 다시 켤 때까지 막혔다.
+    //   → 이미 끝났으면 걸어 두지 않고, 자기 future 일 때만 비운다.
+    var settled = false;
+    Future<void>? self;
+    final f = () async {
       try {
         await deleteToken();
         await writePending(false);
       } finally {
-        _inFlight = null;
+        settled = true;
+        if (self != null && identical(_inFlight, self)) _inFlight = null;
       }
     }();
+    self = f;
+    if (!settled) _inFlight = f;
+    return f;
   }
 
   /// 로그아웃 — 표식을 먼저 남기고 폐기한다. [timeout] 안에 끝났으면 true.

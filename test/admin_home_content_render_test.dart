@@ -381,6 +381,8 @@ AdminHomeReads _reads({
   /// [DU1 VQ] 오늘 기준 시각·약관 상태 — 캡처 동일 조건용(기본 null = production 기본).
   DateTime Function()? clock,
   Future<LegalReadiness> Function()? legalReadiness,
+  /// [impl_21 · Q18] 호출마다 준비 상태 조회를 실패시킬지(null 이면 성공). 재시도 확인용.
+  Object? Function()? postingReadinessError,
 }) {
   void hit(String k) {
     if (calls != null) calls[k] = (calls[k] ?? 0) + 1;
@@ -424,7 +426,12 @@ AdminHomeReads _reads({
       return confirmed ?? const [];
     },
     workDetailTimes: (_) async => <String, dynamic>{},
-    postingReadiness: (bizs) async => _ready(bizs),
+    postingReadiness: (bizs) async {
+      hit('readiness');
+      final e = postingReadinessError?.call();
+      if (e != null) throw e;
+      return _ready(bizs);
+    },
     contractTemplates: (_) async => <ContractTemplateModel>[_Template()],
     // 기본값은 '이미 봤다' — 투어가 뜨지 않는 평소 경로.
     tourCompleted: tour ?? () => Future<bool>.value(true),
@@ -684,7 +691,7 @@ void main() {
     final offset = tester.state<ScrollableState>(find.byType(Scrollable).first).position.pixels;
     final brand = find.text('ALfit');
     expect(brand, findsOneWidget);
-    final role = find.text('관리자');
+    final role = findVisibleText('관리자');
     final rects = <String, Rect>{'ALfit': tester.getRect(brand), if (role.evaluate().isNotEmpty) '관리자': tester.getRect(role.first)};
     for (final e in rects.entries) {
       expect(e.value.top >= 0 && e.value.bottom <= 850, isTrue, reason: '${e.key} 첫 화면 안 ${e.value}');
@@ -1608,5 +1615,51 @@ void main() {
     final node = tester.getSemantics(find.bySemanticsLabel('알림'));
     expect(node.hasFlag(SemanticsFlag.isButton), isTrue);
     h.dispose();
+  });
+
+  // [impl_21 · Q18 · 2026-11-26] 준비 상태 계산이 던지면 — Hero 가 다음 재조회까지 뼈대(로딩)에 묶이던 결함.
+  //   이제 실패도 끝난 상태: Hero 는 운영 상태를 말하고, 준비 칸만 '확인하지 못했어요 · 다시 시도' 한 줄.
+  testWidgets('AHR-Q18-1 준비 상태 실패 → Hero 는 로딩에 갇히지 않고 준비 칸만 실패 한 줄', (tester) async {
+    await _pump(tester,
+        reads: _reads(
+          staffing: _staffing(days: const []),
+          postingReadinessError: () => StateError('readiness boom'),
+        ));
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('admin-home-readiness-failed')), findsOneWidget);
+    expect(findVisibleText('공고 준비 상태를 확인하지 못했어요'), findsOneWidget);
+    expect(findVisibleText('오늘 예정된 근무는 없어요'), findsOneWidget,
+        reason: '준비 상태를 몰라도 Hero 는 운영 상태를 말한다(예전 = 영구 뼈대)');
+    expect(findVisibleText('오늘 상황을 확인하지 못했어요'), findsNothing,
+        reason: 'Hero 전체를 오류로 바꾸지 않는다');
+  });
+
+  testWidgets('AHR-Q18-2 다시 시도 → 같은 loader 로 다시 읽고 성공하면 실패 줄이 사라진다', (tester) async {
+    var fail = true;
+    final calls = <String, int>{};
+    await _pump(tester,
+        reads: _reads(
+          staffing: _staffing(days: const []),
+          calls: calls,
+          postingReadinessError: () => fail ? StateError('readiness boom') : null,
+        ));
+    expect(find.byKey(const ValueKey('admin-home-readiness-failed')), findsOneWidget);
+    final before = calls['readiness'] ?? 0;
+    fail = false;
+    await tester.tap(find.descendant(
+        of: find.byKey(const ValueKey('admin-home-readiness-failed')),
+        matching: find.bySemanticsLabel('다시 시도')));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(calls['readiness'], before + 1, reason: '준비 상태만 다시 읽는다');
+    expect(find.byKey(const ValueKey('admin-home-readiness-failed')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('AHR-Q18-3 성공 경로는 실패 줄을 만들지 않는다(회귀)', (tester) async {
+    await _pump(tester, reads: _reads(staffing: _staffing(days: const [])));
+    expect(find.byKey(const ValueKey('admin-home-readiness-failed')), findsNothing);
+    expect(findVisibleText('오늘 예정된 근무는 없어요'), findsOneWidget);
   });
 }

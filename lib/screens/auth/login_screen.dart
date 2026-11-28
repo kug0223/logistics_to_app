@@ -20,19 +20,25 @@ import '../../widgets/common/loading_widget.dart';
 // Services
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../services/auth_service.dart';
-import '../../services/pass_verification_service.dart';
 
 // Widgets
-import '../../widgets/auth/pass_auth_button.dart';
 
 // Screens
-import 'register_screen.dart';
+import 'auth_start_screen.dart'; // [ALFIT-AUTH-KAKAO-ONBOARDING.1] '회원가입' = 카카오 시작 화면
 import 'registration_recovery_screen.dart'; // [C안 F-01-3] 가입 미완료 복구 화면
 import '../../theme/app_colors.dart';
 
+/// [판정280 C280-01] 휴대폰 본인인증으로 비밀번호를 찾는 길이 닫혔다는 안내(서버 LEGACY_PASS_FLOW_CLOSED).
+const String kLegacyPassResetClosedMessage =
+    '휴대폰 본인인증으로 비밀번호를 찾는 방법은 종료됐어요. 카카오로 시작하거나 고객센터에 문의해 주세요.';
+
 /// ALfit 로그인 화면 - 포커스 이동 + 아이디/비밀번호 찾기
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, this.openedFromStart = false});
+
+  /// [ALFIT-AUTH-KAKAO-ONBOARDING.1] 시작 화면(AuthStartScreen)의 '아이디로 로그인' 으로 열렸다.
+  ///   이때는 뒤로 버튼을 보이고, 로그인에 성공하면 이 화면을 닫는다(아래 AuthWrapper 가 이미 홈으로 바뀌었다).
+  final bool openedFromStart;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -117,6 +123,9 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!mounted) return;
     if (success) {
       AnalyticsService.logLogin(userProvider.currentUser?.role.name ?? 'UNKNOWN');
+      if (widget.openedFromStart && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
     } else {
       // [C안 F-01-3] 외국인 가입 미완료 계정 → 복구 화면으로 라우팅
       if (userProvider.hasIncompleteRegistration) {
@@ -130,6 +139,16 @@ class _LoginScreenState extends State<LoginScreen> {
         (err != null && err.isNotEmpty) ? err : '아이디 또는 비밀번호가 올바르지 않습니다.',
       );
     }
+  }
+
+  /// [판정280 C280-02] 카카오 시작 화면으로 — 시작 화면에서 왔으면 돌아가고, 아니면 연다.
+  void _goKakaoStart() {
+    if (!mounted) return;
+    if (widget.openedFromStart && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+      return;
+    }
+    Navigator.push(context, MaterialPageRoute(builder: (_) => const AuthStartScreen()));
   }
 
   Future<void> _showFindUsernameDialog() async {
@@ -266,7 +285,10 @@ class _LoginScreenState extends State<LoginScreen> {
                           Icon(Icons.check_circle_rounded, size: 60, color: Theme.of(ctx).primaryColor),
                           const SizedBox(height: 16),
                           Text(
-                            foundAccounts!.length == 1 ? '아이디를 찾았어요' : '${foundAccounts!.length}개의 계정을 찾았어요',
+                            // [판정280 C280-02] 카카오로 가입한 계정만 있으면 '카카오로 가입하셨어요'.
+                            foundAccounts!.every((a) => a['provider'] == 'kakao')
+                                ? '카카오로 가입하셨어요'
+                                : (foundAccounts!.length == 1 ? '아이디를 찾았어요' : '${foundAccounts!.length}개의 계정을 찾았어요'),
                             textAlign: TextAlign.center,
                             style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900),
                           ),
@@ -274,6 +296,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ...foundAccounts!.map((account) {
                             final username = account['username'] ?? '';
                             final role = account['role'] ?? '';
+                            final isKakao = account['provider'] == 'kakao';
                             return Container(
                               margin: const EdgeInsets.only(bottom: 10),
                               padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
@@ -285,7 +308,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                 children: [
                                   Expanded(
                                     child: Text(
-                                      maskUsername(username),
+                                      // [판정280 C280-02] 카카오 계정은 아이디가 없다 — 가입 수단을 말한다.
+                                      isKakao ? '카카오로 가입' : maskUsername(username),
                                       style: ResponsiveHelper.subtitleStyle(ctx).copyWith(
                                         fontWeight: FontWeight.w800,
                                         color: Theme.of(ctx).primaryColor,
@@ -312,6 +336,25 @@ class _LoginScreenState extends State<LoginScreen> {
                             );
                           }),
                           const SizedBox(height: 14),
+                          // [판정280 C280-02] 카카오로 가입한 계정이 있으면 카카오 시작으로 바로 잇는다.
+                          if (foundAccounts!.any((a) => a['provider'] == 'kakao')) ...[
+                            OutlinedButton(
+                              onPressed: () {
+                                FocusScope.of(ctx).unfocus();
+                                Navigator.pop(sheetContext);
+                                _goKakaoStart();
+                              },
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                side: BorderSide(color: Theme.of(ctx).primaryColor),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                              ),
+                              child: Text('카카오로 로그인하기',
+                                  style: ResponsiveHelper.subtitleStyle(ctx).copyWith(
+                                      fontWeight: FontWeight.w600, color: Theme.of(ctx).primaryColor)),
+                            ),
+                            const SizedBox(height: 10),
+                          ],
                           ElevatedButton(
                             onPressed: () {
                               FocusScope.of(ctx).unfocus();
@@ -481,6 +524,18 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                   ),
+                  // [ALFIT-AUTH-KAKAO-ONBOARDING.1] 시작 화면에서 열렸을 때만 뒤로 버튼(48×48).
+                  if (widget.openedFromStart)
+                    Positioned(
+                      top: sysPadding.top + 4,
+                      left: 4,
+                      child: IconButton(
+                        tooltip: '뒤로',
+                        onPressed: () => Navigator.of(ctx).maybePop(),
+                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                        icon: const Icon(Icons.arrow_back, color: AppColors.textOnDark),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -661,10 +716,18 @@ class _LoginScreenState extends State<LoginScreen> {
                 style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
               ),
               TextButton(
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const RegisterScreen()),
-                ),
+                // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · B277-03] 옛 아이디 가입(RegisterScreen) 입구를 닫았다 —
+                //   새 가입은 카카오 시작 화면 하나다. 시작 화면에서 왔으면 그리로 돌아가고, 아니면 연다.
+                onPressed: () {
+                  if (widget.openedFromStart && Navigator.of(context).canPop()) {
+                    Navigator.of(context).pop();
+                    return;
+                  }
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AuthStartScreen()),
+                  );
+                },
                 style: TextButton.styleFrom(
                   minimumSize: const Size(48, 48), // [DU326 ②] receiver 최소 48×48
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
@@ -841,7 +904,6 @@ class _PasswordResetSheetState extends State<_PasswordResetSheet> {
 
   // 0: 아이디 + 인증, 1: 새 비밀번호 입력, 2: 완료
   int _step = 0;
-  bool _isAuthenticating = false;
   bool _isChanging = false;
   bool _obscureNew = true;
   bool _obscureConfirm = true;
@@ -946,49 +1008,9 @@ class _PasswordResetSheetState extends State<_PasswordResetSheet> {
   }
 
   // ── PASS 인증 ──────────────────────────────────────────────────────────────
-
-  Future<void> _doPassAuth() async {
-    if (_usernameController.text.trim().isEmpty) {
-      ToastHelper.showWarning('아이디를 입력해주세요');
-      _usernameFocus.requestFocus();
-      return;
-    }
-    setState(() => _isAuthenticating = true);
-    try {
-      final passResult = await PassVerificationService.authenticate(
-        purpose: 'resetPassword',
-      );
-      if (!mounted) return;
-      if (passResult == null) {
-        setState(() => _isAuthenticating = false);
-        return; // 사용자 취소
-      }
-
-      final result = await _fn
-          .httpsCallable(
-            'resetPasswordWithPass',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)),
-          )
-          .call({
-        'passToken': passResult.passToken,
-        'username': _usernameController.text.trim(),
-      });
-      if (!mounted) return;
-      _customToken = result.data['customToken'] as String?;
-      setState(() { _isAuthenticating = false; _step = 1; });
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) _newPasswordFocus.requestFocus();
-      });
-    } on FirebaseFunctionsException catch (e) {
-      if (!mounted) return;
-      setState(() => _isAuthenticating = false);
-      ToastHelper.showError(e.message ?? '본인인증에 실패했습니다');
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isAuthenticating = false);
-      ToastHelper.showError('오류가 발생했습니다. 다시 시도해주세요');
-    }
-  }
+  // [ALFIT-AUTH-KAKAO-ONBOARDING.1 · 판정280 C280-01] 휴대폰 본인인증(resetPassword)으로 비밀번호를 찾는 길은
+  //   서버에서 닫혔다(resetPasswordWithPass · verifyPassAuth resetPassword = LEGACY_PASS_FLOW_CLOSED).
+  //   KG 창을 연 뒤 거절받는 막힌 길을 보이지 않는다 — 내국인 칸은 안내만, 외국인 OTP(옛 QA 유지)는 그대로.
 
   // ── 비밀번호 변경 ──────────────────────────────────────────────────────────
 
@@ -1245,15 +1267,24 @@ class _PasswordResetSheetState extends State<_PasswordResetSheet> {
                   label: '아이디',
                   hint: 'your_username',
                   icon: Icons.account_circle_outlined,
-                  onSubmitted: (_) => _isForeign ? _doOtpSend() : _doPassAuth(),
+                  onSubmitted: (_) { if (_isForeign) _doOtpSend(); },
                 ),
                 const SizedBox(height: 16),
                 if (!_isForeign) ...[
                   // 내국인: PASS 본인인증
-                  PassAuthButton(
-                    onPressed: _doPassAuth,
-                    isLoading: _isAuthenticating,
-                  ),
+                  // [판정280 C280-01] 닫힌 휴대폰 본인인증 비밀번호 찾기 대신 안내만 둔다.
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppColors.grey100,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      TextLayout.keepWords(kLegacyPassResetClosedMessage),
+                      semanticsLabel: kLegacyPassResetClosedMessage,
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.textPrimary),
+                    ),
+                  )
                 ] else if (!_otpSent) ...[
                   // 외국인 1단계: OTP 발송 요청
                   ElevatedButton(

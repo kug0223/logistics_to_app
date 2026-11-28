@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 
+import '../../../models/core/attendance_model.dart';
 import '../../../models/core/business_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/payroll_payment_service.dart';
@@ -18,6 +19,7 @@ class PayrollOverviewReads {
     required this.workerSummaries,
     required this.repairSummary,
     required this.todayPaymentCount,
+    this.outstandingRecords,
     this.personLabels,
     this.monthLedgerCounts,
   });
@@ -60,6 +62,11 @@ class PayrollOverviewReads {
   /// 오늘 지급 대상 건수. 모르면 null.
   final Future<int?> Function(String businessId) todayPaymentCount;
 
+  /// [PERF-L22] 전체 미이체 근태(2020-01-01~ · `getAllOutstandingWages`). 있으면 배너 숫자를 이것으로 세고,
+  ///   **같은 목록**을 배너 → 대시보드로 넘겨 대시보드가 같은 전 기간 조회를 다시 하지 않게 한다.
+  ///   null 이면(시험 등) 예전처럼 [todayPaymentCount] 를 쓴다. 실패는 throw.
+  final Future<List<AttendanceModel>> Function(String businessId)? outstandingRecords;
+
   /// [PAYROLL-ANNUAL-READ.48] CF `callableGetPayrollMonthLedgerCounts` — 한 달 원장을 서버가 끝까지 세어
   ///   숫자만 돌려준다(읽기 전용, **서버 후보 — 미배포**). 한 달이 10,000건을 넘어 원장 응답이 잘렸을
   ///   때만 부른다. 함수가 없으면 throw — 그 달은 '확인 못함'으로 남는다. null 이면 부르지 않는다.
@@ -95,10 +102,11 @@ class PayrollOverviewReads {
         required List<String> managedIds,
       }) async {
         if (isSubAdmin && effectiveBusinessId != null) {
-          final biz = await svc.getBusinessById(effectiveBusinessId);
+          // [impl_55 · AUD-4 H4] 조회 실패를 null/[] 로 접는 변형 대신 OrThrow — '사업장 없음'으로 오인하지 않게.
+          final biz = await svc.getBusinessByIdOrThrow(effectiveBusinessId);
           return biz != null ? [biz] : <BusinessModel>[];
         }
-        return svc.getBusinessesByIds(managedIds);
+        return svc.getBusinessesByIdsOrThrow(managedIds);
       },
       payrollSummaries: ({required String businessId, required int year}) async {
         // [PAYROLL-ANNUAL-READ.48] 화면 대기 30초(.39-A1) — 연결이 안 되면 플러그인 timeout 이
@@ -156,6 +164,8 @@ class PayrollOverviewReads {
       },
       todayPaymentCount: (businessId) =>
           pay.getTodayPaymentCount(businessId: businessId),
+      outstandingRecords: (businessId) =>
+          pay.getAllOutstandingWages(businessId: businessId),
       monthLedgerCounts: ({required String businessId, required String yearMonth}) async {
         final r = await callable('callableGetPayrollMonthLedgerCounts', 30)
             .call<Map<String, dynamic>>({'businessId': businessId, 'yearMonth': yearMonth})

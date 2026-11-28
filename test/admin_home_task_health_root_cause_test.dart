@@ -128,11 +128,34 @@ void main() {
   // ═══════════════════════════════════════════════════════════════
   group('[08D.6-01] resignRequest index', () {
     test('01-a soonCount 쿼리가 세 필드 equality+range를 쓴다', () {
+      // [BL284-01 · 판정288 A안] soon = businessId·resignStatus·resignRetroRequest(false) equality
+      //   + resignAutoApproveAt <= 다음 KST 자정 range. 옛 requestedAt range 를 유지하는 척하지 않는다.
       final c = _codeOf(resignFn);
       expect(c, contains('.where("businessId", "==", bizId)'));
       expect(c, contains('.where("resignStatus", "==", "PENDING")'));
-      expect(c, contains('.where("resignRequestedAt", "<=", soonBoundary)'));
-      expect(c, contains('.count()'));
+      expect(c, contains('const qSoon = base.where("resignRetroRequest", "==", false)\n'
+          '    .where("resignAutoApproveAt", "<=", nextKstMidnight).count();'));
+      expect(c, contains('todayKSTMidnight.getTime() + 24 * 60 * 60 * 1000'));
+      expect(c.contains('resignRequestedAt'), isFalse);
+      expect(RegExp(r'\.count\(\)').allMatches(c).length, 3);
+      // 새 쿼리를 서빙하는 색인 tuple(soon · manual)
+      expect(
+        hasIndex(indexes, 'applications', [
+          ['businessId', 'ASCENDING'],
+          ['resignStatus', 'ASCENDING'],
+          ['resignRetroRequest', 'ASCENDING'],
+          ['resignAutoApproveAt', 'ASCENDING'],
+        ]),
+        isTrue,
+      );
+      expect(
+        hasIndex(indexes, 'applications', [
+          ['businessId', 'ASCENDING'],
+          ['resignStatus', 'ASCENDING'],
+          ['resignRetroRequest', 'ASCENDING'],
+        ]),
+        isTrue,
+      );
     });
 
     test('01-b 그 쿼리를 서빙하는 ASCENDING 인덱스가 존재한다', () {
@@ -161,7 +184,9 @@ void main() {
     });
 
     test('01-d 전체 건수 쿼리는 두 필드 — 기존 인덱스로 충분', () {
-      expect(_codeOf(resignFn), contains('base.count().get()'));
+      // [BL284-01] 전체 = base.count() 를 read-only 거래의 tx.get 으로 읽는다(독립 .get() 0).
+      expect(_codeOf(resignFn), contains('const qAll = base.count();'));
+      expect(_codeOf(resignFn), contains('tx.get(qAll)'));
       expect(
         hasIndex(indexes, 'applications', [
           ['businessId', 'ASCENDING'],
@@ -277,9 +302,13 @@ void main() {
     });
 
     test('03-f srvHomeResignRequest는 0건에서도 객체를 돌려준다', () {
-      expect(_codeOf(resignFn),
-          contains('return {count: allAgg.data().count, soonCount: soonAgg.data().count};'));
-      expect(_codeOf(resignFn).contains('return undefined'), isFalse);
+      // [BL284-01] 빈 세 집계 = {count:0, soonCount:0, manualReviewCount:0} 정상 객체(manual 포함 shape).
+      //   실패·검산 실패만 throw → 호출자 undefined → available=false(정상 0 과 구분).
+      final c = _codeOf(resignFn);
+      expect(c, contains('return {count, soonCount, manualReviewCount};'));
+      expect(c.contains('return undefined'), isFalse);
+      expect(c, contains('manualReviewCount + soonCount > count'));
+      expect(cf, contains('resignRequest:     resignR.status   === "fulfilled" ? resignR.value   : undefined,'));
     });
 
     test('03-g srvHomeUnclosed는 빈 결과를 명시적으로 0으로 돌려준다', () {
@@ -364,11 +393,15 @@ void main() {
   // ═══════════════════════════════════════════════════════════════
   group('[08D.6-06] Functions 무회귀', () {
     test('06-a srvHomeResignRequest가 count() aggregation을 유지한다', () {
-      // 문서 fetch로 바꾸면 read 비용이 늘어난다 (주석 포함 원본에서 확인)
-      expect(resignFn, contains('count() aggregation — 문서 fetch 없음'));
-      expect(RegExp(r'\.count\(\)').allMatches(resignFn).length, 2);
-      expect(_codeOf(resignFn).contains('.select('), isFalse,
-          reason: '문서를 읽지 않는다');
+      // [BL284-01] 정확 3 aggregate · 같은 read-only 거래의 tx.get · application 문서 fetch 0.
+      //   주석 문자열이 아니라 코드(_codeOf)로 본다.
+      final c = _codeOf(resignFn);
+      expect(RegExp(r'\.count\(\)').allMatches(c).length, 3);
+      expect(c, contains('Promise.all([tx.get(qAll), tx.get(qManual), tx.get(qSoon)])'));
+      expect(c, contains('{readOnly: true}'));
+      for (final banned in ['.select(', '.orderBy(', '.limit(', '.startAfter(', '.docs', '.get()']) {
+        expect(c.contains(banned), isFalse, reason: '문서를 읽지 않는다: $banned');
+      }
     });
 
     test('06-b 실패 로깅이 남아 있다 — 다음 원인도 같은 방법으로 찾는다', () {
@@ -388,10 +421,12 @@ void main() {
     });
 
     test('06-d 이번 Phase에서 Functions 코드를 바꾸지 않았다', () {
-      // 변경은 firestore.indexes.json 한 곳뿐이다
-      expect(_codeOf(resignFn), contains('const soonBoundary = admin.firestore.Timestamp.fromDate('));
+      // [BL284-01 · 판정288] 08D.6 당시의 '색인만 변경' 핀은 이번 A안에서 Functions 변경으로 대체됐다.
+      //   지금 고정하는 것: soon 경계 = 다음 KST 자정(오늘 자정 + 1일) · 옛 −2일 requestedAt 경계 제거.
+      expect(_codeOf(resignFn), contains('const nextKstMidnight = admin.firestore.Timestamp.fromMillis('));
       expect(_codeOf(resignFn),
-          contains('new Date(todayKSTMidnight.getTime() - 2 * 24 * 60 * 60 * 1000)'));
+          contains('todayKSTMidnight.getTime() + 24 * 60 * 60 * 1000'));
+      expect(_codeOf(resignFn).contains('soonBoundary'), isFalse);
     });
   });
 }
